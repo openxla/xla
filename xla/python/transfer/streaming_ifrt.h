@@ -114,7 +114,7 @@ class PremappedCopierState
   absl::Mutex mu_;
   size_t base_seq_id_ ABSL_GUARDED_BY(mu_) = 0;
   size_t read_seq_id_ ABSL_GUARDED_BY(mu_) = 0;
-  size_t num_parallel_copies_ = 0;
+  size_t num_parallel_copies_ ABSL_GUARDED_BY(mu_) = 0;
   std::deque<WorkQueueItem> work_queue_ ABSL_GUARDED_BY(mu_);
   std::shared_ptr<absl::Span<uint8_t>> scratch_;
   bool currently_flushing_ ABSL_GUARDED_BY(mu_) = false;
@@ -141,13 +141,15 @@ class RawBufferEntry : public PullTable::Entry {
   bool Handle(tsl::RCReference<ConnectionState> state,
               const SocketTransferPullRequest& req,
               size_t base_req_id) override;
+  bool IsComplete() const override;
 
  private:
-  absl::Mutex mu_;
-  size_t num_consumed_bufs_ = 0;
-  std::vector<BufferRef> arrs_;
-  std::shared_ptr<PremappedCopierState> state_;
-  size_t xfer_size_;
+  mutable absl::Mutex mu_;
+  size_t num_consumed_bufs_ ABSL_GUARDED_BY(mu_) = 0;
+  std::vector<BufferRef> arrs_ ABSL_GUARDED_BY(mu_);
+  std::vector<bool> consumed_ ABSL_GUARDED_BY(mu_);
+  const std::shared_ptr<PremappedCopierState> state_;
+  const size_t xfer_size_;
 };
 
 // A PullTable::Entry impl for a list of pjrt buffers.
@@ -164,13 +166,15 @@ class PjRtBufferEntry : public PullTable::Entry {
   bool Handle(tsl::RCReference<ConnectionState> state,
               const SocketTransferPullRequest& req,
               size_t base_req_id) override;
+  bool IsComplete() const override;
 
  private:
-  absl::Mutex mu_;
-  size_t num_consumed_bufs_ = 0;
-  std::vector<BufferRef> arrs_;
-  std::shared_ptr<PremappedCopierState> state_;
-  size_t xfer_size_;
+  mutable absl::Mutex mu_;
+  size_t num_consumed_bufs_ ABSL_GUARDED_BY(mu_) = 0;
+  std::vector<BufferRef> arrs_ ABSL_GUARDED_BY(mu_);
+  std::vector<bool> consumed_ ABSL_GUARDED_BY(mu_);
+  const std::shared_ptr<PremappedCopierState> state_;
+  const size_t xfer_size_;
 };
 
 // Creates a ChunkDestination for a buffer_index of an
@@ -192,51 +196,76 @@ namespace internal {
 // last callback will wait for all previous decrements to finish.
 class IsLastSemaphore {
  public:
-  explicit IsLastSemaphore(size_t value)
-      : guard_counter_(value), counter_(value) {}
+  explicit IsLastSemaphore(size_t value) : guard_counter_(value) {}
 
   template <typename T>
   auto DoWork(size_t value, T&& cb) -> absl::Status {
-    bool is_last;
+    bool is_last = false;
     {
       absl::MutexLock l(mu_);
-      if (is_done_) {
+      if (aborted_ || is_last_claimed_) {
         return absl::OkStatus();
+      }
+      if (value > guard_counter_) {
+        return absl::InvalidArgumentError(
+            "Received extra bytes beyond remaining transfer size");
       }
       guard_counter_ -= value;
       is_last = guard_counter_ == 0;
       if (is_last) {
-        // Wait if we happen to slip in between guard_counter and counter.
-        is_done_ = true;
-        auto cond = [this, value]() { return counter_ == value; };
+        is_last_claimed_ = true;
+      }
+      ++active_calls_;
+      if (is_last) {
+        // Wait if we happen to slip in between guard_counter and active_calls,
+        // or wake immediately if an earlier call aborted.
+        auto cond = [this]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+          return active_calls_ == 1 || aborted_;
+        };
         mu_.Await(absl::Condition(&cond));
-        // Prevent racing calls to poison.
+        if (aborted_) {
+          --active_calls_;
+          return absl::OkStatus();
+        }
       }
     }
+    absl::Status status = absl::InternalError("Callback did not complete");
     auto cleanup = absl::MakeCleanup([&]() {
       absl::MutexLock l(mu_);
-      counter_ -= value;
+      --active_calls_;
+      if (!status.ok()) {
+        aborted_ = true;
+      } else if (is_last) {
+        completed_ = true;
+      }
     });
-    return cb(is_last);
+    status = cb(is_last);
+    return status;
   }
 
   // Return true if this is the first call to poison.
   bool Poison() {
     absl::MutexLock l(mu_);
-    if (is_done_) {
+    aborted_ = true;
+    auto cond = [this]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+      return active_calls_ == 0;
+    };
+    mu_.Await(absl::Condition(&cond));
+    if (poisoned_ || completed_) {
       return false;
     }
-    is_done_ = true;
-    auto cond = [this]() { return counter_ == guard_counter_; };
-    mu_.Await(absl::Condition(&cond));
+    poisoned_ = true;
     return true;
   }
 
  private:
   absl::Mutex mu_;
-  bool is_done_ = false;
-  ssize_t guard_counter_;
-  ssize_t counter_;
+  bool aborted_ ABSL_GUARDED_BY(mu_) = false;
+  bool completed_ ABSL_GUARDED_BY(mu_) = false;
+  bool is_last_claimed_ ABSL_GUARDED_BY(mu_) = false;
+  bool poisoned_ ABSL_GUARDED_BY(mu_) = false;
+  size_t guard_counter_ ABSL_GUARDED_BY(mu_);
+  size_t active_calls_ ABSL_GUARDED_BY(mu_) = 0;
 };
 
 }  // namespace internal

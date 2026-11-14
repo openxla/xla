@@ -528,7 +528,7 @@ bool SocketFdPacketState::HandleEvents(const pollfd& events) {
       }
       const void* base = packet_to_send.data() + write_offset_;
       size_t size = packet_to_send.size() - write_offset_;
-      ssize_t send_size = send(fd_, base, size, 0);
+      ssize_t send_size = send(fd_, base, size, MSG_NOSIGNAL);
       if (send_size > 0) {
         write_offset_ += send_size;
         if (send_size == size) {

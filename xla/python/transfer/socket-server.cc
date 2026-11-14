@@ -15,10 +15,13 @@ limitations under the License.
 #include "xla/python/transfer/socket-server.h"
 
 #include <netinet/tcp.h>  // for TCP_NODELAY
+#include <sys/socket.h>
 
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <list>
 #include <memory>
 #include <optional>
@@ -32,6 +35,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -106,23 +110,12 @@ class SocketServer::SocketNetworkState : public SocketFdPacketState {
   }
 
   void RecvClosed(absl::Status error) override {
-    Shutdown(SHUT_RDWR);
-    if (error.ok()) {
-      error =
-          absl::InternalError("SocketServer: Connection closed recv() == 0.");
-    }
-    Poison(error);
+    Poison(std::move(error));
     DropSysRef();
   }
 
   void SendClosed(absl::Status error) override {
-    Shutdown(SHUT_RDWR);
-    {
-      absl::MutexLock l(mu_);
-      is_poisoned_ = true;
-      poison_status_ =
-          absl::InternalError("SocketServer: Connection closed recv() == 0.");
-    }
+    Poison(std::move(error));
     DropSysRef();
   }
 
@@ -167,38 +160,40 @@ class SocketServer::SocketNetworkState : public SocketFdPacketState {
   }
 
   std::optional<size_t> InstallPull(tsl::RCReference<ChunkDestination> dest) {
-    mu_.lock();
-    if (is_poisoned_) {
-      auto poison_status = poison_status_;
-      dest->Poison(std::move(poison_status));
-      mu_.unlock();
-      return std::nullopt;
+    absl::Status poison_status;
+    {
+      absl::MutexLock l(mu_);
+      if (!is_poisoned_) {
+        dests_[next_req_id_].dest = std::move(dest);
+        size_t req_id = next_req_id_;
+        ++next_req_id_;
+        return req_id;
+      }
+      poison_status = poison_status_;
     }
-    dests_[next_req_id_].dest = std::move(dest);
-    size_t req_id = next_req_id_;
-    ++next_req_id_;
-    mu_.unlock();
-    return req_id;
+    dest->Poison(std::move(poison_status));
+    return std::nullopt;
   }
 
   std::optional<size_t> InstallPullList(
       std::vector<tsl::RCReference<ChunkDestination>> dests) {
-    mu_.lock();
-    if (is_poisoned_) {
-      auto poison_status = poison_status_;
-      for (auto& dest : dests) {
-        dest->Poison(poison_status);
+    absl::Status poison_status;
+    {
+      absl::MutexLock l(mu_);
+      if (!is_poisoned_) {
+        size_t req_id = next_req_id_;
+        for (auto& dest : dests) {
+          dests_[next_req_id_].dest = std::move(dest);
+          ++next_req_id_;
+        }
+        return req_id;
       }
-      mu_.unlock();
-      return std::nullopt;
+      poison_status = poison_status_;
     }
-    size_t req_id = next_req_id_;
     for (auto& dest : dests) {
-      dests_[next_req_id_].dest = std::move(dest);
-      ++next_req_id_;
+      dest->Poison(poison_status);
     }
-    mu_.unlock();
-    return req_id;
+    return std::nullopt;
   }
 
   void StartBulkTransporting() {
@@ -213,6 +208,12 @@ class SocketServer::SocketNetworkState : public SocketFdPacketState {
   BulkTransportInterface* bulk_transport() { return bulk_transport_.get(); }
 
   void HandlePacket(absl::string_view buffer) override {
+    {
+      absl::MutexLock l(mu_);
+      if (is_poisoned_) {
+        return;
+      }
+    }
     SocketTransferRequest req;
     if (!req.ParseFromString(buffer)) {
       Poison(absl::InternalError("Could not parse SocketTransferRequest."));
@@ -274,6 +275,11 @@ class SocketServer::SocketNetworkState : public SocketFdPacketState {
      private:
       SocketNetworkState* state_;
     };
+    if (bulk_transport_ == nullptr) {
+      Poison(absl::InternalError(
+          "Received pull request before establishing bulk transport."));
+      return;
+    }
     {
       absl::MutexLock l(mu_);
       ++num_refs_;
@@ -299,8 +305,11 @@ class SocketServer::SocketNetworkState : public SocketFdPacketState {
         return HandlePacket(req.half_close());
       case SocketTransferRequest::kErrorPacket:
         return HandlePacket(req.error_packet());
+      case SocketTransferRequest::MSG_NOT_SET:
       default:
-        LOG(FATAL) << "Implement: " << req.DebugString();
+        Poison(absl::InvalidArgumentError(
+            "Received SocketTransferRequest with unset or unknown msg."));
+        return;
     }
   }
 
@@ -318,35 +327,51 @@ class SocketServer::SocketNetworkState : public SocketFdPacketState {
     if (start_bulk_transport_) {
       std::move(start_bulk_transport_)(req);
       start_bulk_transport_ = nullptr;
-    } else {
+    } else if (bulk_transport_ == nullptr) {
       auto info = factory_->RecvBulkTransport(req);
       if (!info.ok()) {
-        SendClosed(std::move(info).status());
+        Poison(std::move(info).status());
         return;
       }
       bulk_transport_ = std::move(info->bulk_transport);
       SocketTransferRequest response;
       *response.mutable_bulk_transport() = std::move(info->request);
       SendFrame(response);
+    } else {
+      Poison(absl::InternalError(
+          "Duplicate SocketTransferEstablishBulkTransport."));
     }
   }
 
   void HandlePacket(const SocketTransferPacketHeader& packet) {
+    if (bulk_transport_ == nullptr) {
+      Poison(absl::InternalError(
+          "Received packet header before establishing bulk transport."));
+      return;
+    }
     auto dest = GetNextDest(packet.req_id(), packet.offset(), packet.size(),
                             packet.is_largest());
     if (!dest.has_value()) {
       return;
     }
+    if (packet.bulk_transport_id() >
+        static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+      (*dest)->Poison(absl::InvalidArgumentError("Invalid bulk_transport_id."));
+      return;
+    }
     bulk_transport_->Recv(
-        packet.size(), packet.bulk_transport_id(),
+        packet.size(), static_cast<int>(packet.bulk_transport_id()),
         [offset = packet.offset(), dest = *std::move(dest)](
             absl::StatusOr<BulkTransportInterface::Message> msgor) {
           if (!msgor.ok()) {
             dest->Poison(msgor.status());
           } else {
             auto msg = std::move(msgor).value();
-            CHECK_OK(
-                dest->Put(msg.data, offset, msg.size, std::move(msg.on_done)));
+            absl::Status s =
+                dest->Put(msg.data, offset, msg.size, std::move(msg.on_done));
+            if (!s.ok()) {
+              dest->Poison(std::move(s));
+            }
           }
         });
   }
@@ -399,10 +424,9 @@ class SocketServer::SocketNetworkState : public SocketFdPacketState {
   }
 
   void HandlePacket(const SocketTransferHalfClose& half_close) {
-    mu_.lock();
+    absl::MutexLock l(mu_);
     peer_half_closed_ = true;
     ShutdownIfNeeded();
-    mu_.unlock();
   }
 
   void ShutdownIfNeeded() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
@@ -490,11 +514,16 @@ class SocketServer::SocketNetworkState : public SocketFdPacketState {
   }
 
   void Poison(absl::Status s) {
+    if (s.ok()) {
+      s = absl::InternalError("SocketServer: Connection closed recv() == 0.");
+    }
     {
       absl::MutexLock l(mu_);
-      is_poisoned_ = true;
       Shutdown(SHUT_RDWR);
-      poison_status_ = s;
+      if (!is_poisoned_) {
+        is_poisoned_ = true;
+        poison_status_ = std::move(s);
+      }
     }
     ClearDestTable();
   }
@@ -505,18 +534,18 @@ class SocketServer::SocketNetworkState : public SocketFdPacketState {
   absl::Mutex mu_;
   size_t num_refs_ ABSL_GUARDED_BY(mu_) = 0;
   size_t num_sys_refs_ ABSL_GUARDED_BY(mu_) = 2;
-  bool no_more_pulls_ = false;
-  bool peer_half_closed_ = false;
-  bool is_poisoned_ = false;
-  absl::Status poison_status_;
+  bool no_more_pulls_ ABSL_GUARDED_BY(mu_) = false;
+  bool peer_half_closed_ ABSL_GUARDED_BY(mu_) = false;
+  bool is_poisoned_ ABSL_GUARDED_BY(mu_) = false;
+  absl::Status poison_status_ ABSL_GUARDED_BY(mu_);
   SocketAddress remote_addr_;
 
-  uint64_t next_req_id_ = 0;
+  uint64_t next_req_id_ ABSL_GUARDED_BY(mu_) = 0;
   struct DestState {
-    ssize_t transferred_size = 0;
+    uint64_t transferred_size = 0;
     tsl::RCReference<ChunkDestination> dest;
   };
-  absl::flat_hash_map<uint64_t, DestState> dests_;
+  absl::flat_hash_map<uint64_t, DestState> dests_ ABSL_GUARDED_BY(mu_);
 
   std::unique_ptr<BulkTransportInterface> bulk_transport_;
   absl::AnyInvocable<void(const SocketTransferEstablishBulkTransport&
@@ -531,6 +560,9 @@ SocketServer::Connection::~Connection() { local_->NoMorePulls(); }
 void SocketServer::Connection::Pull(uint64_t uuid, int buffer_id,
                                     tsl::RCReference<ChunkDestination> dest,
                                     std::optional<absl::Time> timeout) {
+  // Retain a reference to this so Connection remains alive during Pull if
+  // dest->Poison drops the caller's last reference.
+  tsl::RCReference<Connection> self = tsl::FormRef(this);
   local_->Pull(uuid, buffer_id, std::move(dest), timeout);
 }
 
@@ -538,6 +570,9 @@ void SocketServer::Connection::Pull(
     uint64_t uuid, absl::Span<const int> buffer_ids,
     std::vector<tsl::RCReference<ChunkDestination>> dests,
     std::optional<absl::Time> timeout) {
+  // Retain a reference to this so Connection remains alive during Pull if
+  // dest->Poison drops the caller's last reference.
+  tsl::RCReference<Connection> self = tsl::FormRef(this);
   local_->Pull(uuid, buffer_ids, std::move(dests), timeout);
 }
 

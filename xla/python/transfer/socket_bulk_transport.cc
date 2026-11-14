@@ -18,6 +18,7 @@ limitations under the License.
 #include <linux/tcp.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 
 #include <algorithm>
 #include <atomic>
@@ -193,12 +194,17 @@ class SendConnectionHandler : public PollEventLoop::Handler {
   void DoSend(aux::BulkTransportInterface::SendMessage msg) {
     std::move(msg.on_send)(bond_id_, msg.size);
     msg.on_send = nullptr;
+    if (msg.size == 0) {
+      PollEventLoop::GetDefault()->Schedule(std::move(msg.on_done));
+      ReturnToNotReadyFromSending();
+      return;
+    }
 #ifndef MSG_ZEROCOPY
     size_t offset = 0;
     while (offset < msg.size) {
-      ssize_t send_count =
-          send(*fd_, reinterpret_cast<char*>(msg.data) + offset,
-               std::min(msg.size - offset, artificial_send_limit_), 0);
+      ssize_t send_count = send(
+          *fd_, reinterpret_cast<char*>(msg.data) + offset,
+          std::min(msg.size - offset, artificial_send_limit_), MSG_NOSIGNAL);
       if (send_count <= 0) {
         break;
       }
@@ -213,9 +219,10 @@ class SendConnectionHandler : public PollEventLoop::Handler {
 #else
     size_t offset = 0;
     while (offset < msg.size) {
-      ssize_t send_count = send(
-          *fd_, reinterpret_cast<char*>(msg.data) + offset,
-          std::min(msg.size - offset, artificial_send_limit_), MSG_ZEROCOPY);
+      ssize_t send_count =
+          send(*fd_, reinterpret_cast<char*>(msg.data) + offset,
+               std::min(msg.size - offset, artificial_send_limit_),
+               MSG_ZEROCOPY | MSG_NOSIGNAL);
       if (send_count <= 0) {
         break;
       }
@@ -501,6 +508,12 @@ std::shared_ptr<RecvThreadState> RecvThreadState::Create(
 absl::Status RecvThreadState::HandleRecvItem(recv_work_item& work,
                                              size_t& zc_send_count,
                                              size_t& non_zc_send_count) {
+  if (work.recv_size == 0) {
+    static char kEmpty = 0;
+    std::move(work.on_recv)(
+        aux::BulkTransportInterface::Message{&kEmpty, 0, []() {}});
+    return absl::OkStatus();
+  }
   SlabAllocator::Allocation alloc;
   size_t offset = 0;
   if (work.recv_size > uallocator_.max_allocation_size() ||
@@ -604,6 +617,11 @@ class SocketBulkTransport : public BulkTransportInterface {
   void Recv(size_t size, int bond_id,
             absl::AnyInvocable<void(absl::StatusOr<Message> msg) &&> on_recv)
       override {
+    if (bond_id < 0 || static_cast<size_t>(bond_id) >= connections_.size()) {
+      std::move(on_recv)(
+          absl::InvalidArgumentError("Invalid bulk_transport_id"));
+      return;
+    }
     auto& conn = connections_[bond_id];
     absl::MutexLock l(conn->mu);
     if (!conn->fd) {
@@ -702,7 +720,7 @@ class SocketBulkTransportFactory : public BulkTransportFactory {
             setsockopt(cfd, SOL_SOCKET, SO_ZEROCOPY, &value, sizeof(value)), 0)
             << strerror(errno) << " " << errno;
         CHECK_GE(cfd, 0) << strerror(errno) << " " << errno;
-        CHECK_EQ(send(cfd, &uuid, sizeof(uuid), 0), sizeof(uuid))
+        CHECK_EQ(send(cfd, &uuid, sizeof(uuid), MSG_NOSIGNAL), sizeof(uuid))
             << strerror(errno) << " " << errno;
         conns[i]->AcceptSock(cfd);
       }

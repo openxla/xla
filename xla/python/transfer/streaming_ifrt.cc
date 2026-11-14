@@ -217,6 +217,30 @@ void PremappedCopierState::FlushReadyWorkItemsInOrder() {
   }
 }
 
+// Invokes on_done at most once, either explicitly via Run() or upon destruction
+// when a transfer fails early.
+class ScopedOnDone {
+ public:
+  explicit ScopedOnDone(absl::AnyInvocable<void() &&> on_done)
+      : on_done_(std::move(on_done)) {}
+  ScopedOnDone(ScopedOnDone&&) noexcept = default;
+  ScopedOnDone& operator=(ScopedOnDone&&) = delete;
+  ScopedOnDone(const ScopedOnDone&) = delete;
+  ScopedOnDone& operator=(const ScopedOnDone&) = delete;
+  ~ScopedOnDone() { Run(); }
+
+  void Run() {
+    if (on_done_) {
+      absl::AnyInvocable<void() &&> cb = std::move(on_done_);
+      on_done_ = nullptr;
+      std::move(cb)();
+    }
+  }
+
+ private:
+  absl::AnyInvocable<void() &&> on_done_;
+};
+
 class DmaDestination : public ChunkDestination {
  public:
   DmaDestination(
@@ -230,26 +254,32 @@ class DmaDestination : public ChunkDestination {
 
   absl::Status Put(const void* data, int64_t offset, size_t size,
                    absl::AnyInvocable<void() &&> on_done) override {
-    if (offset < 0 || offset > buffer_size_ || buffer_size_ - offset < size) {
-      if (semaphore_.Poison()) {
-        atm_->SetBufferError(buffer_index_,
-                             absl::InvalidArgumentError(absl::StrFormat(
-                                 "Invalid slicing of buffer size %lld with "
-                                 "invalid offset %lld, slice size %lld",
-                                 buffer_size_, offset, size)));
-      }
+    ScopedOnDone on_done_guard(std::move(on_done));
+    if (offset < 0 || static_cast<size_t>(offset) > buffer_size_ ||
+        buffer_size_ - static_cast<size_t>(offset) < size) {
+      Poison(absl::InvalidArgumentError(
+          absl::StrFormat("Invalid slicing of buffer size %lld with "
+                          "invalid offset %lld, slice size %lld",
+                          buffer_size_, offset, size)));
       return absl::OkStatus();
     }
-    return semaphore_.DoWork(size, [&](bool is_last_transfer) {
+    absl::Status status = semaphore_.DoWork(size, [&](bool is_last_transfer) {
       return atm_->TransferRawDataToSubBuffer(
           buffer_index_, data, offset, size, is_last_transfer,
-          [atm = atm_, on_done = std::move(on_done)]() mutable {
-            std::move(on_done)();
+          [atm = atm_, guard = std::move(on_done_guard)]() mutable {
+            guard.Run();
           });
     });
+    if (!status.ok()) {
+      Poison(status);
+    }
+    return status;
   }
 
   void Poison(absl::Status s) override {
+    if (s.ok()) {
+      return;
+    }
     if (semaphore_.Poison()) {
       atm_->SetBufferError(buffer_index_, std::move(s));
     }
@@ -282,48 +312,89 @@ class SlicedRawBufferChunkDestination : public ChunkDestination {
 
   absl::Status Put(const void* data, int64_t offset, size_t size,
                    absl::AnyInvocable<void() &&> on_done) override {
-    if (offset < 0 || offset + size > slice_size_) {
-      return absl::InvalidArgumentError(absl::StrFormat(
+    if (offset < 0 || static_cast<size_t>(offset) > slice_size_ ||
+        slice_size_ - static_cast<size_t>(offset) < size) {
+      std::move(on_done)();
+      absl::Status bounds_err = absl::InvalidArgumentError(absl::StrFormat(
           "Out of bounds SlicedRawBufferChunkDestination Copy: %d+%d vs %d",
           offset, size, slice_size_));
+      Poison(bounds_err);
+      return bounds_err;
     }
+    bool already_failed = false;
+    bool over_sent = false;
     {
       absl::MutexLock l(mu_);
-      ABSL_RETURN_IF_ERROR(saved_status_);
-      sent_bytes_ += size;
+      if (!saved_status_.ok()) {
+        already_failed = true;
+      } else if (all_bytes_sent_ || slice_size_ - sent_bytes_ < size) {
+        over_sent = true;
+      } else {
+        sent_bytes_ += size;
+        if (sent_bytes_ == slice_size_) {
+          all_bytes_sent_ = true;
+        }
+        ++pending_copies_;
+      }
+    }
+    if (already_failed) {
+      std::move(on_done)();
+      return absl::OkStatus();
+    }
+    if (over_sent) {
+      std::move(on_done)();
+      absl::Status extra_err = absl::InvalidArgumentError(absl::StrFormat(
+          "Received extra bytes for SlicedRawBufferChunkDestination of size %d",
+          slice_size_));
+      Poison(extra_err);
+      return extra_err;
     }
     auto future =
         raw_buffer_->CopyRawHostToDevice(data, offset + slice_offset_, size);
-    future.OnReady([state = tsl::FormRef(this), on_done = std::move(on_done),
-                    size](absl::Status s) mutable {
+    future.OnReady([state = tsl::FormRef(this),
+                    on_done = std::move(on_done)](absl::Status s) mutable {
+      tsl::Promise<> ready_promise;
+      absl::Status final_status;
       {
         absl::MutexLock l(state->mu_);
-        state->copied_bytes_ += size;
-        state->SendResultsIfDone(std::move(s));
+        --state->pending_copies_;
+        state->TakePromiseIfDone(std::move(s), ready_promise, final_status);
+      }
+      if (ready_promise) {
+        ready_promise.Set(std::move(final_status));
       }
       std::move(on_done)();
     });
     return absl::OkStatus();
   }
 
-  void SendResultsIfDone(absl::Status s) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+  void TakePromiseIfDone(absl::Status s, tsl::Promise<>& out_promise,
+                         absl::Status& out_status)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
     if (!s.ok() && saved_status_.ok()) {
       saved_status_ = std::move(s);
     }
-    if (copied_bytes_ == sent_bytes_ && !saved_status_.ok()) {
-      promise_.Set(saved_status_);
-    } else if (copied_bytes_ == slice_size_) {
-      promise_.Set(absl::OkStatus());
+    if (!promise_ || pending_copies_ > 0) {
+      return;
+    }
+    if (!saved_status_.ok() || all_bytes_sent_) {
+      out_promise = std::move(promise_);
+      out_status = saved_status_;
     }
   }
 
   void Poison(absl::Status s) override {
-    absl::MutexLock l(mu_);
-    if (slice_size_ == sent_bytes_) {
+    if (s.ok()) {
       return;
     }
-    if (!s.ok()) {
-      SendResultsIfDone(s);
+    tsl::Promise<> ready_promise;
+    absl::Status final_status;
+    {
+      absl::MutexLock l(mu_);
+      TakePromiseIfDone(std::move(s), ready_promise, final_status);
+    }
+    if (ready_promise) {
+      ready_promise.Set(std::move(final_status));
     }
   }
 
@@ -331,11 +402,12 @@ class SlicedRawBufferChunkDestination : public ChunkDestination {
   xla::PjRtRawBufferRef raw_buffer_;
   size_t slice_offset_;
   size_t slice_size_;
-  size_t sent_bytes_ ABSL_GUARDED_BY(&mu_) = 0;
-  size_t copied_bytes_ ABSL_GUARDED_BY(&mu_) = 0;
   absl::Mutex mu_;
-  absl::Status saved_status_ ABSL_GUARDED_BY(&mu_);
-  tsl::Promise<> promise_ ABSL_GUARDED_BY(&mu_);
+  size_t sent_bytes_ ABSL_GUARDED_BY(mu_) = 0;
+  size_t pending_copies_ ABSL_GUARDED_BY(mu_) = 0;
+  bool all_bytes_sent_ ABSL_GUARDED_BY(mu_) = false;
+  absl::Status saved_status_ ABSL_GUARDED_BY(mu_);
+  tsl::Promise<> promise_ ABSL_GUARDED_BY(mu_);
 };
 
 absl::StatusOr<std::pair<tsl::RCReference<ChunkDestination>, tsl::Future<>>>
@@ -350,51 +422,106 @@ CreateSlicedRawBufferDest(xla::PjRtRawBufferRef raw_buffer, size_t offset,
 RawBufferEntry::RawBufferEntry(std::vector<BufferRef> arrs,
                                std::shared_ptr<PremappedCopierState> state,
                                size_t xfer_size)
-    : arrs_(std::move(arrs)), state_(state), xfer_size_(xfer_size) {}
+    : arrs_(std::move(arrs)),
+      consumed_(arrs_.size(), false),
+      state_(std::move(state)),
+      xfer_size_(xfer_size) {
+  for (BufferRef& arr : arrs_) {
+    if (!arr.ready_future.IsValid()) {
+      arr.ready_future = tsl::Future<>(absl::OkStatus());
+    }
+  }
+}
+
 bool RawBufferEntry::Handle(tsl::RCReference<ConnectionState> state,
                             const SocketTransferPullRequest& req,
                             size_t base_req_id) {
   for (uint64_t bid : req.buffer_ids()) {
-    auto req_id = base_req_id;
+    const size_t req_id = base_req_id;
     ++base_req_id;
-    if (bid >= arrs_.size()) {
-      state->SendError(
-          req_id, 0, 0, true,
-          absl::InternalError(absl::StrFormat("Buffer id: %d out of range %d",
-                                              bid, arrs_.size())));
+
+    size_t num_arrs = 0;
+    size_t buf_size = 0;
+    bool out_of_range = false;
+    bool already_fetched = false;
+    tsl::Future<> ready_future;
+    xla::PjRtRawBufferRef buffer;
+    {
+      absl::MutexLock l(mu_);
+      num_arrs = arrs_.size();
+      if (bid >= num_arrs) {
+        out_of_range = true;
+      } else {
+        buf_size = arrs_[bid].buf_size;
+        if (consumed_[bid]) {
+          already_fetched = true;
+        } else {
+          consumed_[bid] = true;
+          ++num_consumed_bufs_;
+          ready_future = std::move(arrs_[bid].ready_future);
+          buffer = std::move(arrs_[bid].buffer);
+        }
+      }
+    }
+
+    if (out_of_range) {
+      state->SendError(req_id, 0, 0, true,
+                       absl::InternalError(absl::StrFormat(
+                           "Buffer id: %d out of range %d", bid, num_arrs)));
       continue;
     }
-    arrs_[bid].ready_future.OnReady(
-        [state, copier_state = state_, xfer_size = xfer_size_,
-         buf_size = arrs_[bid].buf_size, req_id, bid,
-         buffer = std::move(arrs_[bid].buffer)](absl::Status s) {
+    if (already_fetched) {
+      state->SendError(req_id, 0, buf_size, true,
+                       absl::InternalError(absl::StrFormat(
+                           "Buffer id: %d has already been fetched", bid)));
+      continue;
+    }
+
+    std::move(ready_future)
+        .OnReady([state, copier_state = state_, xfer_size = xfer_size_,
+                  buf_size, req_id, bid,
+                  buffer = std::move(buffer)](absl::Status s) {
           if (!s.ok()) {
             state->SendError(req_id, 0, buf_size, true, s);
             return;
           }
           if (!buffer) {
-            state->SendError(
-                req_id, 0, buf_size, true,
-                absl::InternalError(absl::StrFormat(
-                    "Buffer id: %d has already been fetched", bid)));
-
+            state->SendError(req_id, 0, buf_size, true,
+                             absl::InternalError(absl::StrFormat(
+                                 "Buffer id: %d is null", bid)));
             return;
           }
-          for (size_t i = 0; i * xfer_size < buf_size; ++i) {
-            size_t offset = i * xfer_size;
-            size_t size = std::min(xfer_size, buf_size - offset);
-            bool is_largest = size + offset == buf_size;
-            if (auto* host_pointer = buffer->GetHostPointer()) {
-              size_t offset = i * xfer_size;
-              size_t size = std::min(xfer_size, buf_size - offset);
+          if (buf_size == 0) {
+            state->Send(req_id, "", 0, 0, /*is_largest=*/true, [buffer]() {});
+            return;
+          }
+          if (xfer_size == 0) {
+            state->SendError(
+                req_id, 0, buf_size, true,
+                absl::InvalidArgumentError(
+                    "Transfer chunk size must be greater than zero"));
+            return;
+          }
+          void* host_pointer = buffer->GetHostPointer();
+          if (host_pointer == nullptr && copier_state == nullptr) {
+            state->SendError(
+                req_id, 0, buf_size, true,
+                absl::InternalError("PremappedCopierState is null"));
+            return;
+          }
+          for (size_t offset = 0; offset < buf_size;) {
+            const size_t size = std::min(xfer_size, buf_size - offset);
+            const bool is_largest = offset + size == buf_size;
+            if (host_pointer != nullptr) {
               state->Send(req_id,
                           reinterpret_cast<char*>(host_pointer) + offset,
                           offset, size, is_largest, [buffer]() {});
             } else {
               DmaCopyChunk blob;
-              blob.copy_fn = [buffer](void* dst, int64_t offset,
+              blob.copy_fn = [buffer](void* dst, int64_t copy_offset,
                                       int64_t transfer_size) -> tsl::Future<> {
-                return buffer->CopyRawDeviceToHost(dst, offset, transfer_size);
+                return buffer->CopyRawDeviceToHost(dst, copy_offset,
+                                                   transfer_size);
               };
               blob.buffer_id = bid;
               blob.offset = offset;
@@ -409,7 +536,6 @@ bool RawBufferEntry::Handle(tsl::RCReference<ConnectionState> state,
                                        is_largest, buf.status());
                       return;
                     }
-                    CHECK_OK(buf.status());
                     state->Send(req_id, buf.value(), chunk.offset, chunk.size,
                                 is_largest,
                                 [copier_state, buf = buf.value()]() {
@@ -417,63 +543,122 @@ bool RawBufferEntry::Handle(tsl::RCReference<ConnectionState> state,
                                 });
                   });
             }
+            offset += size;
           }
         });
   }
 
-  num_consumed_bufs_ += req.buffer_ids().size();
+  absl::MutexLock l(mu_);
+  return num_consumed_bufs_ == arrs_.size();
+}
+
+bool RawBufferEntry::IsComplete() const {
+  absl::MutexLock l(mu_);
   return num_consumed_bufs_ == arrs_.size();
 }
 
 PjRtBufferEntry::PjRtBufferEntry(std::vector<BufferRef> arrs,
                                  std::shared_ptr<PremappedCopierState> state,
                                  size_t xfer_size)
-    : arrs_(std::move(arrs)), state_(state), xfer_size_(xfer_size) {
-  for (auto& arr : arrs_) {
+    : arrs_(std::move(arrs)),
+      consumed_(arrs_.size(), false),
+      state_(std::move(state)),
+      xfer_size_(xfer_size) {
+  for (BufferRef& arr : arrs_) {
     if (!arr.ready_future.IsValid()) {
-      arr.ready_future = arr.buffer->GetReadyFuture();
+      arr.ready_future = arr.buffer != nullptr
+                             ? arr.buffer->GetReadyFuture()
+                             : tsl::Future<>(absl::OkStatus());
     }
   }
 }
+
 bool PjRtBufferEntry::Handle(tsl::RCReference<ConnectionState> state,
                              const SocketTransferPullRequest& req,
                              size_t base_req_id) {
   for (uint64_t bid : req.buffer_ids()) {
-    auto req_id = base_req_id;
+    const size_t req_id = base_req_id;
     ++base_req_id;
-    if (bid >= arrs_.size()) {
-      state->SendError(
-          req_id, 0, 0, true,
-          absl::InternalError(absl::StrFormat("Buffer id: %d out of range %d",
-                                              bid, arrs_.size())));
+
+    size_t num_arrs = 0;
+    size_t buf_size = 0;
+    bool out_of_range = false;
+    bool already_fetched = false;
+    tsl::Future<> ready_future;
+    std::shared_ptr<xla::PjRtBuffer> buffer;
+    {
+      absl::MutexLock l(mu_);
+      num_arrs = arrs_.size();
+      if (bid >= num_arrs) {
+        out_of_range = true;
+      } else {
+        buf_size = arrs_[bid].buf_size;
+        if (consumed_[bid]) {
+          already_fetched = true;
+        } else {
+          consumed_[bid] = true;
+          ++num_consumed_bufs_;
+          ready_future = std::move(arrs_[bid].ready_future);
+          buffer = std::move(arrs_[bid].buffer);
+        }
+      }
+    }
+
+    if (out_of_range) {
+      state->SendError(req_id, 0, 0, true,
+                       absl::InternalError(absl::StrFormat(
+                           "Buffer id: %d out of range %d", bid, num_arrs)));
       continue;
     }
-    arrs_[bid].ready_future.OnReady(
-        [state, copier_state = state_, xfer_size = xfer_size_,
-         buf_size = arrs_[bid].buf_size, req_id, bid,
-         buffer = std::move(arrs_[bid].buffer)](absl::Status s) {
+    if (already_fetched) {
+      state->SendError(req_id, 0, buf_size, true,
+                       absl::InternalError(absl::StrFormat(
+                           "Buffer id: %d has already been fetched", bid)));
+      continue;
+    }
+
+    std::move(ready_future)
+        .OnReady([state, copier_state = state_, xfer_size = xfer_size_,
+                  buf_size, req_id, bid,
+                  buffer = std::move(buffer)](absl::Status s) {
           if (!s.ok()) {
             state->SendError(req_id, 0, buf_size, true, s);
             return;
           }
           if (!buffer) {
-            state->SendError(
-                req_id, 0, buf_size, true,
-                absl::InternalError(absl::StrFormat(
-                    "Buffer id: %d has already been fetched", bid)));
-
+            state->SendError(req_id, 0, buf_size, true,
+                             absl::InternalError(absl::StrFormat(
+                                 "Buffer id: %d is null", bid)));
             return;
           }
-          for (size_t i = 0; i * xfer_size < buf_size; ++i) {
+          if (buf_size == 0) {
+            state->Send(req_id, "", 0, 0, /*is_largest=*/true, [buffer]() {});
+            return;
+          }
+          if (xfer_size == 0) {
+            state->SendError(
+                req_id, 0, buf_size, true,
+                absl::InvalidArgumentError(
+                    "Transfer chunk size must be greater than zero"));
+            return;
+          }
+          if (copier_state == nullptr) {
+            state->SendError(
+                req_id, 0, buf_size, true,
+                absl::InternalError("PremappedCopierState is null"));
+            return;
+          }
+          for (size_t offset = 0; offset < buf_size;) {
+            const size_t size = std::min(xfer_size, buf_size - offset);
+            const bool is_largest = offset + size == buf_size;
             DmaCopyChunk blob;
-            blob.copy_fn = [buffer](void* dst, int64_t offset,
+            blob.copy_fn = [buffer](void* dst, int64_t copy_offset,
                                     int64_t transfer_size) -> tsl::Future<> {
-              return buffer->CopyRawToHost(dst, offset, transfer_size);
+              return buffer->CopyRawToHost(dst, copy_offset, transfer_size);
             };
             blob.buffer_id = bid;
-            blob.offset = i * xfer_size;
-            blob.size = std::min(xfer_size, buf_size - blob.offset);
-            bool is_largest = blob.size + blob.offset == buf_size;
+            blob.offset = offset;
+            blob.size = size;
             copier_state->ScheduleCopy(
                 std::move(blob),
                 [req_id, state, copier_state, is_largest](
@@ -489,11 +674,17 @@ bool PjRtBufferEntry::Handle(tsl::RCReference<ConnectionState> state,
                                 copier_state->ReturnBuffer(buf);
                               });
                 });
+            offset += size;
           }
         });
   }
 
-  num_consumed_bufs_ += req.buffer_ids().size();
+  absl::MutexLock l(mu_);
+  return num_consumed_bufs_ == arrs_.size();
+}
+
+bool PjRtBufferEntry::IsComplete() const {
+  absl::MutexLock l(mu_);
   return num_consumed_bufs_ == arrs_.size();
 }
 

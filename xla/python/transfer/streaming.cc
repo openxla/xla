@@ -31,6 +31,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -144,10 +145,18 @@ class StringFutureChunkDestination : public aux::ChunkDestination {
     return absl::OkStatus();
   }
 
-  void Poison(absl::Status s) override { CHECK_OK(s); }
+  void Poison(absl::Status s) override {
+    absl::MutexLock l(mu_);
+    if (status_.ok()) {
+      status_ = std::move(s);
+    }
+  }
 
   absl::StatusOr<std::string> ConsumeFinalResult() {
     absl::MutexLock l(mu_);
+    if (!status_.ok()) {
+      return status_;
+    }
     std::sort(chunks_.begin(), chunks_.end());
 
     std::string result;
@@ -162,7 +171,8 @@ class StringFutureChunkDestination : public aux::ChunkDestination {
 
  private:
   absl::Mutex mu_;
-  std::vector<std::pair<size_t, std::string>> chunks_;
+  absl::Status status_ ABSL_GUARDED_BY(mu_);
+  std::vector<std::pair<size_t, std::string>> chunks_ ABSL_GUARDED_BY(mu_);
   tsl::Promise<std::string> dest_;
 };
 
@@ -198,7 +208,13 @@ class LocalBulkTransport : public BulkTransportInterface {
   void Recv(size_t size, int bond_id,
             absl::AnyInvocable<void(absl::StatusOr<Message> msg) &&> on_recv)
       override {
+    if (bond_id != 0) {
+      std::move(on_recv)(
+          absl::InvalidArgumentError("Invalid bulk_transport_id"));
+      return;
+    }
     absl::StatusOr<Message> result;
+    absl::AnyInvocable<void() &&> mismatched_on_done;
     {
       absl::MutexLock l(recv_q_->mu);
       auto cond = [&]() {
@@ -208,10 +224,19 @@ class LocalBulkTransport : public BulkTransportInterface {
       if (recv_q_->buffers.empty()) {
         result = recv_q_->status;
       } else {
-        result = std::move(recv_q_->buffers.front());
+        Message msg = std::move(recv_q_->buffers.front());
         recv_q_->buffers.pop_front();
-        CHECK_EQ(result->size, size);
+        if (msg.size != size) {
+          mismatched_on_done = std::move(msg.on_done);
+          result =
+              absl::InvalidArgumentError("Mismatched bulk transport recv size");
+        } else {
+          result = std::move(msg);
+        }
       }
+    }
+    if (mismatched_on_done) {
+      std::move(mismatched_on_done)();
     }
     std::move(on_recv)(std::move(result));
   }
@@ -380,7 +405,9 @@ absl::StatusOr<std::shared_ptr<absl::Span<uint8_t>>> AllocateAlignedMemory(
 
 void PullTable::AwaitPull(uint64_t uuid, tsl::RCReference<Entry> entry,
                           std::optional<absl::Time> timeout) {
+  const bool already_complete = entry->IsComplete();
   FetchList local_fetches;
+  std::unique_ptr<EntryWithTimeout> replaced_entry;
   {
     absl::MutexLock l(mu_);
     auto it = paused_fetches_.find(uuid);
@@ -399,19 +426,34 @@ void PullTable::AwaitPull(uint64_t uuid, tsl::RCReference<Entry> entry,
       if (it_entry->second->timeout.has_value()) {
         RemoveIntrusive(entry_heap_, it_entry->second.get());
       }
+      replaced_entry = std::move(it_entry->second);
+      entries_.erase(it_entry);
     }
 
-    auto new_entry = std::make_unique<EntryWithTimeout>();
-    new_entry->entry = std::move(entry);
-    new_entry->timeout = timeout;
-    new_entry->uuid = uuid;
-    if (timeout.has_value()) {
-      PushIntrusive(entry_heap_, new_entry.get());
+    if (!already_complete) {
+      auto new_entry = std::make_unique<EntryWithTimeout>();
+      new_entry->entry = entry;
+      new_entry->timeout = timeout;
+      new_entry->uuid = uuid;
+      if (timeout.has_value()) {
+        PushIntrusive(entry_heap_, new_entry.get());
+      }
+      entries_[uuid] = std::move(new_entry);
     }
-    entries_[uuid] = std::move(new_entry);
   }
   for (auto& v : local_fetches) {
-    Handle(v.state, v.req, v.base_req_id, v.timeout);
+    if (entry->Handle(std::move(v.state), v.req, v.base_req_id)) {
+      RemoveEntryIfMatching(uuid, entry.get());
+    }
+  }
+}
+
+void PullTable::RemoveEntryIfMatching(uint64_t uuid, const Entry* entry) {
+  absl::MutexLock l(mu_);
+  auto it = entries_.find(uuid);
+  if (it != entries_.end() && it->second->entry.get() == entry) {
+    RemoveIntrusive(entry_heap_, it->second.get());
+    entries_.erase(it);
   }
 }
 
@@ -441,14 +483,7 @@ void PullTable::Handle(tsl::RCReference<ConnectionState> state,
     entry = entry_ptr->entry;
   }
   if (entry->Handle(std::move(state), req, base_req_id)) {
-    absl::MutexLock l(mu_);
-    auto it = entries_.find(req.uuid());
-    if (it != entries_.end() && it->second->entry == entry) {
-      if (it->second->timeout.has_value()) {
-        RemoveIntrusive(entry_heap_, it->second.get());
-      }
-      entries_.erase(it);
-    }
+    RemoveEntryIfMatching(req.uuid(), entry.get());
   }
 }
 
@@ -503,14 +538,15 @@ void PullTable::DropExpiredPulls(absl::Time t) {
 }
 
 void PullTable::Reset() {
-  mu_.lock();
-  auto entries = std::move(entries_);
-  auto paused_fetches_by_uuid = std::move(paused_fetches_);
-  entries_.clear();
-  paused_fetches_.clear();
-  entry_heap_.clear();
-  fetch_heap_.clear();
-  mu_.unlock();
+  absl::flat_hash_map<uint64_t, std::unique_ptr<EntryWithTimeout>> entries;
+  absl::flat_hash_map<uint64_t, FetchList> paused_fetches_by_uuid;
+  {
+    absl::MutexLock l(mu_);
+    entries_.swap(entries);
+    paused_fetches_.swap(paused_fetches_by_uuid);
+    entry_heap_.clear();
+    fetch_heap_.clear();
+  }
   // Drop entries without the lock held.
   std::vector<std::pair<uint64_t, FetchList>> sorted_fetches(
       paused_fetches_by_uuid.begin(), paused_fetches_by_uuid.end());
@@ -532,18 +568,34 @@ void PullTable::Reset() {
 class StringVectorPullTableEntry : public PullTable::Entry {
  public:
   explicit StringVectorPullTableEntry(std::vector<std::string> buffers)
-      : buffers_(std::move(buffers)) {}
+      : buffers_(std::move(buffers)), consumed_(buffers_.size(), false) {}
 
   bool Handle(tsl::RCReference<ConnectionState> state,
               const SocketTransferPullRequest& req,
               size_t base_req_id) override {
     for (uint64_t bid : req.buffer_ids()) {
-      auto req_id = base_req_id;
+      const size_t req_id = base_req_id;
       ++base_req_id;
       if (bid >= buffers_.size()) {
         state->SendError(
-            req_id, 0, 0, false,
+            req_id, 0, 0, true,
             absl::InvalidArgumentError("StringVectorPullTableEntry::Handle"));
+        continue;
+      }
+      bool already_fetched = false;
+      {
+        absl::MutexLock l(mu_);
+        if (consumed_[bid]) {
+          already_fetched = true;
+        } else {
+          consumed_[bid] = true;
+          ++num_consumed_bufs_;
+        }
+      }
+      if (already_fetched) {
+        state->SendError(req_id, 0, buffers_[bid].size(), true,
+                         absl::InternalError(absl::StrCat(
+                             "Buffer id: ", bid, " has already been fetched")));
         continue;
       }
       auto data_copy = std::make_unique<std::string>(buffers_[bid]);
@@ -551,11 +603,20 @@ class StringVectorPullTableEntry : public PullTable::Entry {
       state->Send(req_id, data.data(), 0, data.size(), true,
                   [data = std::move(data_copy)]() {});
     }
-    return true;
+    absl::MutexLock l(mu_);
+    return num_consumed_bufs_ == buffers_.size();
+  }
+
+  bool IsComplete() const override {
+    absl::MutexLock l(mu_);
+    return num_consumed_bufs_ == buffers_.size();
   }
 
  private:
-  std::vector<std::string> buffers_;
+  const std::vector<std::string> buffers_;
+  mutable absl::Mutex mu_;
+  size_t num_consumed_bufs_ ABSL_GUARDED_BY(mu_) = 0;
+  std::vector<bool> consumed_ ABSL_GUARDED_BY(mu_);
 };
 
 tsl::RCReference<PullTable::Entry> PullTable::MakeStringEntry(

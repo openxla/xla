@@ -30,13 +30,16 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/cleanup/cleanup.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
+#include "absl/types/span.h"
 #include "xla/python/transfer/event_loop.h"
 #include "xla/python/transfer/streaming.h"
 
@@ -372,6 +375,126 @@ TEST(AckTableTest, Basic) {
   auto [ids_count, cbs_count] = table.GetTableSizes();
   EXPECT_EQ(ids_count, 0);
   EXPECT_EQ(cbs_count, 0);
+}
+
+TEST(SendQueue, ZeroByteMessageFollowedByNonEmptyMessage) {
+  size_t packet_size = 1024;
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<absl::Span<uint8_t>> mem,
+                       AllocateAlignedMemory(packet_size * 4));
+  SlabAllocator uallocator(mem, packet_size);
+  auto recv_thread = RecvThreadState::Create(std::nullopt, uallocator);
+
+  int send_fd = -1;
+  int raw_recv_fd = -1;
+  ASSERT_OK(SetupSocketPairUsingEventLoop(send_fd, raw_recv_fd));
+  auto recv_fd = WrapSocket(raw_recv_fd);
+
+  auto work_queue = SharedSendWorkQueue::Start();
+  auto msg_queue = std::make_shared<SharedSendMsgQueue>();
+  SharedSendMsgQueue::StartSubConnectionSender(WrapSocket(send_fd), 0,
+                                               msg_queue, work_queue);
+
+  char empty_buf = 0;
+  std::string payload = "trailing payload";
+  absl::Notification zero_done;
+  absl::Notification payload_done;
+  auto cleanup = absl::MakeCleanup([&]() {
+    shutdown(*recv_fd, SHUT_RDWR);
+    msg_queue->NoMoreMessages();
+    zero_done.WaitForNotification();
+    payload_done.WaitForNotification();
+  });
+
+  BulkTransportInterface::SendMessage zero_msg;
+  zero_msg.data = &empty_buf;
+  zero_msg.size = 0;
+  zero_msg.on_send = [](absl::StatusOr<int> id, size_t size) {
+    EXPECT_THAT(id, ::absl_testing::IsOk());
+    EXPECT_EQ(size, 0u);
+  };
+  zero_msg.on_done = [&zero_done]() { zero_done.Notify(); };
+  msg_queue->ScheduleSendWork(std::move(zero_msg));
+
+  BulkTransportInterface::SendMessage payload_msg;
+  payload_msg.data = payload.data();
+  payload_msg.size = payload.size();
+  payload_msg.on_send = [&](absl::StatusOr<int> id, size_t size) {
+    EXPECT_THAT(id, ::absl_testing::IsOk());
+    EXPECT_EQ(size, payload.size());
+  };
+  payload_msg.on_done = [&payload_done]() { payload_done.Notify(); };
+  msg_queue->ScheduleSendWork(std::move(payload_msg));
+
+  {
+    absl::Notification recv_notify;
+    absl::StatusOr<aux::BulkTransportInterface::Message> recv_msg;
+    recv_thread->ScheduleRecvWork(
+        0, recv_fd,
+        [&](absl::StatusOr<aux::BulkTransportInterface::Message> m) {
+          recv_msg = std::move(m);
+          recv_notify.Notify();
+        });
+    recv_notify.WaitForNotification();
+    ASSERT_OK(recv_msg);
+    EXPECT_EQ(recv_msg->size, 0u);
+    ASSERT_NE(recv_msg->data, nullptr);
+    EXPECT_EQ(*reinterpret_cast<const char*>(recv_msg->data), 0);
+    std::move(recv_msg->on_done)();
+  }
+
+  {
+    absl::Notification recv_notify;
+    absl::StatusOr<aux::BulkTransportInterface::Message> recv_msg;
+    recv_thread->ScheduleRecvWork(
+        payload.size(), recv_fd,
+        [&](absl::StatusOr<aux::BulkTransportInterface::Message> m) {
+          recv_msg = std::move(m);
+          recv_notify.Notify();
+        });
+    recv_notify.WaitForNotification();
+    ASSERT_OK(recv_msg);
+    EXPECT_EQ(absl::string_view(reinterpret_cast<const char*>(recv_msg->data),
+                                recv_msg->size),
+              payload);
+    std::move(recv_msg->on_done)();
+  }
+
+  zero_done.WaitForNotification();
+  payload_done.WaitForNotification();
+  msg_queue->NoMoreMessages();
+}
+
+TEST(SocketBulkTransportFactoryTest, InvalidBondIdReturnsError) {
+  size_t packet_size = 1024 * 8;
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<absl::Span<uint8_t>> mem1,
+                       AllocateAlignedMemory(packet_size * 4));
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<absl::Span<uint8_t>> mem2,
+                       AllocateAlignedMemory(packet_size * 4));
+  SlabAllocator allocator(mem1, packet_size);
+  SlabAllocator uallocator(mem2, packet_size);
+
+  SocketAddress addr;
+  ASSERT_OK_AND_ASSIGN(SocketAddress addrv4, SocketAddress::Parse("0.0.0.0:0"));
+  ASSERT_OK_AND_ASSIGN(
+      std::shared_ptr<BulkTransportFactory> factory,
+      CreateSocketBulkTransportFactory({addr, addrv4}, allocator, uallocator));
+  auto init_res = factory->InitBulkTransport();
+
+  for (int invalid_bond_id : {-1, 99}) {
+    absl::Notification recv_notify;
+    absl::StatusOr<aux::BulkTransportInterface::Message> recv_msg;
+    init_res.bulk_transport->Recv(
+        64, invalid_bond_id,
+        [&](absl::StatusOr<aux::BulkTransportInterface::Message> msg) {
+          recv_msg = std::move(msg);
+          recv_notify.Notify();
+        });
+    recv_notify.WaitForNotification();
+    EXPECT_THAT(recv_msg,
+                ::absl_testing::StatusIs(
+                    absl::StatusCode::kInvalidArgument,
+                    ::testing::HasSubstr("Invalid bulk_transport_id")));
+  }
 }
 
 }  // namespace

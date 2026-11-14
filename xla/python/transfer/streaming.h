@@ -24,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -80,8 +81,11 @@ class SlabAllocator {
     size_t max_allocation_size;
     std::shared_ptr<absl::Span<uint8_t>> data;
     absl::Mutex mu;
-    std::vector<void*> slots;
-    static bool HasSlots(State* state) { return !state->slots.empty(); }
+    std::vector<void*> slots ABSL_GUARDED_BY(mu);
+    static bool HasSlots(State* state)
+        ABSL_EXCLUSIVE_LOCKS_REQUIRED(state->mu) {
+      return !state->slots.empty();
+    }
   };
   tsl::RCReference<State> state_;
 };
@@ -210,6 +214,9 @@ class PullTable {
     virtual bool Handle(tsl::RCReference<ConnectionState> state,
                         const SocketTransferPullRequest& req,
                         size_t base_req_id) = 0;
+
+    // Returns true if this entry has no remaining buffers to be pulled.
+    virtual bool IsComplete() const { return false; }
   };
 
   // Registers an entry in the pull table to be pulled at a later point.
@@ -243,7 +250,8 @@ class PullTable {
     tsl::RCReference<Entry> entry;
     uint64_t uuid;
   };
-  absl::flat_hash_map<uint64_t, std::unique_ptr<EntryWithTimeout>> entries_;
+  absl::flat_hash_map<uint64_t, std::unique_ptr<EntryWithTimeout>> entries_
+      ABSL_GUARDED_BY(mu_);
 
   struct PausedFetch;
   using FetchList = std::list<PausedFetch>;
@@ -253,10 +261,10 @@ class PullTable {
     size_t base_req_id;
     FetchList::iterator list_it;
   };
-  absl::flat_hash_map<uint64_t, FetchList> paused_fetches_;
+  absl::flat_hash_map<uint64_t, FetchList> paused_fetches_ ABSL_GUARDED_BY(mu_);
 
-  std::vector<HeapNodeBase*> entry_heap_;
-  std::vector<HeapNodeBase*> fetch_heap_;
+  std::vector<HeapNodeBase*> entry_heap_ ABSL_GUARDED_BY(mu_);
+  std::vector<HeapNodeBase*> fetch_heap_ ABSL_GUARDED_BY(mu_);
 
   static bool CompareNodes(const HeapNodeBase* a, const HeapNodeBase* b);
   static void BubbleUp(std::vector<HeapNodeBase*>& heap, size_t idx);
@@ -266,6 +274,7 @@ class PullTable {
   static void RemoveIntrusive(std::vector<HeapNodeBase*>& heap,
                               HeapNodeBase* item);
   static HeapNodeBase* PopIntrusive(std::vector<HeapNodeBase*>& heap);
+  void RemoveEntryIfMatching(uint64_t uuid, const Entry* entry);
 };
 
 }  // namespace aux
