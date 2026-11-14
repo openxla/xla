@@ -191,6 +191,19 @@ func.func @sync() -> (tensor<8x4xf32>, tensor<8x4xf32>) {
 
 // -----
 
+func.func @sync_cluster() -> tensor<8x4xf32> {
+  %shared = xla_gpu.allocate_shared : tensor<8x4xf32>
+  %sync = xla_gpu.sync_threads scope <cluster> %shared : tensor<8x4xf32>
+  return %sync : tensor<8x4xf32>
+}
+// CHECK-LABEL: func.func @sync_cluster() -> tensor<32xf32> {
+// CHECK:         %[[SHARED:.*]] = xla_gpu.allocate_shared : tensor<32xf32>
+// CHECK:         %[[SYNC:.*]] = xla_gpu.sync_threads scope <cluster> %[[SHARED]]
+// CHECK-SAME:      : tensor<32xf32>
+// CHECK-NEXT:    return
+
+// -----
+
 func.func @sync_mixed_rank(%i: index) -> (tensor<16xf32>, f32) {
   %shared1 = xla_gpu.allocate_shared : tensor<16xf32>
   %shared2 = xla_gpu.allocate_shared : tensor<8x4xf32>

@@ -15,6 +15,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_FUSIONS_MLIR_OPS
 #define XLA_SERVICE_GPU_FUSIONS_MLIR_OPS
 
+include "mlir/Dialect/GPU/IR/GPUBase.td"
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td"
@@ -62,10 +63,31 @@ def XLAGPU_SyncThreadsOp : XLAGPU_Op<"sync_threads", [
     the synchronized state.
   }];
 
-  let arguments = (ins Variadic<AnyRankedTensor>:$operands);
+  let arguments = (ins
+    Variadic<AnyRankedTensor>:$operands,
+    DefaultValuedAttr<GPU_BarrierScopeAttr,
+      "::mlir::gpu::BarrierScope::Workgroup">:$scope
+  );
   let results = (outs Variadic<AnyRankedTensor>:$results);
 
-  let assemblyFormat = "operands attr-dict `:` type($operands)";
+  let skipDefaultBuilders = 1;
+  let builders = [
+    OpBuilder<(ins "::mlir::TypeRange":$results, "::mlir::ValueRange":$operands,
+               CArg<"::mlir::gpu::BarrierScope",
+                    "::mlir::gpu::BarrierScope::Workgroup">:$scope), [{
+      $_state.addOperands(operands);
+      $_state.addTypes(results);
+      $_state.getOrAddProperties<Properties>().scope =
+          ::mlir::gpu::BarrierScopeAttr::get($_builder.getContext(), scope);
+    }]>,
+    OpBuilder<(ins "::mlir::ValueRange":$operands,
+               CArg<"::mlir::gpu::BarrierScope",
+                    "::mlir::gpu::BarrierScope::Workgroup">:$scope), [{
+      build($_builder, $_state, ::mlir::TypeRange(operands), operands, scope);
+    }]>
+  ];
+
+  let assemblyFormat = "(`scope` $scope^)? $operands attr-dict `:` type($operands)";
 }
 
 def XLAGPU_ShuffleReduceOp : XLAGPU_Op<"shuffle_reduce",

@@ -85,5 +85,24 @@ TEST(LaunchDimensionsTest, FromAndToProto) {
   EXPECT_THAT(launch_dimensions.ToProto(), EqualsProto(proto));
 }
 
+TEST(LaunchDimensionsTest, ClusterDimsProtoAndToString) {
+  se::BlockDim block_dimensions{10, 20, 30};
+  se::ThreadDim thread_dimensions{44, 55, 66};
+  se::ClusterDim cluster_dimensions{2, 1, 1};
+  LaunchDimensions dimensions{block_dimensions, thread_dimensions,
+                              cluster_dimensions};
+
+  EXPECT_EQ(
+      dimensions.ToString(),
+      "blocks: {10, 20, 30}, threads/block: {44, 55, 66}, cluster: {2, 1, 1}");
+  EXPECT_THAT(dimensions.ToProto(), EqualsProto(R"pb(
+                block_counts { coordinates { x: 10 y: 20 z: 30 } }
+                thread_counts_per_block { coordinates { x: 44 y: 55 z: 66 } }
+                cluster_dims { coordinates { x: 2 y: 1 z: 1 } }
+              )pb"));
+  EXPECT_THAT(LaunchDimensions::FromProto(dimensions.ToProto()),
+              absl_testing::IsOkAndHolds(dimensions));
+}
+
 }  // namespace
 }  // namespace xla::gpu

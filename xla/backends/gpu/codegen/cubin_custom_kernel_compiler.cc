@@ -163,8 +163,13 @@ CubinCustomKernelCompiler::CompileMlirToCubinImpl(
   // Return `borrowed_context` to the pool before LLVM/PTX compilation so
   // concurrent emitters can reuse it without allocating fresh contexts.
   borrowed_context.reset();
+  LaunchDimensions launch_dimensions(
+      spec.launch_dimensions().block_counts(),
+      spec.launch_dimensions().thread_counts_per_block(),
+      spec.cluster_dim().has_value() ? spec.cluster_dim()
+                                     : spec.launch_dimensions().cluster_dims());
   ABSL_RETURN_IF_ERROR(AnnotateMlirKernelLlvmModule(
-      device_info_, spec.launch_dimensions(), spec.name(), data_layout_,
+      device_info_, launch_dimensions, spec.name(), data_layout_,
       target_triple_, llvm_source.module()));
   return CompileToCubinImpl(std::move(llvm_source));
 }

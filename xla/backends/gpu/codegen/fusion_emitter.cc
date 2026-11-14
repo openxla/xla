@@ -136,8 +136,12 @@ absl::Status AnnotateKernelLaunchDimensions(
                      launch_dims.thread_counts_per_block().y, ",",
                      launch_dims.thread_counts_per_block().z);
     kernel->addFnAttr("nvvm.reqntid", attr);
-    // Maybe we want to set "reqnctapercluster" here, but not sure if needed or
-    // if LLVM supports that yet. Let's do that later when needed.
+    if (launch_dims.cluster_dims().has_value()) {
+      const std::string cluster_attr = absl::StrCat(
+          launch_dims.cluster_dims()->x, ",", launch_dims.cluster_dims()->y,
+          ",", launch_dims.cluster_dims()->z);
+      kernel->addFnAttr("nvvm.cluster_dim", cluster_attr);
+    }
   } else if (target_triple.getArch() == llvm::Triple::amdgpu) {
     kernel->addFnAttr("amdgpu-flat-work-group-size",
                       absl::StrJoin({launch_dims.num_threads_per_block(),
