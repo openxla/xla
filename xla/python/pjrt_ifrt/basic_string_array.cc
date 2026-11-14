@@ -281,19 +281,40 @@ tsl::Future<> BasicStringArray::CopyToHostBuffer(
         "array has been sharded over %d devices.",
         array_spec_.sharding->devices()->size())));
   }
+  if (byte_strides.has_value()) {
+    return tsl::Future<>(absl::InvalidArgumentError(
+        "Byte strides are not supported for string arrays"));
+  }
+  absl::StatusOr<int64_t> num_elements = array_spec_.shape.NumElements();
+  if (!num_elements.ok()) {
+    return tsl::Future<>(num_elements.status());
+  }
+  if (*num_elements > 0 && data == nullptr) {
+    return tsl::Future<>(absl::InvalidArgumentError(
+        "Host buffer data must not be null for non-empty string arrays"));
+  }
 
   auto [copy_completion_promise, copy_completion_future] = tsl::MakePromise<>();
 
   buffers_.OnReady(
       [copy_completion_promise = std::move(copy_completion_promise),
-       host_buffer = static_cast<absl::Cord*>(data)](
-          absl::StatusOr<Buffers> input_buffers) mutable {
+       host_buffer = static_cast<absl::Cord*>(data),
+       num_elements =
+           *num_elements](absl::StatusOr<Buffers> input_buffers) mutable {
         if (!input_buffers.ok()) {
           copy_completion_promise.Set(input_buffers.status());
           return;
         }
-        const absl::Span<const absl::Cord>& input_buffer = (*input_buffers)[0];
-        for (int i = 0; i < input_buffer.size(); ++i) {
+        const absl::Span<const absl::Cord> input_buffer = (*input_buffers)[0];
+        if (input_buffer.size() != num_elements) {
+          copy_completion_promise.Set(absl::FailedPreconditionError(
+              absl::StrCat("Number of strings in buffer: ", input_buffer.size(),
+                           " does not match the number of elements in array "
+                           "shape: ",
+                           num_elements)));
+          return;
+        }
+        for (int64_t i = 0; i < num_elements; ++i) {
           host_buffer[i] = input_buffer[i];
         }
         copy_completion_promise.Set(absl::OkStatus());
