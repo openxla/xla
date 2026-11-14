@@ -1,7 +1,7 @@
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_binary", "xla_cc_test")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tests:build_defs.bzl", "AMD_GPU_ANY_BACKEND", "xla_test")
 load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
@@ -479,7 +479,7 @@ xla_test(
         "a100",
         "h100",
         "b200",
-        "amdgpu_any",
+        AMD_GPU_ANY_BACKEND,
     ],
     tags = [
         "gpu",
@@ -611,7 +611,7 @@ xla_test(
         "a100",
         "h100",
         "b200",
-        "amdgpu_any",
+        AMD_GPU_ANY_BACKEND,
     ],
     tags = [
         "gpu",
@@ -737,7 +737,7 @@ xla_test(
     name = "mx_scaled_dot_execution_test",
     srcs = ["mx_scaled_dot_execution_test.cc"],
     backends = [
-        "amdgpu_any",
+        AMD_GPU_ANY_BACKEND,
     ],
     tags = [
         "gpu",
@@ -763,7 +763,7 @@ xla_test(
     name = "hipblaslt_test",
     srcs = ["hipblaslt_test.cc"],
     backends = [
-        "amdgpu_any",
+        AMD_GPU_ANY_BACKEND,
     ],
     tags = [
         "gpu",
@@ -964,7 +964,7 @@ xla_test(
     backends = [
         "a100",
         "h100",
-        "amdgpu_any",
+        AMD_GPU_ANY_BACKEND,
     ],
     local_defines = (
         if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
