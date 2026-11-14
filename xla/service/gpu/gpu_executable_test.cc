@@ -28,6 +28,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/log_severity.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -123,6 +124,7 @@ namespace {
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::Field;
+using ::testing::HasSubstr;
 using ::testing::Optional;
 using ::testing::Pair;
 using ::testing::Pointee;
@@ -2019,6 +2021,348 @@ TEST_F(GpuExecutableTest, CollectiveParamsUsesRunOptionsDeviceOrdinal) {
     EXPECT_THAT(recorded_local_device_id, Optional(LocalDeviceId(0)));
     EXPECT_THAT(recorded_global_device_id, Optional(GlobalDeviceId(7)));
   }
+}
+
+void SetupMockExecutorAndStream(
+    se::Platform* platform, const se::GpuComputeCapability& compute_capability,
+    int device_ordinal, se::MockStreamExecutor& executor,
+    se::MockStream& stream) {
+  EXPECT_CALL(executor, GetPlatform()).WillRepeatedly(Return(platform));
+  EXPECT_CALL(executor, device_ordinal())
+      .WillRepeatedly(Return(device_ordinal));
+  EXPECT_CALL(executor, SynchronizeAllActivity()).WillRepeatedly(Return(true));
+  EXPECT_CALL(executor, EnablePeerAccessTo(::testing::_))
+      .WillRepeatedly(Return(absl::OkStatus()));
+  EXPECT_CALL(executor, Activate()).WillRepeatedly([]() { return nullptr; });
+  EXPECT_CALL(stream, parent()).WillRepeatedly(Return(&executor));
+  EXPECT_CALL(stream, DoHostCallbackWithStatus(::testing::_))
+      .WillRepeatedly([](absl::AnyInvocable<absl::Status() &&> callback) {
+        return std::move(callback)();
+      });
+  if (const se::CudaComputeCapability* cuda_cc =
+          compute_capability.cuda_compute_capability()) {
+    EXPECT_CALL(stream, GetCudaComputeCapability())
+        .WillRepeatedly(Return(*cuda_cc));
+  }
+  if (const se::RocmComputeCapability* rocm_cc =
+          compute_capability.rocm_compute_capability()) {
+    EXPECT_CALL(stream, GetRocmComputeCapability())
+        .WillRepeatedly(Return(*rocm_cc));
+  }
+}
+
+absl::StatusOr<GpuExecutableProto> CreateTimeoutTestProto(
+    const se::DeviceDescription& device_description,
+    const DebugOptions& compile_time_options, bool with_embedded_module) {
+  const char* hlo_text = R"(
+    HloModule test_module
+    ENTRY comp {
+      ROOT c = f32[] constant(1.0)
+    })";
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> compile_time_module,
+                        ParseAndReturnUnverifiedModule(hlo_text));
+  compile_time_module->mutable_config().set_debug_options(compile_time_options);
+
+  GpuExecutable::Params params;
+  params.module_name = "test_module";
+  params.executable = std::make_unique<ThunkExecutor>(ThunkSequence{});
+  params.device_description = device_description;
+  params.enable_debug_info_manager = false;
+  params.debug_module = std::move(compile_time_module);
+  SetDummyBufferAssignment(params);
+
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<GpuExecutable> reference_executable,
+                        GpuExecutable::Create(std::move(params)));
+  ABSL_ASSIGN_OR_RETURN(GpuExecutableProto proto,
+                        reference_executable->ToProto());
+  if (!with_embedded_module) {
+    proto.clear_hlo_module_with_config();
+  }
+  return proto;
+}
+
+absl::StatusOr<std::unique_ptr<GpuExecutable>> LoadAndExecuteSingleDevice(
+    se::Platform* platform, const se::DeviceDescription& device_description,
+    const GpuExecutableProto& proto, const DebugOptions& load_time_options) {
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<GpuExecutable> exec,
+      GpuExecutable::FromProto(proto, device_description, "TEST_PLATFORM",
+                               load_time_options));
+  ::testing::NiceMock<se::MockStreamExecutor> executor;
+  ::testing::NiceMock<se::MockStream> stream;
+  SetupMockExecutorAndStream(platform,
+                             device_description.gpu_compute_capability(),
+                             /*device_ordinal=*/0, executor, stream);
+
+  DeviceAssignment device_assn(/*replica_count=*/1, /*computation_count=*/1);
+  device_assn.FillIota(0);
+  LoopbackCollectives loopback_collectives;
+  GpuExecutableRunOptions gpu_opts;
+  gpu_opts.set_collectives(&loopback_collectives);
+  FakeDeviceAddressAllocator allocator(platform);
+
+  ExecutableRunOptions exec_run_options;
+  exec_run_options.set_stream(&stream);
+  exec_run_options.set_allocator(&allocator);
+  exec_run_options.set_device_assignment(&device_assn);
+  exec_run_options.set_gpu_executable_run_options(&gpu_opts);
+  exec_run_options.set_run_id(RunId(1));
+  ServiceExecutableRunOptions run_opts(exec_run_options);
+  ABSL_RETURN_IF_ERROR(
+      exec->ExecuteAsyncOnStream(&run_opts, std::vector<ExecutionInput>{})
+          .status());
+  return exec;
+}
+
+// Requests a 2-device collective clique without wall-clock sleeps.
+class CollectiveCliqueTestThunk : public Thunk {
+ public:
+  explicit CollectiveCliqueTestThunk(ThunkInfo thunk_info)
+      : Thunk(Kind::kAllReduce, std::move(thunk_info)) {}
+
+  absl::Status Prepare(const PrepareParams& params) override {
+    return params.collective_clique_requests->RequestClique(
+        GpuCliqueKey({GlobalDeviceId(0), GlobalDeviceId(1)},
+                     /*num_local_participants=*/2),
+        /*device_groups=*/{{GlobalDeviceId(0), GlobalDeviceId(1)}});
+  }
+
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
+    return absl::OkStatus();
+  }
+
+  BufferUses buffer_uses() const override { return {}; }
+
+  absl::StatusOr<ThunkProto> ToProto() const override { return ThunkProto(); }
+};
+
+class GpuExecutableFromProtoTimeoutTest
+    : public HloPjRtGpuTestBase,
+      public ::testing::WithParamInterface<bool> {};
+
+TEST_P(GpuExecutableFromProtoTimeoutTest, PropagatesLoadTimeExecutionTimeouts) {
+  ASSERT_OK_AND_ASSIGN(
+      se::Platform * platform,
+      se::PlatformManager::PlatformWithId(stream_executor_platform_id()));
+  const bool with_embedded_module = GetParam();
+
+  DebugOptions compile_time_options;
+  compile_time_options.set_xla_dump_to("/compile/dump");
+  compile_time_options.set_xla_gpu_experimental_nccl_window_symmetric(false);
+  compile_time_options.set_xla_gpu_execution_terminate_timeout("inf");
+  compile_time_options.set_xla_gpu_device_execution_terminate_timeout("inf");
+  compile_time_options.set_xla_gpu_execution_progress_tracking(0);
+  compile_time_options.set_xla_gpu_executable_warn_stuck_timeout_seconds(10);
+  compile_time_options.set_xla_gpu_executable_terminate_timeout_seconds(30);
+
+  ASSERT_OK_AND_ASSIGN(
+      GpuExecutableProto proto,
+      CreateTimeoutTestProto(device_description(), compile_time_options,
+                             with_embedded_module));
+
+  DebugOptions load_time_options = GetDebugOptionsFromFlags();
+  load_time_options.set_xla_dump_to("/serve/dump");
+  load_time_options.set_xla_gpu_experimental_nccl_window_symmetric(true);
+  load_time_options.set_xla_gpu_execution_terminate_timeout("300s");
+  load_time_options.set_xla_gpu_device_execution_terminate_timeout("600s");
+  load_time_options.set_xla_gpu_execution_progress_tracking(5);
+  load_time_options.set_xla_gpu_executable_warn_stuck_timeout_seconds(15);
+  load_time_options.set_xla_gpu_executable_terminate_timeout_seconds(45);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> exec,
+      LoadAndExecuteSingleDevice(platform, device_description(), proto,
+                                 load_time_options));
+  const DebugOptions& exec_runtime_options = exec->runtime_debug_options();
+  EXPECT_EQ(exec_runtime_options.xla_dump_to(), "/serve/dump");
+  EXPECT_TRUE(
+      exec_runtime_options.xla_gpu_experimental_nccl_window_symmetric());
+  EXPECT_EQ(exec_runtime_options.xla_gpu_execution_terminate_timeout(), "300s");
+  EXPECT_EQ(exec_runtime_options.xla_gpu_device_execution_terminate_timeout(),
+            "600s");
+  EXPECT_EQ(exec_runtime_options.xla_gpu_execution_progress_tracking(), 5);
+  EXPECT_EQ(
+      exec_runtime_options.xla_gpu_executable_warn_stuck_timeout_seconds(), 15);
+  EXPECT_EQ(exec_runtime_options.xla_gpu_executable_terminate_timeout_seconds(),
+            45);
+  if (with_embedded_module) {
+    ASSERT_TRUE(exec->has_module());
+    EXPECT_THAT(exec_runtime_options,
+                EqualsProto(exec->module_config().debug_options()));
+  } else {
+    EXPECT_FALSE(exec->has_module());
+  }
+}
+
+TEST_P(GpuExecutableFromProtoTimeoutTest,
+       RejectsInvalidHostExecutionTerminateTimeout) {
+  ASSERT_OK_AND_ASSIGN(
+      se::Platform * platform,
+      se::PlatformManager::PlatformWithId(stream_executor_platform_id()));
+  ASSERT_OK_AND_ASSIGN(
+      GpuExecutableProto proto,
+      CreateTimeoutTestProto(device_description(), GetDebugOptionsFromFlags(),
+                             GetParam()));
+
+  DebugOptions invalid_options = GetDebugOptionsFromFlags();
+  invalid_options.set_xla_gpu_execution_terminate_timeout("not_a_duration");
+  EXPECT_THAT(
+      LoadAndExecuteSingleDevice(platform, device_description(), proto,
+                                 invalid_options),
+      absl_testing::StatusIs(
+          absl::StatusCode::kInternal,
+          HasSubstr("Failed to parse XLA host execution terminate timeout")));
+}
+
+TEST_P(GpuExecutableFromProtoTimeoutTest,
+       RejectsInvalidDeviceExecutionTerminateTimeout) {
+  ASSERT_OK_AND_ASSIGN(
+      se::Platform * platform,
+      se::PlatformManager::PlatformWithId(stream_executor_platform_id()));
+  ASSERT_OK_AND_ASSIGN(
+      GpuExecutableProto proto,
+      CreateTimeoutTestProto(device_description(), GetDebugOptionsFromFlags(),
+                             GetParam()));
+
+  DebugOptions invalid_options = GetDebugOptionsFromFlags();
+  invalid_options.set_xla_gpu_device_execution_terminate_timeout(
+      "not_a_duration");
+  EXPECT_THAT(
+      LoadAndExecuteSingleDevice(platform, device_description(), proto,
+                                 invalid_options),
+      absl_testing::StatusIs(
+          absl::StatusCode::kInternal,
+          HasSubstr("Failed to parse XLA device execution terminate timeout")));
+}
+
+INSTANTIATE_TEST_SUITE_P(WithAndWithoutEmbeddedModule,
+                         GpuExecutableFromProtoTimeoutTest, ::testing::Bool(),
+                         [](const ::testing::TestParamInfo<bool>& info) {
+                           return info.param ? "WithEmbeddedModule"
+                                             : "WithoutEmbeddedModule";
+                         });
+
+TEST_F(GpuExecutableTest,
+       FromProtoPreservesCompileTimeTimeoutsWhenLoadTimeFieldsUnset) {
+  DebugOptions compile_time_options;
+  compile_time_options.set_xla_dump_to("/compile/dump");
+  compile_time_options.set_xla_gpu_experimental_nccl_window_symmetric(true);
+  compile_time_options.set_xla_gpu_execution_terminate_timeout("300s");
+  compile_time_options.set_xla_gpu_device_execution_terminate_timeout("600s");
+  compile_time_options.set_xla_gpu_execution_progress_tracking(5);
+  compile_time_options.set_xla_gpu_executable_warn_stuck_timeout_seconds(15);
+  compile_time_options.set_xla_gpu_executable_terminate_timeout_seconds(45);
+
+  ASSERT_OK_AND_ASSIGN(
+      GpuExecutableProto proto,
+      CreateTimeoutTestProto(device_description(), compile_time_options,
+                             /*with_embedded_module=*/true));
+
+  DebugOptions unset_load_time_options;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> exec,
+      GpuExecutable::FromProto(proto, device_description(), "TEST_PLATFORM",
+                               unset_load_time_options));
+
+  const DebugOptions& exec_runtime_options = exec->runtime_debug_options();
+  EXPECT_EQ(exec_runtime_options.xla_dump_to(), "/compile/dump");
+  EXPECT_TRUE(
+      exec_runtime_options.xla_gpu_experimental_nccl_window_symmetric());
+  EXPECT_EQ(exec_runtime_options.xla_gpu_execution_terminate_timeout(), "300s");
+  EXPECT_EQ(exec_runtime_options.xla_gpu_device_execution_terminate_timeout(),
+            "600s");
+  EXPECT_EQ(exec_runtime_options.xla_gpu_execution_progress_tracking(), 5);
+  EXPECT_EQ(
+      exec_runtime_options.xla_gpu_executable_warn_stuck_timeout_seconds(), 15);
+  EXPECT_EQ(exec_runtime_options.xla_gpu_executable_terminate_timeout_seconds(),
+            45);
+  ASSERT_TRUE(exec->has_module());
+  EXPECT_THAT(exec_runtime_options,
+              EqualsProto(exec->module_config().debug_options()));
+}
+
+TEST_F(GpuExecutableTest, RendezvousTimeoutHelpersFallbackAndRespectExplicit) {
+  DebugOptions unset_options;
+  EXPECT_EQ(GetExecutableWarnStuckTimeout(unset_options),
+            absl::Seconds(kDefaultGpuExecutableWarnStuckTimeoutSeconds));
+  EXPECT_EQ(GetExecutableTerminateTimeout(unset_options),
+            absl::Seconds(kDefaultGpuExecutableTerminateTimeoutSeconds));
+
+  DebugOptions explicit_zero;
+  explicit_zero.set_xla_gpu_executable_warn_stuck_timeout_seconds(0);
+  explicit_zero.set_xla_gpu_executable_terminate_timeout_seconds(0);
+  EXPECT_EQ(GetExecutableWarnStuckTimeout(explicit_zero), absl::ZeroDuration());
+  EXPECT_EQ(GetExecutableTerminateTimeout(explicit_zero), absl::ZeroDuration());
+
+  DebugOptions custom_options;
+  custom_options.set_xla_gpu_executable_warn_stuck_timeout_seconds(15);
+  custom_options.set_xla_gpu_executable_terminate_timeout_seconds(45);
+  EXPECT_EQ(GetExecutableWarnStuckTimeout(custom_options), absl::Seconds(15));
+  EXPECT_EQ(GetExecutableTerminateTimeout(custom_options), absl::Seconds(45));
+}
+
+TEST_F(GpuExecutableTest,
+       RendezvousUsesDefaultTimeoutsWhenDebugOptionsFieldsUnset) {
+  ASSERT_OK_AND_ASSIGN(
+      se::Platform * platform,
+      se::PlatformManager::PlatformWithId(stream_executor_platform_id()));
+  constexpr int kNumDevices = 2;
+
+  ThunkSequence thunks;
+  thunks.push_back(
+      std::make_unique<CollectiveCliqueTestThunk>(ThunkInfoWithId(1)));
+
+  GpuExecutable::Params params;
+  params.module_name = "unset_rendezvous_timeouts";
+  params.executable = std::make_unique<ThunkExecutor>(std::move(thunks));
+  params.device_description = device_description();
+  // Explicitly leave rendezvous timeout fields unset (`has_*() == false`).
+  params.debug_options = DebugOptions();
+  params.enable_debug_info_manager = false;
+  SetDummyBufferAssignment(params);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> exec,
+                       GpuExecutable::Create(std::move(params)));
+
+  DeviceAssignment device_assn(/*replica_count=*/kNumDevices,
+                               /*computation_count=*/1);
+  device_assn.FillIota(0);
+  LoopbackCollectives loopback_collectives;
+  GpuExecutableRunOptions gpu_opts;
+  gpu_opts.set_collectives(&loopback_collectives);
+  FakeDeviceAddressAllocator allocator(platform);
+  ::testing::NiceMock<se::MockStreamExecutor> executors[kNumDevices];
+  ::testing::NiceMock<se::MockStream> streams[kNumDevices];
+  const se::GpuComputeCapability& compute_capability =
+      device_description().gpu_compute_capability();
+  for (int d = 0; d < kNumDevices; ++d) {
+    SetupMockExecutorAndStream(platform, compute_capability, d, executors[d],
+                               streams[d]);
+  }
+
+  absl::ScopedMockLog log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(log,
+              Log(absl::LogSeverity::kError, ::testing::_, HasSubstr("stuck")))
+      .Times(0);
+  log.StartCapturingLogs();
+
+  tsl::thread::ThreadPool pool(tsl::Env::Default(), "default_timeouts_test",
+                               kNumDevices);
+  absl::BlockingCounter done(kNumDevices);
+  for (int d = 0; d < kNumDevices; ++d) {
+    pool.Schedule([&, d]() {
+      ExecutableRunOptions exec_run_options;
+      exec_run_options.set_stream(&streams[d]);
+      exec_run_options.set_allocator(&allocator);
+      exec_run_options.set_device_assignment(&device_assn);
+      exec_run_options.set_gpu_executable_run_options(&gpu_opts);
+      exec_run_options.set_run_id(RunId(200));
+      ServiceExecutableRunOptions run_opts(exec_run_options);
+      EXPECT_OK(
+          exec->ExecuteAsyncOnStream(&run_opts, std::vector<ExecutionInput>{}));
+      done.DecrementCount();
+    });
+  }
+  done.Wait();
 }
 
 int64_t BufferSizeBytes(const BufferValue& buffer) {

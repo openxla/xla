@@ -526,8 +526,10 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_executable_embed_debug_info(true);
   opts.set_xla_gpu_executable_num_compute_streams(0);
   opts.set_xla_gpu_executable_num_communication_streams(0);
-  opts.set_xla_gpu_executable_terminate_timeout_seconds(30);
-  opts.set_xla_gpu_executable_warn_stuck_timeout_seconds(10);
+  opts.set_xla_gpu_executable_terminate_timeout_seconds(
+      kDefaultGpuExecutableTerminateTimeoutSeconds);
+  opts.set_xla_gpu_executable_warn_stuck_timeout_seconds(
+      kDefaultGpuExecutableWarnStuckTimeoutSeconds);
   opts.set_xla_gpu_execution_terminate_timeout("inf");
   opts.set_xla_gpu_device_execution_terminate_timeout("inf");
   opts.set_xla_gpu_execution_progress_tracking(0);
@@ -4340,6 +4342,45 @@ DebugOptions GetDebugOptionsFromProtoAndFlags(
   }
 
   return GetDebugOptionsFromFlags();
+}
+
+void ApplyLoadTimeDebugOptionsOverrides(
+    const DebugOptions& load_time_debug_options,
+    DebugOptions* target_debug_options) {
+  CHECK(target_debug_options != nullptr);
+  if (load_time_debug_options.has_xla_dump_to()) {
+    target_debug_options->set_xla_dump_to(
+        load_time_debug_options.xla_dump_to());
+  }
+  // Only enable when true so a default `false` from flag parsing does not
+  // disable an AOT-compiled `true` value.
+  if (load_time_debug_options.xla_gpu_experimental_nccl_window_symmetric()) {
+    target_debug_options->set_xla_gpu_experimental_nccl_window_symmetric(true);
+  }
+  if (load_time_debug_options.has_xla_gpu_execution_terminate_timeout()) {
+    target_debug_options->set_xla_gpu_execution_terminate_timeout(
+        load_time_debug_options.xla_gpu_execution_terminate_timeout());
+  }
+  if (load_time_debug_options
+          .has_xla_gpu_device_execution_terminate_timeout()) {
+    target_debug_options->set_xla_gpu_device_execution_terminate_timeout(
+        load_time_debug_options.xla_gpu_device_execution_terminate_timeout());
+  }
+  if (load_time_debug_options.has_xla_gpu_execution_progress_tracking()) {
+    target_debug_options->set_xla_gpu_execution_progress_tracking(
+        load_time_debug_options.xla_gpu_execution_progress_tracking());
+  }
+  if (load_time_debug_options
+          .has_xla_gpu_executable_warn_stuck_timeout_seconds()) {
+    target_debug_options->set_xla_gpu_executable_warn_stuck_timeout_seconds(
+        load_time_debug_options
+            .xla_gpu_executable_warn_stuck_timeout_seconds());
+  }
+  if (load_time_debug_options
+          .has_xla_gpu_executable_terminate_timeout_seconds()) {
+    target_debug_options->set_xla_gpu_executable_terminate_timeout_seconds(
+        load_time_debug_options.xla_gpu_executable_terminate_timeout_seconds());
+  }
 }
 
 // LINT.IfChange(get_flag_status)

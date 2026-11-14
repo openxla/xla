@@ -1012,6 +1012,7 @@ xla_test(
         "//xla/tsl/util/proto:proto_matchers",
         "//xla/util/split_proto:split_proto_reader",
         "@com_google_absl//absl/base:log_severity",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log:scoped_mock_log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",

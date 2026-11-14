@@ -1145,7 +1145,24 @@ absl::StatusOr<int64_t> GetNumLocalParticipants(
   }
   return num_local_participants;
 }
+
 }  // namespace
+
+absl::Duration GetExecutableWarnStuckTimeout(
+    const DebugOptions& debug_options) {
+  return absl::Seconds(
+      debug_options.has_xla_gpu_executable_warn_stuck_timeout_seconds()
+          ? debug_options.xla_gpu_executable_warn_stuck_timeout_seconds()
+          : kDefaultGpuExecutableWarnStuckTimeoutSeconds);
+}
+
+absl::Duration GetExecutableTerminateTimeout(
+    const DebugOptions& debug_options) {
+  return absl::Seconds(
+      debug_options.has_xla_gpu_executable_terminate_timeout_seconds()
+          ? debug_options.xla_gpu_executable_terminate_timeout_seconds()
+          : kDefaultGpuExecutableTerminateTimeoutSeconds);
+}
 
 absl::Status RendezvousAfterInitialization(
     const ServiceExecutableRunOptions& run_options,
@@ -1178,12 +1195,9 @@ absl::Status RendezvousAfterInitialization(
       "thunk initialization completion for device ordinal %d; run_id=%d",
       run_options.device_ordinal(), run_options.run_options().run_id().ToInt());
 
-  return Rendezvous(
-      rendezvous_name, rendezvous_key, num_local_participants,
-      absl::Seconds(
-          debug_options.xla_gpu_executable_warn_stuck_timeout_seconds()),
-      absl::Seconds(
-          debug_options.xla_gpu_executable_terminate_timeout_seconds()));
+  return Rendezvous(rendezvous_name, rendezvous_key, num_local_participants,
+                    GetExecutableWarnStuckTimeout(debug_options),
+                    GetExecutableTerminateTimeout(debug_options));
 }
 
 absl::Status RendezvousAfterExecution(
@@ -1212,12 +1226,9 @@ absl::Status RendezvousAfterExecution(
       "thunk execution completion for device ordinal %d; run_id=%d",
       run_options.device_ordinal(), run_options.run_options().run_id().ToInt());
 
-  return Rendezvous(
-      rendezvous_name, rendezvous_key, num_local_participants,
-      absl::Seconds(
-          debug_options.xla_gpu_executable_warn_stuck_timeout_seconds()),
-      absl::Seconds(
-          debug_options.xla_gpu_executable_terminate_timeout_seconds()));
+  return Rendezvous(rendezvous_name, rendezvous_key, num_local_participants,
+                    GetExecutableWarnStuckTimeout(debug_options),
+                    GetExecutableTerminateTimeout(debug_options));
 }
 
 absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
@@ -1749,13 +1760,8 @@ GpuExecutable::ModuleConfigMetadataFromProto(
                                ? config.debug_options()
                                : DefaultDebugOptionsIgnoringFlags();
   // Same overrides as `FromProto` applies to the deserialized module.
-  if (load_time_debug_options.has_xla_dump_to()) {
-    metadata.debug_options.set_xla_dump_to(
-        load_time_debug_options.xla_dump_to());
-  }
-  if (load_time_debug_options.xla_gpu_experimental_nccl_window_symmetric()) {
-    metadata.debug_options.set_xla_gpu_experimental_nccl_window_symmetric(true);
-  }
+  ApplyLoadTimeDebugOptionsOverrides(load_time_debug_options,
+                                     &metadata.debug_options);
 
   metadata.slice_size = config.partition_size();
 
@@ -1806,20 +1812,13 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
         HloModule::CreateFromProtoWithConfig(proto.hlo_module_with_config()));
   }
   if (params.debug_module != nullptr) {
-    // The HLO module deserialized from the proto carries xla_dump_to from the
-    // process that originally compiled it. Override with the current process's
-    // dump path so that runtime dumps (checksum logs, etc.) land in the correct
-    // per-process directory.
-    if (params.debug_options.has_xla_dump_to()) {
-      params.debug_module->mutable_config()
-          .mutable_debug_options()
-          .set_xla_dump_to(params.debug_options.xla_dump_to());
-    }
-    if (params.debug_options.xla_gpu_experimental_nccl_window_symmetric()) {
-      params.debug_module->mutable_config()
-          .mutable_debug_options()
-          .set_xla_gpu_experimental_nccl_window_symmetric(true);
-    }
+    // The HLO module deserialized from the proto carries DebugOptions from the
+    // process that originally compiled it. Override runtime-configurable
+    // options from the current process's DebugOptions so that serving flags
+    // take effect on loaded executables.
+    ApplyLoadTimeDebugOptionsOverrides(
+        params.debug_options,
+        &params.debug_module->mutable_config().mutable_debug_options());
   }
 
   // Read the runtime metadata straight from the config proto, so that it
