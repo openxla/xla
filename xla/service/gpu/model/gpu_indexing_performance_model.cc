@@ -1479,9 +1479,13 @@ int64_t GpuPerformanceModelWithIndexingAnalysis::FlopsPerElement(
       auto* concat = Cast<HloConcatenateInstruction>(instr);
       int64_t dim = concat->concatenate_dimension();
       const int64_t warp_size = WarpSize(*device_info_);
-      if (dim > 0 &&
-          concat->operand(0)->shape().dimensions()[dim] % warp_size != 0) {
-        return 400;
+      // A warp can straddle the end of any operand except the last one.
+      if (dim > 0) {
+        for (int64_t i = 0; i + 1 < concat->operand_count(); ++i) {
+          if (concat->operand(i)->shape().dimensions()[dim] % warp_size != 0) {
+            return 400;
+          }
+        }
       }
       return 6;
     }

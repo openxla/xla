@@ -960,6 +960,44 @@ ENTRY entry_computation {
   EXPECT_EQ(wave64_analysis.flop_count(*fusion), 400 * kNumElements);
 }
 
+TEST_F(GpuHloCostAnalysisTest, ConcatenatePenaltyChecksAllInternalBoundaries) {
+  // unaligned_middle: the boundary after p1 is at 64 + 33 = 97, which splits
+  // a warp. unaligned_last: the internal boundaries are at 32 and 96, so only
+  // the last operand is unaligned and no warp is split.
+  absl::string_view hlo_string = R"(
+HloModule m
+
+ENTRY entry_computation {
+  p0 = f32[4,64] parameter(0)
+  p1 = f32[4,33] parameter(1)
+  p2 = f32[4,32] parameter(2)
+  unaligned_middle = f32[4,129] concatenate(p0, p1, p2), dimensions={1}
+  q0 = f32[4,32] parameter(3)
+  q1 = f32[4,64] parameter(4)
+  q2 = f32[4,33] parameter(5)
+  unaligned_last = f32[4,129] concatenate(q0, q1, q2), dimensions={1}
+  ROOT tuple = (f32[4,129], f32[4,129]) tuple(unaligned_middle, unaligned_last)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  HloComputation* entry = module->entry_computation();
+  const HloInstruction* unaligned_middle =
+      entry->GetInstructionWithName("unaligned_middle");
+  const HloInstruction* unaligned_last =
+      entry->GetInstructionWithName("unaligned_last");
+  ASSERT_NE(unaligned_middle, nullptr);
+  ASSERT_NE(unaligned_last, nullptr);
+  constexpr int64_t kNumElements = 4 * 129;
+
+  const se::DeviceDescription device = TestGpuDeviceInfo::RTXA6000DeviceInfo();
+  ASSERT_EQ(device.threads_per_warp(), 32);
+  GpuHloCostAnalysis analysis(options_, device);
+  ASSERT_OK(entry->Accept(&analysis));
+  EXPECT_EQ(analysis.flop_count(*unaligned_middle), 400 * kNumElements);
+  // Only the last operand is unaligned: no boundary is crossed.
+  EXPECT_EQ(analysis.flop_count(*unaligned_last), 6 * kNumElements);
+}
+
 TEST_F(GpuHloCostAnalysisTest,
        TritonCustomCallEscapedJsonBackendConfigMissingProperty) {
   absl::string_view hlo_string = R"(
