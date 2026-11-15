@@ -18,6 +18,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <memory>
 #include <ostream>
 #include <vector>
@@ -49,6 +50,7 @@ namespace {
 using ::testing::AllOf;
 using ::testing::AnyOf;
 using ::testing::Contains;
+using ::testing::Each;
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::Eq;
@@ -57,6 +59,7 @@ using ::testing::Ge;
 using ::testing::IsEmpty;
 using ::testing::Le;
 using ::testing::Lt;
+using ::testing::Not;
 using ::testing::SizeIs;
 
 // Returns a matcher that verifies that each container element that matches
@@ -421,6 +424,147 @@ TEST_F(DotSearchSpaceTest, HonorsSharedMemoryLimit) {
   EXPECT_THAT(search_space.GenerateConfigs(),
               WhenFilteredBy(AllOf(BlockMIs(Eq(128)), BlockNIs(Eq(128))),
                              BlockKIs(Le(256))));
+}
+
+TEST_F(DotSearchSpaceTest, MixedPrecisionSharedMemoryLimitUsesOperandBitwidth) {
+  constexpr const char* kModuleText = R"(
+ENTRY e {
+  p0 = f16[4096,4096] parameter(0)
+  p1 = f16[4096,4096] parameter(1)
+  ROOT r = f32[4096,4096] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleText));
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+
+  // For 128x128 output tile:
+  // Inputs consume 2B (f16 operand_bitwidth_), so:
+  // block_k <= 227 KB / (2B * (128 + 128)) = 454 -> PreviousPowerOfTwo is 256.
+  // If compute_bitwidth_ (32) were mistakenly used, block_k would cap at 128.
+  EXPECT_THAT(search_space.GenerateConfigs(),
+              WhenFilteredBy(AllOf(BlockMIs(Eq(128)), BlockNIs(Eq(128))),
+                             BlockKIs(Le(256))));
+  EXPECT_THAT(
+      search_space.GenerateConfigs(),
+      Contains(AllOf(BlockMIs(Eq(128)), BlockNIs(Eq(128)), BlockKIs(Eq(256)))));
+}
+
+TEST_F(DotSearchSpaceTest, TotalSharedMemoryStagesNeverExceedCapacity) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> module,
+      GetDefaultDotModule(/*lhs_parallel_dim=*/4096, /*rhs_parallel_dim=*/4096,
+                          /*contracting_dim=*/4096));
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+  const int64_t max_smem = device_description_.shared_memory_per_block_optin();
+
+  for (const TritonGemmConfig& config : search_space.GenerateConfigs()) {
+    // Total shared memory for input pipeline staging across stages.
+    int64_t smem_needed = static_cast<int64_t>(config.num_stages) *
+                          (config.block_m + config.block_n) * config.block_k *
+                          /*operand_bytes=*/2;
+    EXPECT_LE(smem_needed, max_smem)
+        << "Config exceeds shared memory capacity: " << config.ToString();
+  }
+}
+
+TEST_F(DotSearchSpaceTest, EnsuresWgmmaContractingTileAtomFor8BitOnHopper) {
+  constexpr const char* kModuleText = R"(
+ENTRY e {
+  p0 = s8[16384,4096] parameter(0)
+  p1 = s8[4096,16384] parameter(1)
+  ROOT r = s32[16384,16384] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleText));
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+
+  // Hopper WGMMA requires a 256-bit contracting atom (256 / 8 = 32 elements).
+  EXPECT_THAT(search_space.GenerateConfigs(),
+              AllOf(Not(IsEmpty()), Each(BlockKIs(Ge(32)))));
+}
+
+TEST_F(DotSearchSpaceTest,
+       SkinnyMDecodePreservesSmallContractingAndTwoWarpOccupancyTiles) {
+  constexpr const char* kSkinnyS8Text = R"(
+ENTRY e {
+  p0 = s8[32,4096] parameter(0)
+  p1 = s8[4096,16384] parameter(1)
+  ROOT r = s32[32,16384] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> s8_module,
+                       ParseAndReturnVerifiedModule(kSkinnyS8Text));
+  TritonDotFusionSearchSpace s8_space = MakeSearchSpace(s8_module.get());
+  EXPECT_THAT(s8_space.GenerateConfigs(),
+              AllOf(Contains(BlockKIs(Eq(16))), Contains(BlockNIs(Ge(256)))));
+
+  constexpr const char* kMediumBatchS8Text = R"(
+ENTRY e {
+  p0 = s8[512,4096] parameter(0)
+  p1 = s8[4096,4096] parameter(1)
+  ROOT r = s32[512,4096] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> medium_s8_module,
+                       ParseAndReturnVerifiedModule(kMediumBatchS8Text));
+  TritonDotFusionSearchSpace medium_s8_space =
+      MakeSearchSpace(medium_s8_module.get());
+  EXPECT_THAT(medium_s8_space.GenerateConfigs(), Contains(BlockKIs(Eq(16))));
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> bf16_decode,
+      GetDefaultDotModule(/*lhs_parallel_dim=*/64, /*rhs_parallel_dim=*/4096,
+                          /*contracting_dim=*/4096));
+  TritonDotFusionSearchSpace bf16_space = MakeSearchSpace(bf16_decode.get());
+  EXPECT_THAT(bf16_space.GenerateConfigs(),
+              AllOf(Contains(AllOf(BlockMIs(Eq(64)), BlockNIs(Eq(64)),
+                                   NumWarpsIs(Eq(2)))),
+                    Contains(BlockNIs(Ge(512)))));
+}
+
+TEST_F(DotSearchSpaceTest, StorageBitwidthMixedPrecisionWgmmaFloor) {
+  constexpr const char* kModuleText = R"(
+ENTRY e {
+  p0 = s8[8192,256] parameter(0)
+  p1 = s8[256,8192] parameter(1)
+  c0 = f32[8192,256] convert(p0)
+  c1 = f32[256,8192] convert(p1)
+  ROOT r = f32[8192,8192] dot(c0, c1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleText));
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+  std::vector<TritonGemmConfig> configs = search_space.GenerateConfigs();
+  EXPECT_THAT(configs, Not(IsEmpty()));
+  for (const auto& config : configs) {
+    if (config.block_m >= 64 && config.block_n >= 64) {
+      EXPECT_GE(config.num_warps, 4);
+    }
+  }
+}
+
+TEST_F(DotSearchSpaceTest, PrunesLowWarpCountsForLargeAccumulatorTiles) {
+  constexpr const char* kModuleText = R"(
+ENTRY e {
+  p0 = f16[16384,4096] parameter(0)
+  p1 = f16[4096,16384] parameter(1)
+  ROOT r = f32[16384,16384] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleText));
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+
+  // For a 128x256 tile with 32-bit accumulators:
+  // accum_regs = 32768 registers.
+  // 4 warps (128 threads) would require 256 regs/thread, exceeding 255.
+  // Hence, min_warps must be at least 8.
+  EXPECT_THAT(search_space.GenerateConfigs(),
+              WhenFilteredBy(AllOf(BlockMIs(Eq(128)), BlockNIs(Eq(256))),
+                             NumWarpsIs(Ge(8))));
 }
 
 TEST_F(DotSearchSpaceTest, EnsuresContractingTileSizeFitsInstructonShape) {

@@ -242,6 +242,8 @@ class TritonDotFusionSearchSpace {
   int64_t lhs_parallel_size_;
   int64_t rhs_parallel_size_;
   int operand_bitwidth_;
+  int lhs_storage_bitwidth_;
+  int rhs_storage_bitwidth_;
   int compute_bitwidth_;
   PrimitiveType operand_type_;
   PrimitiveType compute_type_;

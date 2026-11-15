@@ -320,5 +320,102 @@ ENTRY entry {
 )"));
 }
 
+TEST_F(ConvertTritonGemmConfigTest, GroupSizeSwizzlingForLargeGrid) {
+  absl::string_view hlo = R"(
+dot {
+  lhs = f32[8192,512] parameter(0)
+  rhs = f32[512,2048] parameter(1)
+  ROOT dot = f32[8192,2048] dot(lhs, rhs),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY entry {
+  p0 = f32[8192,512] parameter(0)
+  p1 = f32[512,2048] parameter(1)
+  ROOT fusion = f32[8192,2048] fusion(p0, p1),
+    kind=kCustom, calls=dot, backend_config={
+      "fusion_backend_config": {
+        "kind":"__triton_gemm",  "triton_gemm_config": {
+          "block_m":"64", "block_n":"128", "block_k":"32",
+          "num_stages":"5", "num_warps":"4", "num_ctas":"1"
+        }
+      }
+    }
+})";
+
+  std::unique_ptr<VerifiedHloModule> module = RunConvertTritonGemmConfig(hlo);
+  EXPECT_THAT(RunFileCheck(module->ToString(), R"(
+    CHECK: ROOT{{.*}}fusion(
+    CHECK-SAME: "block_level_fusion_config"
+    CHECK-SAME: "group_size":8
+)"),
+              IsOkAndHolds(true));
+}
+
+TEST_F(ConvertTritonGemmConfigTest, NoGroupSizeSwizzlingForSmallMDecodeGrid) {
+  absl::string_view hlo = R"(
+dot {
+  lhs = f32[64,512] parameter(0)
+  rhs = f32[512,4096] parameter(1)
+  ROOT dot = f32[64,4096] dot(lhs, rhs),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY entry {
+  p0 = f32[64,512] parameter(0)
+  p1 = f32[512,4096] parameter(1)
+  ROOT fusion = f32[64,4096] fusion(p0, p1),
+    kind=kCustom, calls=dot, backend_config={
+      "fusion_backend_config": {
+        "kind":"__triton_gemm", "triton_gemm_config": {
+          "block_m":"16", "block_n":"128", "block_k":"32",
+          "num_stages":"3", "num_warps":"4", "num_ctas":"1"
+        }
+      }
+    }
+})";
+
+  std::unique_ptr<VerifiedHloModule> module = RunConvertTritonGemmConfig(hlo);
+  EXPECT_THAT(RunFileCheck(module->ToString(), R"(
+    CHECK: ROOT{{.*}}fusion(
+    CHECK-SAME: "block_level_fusion_config"
+    CHECK-SAME: "group_size":0
+)"),
+              IsOkAndHolds(true));
+}
+
+TEST_F(ConvertTritonGemmConfigTest,
+       NoGroupSizeSwizzlingWhenOperandsFitInL2Cache) {
+  absl::string_view hlo = R"(
+dot {
+  lhs = bf16[2048,128] parameter(0)
+  rhs = bf16[128,2048] parameter(1)
+  ROOT dot = bf16[2048,2048] dot(lhs, rhs),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY entry {
+  p0 = bf16[2048,128] parameter(0)
+  p1 = bf16[128,2048] parameter(1)
+  ROOT fusion = bf16[2048,2048] fusion(p0, p1),
+    kind=kCustom, calls=dot, backend_config={
+      "fusion_backend_config": {
+        "kind":"__triton_gemm", "triton_gemm_config": {
+          "block_m":"64", "block_n":"64", "block_k":"32",
+          "num_stages":"3", "num_warps":"4", "num_ctas":"1"
+        }
+      }
+    }
+})";
+
+  std::unique_ptr<VerifiedHloModule> module = RunConvertTritonGemmConfig(hlo);
+  EXPECT_THAT(RunFileCheck(module->ToString(), R"(
+    CHECK: ROOT{{.*}}fusion(
+    CHECK-SAME: "block_level_fusion_config"
+    CHECK-SAME: "group_size":0
+)"),
+              IsOkAndHolds(true));
+}
+
 }  // namespace
 }  // namespace xla::gpu
