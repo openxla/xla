@@ -41,7 +41,7 @@ using ::testing::UnorderedElementsAre;
 
 class ConditionalCanonicalizerTest : public HloHardwareIndependentTestBase {
  protected:
-  ConditionalCanonicalizerTest() {}
+  ConditionalCanonicalizerTest() = default;
 };
 
 TEST_F(ConditionalCanonicalizerTest, DenseArrayConditionalRewrite) {

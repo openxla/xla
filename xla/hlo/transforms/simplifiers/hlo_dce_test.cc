@@ -50,7 +50,7 @@ namespace m = ::xla::match;
 
 class HloDceTest : public HloHardwareIndependentTestBase {
  protected:
-  HloDceTest() {}
+  HloDceTest() = default;
 
   // Returns whether the given instruction exists in the given computation.
   bool HasInstruction(const HloComputation& computation,
