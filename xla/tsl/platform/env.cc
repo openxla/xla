@@ -624,9 +624,9 @@ ThreadPoolInterface* Env::CreateThreadPoolInterface(
       EigenEnvironment(this, thread_options, "tf_" + name));
 }
 
-Thread::~Thread() {}
+Thread::~Thread() = default;
 
-EnvWrapper::~EnvWrapper() {}
+EnvWrapper::~EnvWrapper() = default;
 
 absl::Status ReadFileToString(Env* env, const std::string& fname,
                               std::string* data) {

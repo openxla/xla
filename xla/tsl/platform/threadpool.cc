@@ -86,7 +86,7 @@ ThreadPool::ThreadPool(ThreadPoolInterface* user_threadpool) : executor_(this) {
       underlying_threadpool_, underlying_threadpool_->NumThreads(), nullptr);
 }
 
-ThreadPool::~ThreadPool() {}
+ThreadPool::~ThreadPool() = default;
 
 void ThreadPool::Schedule(std::function<void()> fn) {
   CHECK(fn != nullptr);

@@ -35,26 +35,26 @@ namespace {
 
 class Base1 {
  public:
-  virtual ~Base1() {}
+  virtual ~Base1() = default;
   int pad_;
 };
 
 class Base2 {
  public:
-  virtual ~Base2() {}
+  virtual ~Base2() = default;
   int yetotherpad_;
 };
 
 class Derived : public Base1, public Base2 {
  public:
-  ~Derived() override {}
+  ~Derived() override = default;
   int evenmorepad_;
 };
 
 class CopyNoAssign {
  public:
   explicit CopyNoAssign(int value) : foo_(value) {}
-  CopyNoAssign(const CopyNoAssign& other) : foo_(other.foo_) {}
+  CopyNoAssign(const CopyNoAssign& other) : = default;
   int foo_;
 
  private:
@@ -562,8 +562,8 @@ class BenchmarkFactory {
 // A simple type we use with the factory.
 class BenchmarkType {
  public:
-  BenchmarkType() {}
-  virtual ~BenchmarkType() {}
+  BenchmarkType() = default;
+  virtual ~BenchmarkType() = default;
   virtual void DoWork() TF_ATTRIBUTE_NOINLINE {}
 
  private:
