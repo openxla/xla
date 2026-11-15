@@ -821,6 +821,118 @@ ENTRY main {
             LayoutUtil::MakeLayout({1, 2, 0}, {Tile{{8, 128}}}));
 }
 
+TEST_F(HostOffloadLegalizeTest, MoveCopyOverLayoutPreservingDynamicSlice) {
+  absl::string_view hlo_string = R"(
+HloModule jit_f, entry_computation_layout={(f32[8,16,32]{2,1,0:S(5)}, s32[])->f32[1,16,32]{2,0,1}}
+
+ENTRY main {
+  stack = f32[8,16,32]{2,1,0} parameter(0)
+  i = s32[] parameter(1)
+  zero = s32[] constant(0)
+  copy = f32[8,16,32]{2,0,1} copy(stack)
+  layer = f32[1,16,32]{2,0,1} dynamic-slice(copy, i, zero, zero), dynamic_slice_sizes={1,16,32}
+  to_device = f32[1,16,32]{2,0,1} custom-call(layer), custom_call_target="MoveToDevice"
+  ROOT result = f32[1,16,32]{2,0,1} negate(to_device)
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloadLegalize(module.get()));
+
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(FindInstruction(module.get(), "copy"), nullptr);
+  HloInstruction* layer = FindInstruction(module.get(), "layer");
+  ASSERT_NE(layer, nullptr);
+  EXPECT_EQ(layer->operand(0), FindInstruction(module.get(), "stack"));
+  EXPECT_EQ(layer->shape().layout(), LayoutUtil::MakeLayout({2, 1, 0}));
+  // The copy is moved after the slice and still produces its original layout.
+  const HloInstruction* new_copy =
+      module->entry_computation()->root_instruction()->operand(0);
+  ASSERT_EQ(new_copy->opcode(), HloOpcode::kCopy);
+  EXPECT_EQ(new_copy->shape().layout(), LayoutUtil::MakeLayout({2, 0, 1}));
+  const HloInstruction* to_device = new_copy->operand(0);
+  EXPECT_TRUE(to_device->IsCustomCall(
+      memory_annotations::kMoveToDeviceCustomCallTarget));
+  EXPECT_EQ(to_device->shape().layout(), LayoutUtil::MakeLayout({2, 1, 0}));
+  EXPECT_EQ(to_device->operand(0), layer);
+}
+
+// A backend may let a dynamic-slice change the layout. The copy moved after
+// such a slice must produce the layout assigned to the slice, not the layout
+// of the copy, because that is the layout the users of the slice expect.
+TEST_F(HostOffloadLegalizeTest, MoveCopyOverLayoutChangingDynamicSlice) {
+  absl::string_view hlo_string = R"(
+HloModule jit_f, entry_computation_layout={(f32[8,16,32]{2,1,0:S(5)}, s32[])->f32[1,16,32]{1,0,2}}
+
+ENTRY main {
+  stack = f32[8,16,32]{2,1,0} parameter(0)
+  i = s32[] parameter(1)
+  zero = s32[] constant(0)
+  copy = f32[8,16,32]{2,0,1} copy(stack)
+  layer = f32[1,16,32]{1,0,2} dynamic-slice(copy, i, zero, zero), dynamic_slice_sizes={1,16,32}
+  to_device = f32[1,16,32]{1,0,2} custom-call(layer), custom_call_target="MoveToDevice"
+  ROOT result = f32[1,16,32]{1,0,2} negate(to_device)
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloadLegalize(module.get()));
+
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(FindInstruction(module.get(), "copy"), nullptr);
+  // The slice reads the offloaded array in its layout and preserves it.
+  HloInstruction* layer = FindInstruction(module.get(), "layer");
+  ASSERT_NE(layer, nullptr);
+  EXPECT_EQ(layer->operand(0), FindInstruction(module.get(), "stack"));
+  EXPECT_EQ(layer->shape().layout(), LayoutUtil::MakeLayout({2, 1, 0}));
+  // The user of the slice still gets the layout assigned to the slice.
+  const HloInstruction* new_copy =
+      module->entry_computation()->root_instruction()->operand(0);
+  ASSERT_EQ(new_copy->opcode(), HloOpcode::kCopy);
+  EXPECT_EQ(new_copy->shape().layout(), LayoutUtil::MakeLayout({1, 0, 2}));
+  const HloInstruction* to_device = new_copy->operand(0);
+  EXPECT_TRUE(to_device->IsCustomCall(
+      memory_annotations::kMoveToDeviceCustomCallTarget));
+  EXPECT_EQ(to_device->shape().layout(), LayoutUtil::MakeLayout({2, 1, 0}));
+  EXPECT_EQ(to_device->operand(0), layer);
+}
+
+TEST_F(HostOffloadLegalizeTest, MoveCopyOverLayoutChangingSlice) {
+  absl::string_view hlo_string = R"(
+HloModule jit_f, entry_computation_layout={(f32[8,16,32]{2,1,0:S(5)})->f32[1,16,32]{1,0,2}}
+
+ENTRY main {
+  stack = f32[8,16,32]{2,1,0} parameter(0)
+  copy = f32[8,16,32]{2,0,1} copy(stack)
+  layer = f32[1,16,32]{1,0,2} slice(copy), slice={[3:4], [0:16], [0:32]}
+  to_device = f32[1,16,32]{1,0,2} custom-call(layer), custom_call_target="MoveToDevice"
+  ROOT result = f32[1,16,32]{1,0,2} negate(to_device)
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloadLegalize(module.get()));
+
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(FindInstruction(module.get(), "copy"), nullptr);
+  HloInstruction* layer = FindInstruction(module.get(), "layer");
+  ASSERT_NE(layer, nullptr);
+  EXPECT_EQ(layer->operand(0), FindInstruction(module.get(), "stack"));
+  EXPECT_EQ(layer->shape().layout(), LayoutUtil::MakeLayout({2, 1, 0}));
+  const HloInstruction* new_copy =
+      module->entry_computation()->root_instruction()->operand(0);
+  ASSERT_EQ(new_copy->opcode(), HloOpcode::kCopy);
+  EXPECT_EQ(new_copy->shape().layout(), LayoutUtil::MakeLayout({1, 0, 2}));
+  const HloInstruction* to_device = new_copy->operand(0);
+  EXPECT_TRUE(to_device->IsCustomCall(
+      memory_annotations::kMoveToDeviceCustomCallTarget));
+  EXPECT_EQ(to_device->shape().layout(), LayoutUtil::MakeLayout({2, 1, 0}));
+  EXPECT_EQ(to_device->operand(0), layer);
+}
+
 }  // namespace
 
 }  // namespace xla

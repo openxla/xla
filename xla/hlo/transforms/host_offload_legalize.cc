@@ -563,17 +563,22 @@ absl::Status MoveCopyDown(
   HloInstruction* copy_to_move = copy_to_move_instruction_and_index.instruction;
   VLOG(5) << "Moving copy: " << copy_to_move->ToString();
   struct InstructionAndShapes {
-    InstructionAndShapes(InstructionAndIndex idx, Shape s_before, Shape s_after)
+    InstructionAndShapes(InstructionAndIndex idx, Shape s_before, Shape s_after,
+                         Layout original_layout)
         : instruction_and_index(idx),
           shape_before_copy(s_before),
-          shape_after_copy(s_after) {}
+          shape_after_copy(s_after),
+          original_layout(original_layout) {}
     InstructionAndIndex instruction_and_index;
     Shape shape_before_copy;
     Shape shape_after_copy;
+    // The layout the instruction had (at the given index) before its layout was
+    // updated here.
+    Layout original_layout;
   };
   std::vector<InstructionAndShapes> stack = {InstructionAndShapes(
       copy_to_move_instruction_and_index, copy_to_move->operand(0)->shape(),
-      copy_to_move->shape())};
+      copy_to_move->shape(), copy_to_move->shape().layout())};
   while (!stack.empty()) {
     InstructionAndShapes current_instruction_and_shapes = stack.back();
     InstructionAndIndex current_instruction_and_index =
@@ -600,6 +605,9 @@ absl::Status MoveCopyDown(
       Shape shape_after_copy = current_instruction_and_shapes.shape_after_copy;
       VLOG(5) << "Evaluating successor: " << instruction->ToString();
       const int index = instruction_and_index.index;
+      const Layout original_layout =
+          index == -1 ? instruction->shape().layout()
+                      : instruction->shape().tuple_shapes(index).layout();
       if (instruction->opcode() == HloOpcode::kBitcast) {
         std::pair<Shape, Shape> new_shapes;
         ABSL_ASSIGN_OR_RETURN(
@@ -622,7 +630,18 @@ absl::Status MoveCopyDown(
         shape_before_copy = new_shape_before_copy;
 
         Shape new_shape_after_copy = instruction->shape();
-        *new_shape_after_copy.mutable_layout() = shape_after_copy.layout();
+        // A backend may let a Slice/DynamicSlice change the layout (the GPU
+        // layout assignment does, so that a consumer gets the layout it
+        // requires from the slice instead of from the sliced operand). The
+        // slice is made layout-preserving below, so the copy moved after it
+        // has to produce the layout that was assigned to the slice, which is
+        // the one the users of the slice expect.
+        const bool slice_changes_layout =
+            instruction->shape().layout().minor_to_major() !=
+            current_instruction_and_shapes.original_layout.minor_to_major();
+        if (!slice_changes_layout) {
+          *new_shape_after_copy.mutable_layout() = shape_after_copy.layout();
+        }
         pass->UpdateLayout(&new_shape_after_copy);
         VLOG(2) << absl::StreamFormat(
             " Encountered %s \"%s\", updating shape after copy from "
@@ -731,7 +750,7 @@ absl::Status MoveCopyDown(
         }
       }
       stack.emplace_back(instruction_and_index, shape_before_copy,
-                         shape_after_copy);
+                         shape_after_copy, original_layout);
     }
   }
   VLOG(2) << absl::StreamFormat("Removing copy \"%s\"",
