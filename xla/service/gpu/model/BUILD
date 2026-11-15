@@ -158,7 +158,6 @@ xla_test(
     name = "analytical_latency_estimator_test",
     srcs = ["analytical_latency_estimator_test.cc"],
     backends = [
-        "v100",
         "a100",
         "h100",
         "b200",

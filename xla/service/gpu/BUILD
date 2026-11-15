@@ -2682,7 +2682,6 @@ xla_test(
         "nvptx_compiler_test.cc",
     ],
     backends = [
-        "v100",
         "a100",
         "b200",
     ],
@@ -3647,7 +3646,6 @@ xla_test(
     name = "dot_algorithm_support_test",
     srcs = ["dot_algorithm_support_test.cc"],
     backends = [
-        "v100",
         "a100",
         "h100",
         "b200",
