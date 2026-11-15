@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/container/node_hash_map.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -307,13 +308,32 @@ class ComputeRelativeLocation {
 
   // Return the relative locations (defined above) of range2 in relation to
   // instructions in range1. Return kNoOverlap if range2 is outside of range1.
-  Relation ComputeBetweenLiveRangeRegions(const LiveRangeRegions& range1,
-                                          const LiveRangeRegions& range2);
+  // Returns the relation accumulated so far as soon as `stop` holds for it.
+  // The orders of the instructions not visited yet are then not forced, so
+  // such a result only decides interference: do not call
+  // AddControlDependenceForUnorderedOps after it.
+  Relation ComputeBetweenLiveRangeRegions(
+      const LiveRangeRegions& range1, const LiveRangeRegions& range2,
+      absl::FunctionRef<bool(const Relation&)> stop);
 
   // Return whether control dependences, if exist, are added successfully.
   bool AddControlDependenceForUnorderedOps();
 
+  // Returns true only if `interferes` holds for the relations that
+  // ComputeBetweenLiveRangeRegions(src, dest) and then
+  // ComputeBetweenLiveRangeRegions(dest, src) would return. `interferes` must
+  // depend only on the overlap and the interception of each relation and be
+  // monotone in them. Uses only the instruction pairs whose order no saved or
+  // forced order can change. It saves and forces nothing, so the relations
+  // can be computed on this object afterwards.
+  bool SurelyInterferes(
+      const LiveRangeRegions& src, const LiveRangeRegions& dest,
+      absl::FunctionRef<bool(const Relation& rel1, const Relation& rel2)>
+          interferes);
+
  private:
+  friend class ComputeRelativeLocationTestPeer;
+
   enum ComputeStatus {
     kFullyComputed,
     kPartiallyComputed,
@@ -350,9 +370,22 @@ class ComputeRelativeLocation {
                               Relation::RuntimeOrder relation,
                               bool is_unordered_originally = false);
 
+  // ComputeBetweenInstructionEntries, given the order that
+  // ComputeRuntimeOrdering(entry2.first, entry1.first) returns.
+  Relation ComputeBetweenInstructionEntries(const InstructionEntry& entry1,
+                                            const InstructionEntry& entry2,
+                                            bool instr2_can_modify,
+                                            Relation::RuntimeOrder order);
+
   // Compute the runtime ordering constraints between two instructions.
   Relation::RuntimeOrder ComputeRuntimeOrdering(HloInstruction* instr1,
                                                 HloInstruction* instr2);
+
+  // Returns the order that ComputeRuntimeOrdering(instr1, instr2) returns in
+  // every state of this object, or nullopt if a saved or forced order can
+  // change it.
+  std::optional<Relation::RuntimeOrder> StateIndependentRuntimeOrdering(
+      const HloInstruction* instr1, const HloInstruction* instr2) const;
 
   HloOrdering* ordering_;
   const AliasInfo* alias_info_;
@@ -364,6 +397,11 @@ class ComputeRelativeLocation {
       HloComputation*,
       absl::flat_hash_map<HloInstruction*, std::vector<HloInstruction*>>>
       ctrl_deps_;
+  // Set during SurelyInterferes: ComputeRuntimeOrdering then saves nothing,
+  // returns StateIndependentRuntimeOrdering, and reports a pair without one
+  // as unordered and in state_dependent_order_seen_.
+  bool state_independent_orders_only_ = false;
+  bool state_dependent_order_seen_ = false;
 };
 // Class which tracks the HLO values within each HLO buffer in the module
 // during copy removal.
@@ -522,7 +560,9 @@ class CopyRemover {
   }
 
   // Splices the entire linked list with 'head' as its head right after the
-  // node 'insert_after' in another linked list.
+  // node 'insert_after' in another linked list. The caller must call
+  // RemoveCopyValue, which drops the cached live ranges, before the next
+  // ValuesInterfere.
   void SpliceAfter(ValueNode* head, ValueNode* insert_after);
 
   enum CombineLiveRangeOption {
@@ -550,6 +590,12 @@ class CopyRemover {
   std::string ToString() const;
 
  private:
+  friend class CopyRemoverTestPeer;
+
+  // Returns ComputeLiveRangeRegions(node), built at most once between two
+  // elisions. The reference is valid until the next RemoveCopyValue.
+  const LiveRangeRegions& CachedLiveRangeRegions(const ValueNode* node);
+
   const HloDataflowAnalysis& dataflow_;
   // Backend specific aliasing information.
   const AliasInfo* alias_info_;
@@ -576,6 +622,14 @@ class CopyRemover {
   std::optional<int64_t> view_color_;
   std::deque<HloUse> view_uses_;
   absl::flat_hash_set<const HloUse*> view_uses_by_pointer_;
+
+  // Live ranges built by CachedLiveRangeRegions since the last elision, keyed
+  // by the node they start from. Only an elision changes the value lists or
+  // their uses, and each elision ends in RemoveCopyValue, which drops them. A
+  // value read by many copies that cannot be elided thus gets its live range
+  // built once for all of their checks. node_hash_map keeps the src range
+  // valid while ValuesInterfere adds the dest range.
+  absl::node_hash_map<const ValueNode*, LiveRangeRegions> live_ranges_;
 };
 };  // namespace xla
 
