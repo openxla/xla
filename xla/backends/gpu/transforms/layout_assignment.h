@@ -80,7 +80,10 @@ class GpuLayoutAssignment : public LayoutAssignment {
   // On GPU a slice or dynamic-slice may produce its result in a layout that
   // differs from the layout of the sliced operand. This lets a consumer that
   // requires a particular layout get it from the slice itself, instead of
-  // forcing that layout onto the (possibly much larger) sliced operand.
+  // forcing that layout onto the (possibly much larger) sliced operand. The
+  // layout is still passed on to the sliced operand, as a non-mandatory
+  // preference, if that operand can be produced in any layout at no cost and is
+  // only used by slices (see ChooseOperandLayoutFromOutputLayout).
   bool InstructionCanChangeLayoutInstance(
       const HloInstruction* instruction) override;
 

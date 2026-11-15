@@ -984,6 +984,30 @@ bool GpuLayoutAssignment::InstructionCanChangeLayoutInstance(
   return LayoutAssignment::InstructionCanChangeLayoutInstance(instruction);
 }
 
+// Returns true if `operand`, the sliced operand of a slice or dynamic-slice,
+// can be produced in any layout at no cost, and choosing its layout affects
+// nothing but the slices of it:
+//  - it is materialized directly in the assigned layout (constant, iota,
+//    broadcast) and has no operand of rank > 1 that would inherit the layout.
+//    This excludes parameters and loop state, whose layout is fixed elsewhere,
+//    and elementwise producers, which pass the layout on to their operands;
+//  - all of its users slice it.
+static bool SlicedOperandLayoutIsFree(const HloInstruction* operand) {
+  if (!HloPredicateIsOp<HloOpcode::kConstant, HloOpcode::kIota,
+                        HloOpcode::kBroadcast>(operand)) {
+    return false;
+  }
+  if (absl::c_any_of(operand->operands(), [](const HloInstruction* input) {
+        return !input->shape().IsArray() ||
+               input->shape().dimensions().size() > 1;
+      })) {
+    return false;
+  }
+  return absl::c_all_of(operand->users(), [&](const HloInstruction* user) {
+    return IsSliceOrDynamicSlice(user) && user->operand(0) == operand;
+  });
+}
+
 // GPU specific layout alignment for reshapes.
 // ShapeUtil::AlignLayouts puts 1-sized dimensions at the end of minor_to_major
 // (most major), which is good for TPU to avoid padding. But on GPU it can
@@ -1101,6 +1125,18 @@ GpuLayoutAssignment::ChooseOperandLayoutFromOutputLayout(
   const HloInstruction* operand = instruction->operand(operand_no);
   CHECK(instruction->shape().IsArray());
   CHECK(operand->shape().IsArray());
+  // A slice provides the layout required by its consumers itself, so that the
+  // layout does not have to be forced onto the sliced operand, which may be
+  // much larger and have a fixed layout (e.g. a parameter or loop state). The
+  // only exception is an operand whose layout is free: preferring the layout
+  // of the slice result for it keeps the slice layout-preserving. The caller
+  // applies this as a non-mandatory constraint.
+  if (IsSliceOrDynamicSlice(instruction) && operand_no == 0) {
+    return SlicedOperandLayoutIsFree(operand)
+               ? std::make_unique<Layout>(output_layout)
+               : nullptr;
+  }
+
   if (!ShapeUtil::IsScalar(operand->shape()) &&
       operand->shape().dimensions().size() ==
           instruction->shape().dimensions().size() &&
@@ -1152,9 +1188,10 @@ GpuLayoutAssignment::ChooseOutputLayoutFromOperandLayout(
 
   // A slice can change the layout, but keeping the layout of the sliced
   // operand is the cheapest choice unless a consumer needs a different one.
-  // The reverse direction is deliberately not handled in
-  // ChooseOperandLayoutFromOutputLayout: a layout required by a consumer of
-  // the slice is provided by the slice and does not reach the sliced operand.
+  // The reverse direction is restricted in ChooseOperandLayoutFromOutputLayout:
+  // a layout required by a consumer of the slice is provided by the slice and
+  // reaches the sliced operand only as a preference, and only if the layout of
+  // that operand is free.
   if (IsSliceOrDynamicSlice(user) && operand_no == 0) {
     return std::make_unique<Layout>(operand_layout);
   }

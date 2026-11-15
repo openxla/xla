@@ -1652,6 +1652,168 @@ TEST_F(LayoutAssignmentTest, SliceKeepsOperandLayoutWithoutOtherRequirement) {
       << module->ToString();
 }
 
+TEST_F(LayoutAssignmentTest, DynamicSliceOfFreeOperandKeepsOperandLayout) {
+  // The sliced array is produced in whatever layout is assigned to it and is
+  // only used by the slice, so it takes the layout the all-gather needs and the
+  // slice does not have to change the layout.
+  for (absl::string_view weights :
+       {"f32[8,16,32]{2,1,0} broadcast(scalar), dimensions={}",
+        "f32[8,16,32]{2,1,0} broadcast(vector), dimensions={1}",
+        "f32[8,16,32]{2,1,0} iota(), iota_dimension=1",
+        "f32[8,16,32]{2,1,0} constant({...})"}) {
+    SCOPED_TRACE(weights);
+    const std::string hlo_text = absl::Substitute(
+        R"(
+    HloModule module
+
+    ENTRY main {
+      i = s32[] parameter(0)
+      scalar = f32[] parameter(1)
+      vector = f32[16]{0} parameter(2)
+      weights = $0
+      zero = s32[] constant(0)
+      layer = f32[1,16,32]{2,1,0} dynamic-slice(weights, i, zero, zero), dynamic_slice_sizes={1,16,32}
+      ROOT gathered = f32[1,16,64]{2,1,0} all-gather(layer), dimensions={2}, replica_groups={{0,1}}
+    })",
+        weights);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(hlo_text));
+
+    ComputationLayout computation_layout(
+        module->entry_computation()->ComputeProgramShape(),
+        /*ignore_layouts=*/false);
+    GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                          default_device_description_);
+    EXPECT_THAT(layout_assignment.Run(module.get()),
+                absl_testing::IsOkAndHolds(true));
+
+    const HloInstruction* layer = FindInstruction(module.get(), "layer");
+    ASSERT_THAT(layer, NotNull());
+    EXPECT_EQ(layer->operand(0), FindInstruction(module.get(), "weights"))
+        << module->ToString();
+    EXPECT_THAT(layer->operand(0)->shape().layout().minor_to_major(),
+                ::testing::ElementsAre(1, 0, 2));
+    EXPECT_THAT(layer->shape().layout().minor_to_major(),
+                ::testing::ElementsAre(1, 0, 2));
+    const HloInstruction* gathered = FindInstruction(module.get(), "gathered");
+    ASSERT_THAT(gathered, NotNull());
+    EXPECT_EQ(gathered->operand(0), layer) << module->ToString();
+    EXPECT_EQ(CountCopiesOfSize(module.get(), 8 * 16 * 32), 0)
+        << module->ToString();
+    EXPECT_EQ(CountCopiesOfSize(module.get(), 16 * 32), 0)
+        << module->ToString();
+  }
+}
+
+TEST_F(LayoutAssignmentTest, SliceOfFreeOperandKeepsOperandLayout) {
+  const char* hlo_text = R"(
+  HloModule module
+
+  ENTRY main {
+    weights = f32[8,16,32]{2,1,0} constant({...})
+    layer = f32[1,16,32]{2,1,0} slice(weights), slice={[3:4], [0:16], [0:32]}
+    ROOT gathered = f32[1,16,64]{2,1,0} all-gather(layer), dimensions={2}, replica_groups={{0,1}}
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                        default_device_description_);
+  EXPECT_THAT(layout_assignment.Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  const HloInstruction* layer = FindInstruction(module.get(), "layer");
+  ASSERT_THAT(layer, NotNull());
+  EXPECT_EQ(layer->operand(0)->opcode(), HloOpcode::kConstant)
+      << module->ToString();
+  EXPECT_THAT(layer->operand(0)->shape().layout().minor_to_major(),
+              ::testing::ElementsAre(1, 0, 2));
+  EXPECT_THAT(layer->shape().layout().minor_to_major(),
+              ::testing::ElementsAre(1, 0, 2));
+  EXPECT_EQ(CountCopiesOfSize(module.get(), 8 * 16 * 32), 0)
+      << module->ToString();
+  EXPECT_EQ(CountCopiesOfSize(module.get(), 16 * 32), 0) << module->ToString();
+}
+
+TEST_F(LayoutAssignmentTest, DynamicSliceOfOperandWithOtherUserChangesLayout) {
+  // The sliced array has a user that is not a slice, so the layout needed by
+  // the all-gather is provided by the slice and does not reach the array.
+  const char* hlo_text = R"(
+  HloModule module
+
+  ENTRY main {
+    i = s32[] parameter(0)
+    scalar = f32[] parameter(1)
+    weights = f32[8,16,32]{2,1,0} broadcast(scalar), dimensions={}
+    zero = s32[] constant(0)
+    layer = f32[1,16,32]{2,1,0} dynamic-slice(weights, i, zero, zero), dynamic_slice_sizes={1,16,32}
+    gathered = f32[1,16,64]{2,1,0} all-gather(layer), dimensions={2}, replica_groups={{0,1}}
+    neg = f32[8,16,32]{2,1,0} negate(weights)
+    ROOT result = (f32[1,16,64]{2,1,0}, f32[8,16,32]{2,1,0}) tuple(gathered, neg)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                        default_device_description_);
+  EXPECT_THAT(layout_assignment.Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  const HloInstruction* layer = FindInstruction(module.get(), "layer");
+  ASSERT_THAT(layer, NotNull());
+  EXPECT_EQ(layer->operand(0)->opcode(), HloOpcode::kBroadcast)
+      << module->ToString();
+  EXPECT_THAT(layer->operand(0)->shape().layout().minor_to_major(),
+              ::testing::ElementsAre(2, 1, 0));
+  EXPECT_THAT(layer->shape().layout().minor_to_major(),
+              ::testing::ElementsAre(1, 0, 2));
+  EXPECT_EQ(CountCopiesOfSize(module.get(), 8 * 16 * 32), 0)
+      << module->ToString();
+}
+
+TEST_F(LayoutAssignmentTest, DynamicSliceOfElementwiseOperandChangesLayout) {
+  // An elementwise producer would pass the layout on to its own operand, here
+  // a parameter with a fixed layout, so the slice provides the layout.
+  const char* hlo_text = R"(
+  HloModule module
+
+  ENTRY main {
+    p = f32[8,16,32]{2,1,0} parameter(0)
+    i = s32[] parameter(1)
+    weights = f32[8,16,32]{2,1,0} negate(p)
+    zero = s32[] constant(0)
+    layer = f32[1,16,32]{2,1,0} dynamic-slice(weights, i, zero, zero), dynamic_slice_sizes={1,16,32}
+    ROOT gathered = f32[1,16,64]{2,1,0} all-gather(layer), dimensions={2}, replica_groups={{0,1}}
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                        default_device_description_);
+  EXPECT_THAT(layout_assignment.Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  const HloInstruction* layer = FindInstruction(module.get(), "layer");
+  ASSERT_THAT(layer, NotNull());
+  EXPECT_EQ(layer->operand(0)->opcode(), HloOpcode::kNegate)
+      << module->ToString();
+  EXPECT_THAT(layer->operand(0)->shape().layout().minor_to_major(),
+              ::testing::ElementsAre(2, 1, 0));
+  EXPECT_THAT(layer->shape().layout().minor_to_major(),
+              ::testing::ElementsAre(1, 0, 2));
+  EXPECT_EQ(CountCopiesOfSize(module.get(), 8 * 16 * 32), 0)
+      << module->ToString();
+}
+
 struct ScaledDotLayoutTestCase {
   std::string name;
   // Shapes of lhs, rhs, lhs_scale, rhs_scale and the output, followed by the
