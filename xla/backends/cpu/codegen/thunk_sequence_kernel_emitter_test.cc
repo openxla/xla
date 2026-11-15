@@ -26,6 +26,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/attributes.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -62,6 +63,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/kernel_c_api.h"
 #include "xla/backends/cpu/runtime/kernel_thunk.h"
+#include "xla/backends/cpu/runtime/rng_state_resource.h"
 #include "xla/backends/cpu/runtime/rng_state_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/while_thunk.h"
@@ -310,9 +312,9 @@ class ThunkSequenceKernelEmitterTest : public ::testing::Test {
     return Run(thunks, ir, Parameters(thunks));
   }
 
-  absl::StatusOr<bool> Run(const ThunkSequence& thunks,
-                           absl::Span<const absl::string_view> ir,
-                           const KernelSpec::Buffers& parameters) {
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI absl::StatusOr<bool> Run(
+      const ThunkSequence& thunks, absl::Span<const absl::string_view> ir,
+      const KernelSpec::Buffers& parameters) {
     std::vector<LlvmKernelSource> sources;
     absl::flat_hash_set<std::string> names;
     for (absl::string_view kernel : ir) {
@@ -820,7 +822,8 @@ TEST_F(ThunkSequenceKernelEmitterTest, CanEmitRejectsUnsupportedThunkKind) {
   BufferAllocation::Slice state(&allocation_, 0, 16);
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<RngGetAndUpdateStateThunk> rng,
-      RngGetAndUpdateStateThunk::Create({"rng"}, state, /*delta=*/1));
+      RngGetAndUpdateStateThunk::Create({"rng"}, state, /*delta=*/1,
+                                        std::make_shared<RngStateResource>()));
   std::vector<std::unique_ptr<Thunk>> thunks;
   thunks.push_back(std::move(rng));
   ThunkSequence sequence = Sequence(std::move(thunks));

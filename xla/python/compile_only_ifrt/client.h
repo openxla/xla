@@ -24,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -199,7 +200,7 @@ class CompileOnlyIfRtClient final
       std::optional<absl::Span<const int64_t>> byte_strides,
       xla::ifrt::ShardingRef sharding, xla::ifrt::LayoutRef layout,
       HostBufferSemantics semantics,
-      std::function<void()> on_done_with_host_buffer) override {
+      std::shared_ptr<const void> host_buffer_hold) override {
     return Unimplemented(
         "MakeArrayFromHostBuffer not available with compile-only client.");
   }
@@ -209,6 +210,11 @@ class CompileOnlyIfRtClient final
   absl::StatusOr<std::vector<ifrt::ArrayRef>> MakeArraysFromHostBufferShards(
       absl::Span<MakeArraysFromHostBufferShardsSpec> specs,
       HostBufferSemantics semantics) override {
+    for (MakeArraysFromHostBufferShardsSpec& spec : specs) {
+      for (auto& [shard_indices, host_buffer] : spec.buffers) {
+        host_buffer.on_done.reset();
+      }
+    }
     return Unimplemented(
         "MakeArraysFromHostBufferShards not available with compile-only "
         "client.");
@@ -374,7 +380,7 @@ class CompileOnlyIfRtClient final
   }
 
   absl::StatusOr<ifrt::DeviceListRef> MakeDeviceList(
-      absl::Span<ifrt::Device* const> devices) const override {
+      absl::Span<ifrt::Device* absl_nonnull const> devices) const override {
     return ifrt::BasicDeviceList::Create(devices);
   }
 
@@ -382,7 +388,8 @@ class CompileOnlyIfRtClient final
 
   absl::StatusOr<std::vector<tsl::Future<ifrt::LoadedExecutableRef>>> Load(
       absl::Span<const ifrt::ExecutableRef> executables,
-      absl::Span<std::unique_ptr<ifrt::LoadOptions>> options) override {
+      absl::Span<absl_nonnull std::unique_ptr<ifrt::LoadOptions>> options)
+      override {
     return Unimplemented("Load not available with compile-only client.");
   }
 
@@ -396,7 +403,8 @@ class CompileOnlyIfRtClient final
   }
 
   absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> GetDefaultPjRtLayout(
-      ifrt::DType dtype, absl::Span<const int64_t> dims, ifrt::Device* device,
+      ifrt::DType dtype, absl::Span<const int64_t> dims,
+      ifrt::Device* absl_nonnull device,
       ifrt::MemoryKind memory_kind) const override {
     if (memory_kind == ifrt::MemoryKind(UnpinnedHostMemorySpace::kKind)) {
       return std::make_shared<PjRtLayout>(
@@ -422,7 +430,7 @@ class CompileOnlyIfRtClient final
 
   absl::StatusOr<std::unique_ptr<ifrt::DeviceAttributeSubscription>>
   SubscribeToAttributeChanges(
-      absl::Span<ifrt::Device* const> devices,
+      absl::Span<ifrt::Device* absl_nonnull const> devices,
       std::optional<absl::Span<const std::string>> attribute_names,
       ifrt::OnDeviceAttributeChangeCallback callback) override {
     return Unimplemented(

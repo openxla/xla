@@ -911,50 +911,75 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
                      << "but got " << opcode;
         }
       } else {
+        TF_RET_CHECK(proto.operand_ids_size() == 4)
+            << "In-place " << proto.opcode()
+            << " instruction should have 4 operands but sees "
+            << proto.operand_ids_size();
         std::vector<std::vector<int64_t>> slice_sizes;
         HloInstruction* input = operands(0);
         HloInstruction* input_start_indices = operands(2);
-        if (input->shape().IsTuple() &&
-            input->shape().tuple_shapes().size() > 1) {
-          slice_sizes.resize(input->shape().tuple_shapes().size());
-        } else {
-          slice_sizes.resize(1);
-        }
+        // The operand shapes determine how dynamic_slice_sizes is split into
+        // slices. Neither has been verified yet, so check them before use.
+        const auto is_nonempty_tuple = [](const Shape& shape) {
+          return shape.IsTuple() && !shape.tuple_shapes().empty();
+        };
+        TF_RET_CHECK(is_nonempty_tuple(input_start_indices->shape()))
+            << proto.name() << " instruction has invalid start indices";
         int proto_index = 0;
         if (input->shape().IsTuple()) {
+          TF_RET_CHECK(absl::c_all_of(
+              input->shape().tuple_shapes(),
+              [](const Shape& shape) { return shape.IsArray(); }))
+              << proto.name() << " instruction has invalid input buffers";
+          TF_RET_CHECK(input_start_indices->shape().tuple_shapes().size() ==
+                       input->shape().tuple_shapes().size())
+              << proto.name() << " instruction has invalid start indices";
+          TF_RET_CHECK(
+              is_nonempty_tuple(input_start_indices->shape().tuple_shapes(0)))
+              << proto.name() << " instruction has invalid start indices";
           if (input_start_indices->shape()
                   .tuple_shapes(0)
                   .tuple_shapes(0)
                   .IsArray()) {
             slice_sizes.resize(input->shape().tuple_shapes().size());
             for (int i = 0; i < input->shape().tuple_shapes().size(); ++i) {
+              TF_RET_CHECK(is_nonempty_tuple(
+                               input_start_indices->shape().tuple_shapes(i)) &&
+                           input_start_indices->shape()
+                               .tuple_shapes(i)
+                               .tuple_shapes(0)
+                               .IsArray())
+                  << proto.name() << " instruction has invalid start indices";
               slice_sizes[i].resize(
                   input->shape().tuple_shapes(i).dimensions().size());
               for (int j = 0;
                    j < input->shape().tuple_shapes(i).dimensions().size();
                    ++j) {
-                CHECK_GE(proto.dynamic_slice_sizes_size(), proto_index);
+                TF_RET_CHECK(proto_index < proto.dynamic_slice_sizes_size());
                 slice_sizes[i][j] = proto.dynamic_slice_sizes(proto_index);
                 proto_index += 1;
               }
             }
           } else {
-            slice_sizes.resize(
-                input->shape().tuple_shapes().size() *
-                ShapeUtil::TupleElementCount(
-                    input_start_indices->shape().tuple_shapes(0)));
+            const int64_t slices_per_buffer = ShapeUtil::TupleElementCount(
+                input_start_indices->shape().tuple_shapes(0));
+            slice_sizes.resize(input->shape().tuple_shapes().size() *
+                               slices_per_buffer);
             int slice_sizes_count = 0;
             for (int i = 0; i < input->shape().tuple_shapes().size(); ++i) {
-              for (int j = 0;
-                   j < ShapeUtil::TupleElementCount(
-                           input_start_indices->shape().tuple_shapes(i));
-                   ++j) {
+              TF_RET_CHECK(
+                  input_start_indices->shape().tuple_shapes(i).IsTuple() &&
+                  ShapeUtil::TupleElementCount(
+                      input_start_indices->shape().tuple_shapes(i)) ==
+                      slices_per_buffer)
+                  << proto.name() << " instruction has invalid start indices";
+              for (int j = 0; j < slices_per_buffer; ++j) {
                 slice_sizes[slice_sizes_count].resize(
                     input->shape().tuple_shapes(i).dimensions().size());
                 for (int k = 0;
                      k < input->shape().tuple_shapes(i).dimensions().size();
                      ++k) {
-                  CHECK_GE(proto.dynamic_slice_sizes_size(), proto_index);
+                  TF_RET_CHECK(proto_index < proto.dynamic_slice_sizes_size());
                   slice_sizes[slice_sizes_count][k] =
                       proto.dynamic_slice_sizes(proto_index);
                   proto_index += 1;
@@ -964,6 +989,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
             }
           }
         } else {
+          TF_RET_CHECK(input->shape().IsArray())
+              << proto.name() << " instruction has an invalid input buffer";
           slice_sizes.resize(
               ShapeUtil::TupleElementCount(input_start_indices->shape()));
           if (input_start_indices->shape().tuple_shapes(0).IsTuple()) {
@@ -972,6 +999,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
                  ++i) {
               slice_sizes[i].resize(input->shape().dimensions().size());
               for (int j = 0; j < input->shape().dimensions().size(); ++j) {
+                TF_RET_CHECK(proto_index < proto.dynamic_slice_sizes_size());
                 slice_sizes[i][j] = proto.dynamic_slice_sizes(proto_index);
                 proto_index += 1;
               }
@@ -980,11 +1008,14 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
             slice_sizes.resize(1);
             slice_sizes[0].resize(input->shape().dimensions().size());
             for (int j = 0; j < input->shape().dimensions().size(); ++j) {
+              TF_RET_CHECK(proto_index < proto.dynamic_slice_sizes_size());
               slice_sizes[0][j] = proto.dynamic_slice_sizes(proto_index);
               proto_index += 1;
             }
           }
         }
+        TF_RET_CHECK(proto_index == proto.dynamic_slice_sizes_size())
+            << proto.name() << " instruction has invalid dynamic slice sizes";
         if (opcode == HloOpcode::kCollectivePermute) {
           instruction = CreateCollectivePermute(
               shape, operands(0), operands(1), operands(2), operands(3),
@@ -1477,8 +1508,24 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
   }
 
   if (proto.has_original_value()) {
-    instruction->set_original_value(
-        OriginalValue::FromProto(proto.original_value()));
+    const OriginalValueProto& original_value = proto.original_value();
+    // Reject shape indices that do not exist in the instruction's shape, as
+    // the size of the original value's tuple tree is otherwise unbounded. The
+    // elements of a synthetic call are ignored.
+    if (!original_value.is_synthetic_call()) {
+      for (const OriginalValueElementProto& element :
+           original_value.elements()) {
+        if (!ShapeUtil::IndexIsValid(instruction->shape(),
+                                     element.shape_index())) {
+          return InvalidArgument(
+              "Original value of instruction %s has shape index {%s} that is "
+              "invalid for shape %s",
+              proto.name(), absl::StrJoin(element.shape_index(), ","),
+              ShapeUtil::HumanString(instruction->shape()));
+        }
+      }
+    }
+    instruction->set_original_value(OriginalValue::FromProto(original_value));
   }
 
   return instruction;
@@ -4662,8 +4709,7 @@ void HloInstruction::PrintExtraAttributes(
       sharding().Print(printer, options.print_metadata());
     });
   }
-  if (options.print_frontend_attributes() &&
-      !frontend_attributes().map().empty()) {
+  if (options.print_frontend_attributes() && has_frontend_attributes()) {
     printer.Next([this](Printer* printer) {
       AppendCat(printer, "frontend_attributes=",
                 FrontendAttributesToString(frontend_attributes()));
@@ -6124,6 +6170,44 @@ void HloInstruction::set_raw_backend_config_string(std::string config_str) {
       std::make_shared<BackendConfigWrapper>(std::move(config_str));
 }
 
+const FrontendAttributes& HloInstruction::frontend_attributes() const {
+  return rare()->frontend_attributes;
+}
+
+bool HloInstruction::has_frontend_attributes() const {
+  return has_rare() && !rare()->frontend_attributes.map().empty();
+}
+
+bool HloInstruction::has_frontend_attribute(absl::string_view key) const {
+  if (!has_frontend_attributes()) {
+    return false;
+  }
+  return frontend_attributes().map().contains(key);
+}
+
+bool HloInstruction::has_any_frontend_attribute(
+    absl::Span<const absl::string_view> keys) const {
+  if (!has_frontend_attributes()) {
+    return false;
+  }
+  const auto& map = frontend_attributes().map();
+  return absl::c_any_of(
+      keys, [&map](absl::string_view key) { return map.contains(key); });
+}
+
+std::optional<std::string> HloInstruction::get_frontend_attribute(
+    absl::string_view key) const {
+  if (!has_frontend_attributes()) {
+    return std::nullopt;
+  }
+  const auto& map = frontend_attributes().map();
+  auto it = map.find(key);
+  if (it == map.end()) {
+    return std::nullopt;
+  }
+  return it->second;
+}
+
 void HloInstruction::set_frontend_attributes(
     FrontendAttributes frontend_attributes) {
   if (!has_rare() && frontend_attributes.map().empty()) {
@@ -6132,12 +6216,21 @@ void HloInstruction::set_frontend_attributes(
   mutable_rare()->frontend_attributes = std::move(frontend_attributes);
 }
 
-void HloInstruction::add_frontend_attributes(
+void HloInstruction::set_frontend_attribute(absl::string_view key,
+                                            absl::string_view value) {
+  (*mutable_rare()->frontend_attributes.mutable_map())[key] = value;
+}
+
+size_t HloInstruction::add_frontend_attributes(
     FrontendAttributes frontend_attributes) {
-  if (!frontend_attributes.map().empty()) {
-    mutable_rare()->frontend_attributes.mutable_map()->insert(
-        frontend_attributes.map().begin(), frontend_attributes.map().end());
+  if (frontend_attributes.map().empty()) {
+    return 0;
   }
+  auto* map = mutable_rare()->frontend_attributes.mutable_map();
+  const size_t size_before = map->size();
+  map->insert(frontend_attributes.map().begin(),
+              frontend_attributes.map().end());
+  return map->size() - size_before;
 }
 
 bool HloInstruction::add_frontend_attribute(absl::string_view key,
@@ -6147,13 +6240,11 @@ bool HloInstruction::add_frontend_attribute(absl::string_view key,
   return it.second;
 }
 
-std::optional<std::string> HloInstruction::get_frontend_attribute(
-    absl::string_view key) const {
-  auto it = rare()->frontend_attributes.map().find(key);
-  if (it == rare()->frontend_attributes.map().end()) {
-    return std::nullopt;
+bool HloInstruction::erase_frontend_attribute(absl::string_view key) {
+  if (!has_frontend_attributes()) {
+    return false;
   }
-  return it->second;
+  return mutable_rare()->frontend_attributes.mutable_map()->erase(key) > 0;
 }
 
 void HloInstruction::set_metadata(const OpMetadata& metadata) {

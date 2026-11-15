@@ -57,17 +57,27 @@ cc_library(
     hdrs = ["raw_pjrt_client.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        ":async_work_runner",
         ":device_event",
-        ":pjrt_client",
+        ":host_memory_allocator",
+        ":pjrt_abi_version",
+        ":pjrt_common",
+        ":pjrt_device_dimensions",
         ":pjrt_executable",
         ":raw_buffer",
+        ":scoped_async_tracking_event",
         "//xla:executable_run_options",
         "//xla:future",
+        "//xla:literal",
+        "//xla/pjrt/c:pjrt_c_api_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_raw_client_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_status_utils",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
         "//xla/runtime:device_id",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/framework:allocator",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
@@ -159,9 +169,10 @@ xla_cc_test(
     deps = [
         ":semaphore",
         "//xla/hlo/testlib:test",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/synchronization",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:env",
     ],
 )
 
@@ -217,6 +228,7 @@ cc_library(
     deps = [
         ":async_work_runner",
         ":device_event",
+        ":dynamic_pad_to_static",
         ":dynamic_shapes",
         ":host_callback",
         ":host_memory_spaces",
@@ -326,6 +338,37 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "dynamic_pad_to_static",
+    srcs = ["dynamic_pad_to_static.cc"],
+    hdrs = ["dynamic_pad_to_static.h"],
+    visibility = internal_visibility([
+        ":friends",
+    ]),
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla/hlo/analysis:hlo_dataflow_analysis",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:computation_layout",
+        "//xla/service:hlo_value",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+cc_library(
     name = "infer_dispatch_info",
     srcs = ["infer_dispatch_info.cc"],
     hdrs = ["infer_dispatch_info.h"],
@@ -333,6 +376,7 @@ cc_library(
         ":friends",
     ]),
     deps = [
+        ":dynamic_pad_to_static",
         ":dynamic_shapes",
         ":pjrt_client",
         ":pjrt_compiler",
@@ -344,7 +388,6 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
-        "//xla/hlo/analysis:hlo_dataflow_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_sharding",
         "//xla/hlo/translate/mhlo_to_hlo:type_to_shape",
@@ -352,10 +395,8 @@ cc_library(
         "//xla/service:computation_layout",
         "//xla/service:device_assignment",
         "//xla/service:hlo_proto_cc",
-        "//xla/service:hlo_value",
         "//xla/service/spmd/shardy/stablehlo_round_trip:export_shardings",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
@@ -373,9 +414,10 @@ cc_library(
 )
 
 xla_cc_test(
-    name = "infer_dispatch_info_test",
-    srcs = ["infer_dispatch_info_test.cc"],
+    name = "dynamic_pad_to_static_test",
+    srcs = ["dynamic_pad_to_static_test.cc"],
     deps = [
+        ":dynamic_pad_to_static",
         ":infer_dispatch_info",
         ":mlir_to_hlo",
         ":pjrt_client",
@@ -399,6 +441,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
     ],
 )
@@ -565,6 +608,7 @@ cc_library(
     srcs = ["pjrt_client_test.cc"],
     hdrs = ["pjrt_client_test.h"],
     deps = [
+        ":async_work_runner",
         ":common_pjrt_client",
         ":pjrt_client",
         ":pjrt_compiler",
@@ -579,6 +623,7 @@ cc_library(
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:test",
+        "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/tests:literal_test_util",
         "//xla/tsl/framework:allocator",
         "//xla/tsl/lib/core:status_test_util",
@@ -750,9 +795,16 @@ cc_library(
     name = "pjrt_build_stamp_writer",
     srcs = ["pjrt_build_stamp_writer.cc"],
     hdrs = ["pjrt_build_stamp_writer.h"],
-    # Restricted to compiler build stamp factories. Add a package here only if
-    # it registers a build stamp factory.
-    visibility = [":__pkg__"],
+    # Restricted to compiler build stamp factories and the helpers they use. Add
+    # Google-internal packages to `pjrt/google:build_stamp_factories`, which is
+    # not exported, rather than here.
+    visibility = internal_visibility(
+        [
+            ":__pkg__",
+            "//xla/pjrt/google:build_stamp_factories",
+        ],
+        or_else = [":__pkg__"],
+    ),
     deps = [
         ":pjrt_build_stamp",
         ":pjrt_common",
@@ -895,6 +947,8 @@ cc_library(
         "//xla/runtime:device_id",
         "//xla/runtime:process_id",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
     ],
 )
@@ -1538,6 +1592,7 @@ cc_library(
         ":staging_buffer",
         "//xla/runtime:device_id",
         "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:chunked_queue",
         "@com_google_absl//absl/container:inlined_vector",
@@ -1546,6 +1601,8 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:context",
@@ -1803,6 +1860,7 @@ cc_library(
     deps = [
         "//xla/runtime:device_id",
         "//xla/tsl/framework:allocator",
+        "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

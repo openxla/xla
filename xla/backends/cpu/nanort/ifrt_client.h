@@ -23,6 +23,7 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -122,7 +123,7 @@ class NanoIfrtClient
       std::optional<absl::Span<const int64_t>> byte_strides,
       ifrt::ShardingRef sharding, ifrt::LayoutRef layout,
       HostBufferSemantics semantics,
-      std::function<void()> on_done_with_host_buffer) override;
+      std::shared_ptr<const void> host_buffer_hold) override;
   // Expose the base class's `MakeArrayFromHostBuffer` overloads.
   using xla::ifrt::Client::MakeArrayFromHostBuffer;
 
@@ -232,19 +233,21 @@ class NanoIfrtClient
       int local_hardware_id) const override;
 
   absl::StatusOr<ifrt::DeviceListRef> MakeDeviceList(
-      absl::Span<ifrt::Device* const> devices) const override;
+      absl::Span<ifrt::Device* absl_nonnull const> devices) const override;
 
   ifrt::Compiler* GetDefaultCompiler() override;
 
   absl::StatusOr<std::vector<tsl::Future<ifrt::LoadedExecutableRef>>> Load(
       absl::Span<const ifrt::ExecutableRef> executables,
-      absl::Span<std::unique_ptr<ifrt::LoadOptions>> options) override;
+      absl::Span<absl_nonnull std::unique_ptr<ifrt::LoadOptions>> options)
+      override;
 
   absl::StatusOr<std::shared_ptr<ifrt::Topology>> GetTopologyForDevices(
       const ifrt::DeviceListRef& devices) const override;
 
   absl::StatusOr<std::shared_ptr<const PjRtLayout>> GetDefaultPjRtLayout(
-      ifrt::DType dtype, absl::Span<const int64_t> dims, ifrt::Device* device,
+      ifrt::DType dtype, absl::Span<const int64_t> dims,
+      ifrt::Device* absl_nonnull device,
       ifrt::MemoryKind memory_kind) const override;
   absl::StatusOr<ifrt::CustomLayoutRef> GetDefaultLayout(
       ifrt::DType dtype, const ifrt::Shape& shape,
@@ -252,7 +255,7 @@ class NanoIfrtClient
 
   absl::StatusOr<std::unique_ptr<xla::ifrt::DeviceAttributeSubscription>>
   SubscribeToAttributeChanges(
-      absl::Span<xla::ifrt::Device* const> devices,
+      absl::Span<xla::ifrt::Device* absl_nonnull const> devices,
       std::optional<absl::Span<const std::string>> attribute_names,
       xla::ifrt::OnDeviceAttributeChangeCallback callback) override {
     return absl::UnimplementedError(

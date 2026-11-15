@@ -1107,13 +1107,13 @@ absl::Status AlgebraicSimplifierVisitor::HandleAdd(HloInstruction* add) {
                                            m::Op(&lhs_scatter_update))
                                     .WithOneUse()) &&
                      Match(lhs->to_apply()->root_instruction(),
-                           m::Add(m::Parameter(), m::Parameter()));
+                           m::AddAnyOrder(m::Parameter(0), m::Parameter(1)));
   bool rhs_scatter = Match(rhs, m::Scatter(m::Op(&rhs_scatter_operand),
                                            m::Op(&rhs_scatter_index),
                                            m::Op(&rhs_scatter_update))
                                     .WithOneUse()) &&
                      Match(rhs->to_apply()->root_instruction(),
-                           m::Add(m::Parameter(), m::Parameter()));
+                           m::AddAnyOrder(m::Parameter(0), m::Parameter(1)));
   if (rhs_scatter && lhs_scatter) {
     const auto& lhs_dnums = lhs->scatter_dimension_numbers();
     const auto& rhs_dnums = rhs->scatter_dimension_numbers();
@@ -6503,6 +6503,9 @@ AlgebraicSimplifierVisitor::TryToSinkBroadcastAfterElementwiseOps(
     if (!user->IsElementwise()) {
       continue;
     }
+    if (!ShouldSinkBroadcastAfterUser(broadcast, user)) {
+      continue;
+    }
     if (!absl::c_all_of(user->operands(), is_compatible_broadcast)) {
       continue;
     }
@@ -8877,6 +8880,21 @@ absl::Status AlgebraicSimplifierVisitor::BroadcastReduce(
                                               init_for_single_output, {}));
 }
 
+// Returns true if every result of the reduce has the same element type as the
+// corresponding input. This does not hold for mixed precision reduces.
+static bool ReducePreservesElementTypes(const HloReduceInstruction* reduce) {
+  for (int64_t i = 0; i < reduce->input_count(); ++i) {
+    const Shape& result_shape = reduce->shape().IsTuple()
+                                    ? reduce->shape().tuple_shapes(i)
+                                    : reduce->shape();
+    if (!ShapeUtil::SameElementType(result_shape,
+                                    reduce->inputs()[i]->shape())) {
+      return false;
+    }
+  }
+  return true;
+}
+
 absl::Status AlgebraicSimplifierVisitor::ReplaceReduceWithReshape(
     const Shape& reduce_result_shape, bool multi_output_reduce,
     HloReduceInstruction* reduce) {
@@ -9081,9 +9099,12 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
   // If the reduction results in the same number of elements, then the only
   // possible side effect would be a reshape. Since the init_value is an
   // identity of the reduction function, we can therefore replace the reduce
-  // with a simple reshape, ignoring the reduction function completely.
+  // with a simple reshape, ignoring the reduction function completely. A
+  // reshape cannot change the element type, so this does not apply to mixed
+  // precision reduces.
   if (ShapeUtil::ElementsIn(reduce_result_shape) ==
           ShapeUtil::ElementsIn(arg->shape()) &&
+      ReducePreservesElementTypes(reduce) &&
       (!options_.is_layout_sensitive() ||
        ReshapeIsBitcast(arg->shape(), reduce_result_shape))) {
     return ReplaceReduceWithReshape(reduce_result_shape, multi_output_reduce,

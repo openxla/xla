@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -64,6 +65,9 @@ limitations under the License.
 namespace xla {
 
 namespace {
+
+using ::absl_testing::StatusIs;
+using ::testing::HasSubstr;
 
 constexpr int kMaxConcurrentAsyncCollectivePermutes = 5;
 
@@ -192,11 +196,14 @@ TEST(LatencyEstimatorTest, GetLatencyFromMetadata) {
     EXPECT_NEAR(*latency, 1.0, 1e-6);
   }
 
-  // Test case 2: Metadata present but invalid.
+  // Test case 2: Metadata present but invalid or negative.
   {
-    std::optional<LatencyEstimator::TimeCost> latency =
-        SetAndReturnCustomCallLatency(computation, "invalid");
-    EXPECT_FALSE(latency.has_value());
+    EXPECT_DEATH(SetAndReturnCustomCallLatency(computation, "invalid"),
+                 "Failed to parse latency_metadata");
+    EXPECT_DEATH(SetAndReturnCustomCallLatency(computation, "1500.5"),
+                 "Failed to parse latency_metadata");
+    EXPECT_DEATH(SetAndReturnCustomCallLatency(computation, "-10"),
+                 "Expected latency_metadata to be non-negative");
   }
 
   // Test case 3: Metadata missing.
@@ -212,13 +219,6 @@ TEST(LatencyEstimatorTest, GetLatencyFromMetadata) {
         SetAndReturnCustomCallLatency(computation, "0");
     ASSERT_TRUE(latency.has_value());
     EXPECT_EQ(*latency, 0.0);
-  }
-
-  // Test case 5: Metadata present but negative.
-  {
-    std::optional<LatencyEstimator::TimeCost> latency =
-        SetAndReturnCustomCallLatency(computation, "-10");
-    EXPECT_FALSE(latency.has_value());
   }
 }
 
@@ -4942,6 +4942,35 @@ TEST_F(LatencyHidingSchedulerTest, ResourceLimitWithinAnnotationGroup) {
   auto agd0 = GetIndex(new_instruction_sequence, "agd0");
   auto agd1 = GetIndex(new_instruction_sequence, "agd1");
   EXPECT_TRUE(agd0 < ags1 || agd1 < ags0);
+}
+
+// Check that the scheduler reports an error, instead of reading past the end
+// of the annotation ready queue, when the resource limit is exhausted while
+// instructions of the annotation group are still waiting to be scheduled.
+TEST_F(LatencyHidingSchedulerTest, AnnotationGroupExhaustsResourceLimit) {
+  constexpr absl::string_view hlo_string = R"(
+  HloModule module, is_scheduled=true
+
+  ENTRY entry {
+    p0 = f32[16]{0} parameter(0)
+    after-all = token[] after-all()
+    send0 = (f32[16]{0}, u32[], token[]) send(p0, after-all), channel_id=1
+    send1 = (f32[16]{0}, u32[], token[]) send(p0, after-all), channel_id=2
+    send2 = (f32[16]{0}, u32[], token[]) send(p0, after-all), channel_id=3
+    send-done0 = token[] send-done(send0), channel_id=1, frontend_attributes={_scheduling_group_id="0"}
+    send-done1 = token[] send-done(send1), channel_id=2, frontend_attributes={_scheduling_group_id="0"}
+    send-done2 = token[] send-done(send2), channel_id=3, frontend_attributes={_scheduling_group_id="0"}
+    ROOT tuple = (token[], token[], token[]) tuple(send-done0, send-done1, send-done2)
+  }
+)";
+  ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
+  auto sched_config = GetDefaultSchedConfig();
+  sched_config.schedule_send_recvs = true;
+  sched_config.send_recv_overlap_limit = 2;
+  EXPECT_THAT(
+      RunScheduler(hlo_module.get(), sched_config),
+      StatusIs(absl::StatusCode::kInternal,
+               HasSubstr("Couldn't find an annotated node to schedule")));
 }
 
 TEST_F(LatencyHidingSchedulerTest, AnnotatedProducerOpNotReady) {

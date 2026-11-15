@@ -30,6 +30,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -37,6 +38,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -54,6 +56,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/layout_util.h"
+#include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_verifier.h"
@@ -63,6 +66,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/side_effect_util.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -754,6 +758,161 @@ ENTRY entry {
             IotaReplicaGroupList(
                 /*num_replica_groups=*/1, /*num_devices_per_group=*/4)
                 .flattened_replica_groups());
+}
+
+TEST_P(SpmdPartitioningTest, ZerolessFloatReplicationBitcastsViaU8) {
+  auto verify_zero_masked_u8_all_reduce = [](const HloInstruction* ar,
+                                             const Literal& zero_lit,
+                                             int num_remote_shards) {
+    ASSERT_NE(ar, nullptr);
+    ASSERT_EQ(ar->opcode(), HloOpcode::kAllReduce);
+    EXPECT_THAT(
+        ar->to_apply()->root_instruction(),
+        AllOf(op::Shape("u8[]"), op::Add(op::Parameter(0), op::Parameter(1))));
+    HloEvaluator evaluator;
+    for (uint8_t raw_byte : {uint8_t{0x00}, uint8_t{0x7E}, uint8_t{0x7F},
+                             uint8_t{0x80}, uint8_t{0xFE}, uint8_t{0xFF}}) {
+      SCOPED_TRACE(static_cast<int>(raw_byte));
+      Literal acc = LiteralUtil::CreateR0<uint8_t>(raw_byte);
+      for (int remote = 0; remote < num_remote_shards; ++remote) {
+        evaluator.ResetVisitStates();
+        ASSERT_OK_AND_ASSIGN(
+            acc, evaluator.Evaluate(*ar->to_apply(), {&acc, &zero_lit}));
+      }
+      const auto out_e8m0 =
+          absl::bit_cast<tsl::float8_e8m0fnu>(acc.GetFirstElement<uint8_t>());
+      EXPECT_EQ(absl::bit_cast<uint8_t>(out_e8m0), raw_byte);
+    }
+  };
+
+  {
+    SCOPED_TRACE("single_device_broadcast_f8e8m0fnu");
+    constexpr absl::string_view kHlo = R"(
+HloModule module
+
+ENTRY entry {
+  %param = f8e8m0fnu[4,2] parameter(0), sharding={maximal device=0}
+  ROOT %copy = f8e8m0fnu[4,2] copy(%param), sharding={replicated}
+})";
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         PartitionComputation(kHlo, /*num_devices=*/4));
+    const HloInstruction* root =
+        module->entry_computation()->root_instruction();
+    ASSERT_THAT(
+        root,
+        op::Copy(AllOf(
+            op::Shape("f8e8m0fnu[4,2]"),
+            op::BitcastConvert(AllOf(
+                op::Shape("u8[4,2]"),
+                op::AllReduce(op::Select(
+                    op::Broadcast(op::Compare()),
+                    AllOf(op::Shape("u8[4,2]"),
+                          op::BitcastConvert(op::Parameter(0))),
+                    op::Broadcast(op::Constant(LiteralUtil::Zero(U8))))))))));
+    const HloInstruction* ar = root->operand(0)->operand(0);
+    const Literal& zero_lit = ar->operand(0)->operand(2)->operand(0)->literal();
+    verify_zero_masked_u8_all_reduce(ar, zero_lit, /*num_remote_shards=*/3);
+  }
+
+  {
+    SCOPED_TRACE("tiled_broadcast_dim_f8e8m0fnu");
+    constexpr absl::string_view kHlo = R"(
+HloModule module
+
+ENTRY entry {
+  %param = f8e8m0fnu[4,1] parameter(0), sharding={devices=[2,2]<=[4]}
+  ROOT %copy = f8e8m0fnu[4,1] copy(%param), sharding={replicated}
+})";
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         PartitionComputation(kHlo, /*num_devices=*/4));
+    const HloInstruction* root =
+        module->entry_computation()->root_instruction();
+    EXPECT_THAT(
+        root,
+        op::Copy(AllOf(op::Shape("f8e8m0fnu[4,1]"),
+                       op::AllGather(AllOf(
+                           op::Shape("f8e8m0fnu[2,1]"),
+                           op::BitcastConvert(AllOf(
+                               op::Shape("u8[2,1]"),
+                               op::AllReduce(op::Select(
+                                   op::Broadcast(op::Compare()),
+                                   AllOf(op::Shape("u8[2,1]"),
+                                         op::BitcastConvert(op::Parameter(0))),
+                                   op::Broadcast(op::Constant(
+                                       LiteralUtil::Zero(U8))))))))))));
+  }
+
+  {
+    SCOPED_TRACE("dus_all_reduce_uneven_dim_f8e8m0fnu");
+    constexpr absl::string_view kHlo = R"(
+HloModule module
+
+ENTRY entry {
+  %param = f8e8m0fnu[3,2] parameter(0), sharding={devices=[8,1]<=[8]}
+  ROOT %copy = f8e8m0fnu[3,2] copy(%param), sharding={replicated}
+})";
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         PartitionComputation(kHlo, /*num_devices=*/8));
+    const HloInstruction* root =
+        module->entry_computation()->root_instruction();
+    auto u8_zero = op::Constant(LiteralUtil::Zero(U8));
+    auto padded_shard = AllOf(
+        op::Shape("u8[1,2]"),
+        op::Select(
+            _,
+            AllOf(op::Shape("u8[1,2]"), op::BitcastConvert(op::Parameter(0))),
+            op::Broadcast(u8_zero)));
+    ASSERT_THAT(root,
+                op::Copy(AllOf(
+                    op::Shape("f8e8m0fnu[3,2]"),
+                    op::BitcastConvert(AllOf(
+                        op::Shape("u8[3,2]"),
+                        op::AllReduce(op::DynamicUpdateSlice(
+                            op::Broadcast(u8_zero), padded_shard, _, _)))))));
+    const HloInstruction* ar = root->operand(0)->operand(0);
+    const Literal& zero_lit = ar->operand(0)->operand(0)->operand(0)->literal();
+    verify_zero_masked_u8_all_reduce(ar, zero_lit, /*num_remote_shards=*/7);
+  }
+
+  {
+    SCOPED_TRACE("partial_replicate_dus_ar_and_f32_unchanged");
+    constexpr absl::string_view kE8M0Hlo = R"(
+HloModule module
+
+ENTRY entry {
+  %param = f8e8m0fnu[2,4] parameter(0), sharding={devices=[4,2]<=[8]}
+  ROOT %copy = f8e8m0fnu[2,4] copy(%param),
+    sharding={devices=[1,2,4]<=[2,4]T(1,0) last_tile_dim_replicate}
+})";
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> e8m0_module,
+                         PartitionComputation(kE8M0Hlo, /*num_devices=*/8));
+    auto u8_zero = op::Constant(LiteralUtil::Zero(U8));
+    EXPECT_THAT(e8m0_module->entry_computation()->root_instruction(),
+                op::Copy(AllOf(
+                    op::Shape("f8e8m0fnu[2,2]"),
+                    op::BitcastConvert(AllOf(
+                        op::Shape("u8[2,2]"),
+                        op::AllReduce(op::DynamicUpdateSlice(
+                            op::Broadcast(u8_zero),
+                            op::Select(_,
+                                       op::BitcastConvert(op::CollectivePermute(
+                                           op::Parameter(0))),
+                                       op::Broadcast(u8_zero)),
+                            _, _)))))));
+
+    constexpr absl::string_view kF32Hlo = R"(
+HloModule module
+
+ENTRY entry {
+  %param = f32[2,4] parameter(0), sharding={devices=[4,2]<=[8]}
+  ROOT %copy = f32[2,4] copy(%param), sharding={replicated}
+})";
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> f32_module,
+                         PartitionComputation(kF32Hlo, /*num_devices=*/8));
+    EXPECT_EQ(NumOfInstructions(f32_module->entry_computation(),
+                                HloOpcode::kBitcastConvert),
+              0);
+  }
 }
 
 TEST_P(SpmdPartitioningTest, TiledToSingleDevice) {
@@ -2518,6 +2677,65 @@ ENTRY entry {
   EXPECT_THAT(root,
               AllOf(op::AllReduce(op::Convolution(lhs_masked, rhs_masked)),
                     op::Shape("f32[1,64,256]")));
+}
+
+TEST_P(SpmdPartitioningTest,
+       ConvolutionWindowReversalUnevenRhsReshard_HaloOnLhs) {
+  {
+    SCOPED_TRACE("feature_sharded_rhs_resharded_to_spatial");
+    constexpr absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %lhs = f32[2,16,4] parameter(0), sharding={devices=[1,2,1]<=[2]}
+  %rhs = f32[3,4,4] parameter(1), sharding={devices=[1,2,1]<=[2]}
+  ROOT %conv = f32[2,14,4] convolution(%lhs, %rhs),
+    window={size=3 rhs_reversal=1}, dim_labels=b0f_0io->b0f,
+    sharding={replicated}
+})";
+
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         PartitionComputation(hlo_string, /*num_devices=*/2));
+    const auto rhs_resharded = AllOf(
+        op::Shape("f32[2,4,4]"),
+        op::CollectivePermute(op::Reshape(op::Transpose(op::AllToAll(_)))));
+    const auto rhs_left_padded =
+        op::Concatenate(op::CollectivePermute(op::Slice(rhs_resharded)),
+                        op::Slice(rhs_resharded));
+    const auto rhs_masked =
+        AllOf(op::Shape("f32[2,4,4]"), op::Select(_, rhs_left_padded, _));
+    EXPECT_THAT(module->entry_computation()->root_instruction(),
+                AllOf(op::AllReduce(op::Convolution(_, rhs_masked)),
+                      op::Shape("f32[2,14,4]")));
+  }
+  {
+    SCOPED_TRACE("uneven_partial_replicate_rhs_resharded_to_4_way");
+    constexpr absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %lhs = f32[4,8,4] parameter(0), sharding={devices=[1,4,1]<=[4]}
+  %rhs = f32[7,4,4] parameter(1),
+    sharding={devices=[2,1,1,2]0,1,2,3 last_tile_dim_replicate}
+  ROOT %conv = f32[4,2,4] convolution(%lhs, %rhs),
+    window={size=7 rhs_reversal=1}, dim_labels=b0f_0io->b0f,
+    sharding={replicated}
+})";
+
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         PartitionComputation(hlo_string, /*num_devices=*/4));
+    const auto rhs_resharded = AllOf(
+        op::Shape("f32[2,4,4]"),
+        op::CollectivePermute(op::DynamicSlice(op::Parameter(1), _, _, _)));
+    const auto rhs_left_padded =
+        op::Concatenate(op::CollectivePermute(op::Slice(rhs_resharded)),
+                        op::Slice(rhs_resharded));
+    const auto rhs_masked =
+        AllOf(op::Shape("f32[2,4,4]"), op::Select(_, rhs_left_padded, _));
+    EXPECT_THAT(module->entry_computation()->root_instruction(),
+                AllOf(op::AllReduce(op::Convolution(_, rhs_masked)),
+                      op::Shape("f32[4,2,4]")));
+  }
 }
 
 TEST_P(SpmdPartitioningTest, DotLhsTiledRhsTiledWithReshard) {
@@ -11789,6 +12007,92 @@ ENTRY entry {
                   op::Parameter(1), op::Parameter(2)))),
               op::Shape("f32[2,9,8]")));
   }
+}
+
+TEST_P(SpmdPartitioningTest, IndexPassthroughScatterWithIotaIndices) {
+  constexpr absl::string_view kHloString = R"(
+HloModule module
+
+add (lhs: f32[], rhs: f32[]) -> f32[] {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT sum = f32[] add(lhs, rhs)
+}
+
+ENTRY entry {
+  %input = f32[2,128] parameter(0),
+    sharding={devices=[2,1,2]<=[4] last_tile_dim_replicate}
+  %indices = s32[2,1] constant({ {0}, {1} }),
+    sharding={devices=[2,1,2]<=[2,2]T(1,0) last_tile_dim_replicate}
+  %updates = f32[2,128] parameter(1),
+    sharding={devices=[2,1,2]<=[2,2]T(1,0) last_tile_dim_replicate}
+  ROOT %scatter = f32[2,128] scatter(%input, %indices, %updates),
+      to_apply=add,
+      update_window_dims={1},
+      inserted_window_dims={0},
+      scatter_dims_to_operand_dims={0},
+      index_vector_dim=1,
+      indices_are_sorted=true,
+      unique_indices=true,
+      sharding={devices=[2,1,2]<=[4] last_tile_dim_replicate}
+})";
+  SpmdPartitionerOptions options;
+  options.need_resolve_conflicts = false;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      PartitionComputation(kHloString, /*num_devices=*/4, options));
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  auto in_group_partition_id =
+      op::Reshape(op::DynamicSlice(op::Constant(), op::PartitionId()));
+  auto masked_operand =
+      op::Select(op::Broadcast(op::Convert(in_group_partition_id)),
+                 op::Broadcast(op::Constant()), op::Parameter(0));
+  auto adjusted_indices = op::Subtract(op::DynamicSlice(), op::Broadcast());
+  EXPECT_THAT(root,
+              AllOf(op::AllReduce(op::Scatter(masked_operand, adjusted_indices,
+                                              op::Parameter(1))),
+                    op::Shape("f32[1,128]")));
+}
+
+TEST_P(SpmdPartitioningTest,
+       IndexPassthroughScatterWithConcatenatedIotaIndices) {
+  constexpr absl::string_view kHloString = R"(
+HloModule module
+
+add (lhs: f32[], rhs: f32[]) -> f32[] {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT sum = f32[] add(lhs, rhs)
+}
+
+ENTRY entry {
+  %input = f32[4,16] parameter(0), sharding={replicated}
+  %batch_iota = s32[4,1] iota(), iota_dimension=0, sharding={devices=[2,1]<=[2]}
+  %col_indices = s32[4,1] parameter(1), sharding={devices=[2,1]<=[2]}
+  %indices = s32[4,2] concatenate(%batch_iota, %col_indices), dimensions={1},
+      sharding={devices=[2,1]<=[2]}
+  %updates = f32[4] parameter(2), sharding={devices=[2]<=[2]}
+  ROOT %scatter = f32[4,16] scatter(%input, %indices, %updates),
+      to_apply=add,
+      update_window_dims={},
+      inserted_window_dims={0,1},
+      scatter_dims_to_operand_dims={0,1},
+      index_vector_dim=1,
+      sharding={replicated}
+})";
+  SpmdPartitionerOptions options;
+  options.need_resolve_conflicts = false;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      PartitionComputation(kHloString, /*num_devices=*/2, options));
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  auto masked_operand =
+      op::Select(op::Broadcast(op::Convert(op::PartitionId())),
+                 op::Broadcast(op::Constant()), op::Parameter(0));
+  EXPECT_THAT(
+      root,
+      AllOf(op::AllReduce(op::Scatter(masked_operand, _, op::Parameter(2))),
+            op::Shape("f32[4,16]")));
 }
 
 TEST_P(SpmdPartitioningTest, ScatterExplicitBatchDims) {

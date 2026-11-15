@@ -46,11 +46,12 @@ namespace xla::gpu {
 // (`__thread_block_specialized`) and phased (`__phased_block_cluster`) fusions.
 //
 // Each leaf fusion (`kLoop`, `kReduction`, `kTranspose`, `kScatter`,
-// `kConcatenate`) is lowered by its native emitter, virtualized once via
-// `VirtualizeSubKernelPass`, and spliced as an `alwaysinline` internal function
-// into a unified `@launcher` kernel. Horizontal nodes partition `block_id`
-// across children, while phased nodes sequence children with aligned
-// `nvvm.cluster.arrive` / `nvvm.cluster.wait` barriers.
+// `kConcatenate`, `kTriton`) is lowered by its native emitter, virtualized once
+// via `VirtualizeSubKernelPass`, and spliced as an `alwaysinline` internal
+// function into a unified `@launcher` kernel. Horizontal nodes partition
+// `block_id` across children, while phased nodes sequence children with block
+// barriers between consecutive single-block phases and cluster barriers across
+// multi-block boundaries.
 class ThreadBlockSpecializedFusion : public KernelFusionInterface {
  public:
   static constexpr uint64_t kMaxBlocksPerCluster = 8;
@@ -66,6 +67,8 @@ class ThreadBlockSpecializedFusion : public KernelFusionInterface {
     const HloFusionInstruction* fusion = nullptr;
     LaunchDimensions launch_dims;
     std::optional<se::ClusterDim> cluster_dim;
+    // Whether small leaf fusions should be unrolled/vectorized.
+    bool unroll_small_fusions = false;
     std::vector<int64_t> input_arg_indices;
     std::vector<int64_t> output_arg_indices;
     std::vector<NestedKernelSpec> children;
@@ -74,7 +77,7 @@ class ThreadBlockSpecializedFusion : public KernelFusionInterface {
   explicit ThreadBlockSpecializedFusion(const HloFusionAnalysis& analysis);
 
   static std::unique_ptr<MlirKernelEmitter> CreateNativeNestedEmitter(
-      const HloFusionAnalysis& nested_analysis);
+      const HloFusionAnalysis& nested_analysis, bool unroll_small_fusions);
 
   LaunchDimensions launch_dimensions() const override {
     return root_spec_.launch_dims;

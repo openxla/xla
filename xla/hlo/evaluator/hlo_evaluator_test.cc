@@ -559,6 +559,22 @@ TEST_F(HloEvaluatorTest, DoesCountLeadingZerosS8) {
   auto expected = LiteralUtil::CreateR1<int8_t>({8, 7, 0, 0, 1});
   TestUnaryOp(HloOpcode::kClz, std::move(expected), std::move(input));
 }
+
+TEST_F(HloEvaluatorTest, DoesPopulationCountS4) {
+  Literal input = LiteralUtil::CreateR1<s4>(
+      {s4(-8), s4(-7), s4(-5), s4(-1), s4(0), s4(1), s4(7)});
+  Literal expected = LiteralUtil::CreateR1<s4>(
+      {s4(1), s4(2), s4(3), s4(4), s4(0), s4(1), s4(3)});
+  TestUnaryOp(HloOpcode::kPopulationCount, std::move(expected),
+              std::move(input));
+}
+
+TEST_F(HloEvaluatorTest, DoesPopulationCountS2) {
+  Literal input = LiteralUtil::CreateR1<s2>({s2(-2), s2(-1), s2(0), s2(1)});
+  Literal expected = LiteralUtil::CreateR1<s2>({s2(1), s2(-2), s2(0), s2(1)});
+  TestUnaryOp(HloOpcode::kPopulationCount, std::move(expected),
+              std::move(input));
+}
 // Verifies that HloEvaluator evaluates a HLO instruction that performs
 // element-wise divide with 2 operands.
 TEST_F(HloEvaluatorTest, DoesDivideInt64) {
@@ -6328,6 +6344,50 @@ ENTRY main {
   Literal expected = LiteralUtil::CreateR0<bfloat16>(bfloat16(44.0f));
   TF_ASSERT_OK_AND_ASSIGN(Literal result, Evaluate({&arg}));
   EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
+}
+
+// Elementwise operations read their operands as the element type of the
+// result, so they cannot be evaluated if the value of an operand has a
+// different element type.
+TEST_F(HloEvaluatorTest, ElementwiseWithMismatchedOperandElementType) {
+  constexpr char kHloTextFormat[] = R"(
+HloModule m
+
+ENTRY main {
+  lhs = f16[4] constant({1, 2, 3, 4})
+  rhs = f32[4] constant({1, 2, 3, 4})
+  %s
+}
+)";
+  for (const char* instructions : {
+           "ROOT r = f32[4] negate(lhs)",
+           "ROOT r = f32[4] add(lhs, rhs)",
+           "ROOT r = f32[4] clamp(lhs, rhs, rhs)",
+           // A reshape evaluates to the element type of its operand.
+           "reshape = f32[4] reshape(lhs)\n  ROOT r = f32[4] negate(reshape)",
+           "reshape = f32[4] reshape(lhs)\n  ROOT r = f32[4] add(reshape, rhs)",
+       }) {
+    const std::string hlo_text = absl::StrFormat(kHloTextFormat, instructions);
+    SCOPED_TRACE(hlo_text);
+    ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+    HloEvaluator evaluator;
+    EXPECT_EQ(evaluator.Evaluate(*m_->entry_computation(), {}).status().code(),
+              absl::StatusCode::kInternal);
+  }
+}
+
+TEST_F(HloEvaluatorTest, RngWithMismatchedOperandElementType) {
+  const std::string hlo_text = R"(
+HloModule m
+
+ENTRY main {
+  low = f16[] constant(0)
+  high = f16[] constant(1)
+  ROOT r = f32[4] rng(low, high), distribution=rng_uniform
+}
+)";
+  ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+  EXPECT_EQ(Evaluate().status().code(), absl::StatusCode::kInternal);
 }
 
 TEST_F(HloEvaluatorTest, Reduction2D) {

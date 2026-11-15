@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "absl/base/casts.h"
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -244,11 +245,11 @@ absl::StatusOr<xla::ifrt::ArrayRef> Client::MakeArrayFromHostBuffer(
     const void* data, DType dtype, Shape shape,
     std::optional<absl::Span<const int64_t>> byte_strides, ShardingRef sharding,
     LayoutRef layout, xla::ifrt::Client::HostBufferSemantics semantics,
-    std::function<void()> on_done_with_host_buffer) {
+    std::shared_ptr<const void> host_buffer_hold) {
   return Array::MakeArrayFromHostBuffer(
       this, rpc_helper_, data, dtype, std::move(shape), std::move(byte_strides),
       std::move(sharding), std::move(layout), semantics,
-      std::move(on_done_with_host_buffer));
+      std::move(host_buffer_hold));
 }
 
 absl::StatusOr<std::vector<xla::ifrt::ArrayRef>>
@@ -554,14 +555,14 @@ absl::StatusOr<DeviceAssignment> Client::GetDefaultDeviceAssignment(
 }
 
 absl::StatusOr<xla::ifrt::DeviceListRef> Client::MakeDeviceList(
-    absl::Span<xla::ifrt::Device* const> devices) const {
+    absl::Span<xla::ifrt::Device* absl_nonnull const> devices) const {
   return xla::ifrt::BasicDeviceList::Create(devices);
 }
 
 absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>>
 Client::GetDefaultPjRtLayout(xla::ifrt::DType dtype,
                              absl::Span<const int64_t> dims,
-                             xla::ifrt::Device* device,
+                             xla::ifrt::Device* absl_nonnull device,
                              xla::ifrt::MemoryKind memory_kind) const {
   tsl::profiler::TraceMe traceme_ifrt_entrypoint(
       "IfrtProxyEntrypointGetDefaultLayout");

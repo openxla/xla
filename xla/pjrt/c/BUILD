@@ -278,7 +278,10 @@ cc_library(
     name = "pjrt_c_api_multi_slice_internal_types",
     hdrs = ["pjrt_c_api_multi_slice_internal_types.h"],
     visibility = ["//visibility:public"],
-    deps = ["//xla/pjrt:pjrt_executable"],
+    deps = [
+        "//xla/pjrt:pjrt_executable",
+        "//xla/tsl/concurrency:ref_count",
+    ],
 )
 
 cc_library(
@@ -330,6 +333,15 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":pjrt_c_api_device_event_hdrs",
+        ":pjrt_c_api_hdrs",
+    ],
+)
+
+cc_library(
+    name = "pjrt_c_api_raw_client_hdrs",
+    hdrs = ["pjrt_c_api_raw_client.h"],
+    visibility = ["//visibility:public"],
+    deps = [
         ":pjrt_c_api_hdrs",
     ],
 )

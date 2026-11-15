@@ -881,7 +881,12 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
     if constexpr (std::is_integral_v<ElementwiseT> &&
                   !std::is_same_v<ElementwiseT, bool>) {
       return ElementWiseUnaryOp(popcnt, [](ElementwiseT elem_operand) {
-        return std::bitset<CHAR_BIT * sizeof(ReturnT)>(elem_operand).count();
+        // Narrow ReturnT types (s4, s2, s1) have sizeof == 1; use the exact bit
+        // width so sign extension does not inflate the count.
+        constexpr int kBitWidth = std::numeric_limits<ReturnT>::digits +
+                                  std::numeric_limits<ReturnT>::is_signed;
+        return std::bitset<kBitWidth>(static_cast<uint64_t>(elem_operand))
+            .count();
       });
     }
     return UnsupportedTypeError(popcnt);
@@ -1069,6 +1074,13 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
   absl::Status HandleRng(const HloInstruction* random) override {
     RandomDistribution distribution = random->random_distribution();
     Shape result_shape = GetShapeWithLayout(random->shape());
+    // The operands are read as the element type of the result.
+    for (const HloInstruction* operand : random->operands()) {
+      TF_RET_CHECK(
+          parent_->GetEvaluatedLiteralFor(operand).shape().element_type() ==
+          result_shape.element_type())
+          << "operand element type mismatch: " << random->ToString();
+    }
     Literal result(result_shape);
 
     if constexpr (std::is_floating_point_v<ElementwiseT>) {

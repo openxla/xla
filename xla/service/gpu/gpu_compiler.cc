@@ -288,7 +288,6 @@ limitations under the License.
 #include "xla/service/gpu/early_exit_compilation_result.h"
 #include "xla/service/gpu/export_hlo.h"
 #include "xla/service/gpu/flag_utils.h"
-#include "xla/service/gpu/fusion_dispatch_pipeline.h"
 #include "xla/service/gpu/fusion_pipeline.h"
 #include "xla/service/gpu/gpu_aot_compilation_result.h"
 #include "xla/service/gpu/gpu_executable.h"
@@ -882,7 +881,7 @@ absl::Status RunOptimizationPasses(
     pipeline.AddPass<WindowedEinsumHandler>();
   }
   pipeline.AddPass<TopKSplitter>();
-  pipeline.AddPass<TopkSpecializer>(gpu_version);
+  pipeline.AddPass<TopkSpecializer>(gpu_target_config.device_description);
   pipeline.AddPass<TopkDecomposer>();
 
   pipeline.AddPass<DotOperandConverter>(gpu_version);
@@ -2704,29 +2703,40 @@ GpuCompiler::CompileSingleModule(
       CompileTargetBinary(module_config, llvm_module, device_description,
                           relocatable, debug_module, shard_number));
 
-  const bool should_dump =
-      DumpingEnabledForHloModule(debug_module ? debug_module->name() : "",
-                                 debug_options) &&
-      DumpingEnabledForEmitter("llvm", debug_options);
+  bool dumping_enabled = DumpingEnabledForHloModule(
+      debug_module ? debug_module->name() : "", debug_options);
+  if (dumping_enabled && !debug_module) {
+    LOG(ERROR) << "Dumping is not implemented since the file name cannot be "
+                  "inferred. Please implement (potentially MLIR) module -> "
+                  "filename heuristic.";
+    dumping_enabled = false;
+  }
 
-  if (should_dump) {
-    if (debug_module) {
-      llvm_ir::DumpIrIfEnabled(
-          *debug_module, *llvm_module,
-          /*optimized=*/true,
-          shard_number.has_value() ? std::to_string(*shard_number) : "");
-    } else {
-      LOG(ERROR) << "Dumping is not implemented since the file name cannot be "
-                    "inferred. Please implement (potentially MLIR) module -> "
-                    "filename heuristic.";
-    }
+  if (dumping_enabled && DumpingEnabledForEmitter("llvm", debug_options)) {
+    llvm_ir::DumpIrIfEnabled(
+        *debug_module, *llvm_module,
+        /*optimized=*/true,
+        shard_number.has_value() ? std::to_string(*shard_number) : "");
   }
 
   CallUserPostOptimizationHook(*llvm_module);
 
-  absl::MutexLock lock(user_asm_hook_m_);
-  if (user_asm_hook_ && !result.asm_text.empty()) {
-    user_asm_hook_(result.asm_text);
+  if (!result.asm_text.empty()) {
+    ABSL_ASSIGN_OR_RETURN(absl::string_view asm_extension, AsmFileExtension());
+    if (dumping_enabled &&
+        DumpingEnabledForEmitter(asm_extension, debug_options)) {
+      DumpToFileInDirOrStdout(
+          *debug_module, "",
+          shard_number.has_value()
+              ? absl::StrCat(*shard_number, ".", asm_extension)
+              : asm_extension,
+          result.asm_text);
+    }
+
+    absl::MutexLock lock(user_asm_hook_m_);
+    if (user_asm_hook_) {
+      user_asm_hook_(result.asm_text);
+    }
   }
 
   return result;
@@ -2785,9 +2795,9 @@ GpuCompiler::CompileToBackendResult(
       /*default_thread_pool=*/options.thread_pool,
       /*default_parallelism=*/tsl::port::MaxParallelism());
 
-  ABSL_RETURN_IF_ERROR(RunPostSchedulingPipelines(
-      module, schedule_metadata.scheduler_mem_limit, gpu_topology,
-      alias_info.get(), mlir_context, thread_pool.get_mutable()));
+  ABSL_RETURN_IF_ERROR(
+      RunPostSchedulingPipelines(module, schedule_metadata.scheduler_mem_limit,
+                                 gpu_topology, alias_info.get()));
 
   absl::Mutex module_stats_m_;
   ModuleStats module_stats;
@@ -2821,7 +2831,7 @@ GpuCompiler::CompileToBackendResult(
         std::move(llvm_compiler),
         gpu_topology.gpu_target_config().device_description,
         module->config().debug_options(), gpu_topology,
-        thread_pool.get_mutable());
+        llvm::Triple(target_triple_), data_layout_, thread_pool.get_mutable());
     kernel_compiler.SetPreOptimizationHook([&](const llvm::Module& module) {
       CallUserPreOptimizationHook(module);
     });
@@ -3252,8 +3262,7 @@ HloRematerialization::Options CreateRematOpts(
 
 absl::Status GpuCompiler::RunPostSchedulingPipelines(
     HloModule* module, int64_t scheduler_mem_limit,
-    const GpuTopology& gpu_topology, const GpuAliasInfo* alias_info,
-    mlir::MLIRContext* mlir_context, tsl::thread::ThreadPool* thread_pool) {
+    const GpuTopology& gpu_topology, const GpuAliasInfo* alias_info) {
   tsl::profiler::TraceMe traceme("RunPostSchedulingPipelines");
   ABSL_RETURN_IF_ERROR(RunPostSchedulingCopyInsertion(module, alias_info));
   {
@@ -3309,14 +3318,6 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
     HloPassPipeline& pipeline =
         main_pipeline.AddPass<HloPassPipeline>("fusion-wrapper");
     pipeline.AddPass<FusionWrapper>(gpu_device_info);
-  }
-
-  if (IsTritonEnabled(gpu_device_info.gpu_compute_capability())) {
-    // This needs to run after every pass affecting fusions. The last passes
-    // that create new fusions are FusionWrapper and StreamAttributeAnnotator.
-    main_pipeline.AddPass<HloPassPipeline>(
-        FusionDispatchPipeline(gpu_device_info, ShapeSizeBytesFunction(),
-                               mlir_context, thread_pool, &mlir_context_pool_));
   }
 
   if (module->config()

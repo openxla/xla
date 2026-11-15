@@ -19,6 +19,7 @@ limitations under the License.
 
 #include <utility>
 
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -200,6 +201,13 @@ TEST(RCReferenceWrapperTest, Swap) {
   ref1.swap(ref2);
   EXPECT_EQ(ref1->name(), "test2");
   EXPECT_EQ(ref2->name(), "test1");
+}
+
+TEST(RCReferenceWrapperTest, NullabilityAnnotations) {
+  absl_nonnull DerivedClassRef nonnull_ref(tsl::MakeRef<DerivedClass>("test"));
+  absl_nullable DerivedClassRef nullable_ref;
+  EXPECT_EQ(nonnull_ref->name(), "test");
+  EXPECT_EQ(nullable_ref, nullptr);
 }
 
 }  // namespace
