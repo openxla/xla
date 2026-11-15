@@ -28,6 +28,25 @@ limitations under the License.
 namespace xla::cpu {
 namespace {
 
+// std::fpclassify is unreliable under DAZ: Clang implements it with
+// floating-point compares, and under DAZ a subnormal compares equal to zero.
+// Check the bits directly instead; integer ops are unaffected by DAZ.
+bool IsSubnormal(double value) {
+  const uint64_t bits = absl::bit_cast<uint64_t>(value);
+  constexpr uint64_t kMagnitudeMask = 0x7fffffffffffffffULL;
+  constexpr uint64_t kMinNormalMagnitude = uint64_t{1} << 52;
+  const uint64_t magnitude = bits & kMagnitudeMask;
+  return magnitude != 0 && magnitude < kMinNormalMagnitude;
+}
+
+bool IsSubnormal(float value) {
+  const uint32_t bits = absl::bit_cast<uint32_t>(value);
+  constexpr uint32_t kMagnitudeMask = 0x7fffffffU;
+  constexpr uint32_t kMinNormalMagnitude = uint32_t{1} << 23;
+  const uint32_t magnitude = bits & kMagnitudeMask;
+  return magnitude != 0 && magnitude < kMinNormalMagnitude;
+}
+
 TEST(BuiltinAtan2Test, FlushesF64SubnormalInputs) {
   const double tiny = std::numeric_limits<double>::denorm_min();
   const double largest_subnormal =
@@ -147,8 +166,7 @@ TEST(BuiltinAtan2Test, PreservesStateAndPassesNormalF64InputsThrough) {
         // Non-subnormal inputs pass through unchanged, so libm on the same
         // operands is the expectation. Subnormal results are covered by the
         // hardcoded cases above.
-        if (std::fpclassify(y) != FP_SUBNORMAL &&
-            std::fpclassify(x) != FP_SUBNORMAL) {
+        if (!IsSubnormal(y) && !IsSubnormal(x)) {
           const double expected = std::atan2(y, x);
           if (std::isnan(expected)) {
             EXPECT_TRUE(std::isnan(actual));
@@ -198,8 +216,7 @@ TEST(BuiltinAtan2Test, PreservesStateAndPassesNormalF32InputsThrough) {
         SCOPED_TRACE(index);
         const float actual = BuiltinAtan2f(y, x);
         EXPECT_EQ(tsl::port::GetDenormalState(), state);
-        if (std::fpclassify(y) != FP_SUBNORMAL &&
-            std::fpclassify(x) != FP_SUBNORMAL) {
+        if (!IsSubnormal(y) && !IsSubnormal(x)) {
           const float expected = ::atan2f(y, x);
           if (std::isnan(expected)) {
             EXPECT_TRUE(std::isnan(actual));
