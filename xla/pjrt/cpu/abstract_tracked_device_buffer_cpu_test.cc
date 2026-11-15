@@ -272,8 +272,12 @@ TEST(TrackedCpuDeviceBufferTest, DelayedAllocation) {
 TEST(TrackedCpuDeviceBufferTest,
      StreamBasedCompactionDropsCompletedUsageEvents) {
   ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  AsyncWorkRunner* async_work_runner =
+      absl::down_cast<CommonPjRtClient*>(client.get())->async_work_runner();
   PjRtMemorySpace* memory_space = client->memory_spaces()[0];
-  ASSERT_OK_AND_ASSIGN(auto buffer, CpuRawBuffer::Allocate(memory_space, 64));
+  ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      CpuRawBuffer::Allocate(memory_space->ToCApiPtr(), 64, async_work_runner));
   AbstractTrackedDeviceBuffer tracked_buffer(
       buffer, /*definition_events=*/{},
       /*use_stream_based_compaction=*/true);
