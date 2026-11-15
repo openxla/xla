@@ -311,13 +311,12 @@ TEST(MakeArrayFromHostBufferTest, SuccessCase) {
   strings->push_back(absl::Cord("abc"));
   strings->push_back(absl::Cord("def"));
   const void* data = strings->data();
-  auto on_done_with_host_buffer = [strings = std::move(strings)]() {};
 
   TF_ASSERT_OK(client->MakeArrayFromHostBuffer(
       data, DType(DType::kString), shape,
       /*byte_strides=*/std::nullopt, std::move(sharding),
       /*layout=*/nullptr, Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-      std::move(on_done_with_host_buffer)));
+      std::move(strings)));
 }
 
 TEST(MakeArrayFromHostBufferTest, FailureCases) {
@@ -330,7 +329,6 @@ TEST(MakeArrayFromHostBufferTest, FailureCases) {
   strings->push_back(absl::Cord("abc"));
   strings->push_back(absl::Cord("def"));
   const void* data = strings->data();
-  auto on_done_with_host_buffer = [strings = std::move(strings)]() {};
 
   // MakeArrayFromHostBuffer should check and fail if `byte_strides` in not
   // nullopt.
@@ -340,9 +338,9 @@ TEST(MakeArrayFromHostBufferTest, FailureCases) {
           /*byte_strides=*/std::optional<absl::Span<const int64_t>>({8}),
           single_device_sharding,
           /*layout=*/nullptr,
-          Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-          on_done_with_host_buffer),
+          Client::HostBufferSemantics::kImmutableOnlyDuringCall, strings),
       absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_EQ(strings.use_count(), 1);
 
   // MakeArrayFromHostBuffer should check and fail if the sharding is not a
   // SingleDeviceSharding.
@@ -350,13 +348,14 @@ TEST(MakeArrayFromHostBufferTest, FailureCases) {
                           client->MakeDeviceList({device}));
   ShardingRef opaque_sharding =
       OpaqueSharding::Create(std::move(device_list), MemoryKind());
-  EXPECT_THAT(client->MakeArrayFromHostBuffer(
-                  data, DType(DType::kString), shape,
-                  /*byte_strides=*/std::nullopt, opaque_sharding,
-                  /*layout=*/nullptr,
-                  Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-                  on_done_with_host_buffer),
-              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(
+      client->MakeArrayFromHostBuffer(
+          data, DType(DType::kString), shape,
+          /*byte_strides=*/std::nullopt, opaque_sharding,
+          /*layout=*/nullptr,
+          Client::HostBufferSemantics::kImmutableOnlyDuringCall, strings),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_EQ(strings.use_count(), 1);
 
   // MakeArrayFromHostBuffer should check and fail if the requested
   // HostBufferSemantics is not supported.
@@ -368,9 +367,9 @@ TEST(MakeArrayFromHostBufferTest, FailureCases) {
     EXPECT_THAT(client->MakeArrayFromHostBuffer(
                     data, DType(DType::kString), shape,
                     /*byte_strides=*/std::nullopt, single_device_sharding,
-                    /*layout=*/nullptr, host_buffer_semantics,
-                    on_done_with_host_buffer),
+                    /*layout=*/nullptr, host_buffer_semantics, strings),
                 absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+    EXPECT_EQ(strings.use_count(), 1);
   }
 }
 
@@ -387,13 +386,12 @@ absl::StatusOr<ArrayRef> MakeSingleDeviceStringTestArray(
     strings->push_back(absl::Cord(content));
   }
   const void* data = strings->data();
-  auto on_done_with_host_buffer = [strings = std::move(strings)]() {};
 
   return client->MakeArrayFromHostBuffer(
       data, DType(DType::kString), shape,
       /*byte_strides=*/std::nullopt, std::move(sharding),
       /*layout=*/nullptr, Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-      std::move(on_done_with_host_buffer));
+      std::move(strings));
 }
 
 // Makes a single device sharded test array containing floats on the given
@@ -410,7 +408,7 @@ absl::StatusOr<ArrayRef> MakeSingleDeviceFloatTestArray(Client* client,
       data->data(), dtype, shape,
       /*byte_strides=*/std::nullopt, sharding,
       /*layout=*/nullptr, Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-      /*on_done_with_host_buffer=*/nullptr);
+      /*host_buffer_hold=*/nullptr);
 }
 
 // Makes a sharded string array with four shards in total and two addressable
