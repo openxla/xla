@@ -50,7 +50,8 @@ using absl::StrAppend;
 class LiveRangeRegions {
  public:
   struct InstructionInfo {
-    InstructionInfo() : value_definition(nullptr), is_definition(false) {}
+    InstructionInfo()
+        : value_definition(nullptr), is_definition(false), is_root(false) {}
 
     // The instruction that defines the value being used. It basically saves
     // the defining instruction of each HloValue.
@@ -64,12 +65,19 @@ class LiveRangeRegions {
     // create a new HloValue aliasing without defining a new value (cannot be
     // value_definition).
     bool is_definition;
+    // Whether the instruction is the root of its computation and its result
+    // holds a value of the live range. The value is returned by the
+    // computation, so it stays live until the computation ends rather than
+    // until its last explicit use. Note that the root may hold the value
+    // without using it, e.g. a parameter that is returned as is.
+    bool is_root;
 
     std::string ToString() const {
       return absl::StrCat(
           "is_definition: ", std::to_string(is_definition),
           ", value_definition: ",
-          value_definition ? value_definition->name() : "nullptr");
+          value_definition ? value_definition->name() : "nullptr",
+          ", is_root: ", std::to_string(is_root));
     }
   };
   // Map instructions that use a value to the defining instruction of the
