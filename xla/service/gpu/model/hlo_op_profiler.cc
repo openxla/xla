@@ -200,6 +200,22 @@ static const absl::flat_hash_set<HloOpcode>& UnsupportedOps() {
   return *kOps;
 }
 
+// Whether LLVM folds a chain of `op` above O0, e.g. a chain of integer adds
+// becomes a single multiply and repeated rounding becomes a single rounding.
+static bool ChainFoldsAboveO0(HloOpcode op, PrimitiveType data_type) {
+  switch (op) {
+    case HloOpcode::kAdd:
+    case HloOpcode::kMultiply:
+    case HloOpcode::kSubtract:
+      return primitive_util::IsIntegralType(data_type);
+    case HloOpcode::kRoundNearestAfz:
+    case HloOpcode::kRoundNearestEven:
+      return true;
+    default:
+      return false;
+  }
+}
+
 absl::Span<const PrimitiveType> HloOpProfiler::AllSupportedDtypes() {
   return absl::MakeConstSpan(dtypes);
 }
@@ -217,9 +233,9 @@ const absl::flat_hash_set<HloOpcode>& HloOpProfiler::TooFastToMeasure() {
 }
 
 /*static*/ std::unique_ptr<HloModule> HloOpProfiler::MakeModuleForMeasurements(
-    HloOpcode op, PrimitiveType data_type, int chain_length) {
-  constexpr int64_t kInputSize = 1;
-  const Shape shape = ShapeUtil::MakeShape(data_type, {kInputSize});
+    HloOpcode op, PrimitiveType data_type, int chain_length,
+    int64_t num_elements) {
+  const Shape shape = ShapeUtil::MakeShape(data_type, {num_elements});
   HloModuleConfig config;
   config.set_debug_options(GetDebugOptionsFromFlags());
   auto module = std::make_unique<HloModule>("module", config);
@@ -259,8 +275,25 @@ const absl::flat_hash_set<HloOpcode>& HloOpProfiler::TooFastToMeasure() {
 
 absl::StatusOr<absl::Duration> HloOpProfiler::MeasureOpChainDuration(
     HloOpcode op, PrimitiveType data_type, int chain_length) {
-  std::unique_ptr<HloModule> module =
-      MakeModuleForMeasurements(op, data_type, chain_length);
+  const bool is_rocm = dev_info_.gpu_compute_capability().IsRocm();
+  // On ROCm, give each thread of one wave its own element. With a single
+  // element the value is uniform, and LLVM moves integer work to the scalar
+  // unit, which real kernels do not use for per-element math.
+  std::unique_ptr<HloModule> module = MakeModuleForMeasurements(
+      op, data_type, chain_length,
+      /*num_elements=*/is_rocm ? dev_info_.threads_per_warp() : 1);
+  // On ROCm, O0 keeps ocml calls out of line and unoptimized, spilling to the
+  // stack on every call, which inflates ops like sine more than 10x. Measure
+  // at the default level, except for chains that LLVM folds above O0.
+  if (is_rocm) {
+    module->mutable_config()
+        .mutable_debug_options()
+        .set_xla_backend_optimization_level(
+            ChainFoldsAboveO0(op, data_type)
+                ? 0
+                : DefaultDebugOptionsIgnoringFlags()
+                      .xla_backend_optimization_level());
+  }
   HloVerifier verifier(/*layout_sensitive=*/true,
                        /*allow_mixed_precision=*/false);
   ABSL_RETURN_IF_ERROR(verifier.Run(&*module).status());
