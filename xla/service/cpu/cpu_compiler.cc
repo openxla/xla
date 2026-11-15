@@ -320,9 +320,24 @@ absl::StatusOr<std::vector<std::unique_ptr<Executable>>> CpuCompiler::Compile(
 }
 
 /* static */ void CpuCompiler::InitializeLLVMTarget() {
-  // Initialize LLVM's MC layer for the native target.
-  llvm::InitializeNativeTarget();
-  llvm::InitializeNativeTargetAsmPrinter();
+  // Initialize LLVM's MC layer for the native target(s). We initialize
+  // both the AArch64 and X86 backends (when available/linked in) rather
+  // than relying on llvm::InitializeNativeTarget(), which resolves based
+  // on the LLVM build's native target and can otherwise reference
+  // Initialize*Target() symbols for a backend that was never linked in
+  // (e.g. calling into the X86 backend on Windows ARM64).
+#if defined(XLA_LLVM_AARCH64_AVAILABLE)
+  LLVMInitializeAArch64Target();
+  LLVMInitializeAArch64TargetInfo();
+  LLVMInitializeAArch64TargetMC();
+  LLVMInitializeAArch64AsmPrinter();
+#endif
+#if defined(XLA_LLVM_X86_AVAILABLE)
+  LLVMInitializeX86Target();
+  LLVMInitializeX86TargetInfo();
+  LLVMInitializeX86TargetMC();
+  LLVMInitializeX86AsmPrinter();
+#endif
 }
 
 namespace {

@@ -30,6 +30,10 @@ def repo():
     tf_http_archive(
         name = "onednn_async",
         build_file = "//third_party/mkl_dnn:mkldnn_v1_async.BUILD",
+        patch_file = [
+            "//third_party/mkl_dnn:gemm_bfloat16_namespace.patch",
+            "//third_party/mkl_dnn:gemm_common_bfloat16_namespace.patch",
+        ],
         sha256 = "3f2bc020ecc3d3ffcee48075d6bd0bf6894007b95a04bdf3531ebb0fd2ef00ac",
         strip_prefix = "oneDNN-3.14.1",
         urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/refs/tags/v3.14.1.tar.gz"),

@@ -142,6 +142,11 @@ cc_library(
     hdrs = [
         "cpu_compiler.h",
     ],
+    defines = if_llvm_aarch64_available([
+        "XLA_LLVM_AARCH64_AVAILABLE=1",
+    ]) + if_llvm_x86_available([
+        "XLA_LLVM_X86_AVAILABLE=1",
+    ]),
     copts = tsl_copts(),
     deps = [
         ":conv_canonicalization",
