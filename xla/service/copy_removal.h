@@ -307,8 +307,13 @@ class ComputeRelativeLocation {
 
   // Return the relative locations (defined above) of range2 in relation to
   // instructions in range1. Return kNoOverlap if range2 is outside of range1.
-  Relation ComputeBetweenLiveRangeRegions(const LiveRangeRegions& range1,
-                                          const LiveRangeRegions& range2);
+  // Returns the relation accumulated so far as soon as `stop` holds for it.
+  // The orders of the instructions not visited yet are then not forced, so
+  // such a result only decides interference: do not call
+  // AddControlDependenceForUnorderedOps after it.
+  Relation ComputeBetweenLiveRangeRegions(
+      const LiveRangeRegions& range1, const LiveRangeRegions& range2,
+      absl::FunctionRef<bool(const Relation&)> stop);
 
   // Return whether control dependences, if exist, are added successfully.
   bool AddControlDependenceForUnorderedOps();
