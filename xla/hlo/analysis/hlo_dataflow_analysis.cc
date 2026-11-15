@@ -1587,7 +1587,12 @@ bool HloDataflowAnalysis::UpdateInstructionValueSet(
 }
 
 void HloDataflowAnalysis::Propagate() {
-  using Work = std::pair<int64_t, HloInstruction*>;
+  // Priority, unique id, instruction. Instructions that the post order
+  // schedule does not reach, such as those of a computation that a custom call
+  // calls, share one priority. The unique id orders them, and not the address:
+  // phi values get their ids in the order of this work, and those ids must be
+  // the same in every run.
+  using Work = std::tuple<int64_t, int64_t, HloInstruction*>;
   // Avoid duplicating work by preferring work items early in the post order
   // schedule. Intuitively, we start from entry parameters and propagate buffers
   // updates throughout the module only once.
@@ -1599,7 +1604,8 @@ void HloDataflowAnalysis::Propagate() {
     if (workset.insert(instruction).second) {
       VLOG(4) << "Add " << instruction->name() << " to worklist with priority "
               << priority_map[instruction];
-      worklist.emplace(priority_map[instruction], instruction);
+      worklist.emplace(priority_map[instruction], instruction->unique_id(),
+                       instruction);
     }
   };
 
@@ -1617,7 +1623,7 @@ void HloDataflowAnalysis::Propagate() {
   VLOG(1) << "SSA_FORM_: " << ssa_form_;
 
   while (!worklist.empty()) {
-    HloInstruction* instruction = worklist.top().second;
+    HloInstruction* instruction = std::get<HloInstruction*>(worklist.top());
     worklist.pop();
 
     workset.erase(workset.find(instruction));
