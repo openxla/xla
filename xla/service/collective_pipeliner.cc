@@ -903,7 +903,8 @@ class WhileLoopAnalysis {
       HloInstruction* instr, std::vector<HloInstruction*> formatting_ops,
       std::vector<HloDynamicUpdateSliceInstruction*> dyn_updates,
       HloInstruction* sink_instruction, std::vector<int64_t> indices_to_merge,
-      absl::flat_hash_map<const HloInstruction*, int64_t> instruction_order);
+      const absl::flat_hash_map<const HloInstruction*, int64_t>&
+          instruction_order);
   // Merges the new collective (inst) and the existing collectives in
   // indices_to_merge into a single entry in move_infos_. This is done because
   // they mutually share at least one dynamic-update-slice so their dynamic
@@ -917,7 +918,8 @@ class WhileLoopAnalysis {
       std::vector<int64_t> indices_to_merge,
       absl::flat_hash_map<const HloInstruction*, int64_t>&
           index_per_dyn_update_slice,
-      absl::flat_hash_map<const HloInstruction*, int64_t> instruction_order);
+      const absl::flat_hash_map<const HloInstruction*, int64_t>&
+          instruction_order);
   void MergeIntoExistingCollectives(
       HloInstruction* instr, std::vector<HloInstruction*> formatting_ops,
       std::vector<HloDynamicUpdateSliceInstruction*> dyn_updates,
@@ -926,7 +928,8 @@ class WhileLoopAnalysis {
       std::vector<int64_t> indices_to_merge,
       absl::flat_hash_map<const HloInstruction*, int64_t>&
           index_per_dyn_update_slice,
-      absl::flat_hash_map<const HloInstruction*, int64_t> instruction_order,
+      const absl::flat_hash_map<const HloInstruction*, int64_t>&
+          instruction_order,
       collective_pipeliner_utils::PipeliningDirection direction);
   void CollectCollectivesToMove(
       int64_t level_to_operate_on,
@@ -1227,7 +1230,8 @@ void WhileLoopAnalysis::MergeIntoExistingCollectivesForward(
     HloInstruction* instr, std::vector<HloInstruction*> formatting_ops,
     std::vector<HloDynamicUpdateSliceInstruction*> dyn_updates,
     HloInstruction* sink_instruction, std::vector<int64_t> indices_to_merge,
-    absl::flat_hash_map<const HloInstruction*, int64_t> instruction_order) {
+    const absl::flat_hash_map<const HloInstruction*, int64_t>&
+        instruction_order) {
   CHECK_EQ(indices_to_merge.size(), 1);
   CHECK(dyn_updates.size() == 1 || sink_instruction != nullptr);
   int64_t target_idx = indices_to_merge[0];
@@ -1260,7 +1264,7 @@ void WhileLoopAnalysis::MergeIntoExistingCollectivesForward(
   }
   absl::c_sort(move_infos_[target_idx].formatting_ops,
                [&](const HloInstruction* a, const HloInstruction* b) {
-                 return instruction_order[a] < instruction_order[b];
+                 return instruction_order.at(a) < instruction_order.at(b);
                });
 }
 
@@ -1271,7 +1275,8 @@ void WhileLoopAnalysis::MergeIntoExistingCollectivesForwardSink(
     std::vector<int64_t> indices_to_merge,
     absl::flat_hash_map<const HloInstruction*, int64_t>&
         index_per_dyn_update_slice,
-    absl::flat_hash_map<const HloInstruction*, int64_t> instruction_order) {
+    const absl::flat_hash_map<const HloInstruction*, int64_t>&
+        instruction_order) {
   CHECK(!indices_to_merge.empty());
   // Always pick the smallest group index to absorb the others.
   const int64_t target_idx = *absl::c_min_element(indices_to_merge);
@@ -1334,7 +1339,7 @@ void WhileLoopAnalysis::MergeIntoExistingCollectivesForwardSink(
 
   absl::c_sort(move_infos_[target_idx].formatting_ops,
                [&](const HloInstruction* a, const HloInstruction* b) {
-                 return instruction_order[a] < instruction_order[b];
+                 return instruction_order.at(a) < instruction_order.at(b);
                });
 }
 
@@ -1345,7 +1350,8 @@ void WhileLoopAnalysis::MergeIntoExistingCollectives(
     std::vector<int64_t> output_indices, std::vector<int64_t> indices_to_merge,
     absl::flat_hash_map<const HloInstruction*, int64_t>&
         index_per_dyn_update_slice,
-    absl::flat_hash_map<const HloInstruction*, int64_t> instruction_order,
+    const absl::flat_hash_map<const HloInstruction*, int64_t>&
+        instruction_order,
     collective_pipeliner_utils::PipeliningDirection direction) {
   if (direction ==
       collective_pipeliner_utils::PipeliningDirection::kForwardSink) {
