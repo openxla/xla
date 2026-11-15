@@ -32,6 +32,8 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "google/protobuf/text_format.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -48,6 +50,7 @@ limitations under the License.
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/LLVMIR/LLVMMemoryOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/LLVMIR/ROCDLDialectDecl.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -89,6 +92,7 @@ limitations under the License.
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/kernel_api_builder.h"
 #include "xla/codegen/emitters/transforms/atomic_rmw_utils.h"
+#include "xla/codegen/emitters/transforms/nontemporal_hint_targets.h"
 #include "xla/codegen/emitters/transforms/passes.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/analysis/symbolic_map.h"
@@ -2808,9 +2812,212 @@ class LowerTensorsPass : public impl::LowerTensorsPassBase<LowerTensorsPass> {
       signalPassFailure();
       return;
     }
+
+    EmitNontemporalHints();
+    RemoveNontemporalHintFacts();
   }
 
  private:
+  // ROCm only: gfx942 loads and stores.
+  void EmitNontemporalHints() {
+    const emitters::NontemporalHintTargets nt_targets =
+        device_spec_.IsAmdGpu()
+            ? emitters::GetNontemporalHintTargets(device_spec_.gpu())
+            : emitters::NontemporalHintTargets{};
+    if (!nt_targets.loads && !nt_targets.stores) {
+      return;
+    }
+
+    // Traces an address to its function argument; null for shared memory,
+    // constants, allocas and arguments of non-entry blocks.
+    auto global_buffer_arg = [](Value addr) -> mlir::BlockArgument {
+      while (auto gep = addr.getDefiningOp<ml::GEPOp>()) {
+        addr = gep.getBase();
+      }
+      while (auto cast = addr.getDefiningOp<UnrealizedConversionCastOp>()) {
+        addr = cast.getOperand(0);
+      }
+      if (addr.getDefiningOp<ml::AddrSpaceCastOp>() ||
+          addr.getDefiningOp<ml::AddressOfOp>() ||
+          addr.getDefiningOp<ml::AllocaOp>()) {
+        return nullptr;
+      }
+      auto arg = mlir::dyn_cast<mlir::BlockArgument>(addr);
+      if (!arg || !arg.getOwner()->isEntryBlock() ||
+          !mlir::isa<mlir::func::FuncOp>(arg.getOwner()->getParentOp())) {
+        return nullptr;
+      }
+      return arg;
+    };
+
+    auto arg_has_attr = [](mlir::BlockArgument arg,
+                           llvm::StringRef name) -> bool {
+      auto func =
+          mlir::dyn_cast<mlir::func::FuncOp>(arg.getOwner()->getParentOp());
+      return func && func.getArgAttr(arg.getArgNumber(), name) != nullptr;
+    };
+
+    // Slice index of an arg; args with the same index share a buffer.
+    auto slice_index = [](mlir::BlockArgument arg) -> std::optional<int64_t> {
+      auto func =
+          mlir::dyn_cast<mlir::func::FuncOp>(arg.getOwner()->getParentOp());
+      if (!func) {
+        return std::nullopt;
+      }
+      auto index = func.getArgAttrOfType<mlir::IntegerAttr>(arg.getArgNumber(),
+                                                            "xla.slice_index");
+      if (!index) {
+        return std::nullopt;
+      }
+      return index.getInt();
+    };
+
+    // Slice sizes from the entry function; args of the functions it calls have
+    // no llvm.dereferenceable.
+    llvm::DenseMap<int64_t, int64_t> slice_bytes;
+    for (auto func : getOperation().getOps<mlir::func::FuncOp>()) {
+      if (!func->hasAttr("xla.entry")) {
+        continue;
+      }
+      for (mlir::BlockArgument arg : func.getArguments()) {
+        auto size = func.getArgAttrOfType<mlir::IntegerAttr>(
+            arg.getArgNumber(), ml::LLVMDialect::getDereferenceableAttrName());
+        if (std::optional<int64_t> index = slice_index(arg); index && size) {
+          int64_t& bytes = slice_bytes[*index];
+          bytes = std::max(bytes, size.getInt());
+        }
+      }
+    }
+
+    // Buffer size behind an arg; 0 if unknown.
+    auto arg_bytes = [&](mlir::BlockArgument arg) -> int64_t {
+      auto func =
+          mlir::dyn_cast<mlir::func::FuncOp>(arg.getOwner()->getParentOp());
+      if (!func) {
+        return 0;
+      }
+      if (auto size = func.getArgAttrOfType<mlir::IntegerAttr>(
+              arg.getArgNumber(),
+              ml::LLVMDialect::getDereferenceableAttrName())) {
+        return size.getInt();
+      }
+      std::optional<int64_t> index = slice_index(arg);
+      return index ? slice_bytes.lookup(*index) : 0;
+    };
+
+    // Set by loop and concatenate emitters.
+    bool contiguous_output = false;
+    for (auto func : getOperation().getOps<mlir::func::FuncOp>()) {
+      if (func->hasAttr("xla.entry") &&
+          func->hasAttr(emitters::kXlaContiguousOutputAttr)) {
+        contiguous_output = true;
+        break;
+      }
+    }
+
+    // Stream buffers of 16x L2 or more; L2 = 0 disables the hints. Inputs
+    // another instruction also reads stay temporal below 64x L2 (MI300X
+    // Infinity Cache).
+    static constexpr int64_t kNontemporalReadElsewhereL2Multiple = 64;
+    const int64_t l2_bytes = device_spec_.gpu().l2_cache_size();
+    const int64_t stream_threshold =
+        static_cast<int64_t>(nt_targets.stream_l2_multiple) * l2_bytes;
+    const int64_t read_elsewhere_threshold =
+        kNontemporalReadElsewhereL2Multiple * l2_bytes;
+    auto is_large = [&](mlir::BlockArgument arg) {
+      return l2_bytes > 0 && arg_bytes(arg) >= stream_threshold;
+    };
+
+    // Buffer args read in the kernel, and the slices behind them.
+    llvm::DenseSet<Value> loaded_args;
+    llvm::DenseSet<int64_t> loaded_slices;
+    getOperation()->walk([&](ml::LoadOp load) {
+      if (mlir::BlockArgument arg = global_buffer_arg(load.getAddr())) {
+        loaded_args.insert(arg);
+        if (std::optional<int64_t> index = slice_index(arg)) {
+          loaded_slices.insert(*index);
+        }
+      }
+    });
+
+    // Large outputs not read back. An output sharing a slice with a loaded
+    // input overwrites that input.
+    llvm::DenseSet<Value> streamable_outputs;
+    bool overwrites_input = false;
+    getOperation()->walk([&](ml::StoreOp store) {
+      mlir::BlockArgument arg = global_buffer_arg(store.getAddr());
+      if (!arg || arg_has_attr(arg, kXlaInvariantAttr) ||
+          loaded_args.contains(arg)) {
+        return;
+      }
+      if (std::optional<int64_t> index = slice_index(arg)) {
+        overwrites_input |= loaded_slices.contains(*index);
+      }
+      if (is_large(arg)) {
+        streamable_outputs.insert(arg);
+      }
+    });
+
+    // Hint large invariant inputs read once, or not broadcast in a
+    // non-contiguous kernel. No load hints if the kernel overwrites an input;
+    // pieces stay temporal.
+    const bool stream_loads =
+        nt_targets.loads &&
+        !(nt_targets.out_of_place_loads && overwrites_input);
+    bool streams_input = false;
+    getOperation()->walk([&](ml::LoadOp load) {
+      mlir::BlockArgument arg = global_buffer_arg(load.getAddr());
+      if (!arg) {
+        return;
+      }
+      if (!arg_has_attr(arg, kXlaInvariantAttr) || !is_large(arg)) {
+        return;
+      }
+      const bool is_streamed_once =
+          arg_has_attr(arg, emitters::kXlaStreamedOnceAttr);
+      const bool is_not_broadcast =
+          !contiguous_output &&
+          arg_has_attr(arg, emitters::kXlaNotBroadcastAttr);
+      if (is_streamed_once || is_not_broadcast) {
+        if (stream_loads &&
+            !arg_has_attr(arg, emitters::kXlaPiecewiseReadsAttr) &&
+            (!arg_has_attr(arg, emitters::kXlaReadElsewhereAttr) ||
+             arg_bytes(arg) >= read_elsewhere_threshold)) {
+          load.setNontemporal(true);
+        }
+        streams_input = true;
+      }
+    });
+
+    // Stores: only in contiguous kernels that stream an input; gfx942 hints one
+    // output.
+    if (!nt_targets.stores || !contiguous_output || !streams_input ||
+        (nt_targets.single_output_stores && streamable_outputs.size() > 1)) {
+      return;
+    }
+    getOperation()->walk([&](ml::StoreOp store) {
+      mlir::BlockArgument arg = global_buffer_arg(store.getAddr());
+      if (arg && streamable_outputs.contains(arg)) {
+        store.setNontemporal(true);
+      }
+    });
+  }
+
+  // The facts are only for EmitNontemporalHints.
+  void RemoveNontemporalHintFacts() {
+    for (auto func : getOperation().getOps<mlir::func::FuncOp>()) {
+      func->removeAttr(emitters::kXlaContiguousOutputAttr);
+      for (unsigned i = 0; i < func.getNumArguments(); ++i) {
+        for (llvm::StringRef name :
+             {emitters::kXlaStreamedOnceAttr, emitters::kXlaNotBroadcastAttr,
+              emitters::kXlaReadElsewhereAttr,
+              emitters::kXlaPiecewiseReadsAttr}) {
+          func.removeArgAttr(i, name);
+        }
+      }
+    }
+  }
+
   DeviceSpec device_spec_;
 };
 
