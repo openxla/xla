@@ -27,13 +27,18 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parallel/hlo_linking_manifest.h"
+#include "xla/util.h"
 
 namespace xla::parallel {
 
 // Returns a list of sets of computations that can be split into separate
 // modules. Adjacent computations in the same set can be compiled together.
+// If `should_split_call` is provided, only `kCall` instructions satisfying
+// `should_split_call` are treated as split boundaries; other `kCall`s remain
+// internal to their caller's submodule.
 absl::StatusOr<std::vector<absl::flat_hash_set<const HloComputation*>>>
-GroupComputationsForSplitting(const HloModule& module);
+GroupComputationsForSplitting(const HloModule& module,
+                              HloPredicate should_split_call = nullptr);
 
 // Represents one part of a module that was split into multiple parts for
 // separate compilation.
@@ -77,7 +82,8 @@ struct HloModuleSplit {
 // Creates an `HloModule` that only contains the requested computations
 // from the original module and, potentially, insert callee stubs.
 absl::StatusOr<std::unique_ptr<HloModuleSplit>> CreateHloModuleSplit(
-    const HloModule& module, absl::flat_hash_set<const HloComputation*> split);
+    const HloModule& module, absl::flat_hash_set<const HloComputation*> split,
+    HloPredicate should_split_call = nullptr);
 
 // Represents a group of `HloModuleSplit`s.
 struct HloModuleSplitGroup {
@@ -106,7 +112,7 @@ struct HloModuleSplitGroup {
 // computations are assigned to the same module there are multiple keys pointing
 // to the same `ModulePartition` structure.
 absl::StatusOr<std::unique_ptr<HloModuleSplitGroup>> CreateHloModuleSplitGroup(
-    const HloModule& module);
+    const HloModule& module, HloPredicate should_split_call = nullptr);
 
 }  // namespace xla::parallel
 #endif  // XLA_HLO_PARALLEL_HLO_MODULE_SPLITTING_H_

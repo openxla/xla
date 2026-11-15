@@ -45,6 +45,7 @@ cc_library(
     deps = [
         ":hlo_linking_manifest",
         "//xla:status_macros",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service:compilation_environments",
         "//xla/service:hlo_module_config",
@@ -92,6 +93,7 @@ xla_cc_test(
     size = "small",
     srcs = ["hlo_module_splitting_test.cc"],
     deps = [
+        ":hlo_module_linking",
         ":hlo_module_splitting",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",

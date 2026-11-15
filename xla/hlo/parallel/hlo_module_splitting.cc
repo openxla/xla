@@ -89,13 +89,15 @@ absl::StatusOr<std::unique_ptr<HloComputation>> CreateCalleeStub(
   return comp_builder.Build();
 }
 
-// Returns all `kCall` instructions in the given computation.
+// Returns all `kCall` instructions in the given computation that should be
+// split into separate submodules.
 std::vector<const HloInstruction*> CollectCallInstructions(
-    const HloComputation* computation) {
+    const HloComputation* computation, HloPredicate should_split_call) {
   // TODO: b/419473710 - Maybe guarantee order of operand traversal?
   std::vector<const HloInstruction*> call_sites;
   for (const HloInstruction* caller : computation->MakeInstructionPostOrder()) {
-    if (caller->opcode() == HloOpcode::kCall) {
+    if (caller->opcode() == HloOpcode::kCall &&
+        (should_split_call == nullptr || should_split_call(caller))) {
       call_sites.push_back(caller);
     }
   }
@@ -136,22 +138,24 @@ absl::Status MergeMapInto(absl::flat_hash_map<K, V>& into,
 }
 }  // namespace
 
-// Assigns entry & all kCall-ed computations to splits in stable way.
+// Assigns entry & all split kCall-ed computations to splits in stable way.
 // Computations are assigned to exactly one split.
 //
-// Other computations, not explicitly kCall-ed, are not assigned and will be
-// cloned with any explicitly assigned computation that depends on them. Note
+// Other computations, not explicitly split via kCall, are not assigned and will
+// be cloned with any explicitly assigned computation that depends on them. Note
 // that this means that they might be replicated to multiple splits!
 absl::StatusOr<std::vector<absl::flat_hash_set<const HloComputation*>>>
-GroupComputationsForSplitting(const HloModule& module) {
+GroupComputationsForSplitting(const HloModule& module,
+                              HloPredicate should_split_call) {
   std::vector<absl::flat_hash_set<const HloComputation*>> result;
 
   const HloComputation* entry_computation = module.entry_computation();
   TF_RET_CHECK(entry_computation != nullptr)
       << "Module has no entry computation.";
 
-  // Perform a BFS traversal of the graph along kCall edges.
-  // All other edges are ignored.
+  // Perform a BFS traversal of the graph along split kCall edges.
+  // All other edges are traversed within the current split without creating
+  // new splits.
   std::deque<const HloComputation*> computations_to_visit;
   absl::flat_hash_set<const HloComputation*> seen;
 
@@ -166,16 +170,14 @@ GroupComputationsForSplitting(const HloModule& module) {
     // If grouping is possible, this logic might change.
     result.push_back({current_computation});
 
-    // Process callees.
-    for (const HloInstruction* op : current_computation->instructions()) {
-      if (op->opcode() == HloOpcode::kCall) {
-        const HloComputation* callee = op->to_apply();
-        TF_RET_CHECK(callee != nullptr)
-            << "HloOpcode::kCall has a null callee.";
-        if (!seen.contains(callee)) {
-          seen.insert(callee);
-          computations_to_visit.push_back(callee);
-        }
+    // Process callees (including through non-split subcomputations).
+    for (const HloInstruction* op :
+         CollectCallInstructions(current_computation, should_split_call)) {
+      const HloComputation* callee = op->to_apply();
+      TF_RET_CHECK(callee != nullptr) << "HloOpcode::kCall has a null callee.";
+      if (!seen.contains(callee)) {
+        seen.insert(callee);
+        computations_to_visit.push_back(callee);
       }
     }
   }
@@ -183,7 +185,8 @@ GroupComputationsForSplitting(const HloModule& module) {
 }
 
 absl::StatusOr<std::unique_ptr<HloModuleSplit>> CreateHloModuleSplit(
-    const HloModule& module, absl::flat_hash_set<const HloComputation*> split) {
+    const HloModule& module, absl::flat_hash_set<const HloComputation*> split,
+    HloPredicate should_split_call) {
   // If multiple `HloComputation` elements are in a split, we have to worry
   // about their ordering when hashing, or use some ordering-invariant hash.
   CHECK(split.size() == 1)
@@ -206,7 +209,7 @@ absl::StatusOr<std::unique_ptr<HloModuleSplit>> CreateHloModuleSplit(
   const HloComputation* computation = *split.begin();
   VLOG(4) << "Splitting out: " << computation->name();
   std::vector<const HloInstruction*> call_instructions =
-      CollectCallInstructions(computation);
+      CollectCallInstructions(computation, should_split_call);
   // stub -> original callee
   absl::flat_hash_map<const HloComputation*, const HloComputation*> stub_map;
   // original computation -> split computation
@@ -256,6 +259,15 @@ absl::StatusOr<std::unique_ptr<HloModuleSplit>> CreateHloModuleSplit(
       computation->CloneInContext(clone_context, nullptr,
                                   /*extra_parameters=*/{}, /*suffix=*/""));
 
+  if (computation == module.entry_computation()) {
+    *submodule->mutable_entry_computation_layout() =
+        module.entry_computation_layout();
+    submodule->set_input_output_alias_config(
+        module.input_output_alias_config());
+    submodule->set_buffer_donor_config(module.buffer_donor_config());
+    *submodule->metadata() = module.metadata();
+  }
+
   // Patch call sites.
   for (const HloInstruction* caller : call_instructions) {
     HloInstruction* mapped_call_instruction =
@@ -282,7 +294,7 @@ absl::StatusOr<std::unique_ptr<HloModuleSplit>> CreateHloModuleSplit(
 }
 
 absl::StatusOr<std::unique_ptr<HloModuleSplitGroup>> CreateHloModuleSplitGroup(
-    const HloModule& module) {
+    const HloModule& module, HloPredicate should_split_call) {
   absl::flat_hash_map<const HloComputation*, const HloModuleSplit*>
       computation_address_book;
   std::vector<std::unique_ptr<HloModuleSplit>> module_splits;
@@ -295,11 +307,12 @@ absl::StatusOr<std::unique_ptr<HloModuleSplitGroup>> CreateHloModuleSplitGroup(
 
   ABSL_ASSIGN_OR_RETURN(
       std::vector<absl::flat_hash_set<const HloComputation*>> splits,
-      GroupComputationsForSplitting(module));
+      GroupComputationsForSplitting(module, should_split_call));
 
   for (const auto& split : splits) {
-    ABSL_ASSIGN_OR_RETURN(auto module_split,
-                          CreateHloModuleSplit(module, split));
+    ABSL_ASSIGN_OR_RETURN(
+        auto module_split,
+        CreateHloModuleSplit(module, split, should_split_call));
     module_splits.push_back(std::move(module_split));
     // NOLINTNEXTLINE(*-custom-deterministic-iteration-order)
     for (const auto* original_comp : split) {

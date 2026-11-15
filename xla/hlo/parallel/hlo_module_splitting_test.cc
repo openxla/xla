@@ -23,6 +23,8 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/parallel/hlo_module_linking.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/compiler.h"
 #include "xla/service/platform_util.h"
@@ -391,6 +393,63 @@ ENTRY %main() -> f32[] {
                                      /*executor=*/nullptr,
                                      Compiler::CompileOptions{}));
   }
+}
+
+TEST_F(SplittingTest, SplitWithCallPredicateAndLinkComputationInto) {
+  constexpr absl::string_view module_text = R"(
+HloModule split_with_predicate_module, input_output_alias={ {}: (0, {}, may-alias) }
+
+%helper (x: f32[]) -> f32[] {
+  %x = f32[] parameter(0)
+  ROOT %sq = f32[] multiply(f32[] %x, f32[] %x)
+}
+
+%late_callee (p: f32[]) -> f32[] {
+  %p = f32[] parameter(0)
+  %h = f32[] call(f32[] %p), to_apply=%helper
+  ROOT %out = f32[] exponential(f32[] %h)
+}
+
+ENTRY %main (arg: f32[]) -> f32[] {
+  %arg = f32[] parameter(0)
+  %c0 = f32[] call(f32[] %arg), to_apply=%late_callee, frontend_attributes={inlineable="xla_late"}
+  %c1 = f32[] call(f32[] %c0), to_apply=%late_callee, frontend_attributes={inlineable="xla_late"}
+  ROOT %res = f32[] call(f32[] %c1), to_apply=%helper
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(module_text));
+  auto is_late_call = [](const HloInstruction* inst) {
+    if (inst->opcode() != HloOpcode::kCall) {
+      return false;
+    }
+    auto it = inst->frontend_attributes().map().find("inlineable");
+    return it != inst->frontend_attributes().map().end() &&
+           it->second == "xla_late";
+  };
+
+  ASSERT_OK_AND_ASSIGN(auto buckets,
+                       GroupComputationsForSplitting(*module, is_late_call));
+  // Only ENTRY %main and %late_callee are split boundaries; %helper is cloned
+  // into each split that calls it.
+  EXPECT_EQ(buckets.size(), 2);
+
+  ASSERT_OK_AND_ASSIGN(auto split_group,
+                       CreateHloModuleSplitGroup(*module, is_late_call));
+  EXPECT_EQ(split_group->module_splits.size(), 2);
+
+  ASSERT_OK_AND_ASSIGN(
+      const HloComputation* split_root,
+      split_group->GetClonedComputation(module->entry_computation()));
+  ASSERT_NE(split_root, nullptr);
+  EXPECT_TRUE(
+      split_root->parent()->input_output_alias_config().ParameterHasAlias(0,
+                                                                          {}));
+
+  ASSERT_OK(LinkComputationInto(module.get(), split_group->linking_manifest,
+                                split_root));
+  EXPECT_TRUE(module->input_output_alias_config().ParameterHasAlias(0, {}));
+  // Linked module has main, late_callee, and the cloned helper computations.
+  EXPECT_GE(module->computation_count(), 3);
 }
 
 }  // namespace
