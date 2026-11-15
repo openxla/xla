@@ -17,17 +17,24 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <memory>
 #include <utility>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/hash/hash.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/literal_util.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 
@@ -653,6 +660,213 @@ ENTRY %jit_insert.fusion.21.isolated.root {
   ASSERT_NE(fusion, nullptr);
   EXPECT_EQ(fusion->shape().layout().memory_space(), 1);
   TF_EXPECT_OK(Verify(module.get()));
+}
+
+// Fusion computations that forward values through every rule Run() models
+// without a dataflow analysis: a nested tuple parameter read through
+// get-tuple-elements, tuples re wrapped at depth one and two, add-dependency,
+// opt-barrier, domain, a tuple copy, a root tuple returning a parameter leaf
+// twice, nested fusions on the input side (one using a value at two
+// operands) and on the output side, a bitcast chain and a dynamic-update-slice
+// root. One value (p{0,0}) is reached from operand leaf {0,0} and from output
+// leaves {0}, {1} and {3}, with different memory spaces.
+constexpr absl::string_view kForwardingShapesHlo = R"(
+  HloModule ForwardingShapes
+
+  %nested_bitcast {
+    %q = s32[6]{0:T(128)} parameter(0)
+    ROOT %bc = s32[3,2]{0,1:T(128)} bitcast(%q)
+  }
+
+  %nested_negate {
+    %r = s32[3,2]{0,1:T(128)} parameter(0)
+    ROOT %neg = s32[3,2]{0,1:T(128)} negate(%r)
+  }
+
+  %nested_add {
+    %a = s32[6]{0:T(128)} parameter(0)
+    %b = s32[6]{0:T(128)} parameter(1)
+    ROOT %sum = s32[6]{0:T(128)} add(%a, %b)
+  }
+
+  %tuple_forwarding {
+    %p = ((s32[6]{0:T(128)}, s32[6]{0:T(128)}), s32[6]{0:T(128)}) parameter(0)
+    %inner = (s32[6]{0:T(128)}, s32[6]{0:T(128)}) get-tuple-element(%p), index=0
+    %g0 = s32[6]{0:T(128)} get-tuple-element(%inner), index=0
+    %g1 = s32[6]{0:T(128)} get-tuple-element(%inner), index=1
+    %g2 = s32[6]{0:T(128)} get-tuple-element(%p), index=1
+    %t = (s32[6]{0:T(128)}, (s32[6]{0:T(128)}, s32[6]{0:T(128)})) tuple(%g2, %inner)
+    %tok = token[] after-all()
+    %ad = (s32[6]{0:T(128)}, (s32[6]{0:T(128)}, s32[6]{0:T(128)})) add-dependency(%t, %tok)
+    %ob = (s32[6]{0:T(128)}, (s32[6]{0:T(128)}, s32[6]{0:T(128)})) opt-barrier(%ad)
+    %cp = (s32[6]{0:T(128)}, (s32[6]{0:T(128)}, s32[6]{0:T(128)})) copy(%ob)
+    %inner2 = (s32[6]{0:T(128)}, s32[6]{0:T(128)}) get-tuple-element(%cp), index=1
+    %g3 = s32[6]{0:T(128)} get-tuple-element(%inner2), index=0
+    %g4 = s32[6]{0:T(128)} get-tuple-element(%ob), index=0
+    %dom = s32[6]{0:T(128)} domain(%g1), domain={kind="sharding", entry={maximal device=0}, exit={maximal device=1}}
+    %n = s32[6]{0:T(128)} negate(%dom)
+    %f1 = s32[3,2]{0,1:T(128)} fusion(%n), kind=kLoop, calls=%nested_bitcast
+    %f2 = s32[3,2]{0,1:T(128)} fusion(%f1), kind=kLoop, calls=%nested_negate
+    %f3 = s32[6]{0:T(128)} fusion(%g4, %g4), kind=kLoop, calls=%nested_add
+    ROOT %root = (s32[6]{0:T(128)}, s32[6]{0:T(128)}, s32[3,2]{0,1:T(128)}, s32[6]{0:T(128)}, s32[6]{0:T(128)}) tuple(%g3, %g0, %f2, %g0, %f3)
+  }
+
+  %dus_root {
+    %base = s32[2,3]{1,0:T(128)} parameter(0)
+    %update = s32[1,3]{1,0:T(128)} parameter(1)
+    %idx = s32[]{:T(128)} parameter(2)
+    %bcb = s32[2,3]{1,0:T(128)} bitcast(%base)
+    ROOT %dus = s32[2,3]{1,0:T(128)} dynamic-update-slice(%bcb, %update, %idx, %idx)
+  }
+
+  ENTRY %entry {
+    %p0 = s32[6]{0:T(128)} parameter(0)
+    %p1 = s32[6]{0:T(128)} parameter(1)
+    %arg0 = s32[6]{0:T(128)S(1)} copy(%p0)
+    %inner_pair = (s32[6]{0:T(128)S(1)}, s32[6]{0:T(128)}) tuple(%arg0, %p1)
+    %triple = ((s32[6]{0:T(128)S(1)}, s32[6]{0:T(128)}), s32[6]{0:T(128)}) tuple(%inner_pair, %p1)
+    %fwd = (s32[6]{0:T(128)}, s32[6]{0:T(128)S(1)}, s32[3,2]{0,1:T(128)S(1)}, s32[6]{0:T(128)}, s32[6]{0:T(128)S(1)}) fusion(%triple), kind=kLoop, calls=%tuple_forwarding
+    %base = s32[2,3]{1,0:T(128)S(1)} parameter(2)
+    %update = s32[1,3]{1,0:T(128)} parameter(3)
+    %idx = s32[]{:T(128)} parameter(4)
+    %dus_out = s32[2,3]{1,0:T(128)} fusion(%base, %update, %idx), kind=kLoop, calls=%dus_root
+    ROOT %r = ((s32[6]{0:T(128)}, s32[6]{0:T(128)S(1)}, s32[3,2]{0,1:T(128)S(1)}, s32[6]{0:T(128)}, s32[6]{0:T(128)S(1)}), s32[2,3]{1,0:T(128)}) tuple(%fwd, %dus_out)
+  }
+  )";
+
+// Adds to the entry computation of module a fusion whose computation calls
+// another computation, one of the instruction kinds Run() does not model, so
+// Run() falls back to the dataflow analysis on this module.
+void AddFusionWithCall(HloModule* module) {
+  const Shape shape = ShapeUtil::MakeShapeWithDenseLayout(S32, {}, {});
+  HloComputation::Builder callee_builder("callee");
+  HloInstruction* callee_param = callee_builder.AddInstruction(
+      HloInstruction::CreateParameter(0, shape, "callee_param"));
+  callee_builder.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, callee_param));
+  HloComputation* callee =
+      module->AddEmbeddedComputation(callee_builder.Build());
+  HloComputation::Builder fused_builder("fused_call");
+  HloInstruction* fused_param = fused_builder.AddInstruction(
+      HloInstruction::CreateParameter(0, shape, "fused_param"));
+  fused_builder.AddInstruction(
+      HloInstruction::CreateCall(shape, {fused_param}, callee));
+  HloComputation* fused = module->AddEmbeddedComputation(fused_builder.Build());
+  HloComputation* entry = module->entry_computation();
+  HloInstruction* constant = entry->AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(0)));
+  entry->AddInstruction(HloInstruction::CreateFusion(
+      shape, HloInstruction::FusionKind::kLoop, {constant}, fused));
+}
+
+// The module propagated from the fusion computations and, forced by an
+// unrelated fusion with a call, through the dataflow analysis, ends with the
+// same shape everywhere.
+TEST_F(MemorySpacePropagationTest, LocalDataflowMatchesAnalysisOnForwarding) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnUnverifiedModule(kForwardingShapesHlo));
+  std::unique_ptr<HloModule> reference = module->Clone(/*suffix=*/"");
+  AddFusionWithCall(reference.get());
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          MemorySpacePropagation().Run(module.get()));
+  EXPECT_TRUE(changed);
+  TF_ASSERT_OK_AND_ASSIGN(bool reference_changed,
+                          MemorySpacePropagation().Run(reference.get()));
+  EXPECT_TRUE(reference_changed);
+  int64_t compared = 0;
+  for (HloComputation* computation : module->computations()) {
+    HloComputation* reference_computation =
+        reference->GetComputationWithName(computation->name());
+    ASSERT_NE(reference_computation, nullptr);
+    for (const HloInstruction* instruction : computation->instructions()) {
+      const HloInstruction* reference_instruction =
+          reference_computation->GetInstructionWithName(instruction->name());
+      ASSERT_NE(reference_instruction, nullptr);
+      EXPECT_TRUE(
+          Shape::Equal()(instruction->shape(), reference_instruction->shape()))
+          << instruction->ToString() << " vs "
+          << reference_instruction->ToString();
+      ++compared;
+    }
+  }
+  EXPECT_EQ(compared, module->instruction_count());
+}
+
+// A call inside a fusion computation of another thread: a main thread run
+// propagates from the fusion computations and does not enter that thread; a
+// run over all threads builds the analysis, which follows the call into its
+// callee.
+TEST_F(MemorySpacePropagationTest, CallInsideFusionNeedsTheAnalysis) {
+  absl::string_view hlo_string = R"(
+  HloModule CallInsideFusion
+
+  %callee {
+    %cp = s32[6]{0:T(128)} parameter(0)
+    ROOT %cn = s32[6]{0:T(128)} negate(%cp)
+  }, execution_thread="other"
+
+  %fused_call {
+    %fp = s32[6]{0:T(128)} parameter(0)
+    ROOT %call = s32[6]{0:T(128)} call(%fp), to_apply=%callee
+  }, execution_thread="other"
+
+  %other_computation {
+    %op = s32[6]{0:T(128)} parameter(0)
+    ROOT %of = s32[6]{0:T(128)S(1)} fusion(%op), kind=kLoop, calls=%fused_call
+  }, execution_thread="other"
+
+  %fused_add {
+    %ap = (s32[6]{0:T(128)}, s32[6]{0:T(128)}) parameter(0)
+    %a0 = s32[6]{0:T(128)} get-tuple-element(%ap), index=0
+    %a1 = s32[6]{0:T(128)} get-tuple-element(%ap), index=1
+    ROOT %as = s32[6]{0:T(128)} add(%a0, %a1)
+  }
+
+  ENTRY %entry {
+    %p0 = s32[6]{0:T(128)} parameter(0)
+    %p1 = s32[6]{0:T(128)} parameter(1)
+    %start = ((s32[6]{0:T(128)}), s32[6]{0:T(128)}, u32[]) async-start(%p0), calls=%other_computation, async_execution_thread="other"
+    %done = s32[6]{0:T(128)} async-done(%start)
+    %arg1 = s32[6]{0:T(128)S(1)} copy(%p1)
+    %pair = (s32[6]{0:T(128)}, s32[6]{0:T(128)S(1)}) tuple(%done, %arg1)
+    ROOT %fusion = s32[6]{0:T(128)S(1)} fusion(%pair), kind=kLoop, calls=%fused_add
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  HloComputation* fused_add = module->GetComputationWithName("fused_add");
+  HloComputation* callee = module->GetComputationWithName("callee");
+  const absl::flat_hash_set<absl::string_view> main_thread = {
+      HloInstruction::kMainExecutionThread};
+  TF_ASSERT_OK_AND_ASSIGN(bool main_changed, MemorySpacePropagation().Run(
+                                                 module.get(), main_thread));
+  EXPECT_TRUE(main_changed);
+  EXPECT_EQ(fused_add->parameter_instruction(0)
+                ->shape()
+                .tuple_shapes(1)
+                .layout()
+                .memory_space(),
+            1);
+  EXPECT_EQ(
+      fused_add->GetInstructionWithName("a1")->shape().layout().memory_space(),
+      1);
+  EXPECT_EQ(fused_add->root_instruction()->shape().layout().memory_space(), 1);
+  EXPECT_EQ(callee->root_instruction()->shape().layout().memory_space(), 0);
+
+  TF_ASSERT_OK_AND_ASSIGN(bool all_threads_changed,
+                          MemorySpacePropagation().Run(module.get()));
+  EXPECT_TRUE(all_threads_changed);
+  EXPECT_EQ(module->GetComputationWithName("fused_call")
+                ->root_instruction()
+                ->shape()
+                .layout()
+                .memory_space(),
+            1);
+  // The callee is embedded too, so its parameter defines its own value and
+  // keeps its memory space, while the call forwards the callee's root value.
+  EXPECT_EQ(callee->parameter_instruction(0)->shape().layout().memory_space(),
+            0);
+  EXPECT_EQ(callee->root_instruction()->shape().layout().memory_space(), 1);
 }
 
 }  // namespace
