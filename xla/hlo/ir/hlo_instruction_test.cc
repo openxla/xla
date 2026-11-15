@@ -1440,7 +1440,7 @@ TEST_F(HloInstructionTest, ScanFromProtoWithoutDimensionIsRejected) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kScanHlo));
   HloModuleProto proto = module->ToProto();
-  ASSERT_OK_AND_ASSIGN(HloInstructionProto* scan,
+  ASSERT_OK_AND_ASSIGN(HloInstructionProto * scan,
                        FindInstructionProto(proto, "scan"));
   scan->clear_dimensions();
   EXPECT_THAT(HloModule::CreateFromProto(proto, module->config()),
@@ -1453,7 +1453,7 @@ TEST_F(HloInstructionTest, ScanFromProtoWithTwoDimensionsIsRejected) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kScanHlo));
   HloModuleProto proto = module->ToProto();
-  ASSERT_OK_AND_ASSIGN(HloInstructionProto* scan,
+  ASSERT_OK_AND_ASSIGN(HloInstructionProto * scan,
                        FindInstructionProto(proto, "scan"));
   scan->add_dimensions(0);
   EXPECT_THAT(HloModule::CreateFromProto(proto, module->config()),
@@ -1505,7 +1505,7 @@ TEST_F(HloInstructionTest, ScatterFromProtoWithoutOperandsIsRejected) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kScatterHlo));
   HloModuleProto proto = module->ToProto();
-  ASSERT_OK_AND_ASSIGN(HloInstructionProto* scatter,
+  ASSERT_OK_AND_ASSIGN(HloInstructionProto * scatter,
                        FindInstructionProto(proto, "scatter"));
   scatter->clear_operand_ids();
   EXPECT_THAT(HloModule::CreateFromProto(proto, module->config()),
@@ -1518,7 +1518,7 @@ TEST_F(HloInstructionTest, ScatterFromProtoWithEvenOperandCountIsRejected) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kScatterHlo));
   HloModuleProto proto = module->ToProto();
-  ASSERT_OK_AND_ASSIGN(HloInstructionProto* scatter,
+  ASSERT_OK_AND_ASSIGN(HloInstructionProto * scatter,
                        FindInstructionProto(proto, "scatter"));
   scatter->mutable_operand_ids()->RemoveLast();
   EXPECT_THAT(HloModule::CreateFromProto(proto, module->config()),
