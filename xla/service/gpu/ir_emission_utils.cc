@@ -258,15 +258,25 @@ int GetBitwidth(PrimitiveType type) {
 }
 
 bool IsContiguousSlice(const HloInstruction& instr) {
+  // A slice that produces its result in a different layout than its operand
+  // rearranges the elements, so its result is not a contiguous region of the
+  // operand buffer.
+  auto preserves_layout = [](const Shape& full_shape,
+                             const Shape& slice_shape) {
+    return Layout::Equal().MinorToMajorOnly()(full_shape.layout(),
+                                              slice_shape.layout());
+  };
   if (auto slice = DynCast<HloSliceInstruction>(&instr)) {
     const Shape& full_shape = slice->operand(0)->shape();
     const Shape& slice_shape = slice->shape();
-    return IsContiguousSlice(full_shape, slice_shape, slice->slice_strides());
+    return preserves_layout(full_shape, slice_shape) &&
+           IsContiguousSlice(full_shape, slice_shape, slice->slice_strides());
 
   } else if (auto slice = DynCast<HloDynamicSliceInstruction>(&instr)) {
     const Shape& full_shape = slice->operand(0)->shape();
     const Shape& slice_shape = slice->shape();
-    return IsContiguousSlice(full_shape, slice_shape, std::nullopt);
+    return preserves_layout(full_shape, slice_shape) &&
+           IsContiguousSlice(full_shape, slice_shape, std::nullopt);
 
   } else if (auto slice = DynCast<HloDynamicUpdateSliceInstruction>(&instr)) {
     const Shape& full_shape = slice->shape();

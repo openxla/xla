@@ -708,6 +708,60 @@ ENTRY main {
 )");
 }
 
+TEST_F(LayoutNormalizationTest, SliceChangesLayout) {
+  const char* hlo = R"(
+HloModule module
+
+ENTRY main {
+  input = f32[3,4,32]{2,1,0} parameter(0)
+  ROOT out = f32[1,4,32]{1,0,2} slice(input), slice={[1:2],[0:4],[0:32]}
+}
+)";
+  CheckLayoutNormalization(hlo, R"(
+// CHECK: [[input_0:%[^ ]+]] = f32[3,4,32]{2,1,0} parameter(0)
+// CHECK-NEXT: [[slice_1:%[^ ]+]] = f32[1,4,32]{2,1,0} slice([[input_0]]), slice={[1:2], [0:4], [0:32]}
+// CHECK-NEXT: [[transpose_2:%[^ ]+]] = f32[32,1,4]{2,1,0} transpose([[slice_1]]), dimensions={2,0,1}
+// CHECK-NEXT: ROOT [[bitcast_3:%[^ ]+]] = f32[1,4,32]{1,0,2} bitcast([[transpose_2]])
+  )");
+}
+
+TEST_F(LayoutNormalizationTest, DynamicSliceChangesLayout) {
+  const char* hlo = R"(
+HloModule module
+
+ENTRY main {
+  input = f32[3,4,32]{2,1,0} parameter(0)
+  p1 = s32[] parameter(1)
+  p2 = s32[] parameter(2)
+  p3 = s32[] parameter(3)
+  ROOT out = f32[1,4,32]{1,0,2} dynamic-slice(input, p1, p2, p3), dynamic_slice_sizes={1,4,32}, metadata={op_name="test"}
+}
+  )";
+  CheckLayoutNormalization(hlo, R"(
+// CHECK: [[slice_0:%[^ ]+]] = f32[1,4,32]{2,1,0} dynamic-slice({{.*}}), dynamic_slice_sizes={1,4,32}, metadata={op_name="test"}
+// CHECK-NEXT: [[transpose_1:%[^ ]+]] = f32[32,1,4]{2,1,0} transpose([[slice_0]]), dimensions={2,0,1}
+// CHECK-NEXT: ROOT [[bitcast_2:%[^ ]+]] = f32[1,4,32]{1,0,2} bitcast([[transpose_1]])
+)");
+}
+
+TEST_F(LayoutNormalizationTest, DynamicSliceChangesLayoutOfTransposedOperand) {
+  const char* hlo = R"(
+HloModule module
+
+ENTRY main {
+  input = f32[3,4,32]{1,0,2} parameter(0)
+  p1 = s32[] parameter(1)
+  p2 = s32[] parameter(2)
+  p3 = s32[] parameter(3)
+  ROOT out = f32[1,4,32]{2,1,0} dynamic-slice(input, p1, p2, p3), dynamic_slice_sizes={1,4,32}
+}
+  )";
+  CheckLayoutNormalization(hlo, R"(
+// CHECK: [[slice_0:%[^ ]+]] = f32[32,1,4]{2,1,0} dynamic-slice({{.*}}), dynamic_slice_sizes={32,1,4}
+// CHECK-NEXT: ROOT [[transpose_1:%[^ ]+]] = f32[1,4,32]{2,1,0} transpose([[slice_0]]), dimensions={1,2,0}
+)");
+}
+
 TEST_F(LayoutNormalizationTest, DynamicSliceHasDegenerate) {
   const char* hlo = R"(
 HloModule module

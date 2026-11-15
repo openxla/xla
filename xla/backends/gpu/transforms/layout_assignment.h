@@ -77,6 +77,13 @@ class GpuLayoutAssignment : public LayoutAssignment {
 
   bool PropagateReductionLayoutToOperand(const HloInstruction* user) override;
 
+  // On GPU a slice or dynamic-slice may produce its result in a layout that
+  // differs from the layout of the sliced operand. This lets a consumer that
+  // requires a particular layout get it from the slice itself, instead of
+  // forcing that layout onto the (possibly much larger) sliced operand.
+  bool InstructionCanChangeLayoutInstance(
+      const HloInstruction* instruction) override;
+
   std::unique_ptr<Layout> ChooseOperandLayoutFromOutputLayout(
       const Layout& output_layout, const HloInstruction* instruction,
       int64_t operand_no) override;

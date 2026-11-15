@@ -634,6 +634,7 @@ ENTRY entry {
   slice.10 = f32[8,2,50,11]{3,2,1,0} slice(p0), slice={[0:8:1], [10:12:1], [0:100:2], [0:11:1]}
   slice.11 = f32[2]{0} slice(p1), slice={[0:3:2]}
   slice.12 = f32[1]{0} slice(p1), slice={[0:1:2]}
+  slice.13 = f32[2,12,100,11]{0,1,3,2} slice(p0), slice={[1:3], [0:12], [0:100], [0:11]}
   ROOT t = (f32[2,12,100,11]{3,2,1,0},
             f32[1,1,1,11]{3,2,1,0},
             f32[1,1,10,11]{3,2,1,0},
@@ -645,7 +646,8 @@ ENTRY entry {
             f32[8,2,40,11]{0,1,3,2},
             f32[8,2,50,11]{3,2,1,0},
             f32[2]{0},
-            f32[1]{0}) tuple(slice.1, slice.2, slice.3, slice.4, slice.5, slice.6, slice.7, slice.8, slice.9, slice.10, slice.11, slice.12)
+            f32[1]{0},
+            f32[2,12,100,11]{0,1,3,2}) tuple(slice.1, slice.2, slice.3, slice.4, slice.5, slice.6, slice.7, slice.8, slice.9, slice.10, slice.11, slice.12, slice.13)
 }
 )";
 
@@ -688,6 +690,9 @@ ENTRY entry {
   EXPECT_FALSE(IsContiguousSlice(*slice10));
   EXPECT_FALSE(IsContiguousSlice(*slice11));
   EXPECT_TRUE(IsContiguousSlice(*slice12));
+  // The same region as slice.1, but in a different layout than the operand.
+  EXPECT_FALSE(IsContiguousSlice(
+      *module->entry_computation()->GetInstructionWithName("slice.13")));
 }
 
 TEST_F(IrEmissionUtilsTest, EmitsNoThunks) {

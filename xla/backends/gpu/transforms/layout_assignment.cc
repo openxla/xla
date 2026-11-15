@@ -971,6 +971,19 @@ bool GpuLayoutAssignment::PropagateReductionLayoutToOperand(
   return reduction_size >= 32;
 }
 
+static bool IsSliceOrDynamicSlice(const HloInstruction* instruction) {
+  return HloPredicateIsOp<HloOpcode::kSlice, HloOpcode::kDynamicSlice>(
+      instruction);
+}
+
+bool GpuLayoutAssignment::InstructionCanChangeLayoutInstance(
+    const HloInstruction* instruction) {
+  if (IsSliceOrDynamicSlice(instruction)) {
+    return true;
+  }
+  return LayoutAssignment::InstructionCanChangeLayoutInstance(instruction);
+}
+
 // GPU specific layout alignment for reshapes.
 // ShapeUtil::AlignLayouts puts 1-sized dimensions at the end of minor_to_major
 // (most major), which is good for TPU to avoid padding. But on GPU it can
@@ -1134,6 +1147,15 @@ GpuLayoutAssignment::ChooseOutputLayoutFromOperandLayout(
       operand->shape().dimensions().size() ==
           user->shape().dimensions().size() &&
       !InstructionCanChangeLayoutInstance(user)) {
+    return std::make_unique<Layout>(operand_layout);
+  }
+
+  // A slice can change the layout, but keeping the layout of the sliced
+  // operand is the cheapest choice unless a consumer needs a different one.
+  // The reverse direction is deliberately not handled in
+  // ChooseOperandLayoutFromOutputLayout: a layout required by a consumer of
+  // the slice is provided by the slice and does not reach the sliced operand.
+  if (IsSliceOrDynamicSlice(user) && operand_no == 0) {
     return std::make_unique<Layout>(operand_layout);
   }
 

@@ -1515,6 +1515,143 @@ TEST_F(LayoutAssignmentTest,
               ::testing::ElementsAre(3, 2, 0, 1));
 }
 
+// Returns the number of copy instructions in `module` that produce an array of
+// `num_elements` elements.
+int64_t CountCopiesOfSize(const HloModule* module, int64_t num_elements) {
+  int64_t count = 0;
+  for (const HloComputation* computation : module->computations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      if (instruction->opcode() == HloOpcode::kCopy &&
+          ShapeUtil::ElementsIn(instruction->shape()) == num_elements) {
+        ++count;
+      }
+    }
+  }
+  return count;
+}
+
+TEST_F(LayoutAssignmentTest, DynamicSliceChangesLayoutForAllGather) {
+  // The all-gather needs dimension 2 to be the most major dimension. The slice
+  // provides that layout, so the sliced array keeps its own layout.
+  const char* hlo_text = R"(
+  HloModule module
+
+  ENTRY main {
+    weights = f32[8,16,32]{2,1,0} parameter(0)
+    i = s32[] parameter(1)
+    zero = s32[] constant(0)
+    layer = f32[1,16,32]{2,1,0} dynamic-slice(weights, i, zero, zero), dynamic_slice_sizes={1,16,32}
+    ROOT gathered = f32[1,16,64]{2,1,0} all-gather(layer), dimensions={2}, replica_groups={{0,1}}
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                        default_device_description_);
+  EXPECT_THAT(layout_assignment.Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  const HloInstruction* layer = FindInstruction(module.get(), "layer");
+  ASSERT_THAT(layer, NotNull());
+  EXPECT_EQ(layer->operand(0)->opcode(), HloOpcode::kParameter)
+      << module->ToString();
+  EXPECT_THAT(layer->operand(0)->shape().layout().minor_to_major(),
+              ::testing::ElementsAre(2, 1, 0));
+  EXPECT_THAT(layer->shape().layout().minor_to_major(),
+              ::testing::ElementsAre(1, 0, 2));
+  const HloInstruction* gathered = FindInstruction(module.get(), "gathered");
+  ASSERT_THAT(gathered, NotNull());
+  EXPECT_EQ(gathered->operand(0), layer) << module->ToString();
+  EXPECT_EQ(CountCopiesOfSize(module.get(), 8 * 16 * 32), 0)
+      << module->ToString();
+}
+
+TEST_F(LayoutAssignmentTest, DynamicSliceInLoopChangesLayoutForAllGather) {
+  // Same as above, but the sliced array is carried through a while loop. The
+  // array must not be converted to the layout of the all-gather outside of the
+  // loop.
+  const char* hlo_text = R"(
+  HloModule module
+
+  body {
+    p = (s32[], f32[8,16,32]{2,1,0}, f32[1,16,64]{2,1,0}) parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    weights = f32[8,16,32]{2,1,0} get-tuple-element(p), index=1
+    zero = s32[] constant(0)
+    layer = f32[1,16,32]{2,1,0} dynamic-slice(weights, i, zero, zero), dynamic_slice_sizes={1,16,32}
+    gathered = f32[1,16,64]{2,1,0} all-gather(layer), dimensions={2}, replica_groups={{0,1}}
+    one = s32[] constant(1)
+    next = s32[] add(i, one)
+    ROOT result = (s32[], f32[8,16,32]{2,1,0}, f32[1,16,64]{2,1,0}) tuple(next, weights, gathered)
+  }
+
+  condition {
+    p = (s32[], f32[8,16,32]{2,1,0}, f32[1,16,64]{2,1,0}) parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    limit = s32[] constant(8)
+    ROOT lt = pred[] compare(i, limit), direction=LT
+  }
+
+  ENTRY main {
+    weights = f32[8,16,32]{2,1,0} parameter(0)
+    acc = f32[1,16,64]{2,1,0} parameter(1)
+    zero = s32[] constant(0)
+    init = (s32[], f32[8,16,32]{2,1,0}, f32[1,16,64]{2,1,0}) tuple(zero, weights, acc)
+    ROOT loop = (s32[], f32[8,16,32]{2,1,0}, f32[1,16,64]{2,1,0}) while(init), condition=condition, body=body
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                        default_device_description_);
+  EXPECT_THAT(layout_assignment.Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  const HloInstruction* layer = FindInstruction(module.get(), "layer");
+  ASSERT_THAT(layer, NotNull());
+  EXPECT_EQ(layer->operand(0)->opcode(), HloOpcode::kGetTupleElement)
+      << module->ToString();
+  EXPECT_THAT(layer->operand(0)->shape().layout().minor_to_major(),
+              ::testing::ElementsAre(2, 1, 0));
+  EXPECT_THAT(layer->shape().layout().minor_to_major(),
+              ::testing::ElementsAre(1, 0, 2));
+  EXPECT_EQ(CountCopiesOfSize(module.get(), 8 * 16 * 32), 0)
+      << module->ToString();
+}
+
+TEST_F(LayoutAssignmentTest, SliceKeepsOperandLayoutWithoutOtherRequirement) {
+  const char* hlo_text = R"(
+  HloModule module
+
+  ENTRY main {
+    p = f32[8,16,32]{0,1,2} parameter(0)
+    s = f32[2,16,32]{0,1,2} slice(p), slice={[0:2], [0:16], [0:32]}
+    ROOT neg = f32[2,16,32]{0,1,2} negate(s)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                        default_device_description_);
+  EXPECT_THAT(layout_assignment.Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Negate(
+          m::Slice(m::Parameter()).WithShape(F32, {2, 16, 32}, {0, 1, 2}))))
+      << module->ToString();
+}
+
 struct ScaledDotLayoutTestCase {
   std::string name;
   // Shapes of lhs, rhs, lhs_scale, rhs_scale and the output, followed by the
