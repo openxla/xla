@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/python/ifrt/index_domain.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <ostream>
 #include <utility>
@@ -34,6 +35,47 @@ limitations under the License.
 namespace xla {
 namespace ifrt {
 
+absl::StatusOr<IndexDomain> IndexDomain::Create(Index origin, Shape shape) {
+  absl::Span<const int64_t> origin_elements = origin.elements();
+  absl::Span<const int64_t> shape_dims = shape.dims();
+  if (origin_elements.size() != shape_dims.size()) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "IndexDomain requires origin and shape to have the same number of "
+        "dimensions, but got origin=",
+        origin, " vs. shape=", shape));
+  }
+  int64_t upper_bound_product = 1;
+  for (size_t i = 0; i < shape_dims.size(); ++i) {
+    if (origin_elements[i] > Shape::kMaxNumElements - shape_dims[i]) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "IndexDomain upper bound exceeds Shape::kMaxNumElements (",
+          Shape::kMaxNumElements, ") at dimension ", i, " for origin=", origin,
+          " and shape=", shape));
+    }
+    const int64_t upper_bound = origin_elements[i] + shape_dims[i];
+    if (upper_bound <= 0) {
+      continue;
+    }
+    if (__builtin_mul_overflow(upper_bound_product, upper_bound,
+                               &upper_bound_product) ||
+        upper_bound_product > Shape::kMaxNumElements) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "IndexDomain upper-bound non-zero dimension product exceeds "
+          "Shape::kMaxNumElements (",
+          Shape::kMaxNumElements, ") for origin=", origin,
+          " and shape=", shape));
+    }
+  }
+  return IndexDomain(UncheckedTag{}, std::move(origin), std::move(shape));
+}
+
+IndexDomain::IndexDomain(Index origin, Shape shape)
+    : IndexDomain([](Index o, Shape s) {
+        absl::StatusOr<IndexDomain> domain = Create(std::move(o), std::move(s));
+        CHECK_OK(domain);
+        return *std::move(domain);
+      }(std::move(origin), std::move(shape))) {}
+
 absl::StatusOr<IndexDomain> IndexDomain::FromProto(
     const IndexDomainProto& proto) {
   const SerDesVersionNumber version_number(proto.version_number());
@@ -45,7 +87,7 @@ absl::StatusOr<IndexDomain> IndexDomain::FromProto(
   ABSL_ASSIGN_OR_RETURN(Index origin_val, Index::FromProto(proto.origin()));
   ABSL_ASSIGN_OR_RETURN(Shape shape_val, Shape::FromProto(proto.shape()));
 
-  return IndexDomain(std::move(origin_val), std::move(shape_val));
+  return Create(std::move(origin_val), std::move(shape_val));
 }
 
 void IndexDomain::ToProto(IndexDomainProto& proto,
@@ -67,8 +109,7 @@ absl::StatusOr<IndexDomain> IndexDomain::Intersect(
   absl::Span<const int64_t> a_shape = shape_.dims();
   absl::Span<const int64_t> b_origin = other.origin_.elements();
   absl::Span<const int64_t> b_shape = other.shape_.dims();
-  if (a_origin.size() != a_shape.size() || b_origin.size() != b_shape.size() ||
-      a_shape.size() != b_shape.size()) {
+  if (a_shape.size() != b_shape.size()) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Cannot intersect IndexDomains with mismatched numbers of dimensions: ",
         *this, " vs. ", other));
@@ -87,7 +128,7 @@ absl::StatusOr<IndexDomain> IndexDomain::Intersect(
     origin[i] = low;
     shape[i] = high - low;
   }
-  return IndexDomain(Index(origin), Shape(shape));
+  return IndexDomain(UncheckedTag{}, Index(origin), Shape(shape));
 }
 
 absl::StatusOr<bool> IndexDomain::Contains(const IndexDomain& other) const {
@@ -95,8 +136,7 @@ absl::StatusOr<bool> IndexDomain::Contains(const IndexDomain& other) const {
   absl::Span<const int64_t> a_shape = shape_.dims();
   absl::Span<const int64_t> b_origin = other.origin_.elements();
   absl::Span<const int64_t> b_shape = other.shape_.dims();
-  if (a_origin.size() != a_shape.size() || b_origin.size() != b_shape.size() ||
-      a_shape.size() != b_shape.size()) {
+  if (a_shape.size() != b_shape.size()) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Cannot check containment of IndexDomains with mismatched numbers of "
         "dimensions: ",
