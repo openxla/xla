@@ -47,9 +47,6 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "tsl/platform/casts.h"
-#include "tsl/platform/hash.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -70,6 +67,9 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/hash.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 

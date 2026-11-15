@@ -248,6 +248,7 @@ xla_cc_test(
     srcs = ["cancels_pending_clique_init_test.cc"],
     deps = [
         ":cancellation_token",
+        ":gpu_clique",
         ":gpu_clique_key",
         ":gpu_cliques",
         ":gpu_collectives",
@@ -256,6 +257,7 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/core/collectives:clique_id",
         "//xla/core/collectives:clique_key",
+        "//xla/core/collectives:collectives",
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/core/collectives:reduction_kind",
@@ -265,6 +267,7 @@ xla_cc_test(
         "//xla/stream_executor:mock_stream_executor",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
