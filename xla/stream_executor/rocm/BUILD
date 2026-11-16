@@ -927,6 +927,7 @@ rocm_library(
         "rocm-only",
     ],
     deps = [
+        ":hipblas_lt_header",
         "@local_config_rocm//rocm:rocm_headers",
     ],
 )

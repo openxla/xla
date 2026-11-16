@@ -44,6 +44,31 @@ namespace stream_executor {
 
 namespace rocm {
 
+// Bundles all host-side parameters for a grouped/ragged-dot UserArguments
+// update launch. This replaces a ~35-argument free-function signature.
+struct GroupGemmUpdateArgsParams {
+  DeviceAddressBase args, a, b, c, d, bias, group_sizes;
+  uint8_t group_size_bytewidth;
+  // Byte strides: the element stride premultiplied by the operand's element
+  // width, with stride_a/stride_b already swapped when must_swap_operands.
+  uint64_t stride_a_bytes, stride_b_bytes, c_stride_ragged_dim_bytes,
+      output_stride_ragged_dim_bytes;
+  bool must_swap_operands;
+  uint32_t m, n, k, batch;
+  uint32_t strideA1, strideA2, strideB1, strideB2, strideC1, strideC2, strideD1,
+      strideD2;
+  gpu::RaggedDotMode ragged_mode;
+  uint32_t num_gemms;
+  int32_t activation_type;
+  int8_t bias_type;
+  bool has_matrix_bias;
+};
+
+// Launches the kernel that populates the device-side hipBLASLt UserArguments
+// array for a grouped/ragged-dot GEMM. Defined in rocm_helpers.cu.cc.
+void GroupGemmUpdateArgs(hipStream_t stream,
+                         const GroupGemmUpdateArgsParams& params);
+
 class BlasLt : public gpu::BlasLt {
   template <typename T>
   using Owned =
