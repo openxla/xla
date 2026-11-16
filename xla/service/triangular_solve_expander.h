@@ -49,7 +49,10 @@ class TriangularSolveExpander : public OpExpanderPass {
                                        bool conjugate_a, bool unit_diagonal,
                                        PrecisionConfig::Precision precision);
 
-  // Helper function used by SolveByInvertingDiagonalBlocks
+  // Helper function used by SolveByInvertingDiagonalBlocks. Computes the
+  // inverse of the row-scaled unit-triangular factor U = D^{-1} A_jj where
+  // D = diag(A_jj), returning U^{-1} = A_jj^{-1} D. Callers apply D^{-1}
+  // separately to avoid intermediate underflow/overflow when D is extreme.
   virtual XlaOp InvertDiagonalBlocks(XlaOp diag_blocks, bool lower_triangular,
                                      PrecisionConfig::Precision precision);
 

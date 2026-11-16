@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -137,7 +138,12 @@ XlaOp DiagonalBlocks(XlaOp a, int64_t block_size) {
   });
 }
 
+// Solves op(A) X = B (left_side=true) or X op(A) = B (left_side=false) given
+// inv_diag_blocks = U^{-1} = A_jj^{-1} D where A_jj = D U and D = diag(A_jj).
+// When a_diag is present (non-unit diagonal), applies D^{-1} directly to avoid
+// materializing A_jj^{-1} = U^{-1} D^{-1}.
 XlaOp SolveWithInvertedDiagonalBlocks(XlaOp a, XlaOp b, XlaOp inv_diag_blocks,
+                                      std::optional<XlaOp> a_diag,
                                       bool left_side, bool lower,
                                       bool transpose_a, bool conjugate_a,
                                       PrecisionConfig::Precision precision) {
@@ -159,6 +165,17 @@ XlaOp SolveWithInvertedDiagonalBlocks(XlaOp a, XlaOp b, XlaOp inv_diag_blocks,
     int bdims = b_shape.dimensions().size();
     int64_t block_dim = (left_side) ? bdims - 2 : bdims - 1;
 
+    XlaOp diag;
+    std::vector<int64_t> diag_broadcast_dims;
+    if (a_diag.has_value()) {
+      diag = MaybeConjugate(*a_diag, conjugate_a);
+      diag_broadcast_dims.resize(ndims - 1);
+      std::iota(diag_broadcast_dims.begin(), diag_broadcast_dims.end(), 0);
+      if (!left_side) {
+        diag_broadcast_dims.back() = ndims - 1;
+      }
+    }
+
     // Initialize the solution
     XlaOp x;
 
@@ -168,7 +185,8 @@ XlaOp SolveWithInvertedDiagonalBlocks(XlaOp a, XlaOp b, XlaOp inv_diag_blocks,
       // High-level intuition: We have B[i] = L[i] @ X. Since L is upper
       // triangular this means B[i] = L[i, :i + 1] @ X[:i + 1]. We can split
       // this into two parts: B[i] = L[i, :i] @ X[:i] + L[i, i] @ X[i] which
-      // can be solved for X[i] as X[i] = inv(L[i, i]) @ B[i] - L[i, :i] @ X[:i]
+      // can be solved for X[i] as X[i] = inv(L[i, i]) @ (B[i] - L[i, :i] @
+      // X[:i])
 
       // Decide whether we go from first block to last or vice versa
       bool backward = left_side ^ lower ^ transpose_a;
@@ -222,13 +240,36 @@ XlaOp SolveWithInvertedDiagonalBlocks(XlaOp a, XlaOp b, XlaOp inv_diag_blocks,
         }
       }
 
+      XlaOp d_j;
+      if (a_diag.has_value()) {
+        d_j = (num_blocks == 1) ? diag
+                                : SliceInMinorDims(diag, {j * block_size}, {k});
+      }
+
+      // With A_jj = D U and inv_block = MaybeConjugate(U^{-1}, conjugate_a):
+      //   left_side && !transpose_a: U^{-1} @ (D^{-1} rem)
+      //   left_side && transpose_a:  (D^*)^{-1} @ ((U^{-1})^H @ rem)
+      //   !left_side && !transpose_a: (rem @ U^{-1}) @ D^{-1}
+      //   !left_side && transpose_a:  (rem @ (D^*)^{-1}) @ (U^{-1})^H
       XlaOp x_update;
       if (left_side) {
+        if (a_diag.has_value() && !transpose_a) {
+          remainder = Div(remainder, d_j, diag_broadcast_dims);
+        }
         x_update =
             BatchDot(inv_block, transpose_a, remainder, false, precision);
+        if (a_diag.has_value() && transpose_a) {
+          x_update = Div(x_update, d_j, diag_broadcast_dims);
+        }
       } else {
+        if (a_diag.has_value() && transpose_a) {
+          remainder = Div(remainder, d_j, diag_broadcast_dims);
+        }
         x_update =
             BatchDot(remainder, false, inv_block, transpose_a, precision);
+        if (a_diag.has_value() && !transpose_a) {
+          x_update = Div(x_update, d_j, diag_broadcast_dims);
+        }
       }
 
       if (i == 0) {
@@ -260,19 +301,23 @@ XlaOp TriangularSolveExpander::InvertDiagonalBlocks(
     int64_t num_blocks = ShapeUtil::ElementsIn(shape) / IPow(block_size, 2);
     diag_blocks = Reshape(diag_blocks, {num_blocks, block_size, block_size});
 
-    // The input must be triangular because we rely on that when doing
-    // multiplications later on
-    diag_blocks = Triangle(diag_blocks, /*lower=*/lower_triangular);
+    // Row-scale each block to unit triangular U = D^{-1} A_jj, explicitly
+    // setting the diagonal to 1.0 (avoiding Inf / Inf = NaN) and zeroing the
+    // ignored triangle (avoiding 0 / 0 = NaN on singular rows). We leave D
+    // factored out and return U^{-1} = A_jj^{-1} D.
+    auto diags = GetMatrixDiagonalViaGather(diag_blocks);
+    auto identity =
+        IdentityMatrix(builder, shape.element_type(), block_size, block_size);
+    auto identity_blocks = Broadcast(identity, {num_blocks});
+    auto row_scaled = Div(diag_blocks, diags, /*broadcast_dimensions=*/{0, 1});
+    auto scaled_diag_blocks =
+        lower_triangular
+            ? Select(TriangleMask(diag_blocks, -1), row_scaled, identity_blocks)
+            : Select(TriangleMask(diag_blocks, 0), identity_blocks, row_scaled);
 
-    // Rescale blocks to be unit triangular. We were careful to pad the last
-    // block with the identity matrix, which means we won't introduce NaNs by
-    // doing this (unless the matrix is singular, in which case that's ok).
-    auto diags = GetMatrixDiagonal(diag_blocks);
-    auto scaled_diag_blocks = Div(diag_blocks, diags, {0, 2});
-
-    // We can now use the fact that for an upper triangular matrix
+    // We can now use the fact that for a lower triangular matrix
     // [[L11, 0], [L21, L22]], given the inverses L11' and L22', we have
-    // L22' = -L22' * L21 * L11'. In our case, L21 is a vector and our blocks
+    // L21' = -L22' * L21 * L11'. In our case, L21 is a vector and our blocks
     // have been rescaled to be unit triangular, so L22 = L22' = 1.
 
     // Initialize the output matrix with -1s on the diagonal. We use -1 instead
@@ -282,8 +327,6 @@ XlaOp TriangularSolveExpander::InvertDiagonalBlocks(
     // entire row i.e. we calculate
     // [L21 L22 0] <- -[L21 L22 0] @ diag_blocks([L11', -I, -I])
     // which means [L21 L22 0] <- [-L21 * L11', L22, 0].
-    auto identity =
-        IdentityMatrix(builder, shape.element_type(), block_size, block_size);
     auto neg_identity = -identity;
 
     // The first or last  diagonal element should be set to 1 instead of -1
@@ -364,9 +407,6 @@ XlaOp TriangularSolveExpander::InvertDiagonalBlocks(
     // return while_loop(cond_fun, body_fun, init)[1]
     auto invert_while = While(cond, body, init);
     auto inv_diag_blocks = GetTupleElement(invert_while, 1);
-    // Undo the scaling
-    inv_diag_blocks = Div(inv_diag_blocks, diags,
-                          /*broadcast_dimensions=*/{0, 1});
 
     // Reshape back to original batch major dimensions
     return Reshape(inv_diag_blocks, shape.dimensions());
@@ -385,6 +425,7 @@ XlaOp TriangularSolveExpander::SolveByInvertingDiagonalBlocks(
 
     // TODO(phawkins): consider pushing triangle masking into
     // InvertDiagonalBlocks.
+    std::optional<XlaOp> a_diag;
     if (unit_diagonal) {
       // Mask everything but the subdiagonal/superdiagonal elements.
       a = lower ? Select(TriangleMask(a, -1), a, ZerosLike(a))
@@ -392,6 +433,7 @@ XlaOp TriangularSolveExpander::SolveByInvertingDiagonalBlocks(
       a = xla::Add(a, IdentityMatrix(builder, a_shape.element_type(), k, k),
                    /*broadcast_dimensions=*/{ndims - 2, ndims - 1});
     } else {
+      a_diag = GetMatrixDiagonalViaGather(a);
       // Mask off the ignored elements of the triangular matrix a.
       a = Triangle(a, lower);
     }
@@ -400,13 +442,15 @@ XlaOp TriangularSolveExpander::SolveByInvertingDiagonalBlocks(
     int64_t block_size = std::min(block_size_, k);
     auto diag_blocks = DiagonalBlocks(a, block_size);
 
-    // We invert these blocks in parallel using batched matrix-vector products
+    // We invert the unit-triangular factors U = D^{-1} A_jj of these blocks in
+    // parallel using batched matrix-vector products, leaving D = diag(A_jj)
+    // factored out for SolveWithInvertedDiagonalBlocks.
     auto inv_diag_blocks = InvertDiagonalBlocks(diag_blocks, lower, precision);
 
     // We now find the solution using GEMMs
-    return SolveWithInvertedDiagonalBlocks(a, b, inv_diag_blocks, left_side,
-                                           lower, transpose_a, conjugate_a,
-                                           precision);
+    return SolveWithInvertedDiagonalBlocks(a, b, inv_diag_blocks, a_diag,
+                                           left_side, lower, transpose_a,
+                                           conjugate_a, precision);
   });
 }
 
