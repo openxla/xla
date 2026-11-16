@@ -621,6 +621,27 @@ ENTRY test {
                                        m::Op(), m::Op())));
 }
 
+TEST_F(DynamicPadderTest, PadRaggedDotWithDynamicGroupSizes) {
+  const std::string hlo_text = R"(
+HloModule test
+ENTRY test {
+  lhs = f32[16,32] parameter(0)
+  rhs = f32[4,32,64] parameter(1)
+  group_sizes = s32[<=4] parameter(2)
+  ROOT root = f32[16,64] ragged-dot(lhs, rhs, group_sizes),
+      lhs_ragged_dims={0}, rhs_group_dims={0},
+      lhs_contracting_dims={1}, rhs_contracting_dims={1}
+}
+)";
+  module_ = GetHloModule(hlo_text);
+  ASSERT_OK(RunPadder(/*slice_dynamic_output=*/false).status());
+
+  EXPECT_THAT(module_->entry_computation()->root_instruction(),
+              GmockMatch(m::RaggedDot(m::Op().WithShape(F32, {16, 32}),
+                                      m::Op().WithShape(F32, {4, 32, 64}),
+                                      m::Op().WithShape(S32, {4}))));
+}
+
 TEST_F(DynamicPadderTest, PadToStaticForCustomCall) {
   const std::string hlo_text = R"(
 HloModule test
