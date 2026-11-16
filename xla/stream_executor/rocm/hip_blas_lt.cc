@@ -16,6 +16,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <new>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -24,7 +25,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/casts.h"
-#include "absl/base/dynamic_annotations.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -81,16 +81,9 @@ using ::xla::complex64;
 // Two hipblaslt_ext functions take std::vector arguments, so their mangled
 // names contain the standard library's namespace and do not link across the
 // two libraries: libc++ names std::__1::vector, libstdc++ std::vector. Call
-// them through their libstdc++ names instead, passing XLA's own vectors. This
-// relies on both libraries laying out std::vector<T> as the same three
-// pointers (begin, end, end of storage), which holds for libstdc++ since GCC
-// 3.4 and for libc++'s default pointer-based layout (asserted below). With
-// libstdc++ the declarations below name the same functions as the header.
-//
-// hipBLASLt takes the vectors by non-const reference. Passing the original
-// objects keeps ownership consistent if it ever resizes or moves from one: both
-// libraries' operator new and delete are backed by malloc and free, so a
-// buffer allocated by one may be freed by the other.
+// them through their libstdc++ names instead, passing a Vector (below) where
+// they take a std::vector. With libstdc++ the declarations below name the same
+// functions as the header.
 //
 // Everything else XLA uses from hipblaslt-ext.hpp is safe across the two
 // libraries: the other functions have no std:: types in their names, and
@@ -104,14 +97,78 @@ using ::xla::complex64;
 // TODO: Switch to a C API for grouped GEMM once hipBLASLt provides one.
 namespace hipblaslt_libstdcxx {
 
-// The type of a call to member function MemberFn as a free function that takes
-// the object pointer as its first argument, which is how the member function is
-// called at the ABI level.
-template <typename MemberFn>
-struct AsFreeFunction;
+// An owning array laid out as libstdc++'s std::vector<T>: pointers to the
+// first element, past the last element and past the end of the storage.
+// hipBLASLt reads it, and fills the getAllAlgos result, as a std::vector, so
+// the storage it allocates or frees comes from libstdc++'s operator new and
+// delete. Both libraries' versions are backed by malloc and free, so this frees
+// with the unsized ::operator delete whichever side allocated.
+template <typename T>
+class Vector {
+ public:
+  Vector() = default;
+  explicit Vector(size_t count) {
+    for (T* p = Allocate(count); p != end_of_storage_; ++p) {
+      new (p) T();
+    }
+    finish_ = end_of_storage_;
+  }
+  Vector(size_t count, const T& value) {
+    for (T* p = Allocate(count); p != end_of_storage_; ++p) {
+      new (p) T(value);
+    }
+    finish_ = end_of_storage_;
+  }
+  Vector(const Vector&) = delete;
+  Vector& operator=(const Vector&) = delete;
+  ~Vector() {
+    for (T* p = start_; p != finish_; ++p) {
+      p->~T();
+    }
+    ::operator delete(start_);
+  }
+
+  size_t size() const { return finish_ - start_; }
+  T* begin() { return start_; }
+  T* end() { return finish_; }
+  T& operator[](size_t i) { return start_[i]; }
+
+ private:
+  static_assert(alignof(T) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
+
+  // Allocates storage for count elements, none of them constructed yet.
+  T* Allocate(size_t count) {
+    start_ = finish_ = static_cast<T*>(::operator new(count * sizeof(T)));
+    end_of_storage_ = start_ + count;
+    return start_;
+  }
+
+  T* start_ = nullptr;
+  T* finish_ = nullptr;
+  T* end_of_storage_ = nullptr;
+};
+
+// The type of a call to function Fn with each std::vector<T>& parameter
+// replaced by Vector<T>&. A member function becomes a free function that takes
+// the object pointer as its first argument, which is how it is called at the
+// ABI level.
+template <typename T>
+struct AtBoundary {
+  using type = T;
+};
+template <typename T>
+struct AtBoundary<std::vector<T>&> {
+  using type = Vector<T>&;
+};
+template <typename Fn>
+struct WithVectors;
+template <typename R, typename... Args>
+struct WithVectors<R(Args...)> {
+  using type = R(typename AtBoundary<Args>::type...);
+};
 template <typename R, typename C, typename... Args>
-struct AsFreeFunction<R (C::*)(Args...)> {
-  using type = R(C*, Args...);
+struct WithVectors<R (C::*)(Args...)> {
+  using type = R(C*, typename AtBoundary<Args>::type...);
 };
 
 // hipblaslt_ext::GroupedGemm::setProblem(m, n, k, batch_count, lda, ldb, ldc,
@@ -130,7 +187,7 @@ using GroupedGemmSetProblemMemberFn =
 // The function types are spelled as aliases so the __asm__ labels stay on a
 // short declaration that clang-format can wrap.
 using GroupedGemmSetProblemFn =
-    AsFreeFunction<GroupedGemmSetProblemMemberFn>::type;
+    WithVectors<GroupedGemmSetProblemMemberFn>::type;
 GroupedGemmSetProblemFn GroupedGemmSetProblem __asm__(
     "_ZN13hipblaslt_ext11GroupedGemm10setProblemERSt6vectorIlSaIlEES4_S4_"
     "S4_S4_S4_S4_S4_S4_S4_S4_S4_RS1_INS_12GemmEpilogueESaIS5_EERS1_INS_"
@@ -148,70 +205,42 @@ static_assert(
                    GroupedGemmSetProblemMemberFn>);
 
 // hipblaslt_ext::getAllAlgos.
-using GetAllAlgosFn = hipblasStatus_t(
+using GetAllAlgosHeaderFn = hipblasStatus_t(
     hipblasLtHandle_t handle, hipblaslt_ext::GemmType gemm_type,
     hipblasOperation_t op_a, hipblasOperation_t op_b, hipDataType type_a,
     hipDataType type_b, hipDataType type_c, hipDataType type_d,
     hipblasComputeType_t compute_type,
     std::vector<hipblasLtMatmulHeuristicResult_t>& heuristic_results);
+using GetAllAlgosFn = WithVectors<GetAllAlgosHeaderFn>::type;
 GetAllAlgosFn GetAllAlgos __asm__(
     "_ZN13hipblaslt_ext11getAllAlgosEPvNS_8GemmTypeE18hipblasOperation_"
     "tS2_11hipDataTypeS3_S3_S3_20hipblasComputeType_tRSt6vectorI33_"
     "hipblasLtMatmulHeuristicResult_tSaIS6_EE");
 // As for setProblem, require hipblaslt-ext.hpp to declare exactly this.
-static_assert(std::is_same_v<decltype(static_cast<GetAllAlgosFn*>(
+static_assert(std::is_same_v<decltype(static_cast<GetAllAlgosHeaderFn*>(
                                  &hipblaslt_ext::getAllAlgos)),
-                             GetAllAlgosFn*>);
+                             GetAllAlgosHeaderFn*>);
 
 // The labels encode int64_t as 'l' (long).
 static_assert(std::is_same_v<int64_t, long>);
 
+// libstdc++'s std::vector is three pointers.
+static_assert(std::is_standard_layout_v<Vector<int64_t>>);
+static_assert(sizeof(Vector<int64_t>) == 3 * sizeof(void*));
 // setProblem reads each GemmEpilogue, GemmInputs and GemmProblemType as a
 // single pimpl pointer.
 static_assert(sizeof(hipblaslt_ext::GemmEpilogue) == sizeof(void*));
 static_assert(sizeof(hipblaslt_ext::GemmInputs) == sizeof(void*));
 static_assert(sizeof(hipblaslt_ext::GemmProblemType) == sizeof(void*));
-// hipBLASLt reads and writes XLA's vectors, and XLA allocates GroupedGemm,
-// whose size must match hipBLASLt's (it holds a std::vector and a
-// std::shared_ptr).
-static_assert(sizeof(std::vector<int64_t>) == 3 * sizeof(void*));
-static_assert(sizeof(std::vector<hipblasLtMatmulHeuristicResult_t>) ==
+// XLA allocates GroupedGemm, so its size must match hipBLASLt's. It has no
+// members of its own, and GemmInstance's only standard library members are a
+// std::vector and a std::shared_ptr; check those rather than the total, which
+// differs between hipBLASLt versions.
+static_assert(sizeof(std::vector<hipblaslt_ext::GemmProblemType>) ==
               3 * sizeof(void*));
-// libc++ can instead lay out std::vector as begin, size and capacity
-// (_LIBCPP_ABI_VECTOR_LAYOUT_SIZE_BASED, part of its unstable ABI v2). That is
-// also three words, so the size checks above would not catch it.
-#if defined(_LIBCPP_ABI_VECTOR_LAYOUT_SIZE_BASED)
-inline constexpr bool kVectorLayoutIsPointerBased = false;
-#else
-inline constexpr bool kVectorLayoutIsPointerBased = true;
-#endif
-static_assert(kVectorLayoutIsPointerBased,
-              "hipBLASLt (libstdc++) needs libc++'s pointer-based std::vector "
-              "layout; build without _LIBCPP_ABI_VECTOR_LAYOUT_SIZE_BASED");
 static_assert(sizeof(std::shared_ptr<void>) == 2 * sizeof(void*));
 // XLA destroys GroupedGemm, which must dispatch to hipBLASLt's destructor.
 static_assert(std::has_virtual_destructor_v<hipblaslt_ext::GroupedGemm>);
-
-// Under ASan, libc++'s std::vector keeps [size(), capacity()) poisoned and
-// updates that annotation on every change. libhipblaslt.so (libstdc++, not
-// instrumented) allocates and fills the getAllAlgos result without it, so mark
-// the unused capacity as libc++ would have. ABSL_ANNOTATE_CONTIGUOUS_CONTAINER
-// expands to nothing without ASan.
-#if defined(_LIBCPP_VERSION)
-inline constexpr bool kVectorIsAsanAnnotated = true;
-#else
-inline constexpr bool kVectorIsAsanAnnotated = false;
-#endif
-void AnnotateFilledByHipblaslt(
-    std::vector<hipblasLtMatmulHeuristicResult_t>& results) {
-  if constexpr (kVectorIsAsanAnnotated) {
-    if (results.data() != nullptr) {
-      ABSL_ANNOTATE_CONTIGUOUS_CONTAINER(
-          results.data(), results.data() + results.capacity(),
-          results.data() + results.capacity(), results.data() + results.size());
-    }
-  }
-}
 
 }  // namespace hipblaslt_libstdcxx
 
@@ -954,12 +983,11 @@ auto BlasLt::GroupedMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
   grouped_gemm_->setMaxWorkspaceBytes(max_workspace_size);
 
   const ProblemType& problem = problem_type_;
-  std::vector<hipblasLtMatmulHeuristicResult_t> heuristicResult;
+  hipblaslt_libstdcxx::Vector<hipblasLtMatmulHeuristicResult_t> heuristicResult;
   hipblasStatus_t status = hipblaslt_libstdcxx::GetAllAlgos(
       blas_lt_.handle_.get(), hipblaslt_ext::GemmType::HIPBLASLT_GROUPED_GEMM,
       problem.op_a, problem.op_b, problem.type_a, problem.type_b,
       problem.type_c, problem.type_d, problem.compute_type, heuristicResult);
-  hipblaslt_libstdcxx::AnnotateFilledByHipblaslt(heuristicResult);
   SE_HIPBLAS_RETURN_IF_ERROR(status);
   VLOG(2) << "Total heuristics found: " << heuristicResult.size();
   std::vector<MatmulAlgorithm> algorithms;
@@ -995,7 +1023,7 @@ absl::Status BlasLt::GroupedMatmulPlan::DoInitialize(
     }
   }
 
-  std::vector<int64_t> v_m(cfg_.group_count, cfg_.m),
+  hipblaslt_libstdcxx::Vector<int64_t> v_m(cfg_.group_count, cfg_.m),
       v_n(cfg_.group_count, cfg_.n), v_k(cfg_.group_count, cfg_.k),
       v_batch_count(cfg_.group_count, cfg_.batch_count),
       v_lda(cfg_.group_count, cfg_.lhs_leading_dim_stride),
@@ -1027,8 +1055,10 @@ absl::Status BlasLt::GroupedMatmulPlan::DoInitialize(
     }
   }
 
-  std::vector<hipblaslt_ext::GemmEpilogue> epilogues(cfg_.group_count);
-  std::vector<hipblaslt_ext::GemmInputs> inputs(cfg_.group_count);
+  hipblaslt_libstdcxx::Vector<hipblaslt_ext::GemmEpilogue> epilogues(
+      cfg_.group_count);
+  hipblaslt_libstdcxx::Vector<hipblaslt_ext::GemmInputs> inputs(
+      cfg_.group_count);
 
   // Convert the epilogue from the stored member variable
   ABSL_ASSIGN_OR_RETURN(auto hip_epilogue, AsHipblasLtEpilogue(epilogue));
