@@ -479,7 +479,6 @@ xla_test(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/cuda:cuda_platform",  # buildcleaner: keep
-        "//xla/stream_executor/gpu:gpu_executor_header",
         "//xla/tsl/concurrency:executor",
         "//xla/tsl/cuda",  # buildcleaner: keep
         "//xla/tsl/cuda:nccl",

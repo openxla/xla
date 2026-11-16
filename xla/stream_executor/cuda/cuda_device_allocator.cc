@@ -309,25 +309,44 @@ AllocateDeviceMemory(StreamExecutor* executor,
   absl::StatusOr<CUmemGenericAllocationHandle> allocation =
       CreateVmmPhysicalAllocation(properties, padded_size);
   constexpr uint64_t kFallbackChunkSize = uint64_t{1} << 30;
-  if (!allocation.ok() && absl::IsResourceExhausted(allocation.status()) &&
-      !localized && options.enable_posix_fd_handle &&
-      !options.enable_fabric_handle && padded_size > kFallbackChunkSize &&
-      IsWsl()) {
-    // WSL can reject large exportable allocations with OUT_OF_MEMORY despite
-    // sufficient free memory. Retry with smaller backing allocations, keeping
-    // the contiguous VA range and requested handle types. Fabric and multicast
-    // consumers can require a single physical handle.
-    chunk_size = kFallbackChunkSize / granularity * granularity;
-    int multicast_supported = 0;
-    if (chunk_size != 0 &&
-        cuDeviceGetAttribute(&multicast_supported,
-                             CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED,
-                             device) == CUDA_SUCCESS &&
-        !multicast_supported) {
-      CUmemGenericAllocationHandle chunk_handle;
-      ABSL_RETURN_IF_ERROR(cuda::ToStatus(
-          cuMemCreate(&chunk_handle, chunk_size, &properties, 0)));
-      allocation = chunk_handle;
+  if (!allocation.ok()) {
+    if (!absl::IsResourceExhausted(allocation.status())) {
+      return allocation.status();
+    }
+    if (IsWsl()) {
+      auto retry_error = [&](const char* reason) {
+        return xla::AppendStatus(
+            allocation.status(),
+            absl::StrCat("WSL chunk retry not attempted: ", reason));
+      };
+      if (localized) {
+        return retry_error("locality-domain allocation is not eligible");
+      }
+      if (!options.enable_posix_fd_handle) {
+        return retry_error("POSIX-FD handles are disabled");
+      }
+      if (options.enable_fabric_handle) {
+        return retry_error("FABRIC allocations are not eligible");
+      }
+      if (padded_size <= kFallbackChunkSize) {
+        return retry_error("allocation does not exceed the 1 GiB chunk limit");
+      }
+      // WSL can reject large exportable allocations with OUT_OF_MEMORY despite
+      // sufficient free memory. Retry with smaller backing allocations, keeping
+      // the contiguous VA range and requested handle types. Fabric and
+      // multicast consumers can require a single physical handle.
+      chunk_size = kFallbackChunkSize / granularity * granularity;
+      int multicast_supported = 0;
+      if (chunk_size != 0 &&
+          cuDeviceGetAttribute(&multicast_supported,
+                               CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED,
+                               device) == CUDA_SUCCESS &&
+          !multicast_supported) {
+        CUmemGenericAllocationHandle chunk_handle;
+        ABSL_RETURN_IF_ERROR(cuda::ToStatus(
+            cuMemCreate(&chunk_handle, chunk_size, &properties, 0)));
+        allocation = chunk_handle;
+      }
     }
   }
   ABSL_ASSIGN_OR_RETURN(CUmemGenericAllocationHandle handle,
@@ -368,7 +387,7 @@ AllocateDeviceMemory(StreamExecutor* executor,
   // the first mapping covers the full allocation and this loop is skipped.
   // Mappings retain their physical allocations. Keep only the first handle
   // for the existing deallocation path; release later handles after mapping.
-  while (mapped_size < padded_size) {
+  while (mapped_size < padded_size && IsWsl()) {
     uint64_t bytes = std::min(chunk_size, padded_size - mapped_size);
     CUmemGenericAllocationHandle chunk_handle;
     ABSL_RETURN_IF_ERROR(

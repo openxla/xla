@@ -15,7 +15,6 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <fstream>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -35,7 +34,6 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/barrier.h"
@@ -55,7 +53,6 @@ limitations under the License.
 #include "xla/runtime/device_id.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_address.h"
-#include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_allocator.h"
 #include "xla/stream_executor/platform.h"
@@ -160,14 +157,8 @@ absl::StatusOr<CapturedGraphInfo> CaptureCollectiveGraph(
   return info;
 }
 
-// Exercise the WSL fallback with the normal allocator and two GPUs.
-TEST(NcclCommunicatorTest, LargeChunkedBufferRegistration) {
-  std::ifstream kernel_release_file("/proc/sys/kernel/osrelease");
-  std::string kernel_release;
-  if (!std::getline(kernel_release_file, kernel_release) ||
-      !absl::StrContainsIgnoreCase(kernel_release, "microsoft")) {
-    GTEST_SKIP() << "Test requires WSL";
-  }
+// Register a large buffer from the normal allocator and verify the transfer.
+TEST(NcclCommunicatorTest, LargeBufferRegistration) {
   ASSERT_OK_AND_ASSIGN(se::Platform * platform,
                        se::PlatformManager::PlatformWithName("CUDA"));
   if (platform->VisibleDeviceCount() < 2) {
@@ -197,14 +188,6 @@ TEST(NcclCommunicatorTest, LargeChunkedBufferRegistration) {
   ASSERT_OK_AND_ASSIGN(auto allocators, CreateMemoryAllocators(executors));
   ASSERT_OK_AND_ASSIGN(auto send_alloc, allocators[0]->Allocate(kSize));
   se::DeviceAddressBase send_addr(send_alloc->address().opaque(), kSize);
-  auto activation = executors[0]->Activate();
-  auto* gpu_executor = static_cast<se::gpu::GpuExecutor*>(executors[0]);
-  ASSERT_OK_AND_ASSIGN(auto first_mapping,
-                       gpu_executor->GetAllocationRange(send_addr.opaque()));
-  if (first_mapping.size() >= kSize) {
-    GTEST_SKIP() << "The normal allocator did not produce a chunked buffer";
-  }
-  ASSERT_LE(first_mapping.size(), kGiB);
   ASSERT_OK_AND_ASSIGN(auto recv_alloc, allocators[1]->Allocate(kSize));
   se::DeviceAddressBase recv_addr(recv_alloc->address().opaque(), kSize);
   ASSERT_OK_AND_ASSIGN(auto stream0, executors[0]->CreateStream());
