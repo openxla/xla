@@ -84,6 +84,7 @@ limitations under the License.
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/codegen/llvm_kernel_source.h"
 #include "xla/codegen/mlir_kernel_source.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/future.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -549,6 +550,52 @@ ThreadBlockSpecializedFusion::CreateNativeNestedEmitter(
     default:
       return nullptr;
   }
+}
+
+/*static*/
+std::optional<LaunchDimensions>
+ThreadBlockSpecializedFusion::GetNestedTritonLaunchDimensions(
+    const HloFusionAnalysis& nested_analysis) {
+  const se::DeviceDescription& device_info = nested_analysis.device_info();
+  // XLA:GPU only enables Triton on CUDA Ampere (sm_80) and newer; nested Triton
+  // leaves are not supported on ROCm.
+  const se::CudaComputeCapability* cuda_cc =
+      device_info.gpu_compute_capability().cuda_compute_capability();
+  if (cuda_cc == nullptr || !cuda_cc->IsAtLeastAmpere() ||
+      nested_analysis.emitter_fusion_kind() !=
+          HloFusionAnalysis::EmitterFusionKind::kTriton ||
+      nested_analysis.fusion_backend_config().kind() != kTritonFusionKind) {
+    return std::nullopt;
+  }
+  std::optional<TritonFusion::LaunchConfig> launch_config =
+      TritonFusion::GetLaunchConfig(&nested_analysis);
+  if (!launch_config.has_value()) {
+    return std::nullopt;
+  }
+  const xtile::BlockLevelParameters& params =
+      launch_config->block_level_parameters;
+  // A nested leaf is called as a device function from the outer kernel, so it
+  // cannot rely on kernel-level launch features: thread block clusters
+  // (`num_ctas > 1`), TMA descriptors (passed as `__grid_constant__` kernel
+  // parameters) or warp specialization (which assumes it owns all warps of the
+  // block).
+  if (params.num_ctas != 1 || params.num_stages <= 0 || params.num_warps <= 0 ||
+      params.is_tma_allowed || params.is_warp_specialization_allowed) {
+    return std::nullopt;
+  }
+  // The outer kernel uses the maximum block size of all leaves and guards
+  // smaller leaves with `tid < num_threads`. Block barriers inside the leaf
+  // then require its thread count to be a multiple of the warp size.
+  LaunchDimensions launch_dims = launch_config->launch_dimensions;
+  if (launch_dims.num_blocks() == 0 ||
+      launch_dims.num_threads_per_block() == 0 ||
+      launch_dims.num_threads_per_block() >
+          device_info.threads_per_block_limit() ||
+      launch_dims.num_threads_per_block() % device_info.threads_per_warp() !=
+          0) {
+    return std::nullopt;
+  }
+  return launch_dims;
 }
 
 ThreadBlockSpecializedFusion::ThreadBlockSpecializedFusion(

@@ -2285,6 +2285,17 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
         /*ignore_small_reduce_dims=*/false);
     pipeline.AddPass<HloPassFix<TreeReductionRewriter>>(
         gpu_target_config.device_description);
+    // Run Softmax fusion again to catch normalization diamonds whose reduction
+    // was split into two stages by `TreeReductionRewriter` (e.g. very wide
+    // RMSNorms). The second stage is fused into the normalization consumer
+    // while the first stage stays a separate kernel. Diamonds fused by the
+    // first run above are already Triton fusions and are not matched again.
+    if (IsTritonEnabled(gpu_version)) {
+      pipeline.AddPass<SoftmaxRewriterTriton>(
+          gpu_target_config.device_description, ShapeSizeBytesFunction(),
+          alias_info, mlir_context,
+          /*only_fuse_if_profitable=*/true, thread_pool, &mlir_context_pool_);
+    }
     // Normalization passes might have introduced s4 tensors without bit width
     // annotations, this pass will add the annotations.
     pipeline.AddPass<SubByteNormalization>(
@@ -3320,9 +3331,14 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
     pipeline.AddPass<FusionWrapper>(gpu_device_info);
   }
 
+  // Horizontal fusion may nest Triton fusions, which are only enabled on CUDA
+  // Ampere and newer.
+  const se::CudaComputeCapability* cuda_cc =
+      gpu_device_info.gpu_compute_capability().cuda_compute_capability();
   if (module->config()
           .debug_options()
-          .xla_gpu_experimental_enable_horizontal_fusion()) {
+          .xla_gpu_experimental_enable_horizontal_fusion() &&
+      cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere()) {
     HloPassPipeline& pipeline =
         main_pipeline.AddPass<HloPassPipeline>("horizontal-fusion");
     pipeline.AddPass<HorizontalFusion>(gpu_device_info);

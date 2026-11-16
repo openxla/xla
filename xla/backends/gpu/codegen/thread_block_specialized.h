@@ -79,6 +79,12 @@ class ThreadBlockSpecializedFusion : public KernelFusionInterface {
   static std::unique_ptr<MlirKernelEmitter> CreateNativeNestedEmitter(
       const HloFusionAnalysis& nested_analysis, bool unroll_small_fusions);
 
+  // Returns the launch dimensions of `nested_analysis` if it is a generic
+  // (`__triton`) Triton fusion that can be emitted as a nested leaf kernel of a
+  // thread-block-specialized fusion, and `std::nullopt` otherwise.
+  static std::optional<LaunchDimensions> GetNestedTritonLaunchDimensions(
+      const HloFusionAnalysis& nested_analysis);
+
   LaunchDimensions launch_dimensions() const override {
     return root_spec_.launch_dims;
   }

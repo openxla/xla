@@ -27,6 +27,8 @@ limitations under the License.
 #include "xla/error_spec.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_interpreter_reference_mixin.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla.pb.h"
@@ -39,6 +41,13 @@ using ::absl_testing::IsOkAndHolds;
 class HorizontalFusionTest
     : public HloInterpreterReferenceMixin<GpuPjRtCodegenTest> {
  protected:
+  void SetUp() override {
+    HloInterpreterReferenceMixin<GpuPjRtCodegenTest>::SetUp();
+    if (!device_description().cuda_compute_capability().IsAtLeastAmpere()) {
+      GTEST_SKIP() << "HorizontalFusion requires CUDA Ampere or newer.";
+    }
+  }
+
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuPjRtCodegenTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_experimental_enable_horizontal_fusion(true);
@@ -418,6 +427,178 @@ ENTRY main {
 
   EXPECT_TRUE(
       RunAndCompareNoHloPasses(std::move(module), ErrorSpec{1e-5, 1e-5}));
+}
+
+TEST_F(HorizontalFusionTest, NestedTritonRmsNormPlusLoopExecution) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule triton_plus_loop, is_scheduled=true
+
+add_f32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT sum = f32[] add(lhs, rhs)
+}
+
+triton_rmsnorm {
+  p0 = bf16[8,1024]{1,0} parameter(0)
+  x = f32[8,1024]{1,0} convert(p0)
+  sq = f32[8,1024]{1,0} multiply(x, x)
+  c0 = f32[] constant(0)
+  red = f32[8]{0} reduce(sq, c0), dimensions={1}, to_apply=add_f32
+  inv_n = f32[] constant(0.0009765625)
+  inv_n_b = f32[8]{0} broadcast(inv_n), dimensions={}
+  mean = f32[8]{0} multiply(red, inv_n_b)
+  eps = f32[] constant(1e-05)
+  eps_b = f32[8]{0} broadcast(eps), dimensions={}
+  var_eps = f32[8]{0} add(mean, eps_b)
+  rsq = f32[8]{0} rsqrt(var_eps)
+  rsq_b = f32[8,1024]{1,0} broadcast(rsq), dimensions={0}
+  norm = f32[8,1024]{1,0} multiply(x, rsq_b)
+  ROOT out = bf16[8,1024]{1,0} convert(norm)
+}
+
+fused_loop {
+  p1 = f32[2048]{0} parameter(0)
+  mul = f32[2048]{0} multiply(p1, p1)
+  ROOT out = f32[2048]{0} add(mul, p1)
+}
+
+ENTRY main {
+  p0 = bf16[8,1024]{1,0} parameter(0)
+  p1 = f32[2048]{0} parameter(1)
+  f_triton = bf16[8,1024]{1,0} fusion(p0), kind=kCustom, calls=triton_rmsnorm,
+    backend_config={"fusion_backend_config":{"kind":"__triton","block_level_fusion_config":{"output_tiles":[{"sizes":["1","1024"]}],"num_warps":"4","num_ctas":1,"num_stages":1}}}
+  f_loop = f32[2048]{0} fusion(p1), kind=kLoop, calls=fused_loop
+  ROOT result = (bf16[8,1024]{1,0}, f32[2048]{0}) tuple(f_triton, f_loop)
+})hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  HorizontalFusion horizontal_fusion(device_description());
+  ASSERT_THAT(horizontal_fusion.Run(module.get()), IsOkAndHolds(true));
+  EXPECT_OK(module->schedule().Verify());
+
+  EXPECT_TRUE(
+      RunAndCompareNoHloPasses(std::move(module), ErrorSpec{1e-2, 1e-2}));
+}
+
+TEST_F(HorizontalFusionTest, DisjointQkvReduceSlicesEndToEndExecution) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule qkv_reduce_slices
+
+add_f32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT res = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  qkv_partials = f32[3,8,1536]{2,1,0} parameter(0)
+  c0 = f32[] constant(0)
+  red = f32[8,1536]{1,0} reduce(qkv_partials, c0), dimensions={0}, to_apply=add_f32
+  qkv = bf16[8,1536]{1,0} convert(red)
+  q = bf16[8,1024]{1,0} slice(qkv), slice={[0:8], [0:1024]}
+  k = bf16[8,256]{1,0} slice(qkv), slice={[0:8], [1024:1280]}
+  v = bf16[8,256]{1,0} slice(qkv), slice={[0:8], [1280:1536]}
+  ROOT out = (bf16[8,1024]{1,0}, bf16[8,256]{1,0}, bf16[8,256]{1,0}) tuple(q, k, v)
+})hlo";
+
+  MatchOptimizedHlo(kHloText, R"(
+// CHECK: %horizontal_fusion_computation
+// CHECK-DAG: (bf16[8,256]{1,0}, bf16[8,256]{1,0}) fusion({{.*}})
+// CHECK-DAG: bf16[8,1024]{1,0} fusion({{.*}})
+// CHECK: ENTRY %main
+// CHECK: fusion({{.*}}), kind=kCustom, calls=%horizontal_fusion_computation{{.*}}"kind":"__thread_block_specialized"
+)");
+
+  EXPECT_OK(CompileAndVerifyIr(kHloText, R"(
+; CHECK-LABEL: define ptx_kernel void @horizontal_fusion
+; CHECK: tail call i32 @llvm.nvvm.read.ptx.sreg.ctaid.x()
+; CHECK: ret void
+)",
+                               /*match_optimized_ir=*/true,
+                               /*run_optimization_passes=*/true));
+
+  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{1e-2, 1e-2}));
+}
+
+TEST_F(HorizontalFusionTest, TwoStageWideRmsNormEndToEndExecution) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule wide_rmsnorm
+
+add_f32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT res = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  x_in = bf16[8,65536]{1,0} parameter(0)
+  x_f32 = f32[8,65536]{1,0} convert(x_in)
+  x_sq = f32[8,65536]{1,0} multiply(x_f32, x_f32)
+  c0 = f32[] constant(0)
+  red = f32[8]{0} reduce(x_sq, c0), dimensions={1}, to_apply=add_f32
+  inv_n = f32[] constant(1.52587891e-05)
+  inv_n_b = f32[8]{0} broadcast(inv_n), dimensions={}
+  mean = f32[8]{0} multiply(red, inv_n_b)
+  eps = f32[] constant(1e-06)
+  eps_b = f32[8]{0} broadcast(eps), dimensions={}
+  var_eps = f32[8]{0} add(mean, eps_b)
+  rsq = f32[8]{0} rsqrt(var_eps)
+  rsq_b = f32[8,65536]{1,0} broadcast(rsq), dimensions={0}
+  norm = f32[8,65536]{1,0} multiply(x_f32, rsq_b)
+  ROOT out = bf16[8,65536]{1,0} convert(norm)
+})hlo";
+
+  MatchOptimizedHlo(kHloText, R"(
+// CHECK: ENTRY %main
+// CHECK: %[[R1:.*]] = f32[8,{{.*}}]{1,0} fusion(%{{.*}})
+// CHECK: ROOT %{{.*}} = bf16[8,65536]{1,0} fusion({{.*}}%[[R1]]{{.*}}), kind=kCustom{{.*}}"kind":"__triton"
+)");
+
+  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{1e-2, 1e-2}));
+}
+
+TEST_F(HorizontalFusionTest, TinyCrossBarrierScalarAndRngFusionsExecution) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule tiny_cross_barrier_exec, is_scheduled=true
+
+fused_step_idx {
+  p0 = s32[1]{0} parameter(0)
+  const1 = s32[1]{0} constant({1})
+  ROOT next = s32[1]{0} add(p0, const1)
+}
+
+fused_rng_split {
+  p1 = u32[4]{0} parameter(0)
+  const7 = u32[4]{0} constant({7, 11, 13, 17})
+  x = u32[4]{0} xor(p1, const7)
+  slice0 = u32[2]{0} slice(x), slice={[0:2]}
+  slice1 = u32[2]{0} slice(x), slice={[2:4]}
+  ROOT out = (u32[2]{0}, u32[2]{0}) tuple(slice0, slice1)
+}
+
+ENTRY main {
+  p0 = s32[1]{0} parameter(0)
+  p_mat = f32[64,64]{1,0} parameter(1)
+  f0 = s32[1]{0} fusion(p0), kind=kLoop, calls=fused_step_idx
+  barrier_val = f32[64,64]{1,0} opt-barrier(p_mat)
+  p1 = u32[2,2]{1,0} parameter(2)
+  bc1 = u32[4]{0} bitcast(p1)
+  f1 = (u32[2]{0}, u32[2]{0}) fusion(bc1), kind=kLoop, calls=fused_rng_split
+  gte0 = u32[2]{0} get-tuple-element(f1), index=0
+  gte1 = u32[2]{0} get-tuple-element(f1), index=1
+  ROOT result = (s32[1]{0}, f32[64,64]{1,0}, u32[2]{0}, u32[2]{0})
+      tuple(f0, barrier_val, gte0, gte1)
+})hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  HorizontalFusion horizontal_fusion(device_description());
+  ASSERT_THAT(horizontal_fusion.Run(module.get()), IsOkAndHolds(true));
+  EXPECT_OK(module->schedule().Verify());
+
+  EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), ErrorSpec{0, 0}));
 }
 }  // namespace
 }  // namespace xla::gpu

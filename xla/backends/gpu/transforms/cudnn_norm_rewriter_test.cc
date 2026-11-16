@@ -43,6 +43,7 @@ class CudnnNormRewriterTest
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloPjRtGpuTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_cudnn_layer_norm(true);
+    debug_options.set_xla_gpu_experimental_enable_horizontal_fusion(false);
     return debug_options;
   }
 

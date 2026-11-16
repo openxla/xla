@@ -193,6 +193,10 @@ TEST(StreamExecutorGpuClientTest, ResultsHaveIndividualDefinitionEvents) {
   ASSERT_OK_AND_ASSIGN(auto input, CreateDeviceBufferForTest(client.get()));
   CompileOptions compile_options;
   compile_options.individually_defined_output_indices = {0, 1};
+  // Keep `negate` and `add` in separate kernel thunks so each output receives a
+  // distinct definition event sequence ID.
+  compile_options.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_experimental_enable_horizontal_fusion(false);
   ASSERT_OK_AND_ASSIGN(
       auto executable,
       CompileExecutable(kProgram, *client, std::move(compile_options)));
@@ -287,6 +291,10 @@ TEST(StreamExecutorGpuClientTest,
 
   CompileOptions compile_options;
   compile_options.individually_defined_output_indices = {0, 1};
+  // Keep `negate` and `add` in separate kernel thunks so both outputs exercise
+  // individual thunk definition paths.
+  compile_options.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_experimental_enable_horizontal_fusion(false);
   ASSERT_OK_AND_ASSIGN(
       auto executable,
       CompileExecutable(kProgram, *client, std::move(compile_options)));
