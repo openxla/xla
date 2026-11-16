@@ -912,8 +912,17 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
   absl::StatusOr<HloInstruction*> ConvertSliceToResultLayout(
       HloInstruction* normalized_slice, const Layout& operand_layout,
       const Shape& s) {
+    // A slice may only reorder the dimensions. The transpose below does not
+    // repack sub-byte elements or move data to another memory space, so every
+    // other layout attribute has to match the operand.
+    Layout expected_layout = operand_layout;
+    expected_layout.mutable_minor_to_major()->assign(
+        s.layout().minor_to_major().begin(), s.layout().minor_to_major().end());
+    TF_RET_CHECK(s.layout() == expected_layout)
+        << "The layout of a slice may differ from the layout of its operand "
+           "only in the dimension order, got slice layout "
+        << s.layout() << " and operand layout " << operand_layout;
     if (Layout::Equal().MinorToMajorOnly()(s.layout(), operand_layout)) {
-      TF_RET_CHECK(s.layout() == operand_layout);
       return MaybeBitcast(normalized_slice, s);
     }
     std::vector<int64_t> operand_perm =

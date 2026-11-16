@@ -22,6 +22,7 @@ limitations under the License.
 #include <optional>
 
 #include "absl/log/check.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -760,6 +761,79 @@ ENTRY main {
 // CHECK: [[slice_0:%[^ ]+]] = f32[32,1,4]{2,1,0} dynamic-slice({{.*}}), dynamic_slice_sizes={32,1,4}
 // CHECK-NEXT: ROOT [[transpose_1:%[^ ]+]] = f32[1,4,32]{2,1,0} transpose([[slice_0]]), dimensions={1,2,0}
 )");
+}
+
+TEST_F(LayoutNormalizationTest, DynamicSliceChangesLayoutKeepsElementSize) {
+  const char* hlo = R"(
+HloModule module
+
+ENTRY main {
+  input = s4[3,4,32]{2,1,0:E(4)} parameter(0)
+  p1 = s32[] parameter(1)
+  p2 = s32[] parameter(2)
+  p3 = s32[] parameter(3)
+  ROOT out = s4[1,4,32]{1,0,2:E(4)} dynamic-slice(input, p1, p2, p3), dynamic_slice_sizes={1,4,32}
+}
+  )";
+  CheckLayoutNormalization(hlo, R"(
+// CHECK: [[slice_0:%[^ ]+]] = s4[1,4,32]{2,1,0:E(4)} dynamic-slice({{.*}}), dynamic_slice_sizes={1,4,32}
+// CHECK-NEXT: [[transpose_1:%[^ ]+]] = s4[32,1,4]{2,1,0:E(4)} transpose([[slice_0]]), dimensions={2,0,1}
+// CHECK-NEXT: ROOT [[bitcast_2:%[^ ]+]] = s4[1,4,32]{1,0,2:E(4)} bitcast([[transpose_1]])
+)");
+}
+
+TEST_F(LayoutNormalizationTest, SliceChangesLayoutAndElementSize) {
+  const char* hlo = R"(
+HloModule module
+
+ENTRY main {
+  input = s4[3,4,32]{2,1,0:E(4)} parameter(0)
+  ROOT out = s4[1,4,32]{1,0,2} slice(input), slice={[1:2],[0:4],[0:32]}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  absl::StatusOr<bool> result = LayoutNormalization().Run(module.get());
+  ASSERT_FALSE(result.ok());
+  EXPECT_THAT(result.status().message(),
+              ::testing::HasSubstr("only in the dimension order"));
+}
+
+TEST_F(LayoutNormalizationTest, DynamicSliceChangesLayoutAndElementSize) {
+  const char* hlo = R"(
+HloModule module
+
+ENTRY main {
+  input = s4[3,4,32]{2,1,0:E(4)} parameter(0)
+  p1 = s32[] parameter(1)
+  p2 = s32[] parameter(2)
+  p3 = s32[] parameter(3)
+  ROOT out = s4[1,4,32]{1,0,2} dynamic-slice(input, p1, p2, p3), dynamic_slice_sizes={1,4,32}
+}
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  absl::StatusOr<bool> result = LayoutNormalization().Run(module.get());
+  ASSERT_FALSE(result.ok());
+  EXPECT_THAT(result.status().message(),
+              ::testing::HasSubstr("only in the dimension order"));
+}
+
+TEST_F(LayoutNormalizationTest, DynamicSliceChangesLayoutAndMemorySpace) {
+  const char* hlo = R"(
+HloModule module
+
+ENTRY main {
+  input = f32[3,4,32]{2,1,0:S(5)} parameter(0)
+  p1 = s32[] parameter(1)
+  p2 = s32[] parameter(2)
+  p3 = s32[] parameter(3)
+  ROOT out = f32[1,4,32]{1,0,2} dynamic-slice(input, p1, p2, p3), dynamic_slice_sizes={1,4,32}
+}
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  absl::StatusOr<bool> result = LayoutNormalization().Run(module.get());
+  ASSERT_FALSE(result.ok());
+  EXPECT_THAT(result.status().message(),
+              ::testing::HasSubstr("only in the dimension order"));
 }
 
 TEST_F(LayoutNormalizationTest, DynamicSliceHasDegenerate) {
