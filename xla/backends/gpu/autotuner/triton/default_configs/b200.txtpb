@@ -24,14 +24,39 @@ config { block_m: 64 block_n: 32 block_k: 64 num_stages: 1 num_warps: 2 num_ctas
 config { block_m: 64 block_n: 64 block_k: 16 num_stages: 1 num_warps: 32 num_ctas: 1 }
 config { block_m: 64 block_n: 64 block_k: 64 num_stages: 1 num_warps: 2 num_ctas: 1 is_tma_allowed: true }
 config { block_m: 64 block_n: 64 block_k: 128 num_stages: 3 num_warps: 4 num_ctas: 1 is_tma_allowed: true }
+# 4- and 5-stage TMA for narrow-activation (`block_n = 64`) GEMMs with K-minor
+# weights, wide-K (`block_k = 256`) tiles unlocked for mixed-precision dots,
+# and 2-CTA cluster configs (`num_ctas: 2`) that multicast shared operands
+# across CTA pairs while splitting the larger output dimension per CTA.
+#
+# Shared-memory budget per CTA: 227 KiB (opt-in maximum per block). On B200,
+# Triton keeps `num_stages - 1` TMA buffers per operand for tcgen05 MMAs, so a
+# config needs
+#   (num_stages - 1) * block_k * (cta_m * lhs_bytes + cta_n * rhs_bytes)
+# bytes, where (cta_m, cta_n) is the per-CTA output slice. With `num_ctas: 2`,
+# Triton's `getDotCGASplit` halves M when `block_m >= 256` (or when halving N
+# would leave fewer than 64 columns), otherwise it halves N. Below, "bf16" is a
+# 16-bit x 16-bit dot and "w8" one with `s8` LHS weights and a `bf16` RHS.
+# `TritonDotFusionSearchSpace` drops hints that do not fit a dot's operand
+# types, and only generates 2-CTA configs on GPUs with tcgen05.
+config { block_m: 64 block_n: 64 block_k: 128 num_stages: 4 num_warps: 4 num_ctas: 1 is_tma_allowed: true }
 config { block_m: 64 block_n: 128 block_k: 16 num_stages: 3 num_warps: 2 num_ctas: 1 }
 config { block_m: 64 block_n: 128 block_k: 64 num_stages: 4 num_warps: 4 num_ctas: 1 }
 config { block_m: 64 block_n: 128 block_k: 64 num_stages: 5 num_warps: 4 num_ctas: 1 is_tma_allowed: true }
+# 2 CTAs, N split, per-CTA 64x128x128: bf16 3 * 48 KiB = 144 KiB.
+config { block_m: 64 block_n: 256 block_k: 128 num_stages: 4 num_warps: 4 num_ctas: 2 is_tma_allowed: true }
 config { block_m: 128 block_n: 16 block_k: 256 num_stages: 2 num_warps: 4 num_ctas: 1 }
 config { block_m: 128 block_n: 16 block_k: 128 num_stages: 3 num_warps: 4 num_ctas: 1 is_tma_allowed: true }
 config { block_m: 128 block_n: 32 block_k: 64 num_stages: 3 num_warps: 4 num_ctas: 1 }
 config { block_m: 128 block_n: 32 block_k: 64 num_stages: 3 num_warps: 4 num_ctas: 1 is_tma_allowed: true }
+# 5 stages: bf16 4 * 24 KiB = 96 KiB.
+config { block_m: 128 block_n: 64 block_k: 64 num_stages: 5 num_warps: 4 num_ctas: 1 is_tma_allowed: true }
 config { block_m: 128 block_n: 64 block_k: 128 num_stages: 3 num_warps: 4 num_ctas: 1 }
+config { block_m: 128 block_n: 64 block_k: 128 num_stages: 4 num_warps: 4 num_ctas: 1 is_tma_allowed: true }
+# 5 stages: bf16 4 * 48 KiB = 192 KiB, w8 4 * 32 KiB = 128 KiB.
+config { block_m: 128 block_n: 64 block_k: 128 num_stages: 5 num_warps: 4 num_ctas: 1 is_tma_allowed: true }
+# Wide K, w8 only: w8 3 * 64 KiB = 192 KiB (bf16 would need 288 KiB).
+config { block_m: 128 block_n: 64 block_k: 256 num_stages: 4 num_warps: 8 num_ctas: 1 is_tma_allowed: true }
 config { block_m: 128 block_n: 128 block_k: 64 num_stages: 3 num_warps: 4 num_ctas: 1 is_tma_allowed: true }
 config { block_m: 128 block_n: 128 block_k: 64 num_stages: 4 num_warps: 4 num_ctas: 1 }
 config { block_m: 128 block_n: 128 block_k: 128 num_stages: 1 num_warps: 8 num_ctas: 1 is_tma_allowed: true }
@@ -48,7 +73,16 @@ config { block_m: 256 block_n: 16 block_k: 32 num_stages: 3 num_warps: 2 num_cta
 config { block_m: 256 block_n: 16 block_k: 64 num_stages: 3 num_warps: 4 num_ctas: 1 is_tma_allowed: true }
 config { block_m: 256 block_n: 16 block_k: 64 num_stages: 4 num_warps: 4 num_ctas: 1 }
 config { block_m: 256 block_n: 64 block_k: 64 num_stages: 3 num_warps: 4 num_ctas: 1 is_tma_allowed: true }
+# 2 CTAs, M split, per-CTA 128x64x64: bf16 4 * 24 KiB = 96 KiB.
+config { block_m: 256 block_n: 64 block_k: 64 num_stages: 5 num_warps: 4 num_ctas: 2 is_tma_allowed: true }
 config { block_m: 256 block_n: 64 block_k: 128 num_stages: 3 num_warps: 4 num_ctas: 1 is_tma_allowed: true }
+# 2 CTAs, M split, per-CTA 128x64x128: bf16 3 * 48 KiB = 144 KiB, w8 96 KiB.
+config { block_m: 256 block_n: 64 block_k: 128 num_stages: 4 num_warps: 4 num_ctas: 2 is_tma_allowed: true }
+config { block_m: 256 block_n: 64 block_k: 128 num_stages: 4 num_warps: 8 num_ctas: 2 is_tma_allowed: true }
+# 2 CTAs, M split, per-CTA 128x64x256, w8 only: 3 * 64 KiB = 192 KiB.
+config { block_m: 256 block_n: 64 block_k: 256 num_stages: 4 num_warps: 8 num_ctas: 2 is_tma_allowed: true }
 config { block_m: 256 block_n: 128 block_k: 32 num_stages: 5 num_warps: 8 num_ctas: 1 is_tma_allowed: true }
+# 2 CTAs, M split, per-CTA 128x128x128: bf16 2 * 64 KiB = 128 KiB.
+config { block_m: 256 block_n: 128 block_k: 128 num_stages: 3 num_warps: 4 num_ctas: 2 is_tma_allowed: true }
 config { block_m: 256 block_n: 256 block_k: 32 num_stages: 3 num_warps: 8 num_ctas: 1 }
 config { block_m: 256 block_n: 256 block_k: 32 num_stages: 5 num_warps: 8 num_ctas: 1 is_tma_allowed: true }

@@ -44,6 +44,7 @@ class TritonFusion : public FusionInterface {
  public:
   struct LaunchConfig {
     LaunchDimensions launch_dimensions;
+    std::optional<se::ClusterDim> cluster_dim;
     xla::xtile::BlockLevelParameters block_level_parameters;
   };
 

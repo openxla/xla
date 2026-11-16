@@ -23,7 +23,9 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
@@ -66,6 +68,35 @@ class LayoutAssignmentTest : public HloHardwareIndependentTestBase {
   const se::GpuComputeCapability default_gpu_cc_ = se::GpuComputeCapability();
   const se::DeviceDescription default_device_description_ =
       se::DeviceDescription();
+
+  // Assigns layouts to a dot of `rows` rows of activations with weights of
+  // `weights_type` and AUTO layout that are converted to bf16, and returns the
+  // layout of the weights.
+  absl::StatusOr<Layout> AssignLayoutOfConvertedWeights(
+      const se::CudaComputeCapability& cuda_cc, int rows,
+      absl::string_view weights_type) {
+    const std::string hlo = absl::Substitute(R"(
+    HloModule m
+
+    ENTRY main {
+      activations = bf16[$0,1024] parameter(0)
+      weights = $1[1024,2048] parameter(1)
+      converted = bf16[1024,2048] convert(weights)
+      ROOT dot = bf16[$0,2048] dot(activations, converted), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    })",
+                                             rows, weights_type);
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<HloModule> m,
+        ParseAndReturnUnverifiedModule(
+            hlo, {}, HloParserOptions().set_fill_missing_layouts(false)));
+    ComputationLayout computation_layout(
+        m->entry_computation()->ComputeProgramShape(),
+        /*ignore_layouts=*/false);
+    GpuLayoutAssignment layout_assignment(&computation_layout, cuda_cc,
+                                          default_device_description_);
+    ABSL_RETURN_IF_ERROR(layout_assignment.Run(m.get()).status());
+    return m->entry_computation()->parameter_instruction(1)->shape().layout();
+  }
 };
 
 TEST_F(LayoutAssignmentTest, Elementwise) {
@@ -1235,6 +1266,96 @@ TEST_F(LayoutAssignmentTest, DotSetsNonMandatoryConstraintIfAutoLayout) {
 )"),
               absl_testing::IsOkAndHolds(true));
 };
+
+TEST_F(LayoutAssignmentTest,
+       AutoLayoutDequantizedWeightsOfFewRowsAreContractingMinorWithTcgen05) {
+  for (int rows : {32, 64, 128}) {
+    EXPECT_THAT(AssignLayoutOfConvertedWeights(
+                    se::CudaComputeCapability::Blackwell(), rows, "s8"),
+                absl_testing::IsOkAndHolds(LayoutUtil::MakeLayout({0, 1})))
+        << "rows: " << rows;
+  }
+}
+
+TEST_F(LayoutAssignmentTest,
+       AutoLayoutDequantizedWeightsKeepDefaultLayoutOutsideOfRowsRange) {
+  for (int rows : {16, 256}) {
+    EXPECT_THAT(AssignLayoutOfConvertedWeights(
+                    se::CudaComputeCapability::Blackwell(), rows, "s8"),
+                absl_testing::IsOkAndHolds(LayoutUtil::MakeLayout({1, 0})))
+        << "rows: " << rows;
+  }
+}
+
+TEST_F(LayoutAssignmentTest,
+       AutoLayoutDequantizedWeightsKeepDefaultLayoutWithoutTcgen05) {
+  EXPECT_THAT(AssignLayoutOfConvertedWeights(
+                  se::CudaComputeCapability::Hopper(), 64, "s8"),
+              absl_testing::IsOkAndHolds(LayoutUtil::MakeLayout({1, 0})));
+}
+
+TEST_F(LayoutAssignmentTest, AutoLayoutFloatWeightsKeepDefaultLayout) {
+  EXPECT_THAT(AssignLayoutOfConvertedWeights(
+                  se::CudaComputeCapability::Blackwell(), 64, "f32"),
+              absl_testing::IsOkAndHolds(LayoutUtil::MakeLayout({1, 0})));
+}
+
+TEST_F(LayoutAssignmentTest, DequantizedWeightsWithFixedLayoutAreNotCopied) {
+  const char* hlo = R"(
+  HloModule m
+
+  ENTRY main {
+    activations = bf16[64,1024]{1,0} parameter(0)
+    weights = s8[1024,2048]{1,0} parameter(1)
+    dequantized = bf16[1024,2048] convert(weights)
+    ROOT dot = bf16[64,2048] dot(activations, dequantized), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  })";
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> m,
+      ParseAndReturnUnverifiedModule(
+          hlo, {}, HloParserOptions().set_fill_missing_layouts(false)));
+  ComputationLayout computation_layout(
+      m->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout,
+                                        se::CudaComputeCapability::Blackwell(),
+                                        default_device_description_);
+  EXPECT_THAT(layout_assignment.Run(m.get()), absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(m::Dot(m::Parameter(0), m::Convert(m::Parameter(1).WithShape(
+                                             S8, {1024, 2048}, {1, 0})))));
+}
+
+TEST_F(LayoutAssignmentTest,
+       AutoLayoutDequantizedWeightsFollowTransposeAndReshape) {
+  const char* hlo = R"(
+  HloModule m
+
+  ENTRY main {
+    activations = bf16[64,1024] parameter(0)
+    weights = s8[24,1024,128] parameter(1)
+    dequantized = bf16[24,1024,128] convert(weights)
+    transposed = bf16[1024,24,128] transpose(dequantized), dimensions={1,0,2}
+    reshaped = bf16[1024,3072] reshape(transposed)
+    ROOT dot = bf16[64,3072] dot(activations, reshaped), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  })";
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> m,
+      ParseAndReturnUnverifiedModule(
+          hlo, {}, HloParserOptions().set_fill_missing_layouts(false)));
+  ComputationLayout computation_layout(
+      m->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout,
+                                        se::CudaComputeCapability::Blackwell(),
+                                        default_device_description_);
+  EXPECT_THAT(layout_assignment.Run(m.get()), absl_testing::IsOkAndHolds(true));
+  // The contracting dimension of the weights is the minor one.
+  EXPECT_THAT(
+      m->entry_computation()->parameter_instruction(1),
+      GmockMatch(m::Parameter(1).WithShape(S8, {24, 1024, 128}, {1, 2, 0})));
+}
 
 TEST_F(LayoutAssignmentTest, VariadicReduceSameOperandLayout) {
   const char* module_str = R"(

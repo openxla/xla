@@ -142,13 +142,35 @@ absl::StatusOr<TmaDescriptor> CreateTmaDescriptor(
                              GetTmaSwizzleMode(swizzle_mode));
 }
 
+namespace {
+
+// Deepest software pipeline for which TMA is recommended. With `num_stages`
+// stages, Triton keeps `num_stages - 1` TMA buffers per operand in flight for
+// tcgen05 MMAs (one more for Hopper's wgmma). Five stages keep enough bytes in
+// flight to hide HBM latency on narrow, memory-bound GEMMs (e.g. W8A16 GEMMs
+// with `block_n = 64`): for a 128x64x128 tile with `s8` LHS and `bf16` RHS,
+// 4 * (128 * 128 * 1 B + 64 * 128 * 2 B) = 128 KiB per CTA, well below the
+// 227 KiB opt-in shared-memory limit per block. Whether a specific tile fits is
+// checked by the autotuner's shared-memory model
+// (`TritonDotFusionSearchSpace`), not here.
+constexpr int kMaxRecommendedTmaStages = 5;
+
+// Returns true if TMA is recommended for a software pipeline of `num_stages`.
+bool IsTmaRecommendedNumStages(int num_stages) {
+  return num_stages == 1 ||
+         (num_stages >= 3 && num_stages <= kMaxRecommendedTmaStages);
+}
+
+}  // namespace
+
 // The current recommendation is based on analyzing the E2E "Nucleo" group
 // data. It might make sense to re-evaluate this recommendation later if we
-// believe there are missed opportunities.
+// believe there are missed opportunities. Five stages were added after
+// microbenchmarks of narrow W8A16 GEMMs on B200/GB300 (see
+// `kMaxRecommendedTmaStages`).
 bool IsTmaRecommended(const TritonGemmConfig& config) {
   return config.num_warps <= 8 &&
-         (config.num_stages == 1 || config.num_stages == 3 ||
-          config.num_stages == 4) &&
+         IsTmaRecommendedNumStages(config.num_stages) &&
          config.block_m <= 256 && config.block_n <= 256 &&
          config.block_k <= 256;
 }
@@ -156,8 +178,7 @@ bool IsTmaRecommended(const TritonGemmConfig& config) {
 // Equivalent to the recommendation constructed for TritonGemmConfig.
 bool IsTmaRecommended(const xtile::BlockLevelFusionConfig& config) {
   if (!(config.num_warps() <= 8 &&
-        (config.num_stages() == 1 || config.num_stages() == 3 ||
-         config.num_stages() == 4))) {
+        IsTmaRecommendedNumStages(config.num_stages()))) {
     return false;
   }
   for (const auto& tile : config.output_tiles()) {

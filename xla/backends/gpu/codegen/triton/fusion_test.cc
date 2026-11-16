@@ -45,6 +45,8 @@ namespace gpu {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::Eq;
+using ::testing::Optional;
 
 class TritonFusionTest : public HloHardwareIndependentTestBase {};
 
@@ -206,6 +208,42 @@ ENTRY entry_computation {
             /*ceil(125 / 4)=*/32);
   EXPECT_EQ(launch_config->launch_dimensions.num_threads_per_block(),
             /*32 * 2 * 1=*/64);
+  EXPECT_THAT(launch_config->cluster_dim, Eq(std::nullopt));
+}
+
+TEST_F(TritonFusionTest, LaunchConfigScalesBlocksAndSetsClusterDimForMultiCta) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+triton_computation {
+  param_0 = bf16[512,64] parameter(0)
+  ROOT abs = bf16[512,64] abs(param_0)
+}
+
+ENTRY entry_computation {
+  param_0 = bf16[512,64] parameter(0)
+  ROOT fusion = bf16[512,64] fusion(param_0), kind=kCustom,
+    calls=triton_computation,
+    backend_config={"fusion_backend_config":{
+      "kind":"__triton",
+      "block_level_fusion_config":{"output_tiles":[{"sizes":["256","64"]}],
+                                   "num_warps":"4",
+                                   "num_ctas":2,
+                                   "num_stages":4,
+                                   "is_tma_allowed":true}}}
+})"));
+
+  stream_executor::DeviceDescription device_info =
+      TestGpuDeviceInfo::B200SXMDeviceInfo();
+  auto* root = module->entry_computation()->root_instruction();
+  HloFusionAnalysis analysis = HloFusionAnalysis::Create(*root, device_info);
+
+  std::optional<TritonFusion::LaunchConfig> launch_config =
+      TritonFusion::GetLaunchConfig(&analysis);
+  ASSERT_NE(launch_config, std::nullopt);
+  // 2 logical cluster tiles * 2 CTAs per cluster = 4 physical CTAs.
+  EXPECT_EQ(launch_config->launch_dimensions.num_blocks(), 4);
+  EXPECT_EQ(launch_config->launch_dimensions.num_threads_per_block(), 128);
+  EXPECT_THAT(launch_config->cluster_dim,
+              Optional(Eq(se::ClusterDim(2, 1, 1))));
 }
 
 }  // namespace
