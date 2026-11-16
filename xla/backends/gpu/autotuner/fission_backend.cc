@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
+#include "xla/backends/gpu/transforms/algebraic_simplifier.h"
 #include "xla/backends/gpu/transforms/fusion_wrapper.h"
 #include "xla/backends/gpu/transforms/priority_fusion.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -42,9 +43,15 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/transforms/expanders/reshape_decomposer.h"
+#include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
+#include "xla/hlo/transforms/simplifiers/broadcast_canonicalizer.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/hlo/utils/hlo_traversal.h"
+#include "xla/layout_util.h"
 #include "xla/service/compiler.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/mlir_context_pool.h"
@@ -53,8 +60,10 @@ limitations under the License.
 #include "xla/service/gpu/model/gpu_performance_model_base.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/instruction_fusion.h"
+#include "xla/service/layout_normalization.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/xla.pb.h"
 
@@ -103,6 +112,65 @@ absl::Status InlineFissionedComputation(HloInstruction* fusion_instr,
   TF_RET_CHECK(replaced) << "Failed to inline fissioned computation for "
                          << fusion_instr->name();
   return absl::OkStatus();
+}
+
+// Returns true if every instruction across all computations in `module` has a
+// concrete layout (non-custom fusions may have interior layouts cleared by
+// LayoutAssignment::SetFusionLayouts).
+bool AllInstructionsHaveLayout(const HloModule& module) {
+  for (const HloComputation* computation : module.computations()) {
+    for (const HloInstruction* instr : computation->instructions()) {
+      if (!LayoutUtil::HasLayout(instr->shape())) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// Normalizes layouts inside `hlo_module` before rewriting so that any
+// layout-changing kCopy (e.g. inserted by ReduceDecomposer after initial
+// LayoutNormalization) becomes bitcast -> transpose -> bitcast rather than a
+// bare layout-changing kCopy that ThunkEmitter rejects. Skips modules where any
+// instruction lacks a layout (e.g. non-custom fusions after
+// LayoutAssignment::SetFusionLayouts).
+absl::Status NormalizeLayoutsIfPresent(HloModule* hlo_module,
+                                       const se::GpuComputeCapability& gpu_cc,
+                                       const DebugOptions& options) {
+  if (!AllInstructionsHaveLayout(*hlo_module)) {
+    return absl::OkStatus();
+  }
+  ABSL_ASSIGN_OR_RETURN(bool reshape_changed,
+                        ReshapeDecomposer{}.Run(hlo_module));
+  ABSL_ASSIGN_OR_RETURN(bool layout_changed,
+                        LayoutNormalization{}.Run(hlo_module));
+  if (!reshape_changed && !layout_changed) {
+    return absl::OkStatus();
+  }
+  HloPassPipeline cleanup_pipeline("fission_layout_normalization_cleanup");
+  // Mirror GpuCompiler::GetAlgebraicSimplifierOptions(kLayoutNormalization):
+  // :gpu_compiler carries tags=["gpu"], whereas :fission_backend must remain
+  // buildable in CPU-only builds (no-gpu-targets-in-cpu-build).
+  AlgebraicSimplifierOptions algsimp_options;
+  algsimp_options.set_is_layout_sensitive(true);
+  algsimp_options.set_supports_non_canonical_dots(false);
+  algsimp_options.set_enable_conv_operand_swap(false);
+  algsimp_options.set_enable_dot_strength_reduction(false);
+  algsimp_options.set_enable_conv_add_multiply_reorder(true);
+  algsimp_options.set_enable_unconditional_reduce_of_concat_replacement(false);
+  algsimp_options.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
+  algsimp_options.set_enable_conditional_simplification(true);
+  algsimp_options.set_enable_fold_transpose_into_scatter(true);
+  if (gpu_cc.IsCuda() && options.xla_gpu_experimental_enable_conv_fusion()) {
+    algsimp_options.set_enable_folding_pad_into_convolution(false);
+  }
+  algsimp_options.set_minmax_propagate_nan(
+      !options.xla_gpu_enable_fast_min_max());
+  cleanup_pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(algsimp_options,
+                                                               gpu_cc);
+  cleanup_pipeline.AddPass<BroadcastCanonicalizer>();
+  cleanup_pipeline.AddPass<HloDCE>();
+  return cleanup_pipeline.Run(hlo_module).status();
 }
 
 }  // namespace
@@ -234,6 +302,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> FissionBackend::RunHloPasses(
       codegen_backend_->RunHloPasses(std::move(hlo_module), options));
 
   ABSL_RETURN_IF_ERROR(RunPriorityFusion(module.get()));
+  FusionWrapper fusion_wrapper(target_config().device_description);
+  ABSL_RETURN_IF_ERROR(fusion_wrapper.Run(module.get()).status());
   return module;
 }
 
@@ -366,6 +436,11 @@ FissionBackend::GetFissionedAndRewrittenModule(
   DebugOptions options = debug_options();
   AdjustDebugOptionsForAutotuning(options);
   hlo_module->mutable_config().set_debug_options(options);
+
+  ABSL_RETURN_IF_ERROR(NormalizeLayoutsIfPresent(
+      hlo_module.get(),
+      target_config().device_description.gpu_compute_capability(), options));
+
   ABSL_RETURN_IF_ERROR(rewriter_pipeline_->Run(hlo_module.get()).status());
   return hlo_module;
 }
