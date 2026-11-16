@@ -36,6 +36,8 @@ limitations under the License.
 #include "tsl/platform/protobuf.h"
 #include "tsl/profiler/lib/context_types.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/utils/math_utils.h"
 #include "xla/tsl/profiler/utils/tf_xplane_visitor.h"
@@ -743,8 +745,25 @@ void SortXLine(XLine* line) {
 }
 
 void SortXPlane(XPlane* plane) {
-  for (XLine& line : *plane->mutable_lines()) {
-    SortXLine(&line);
+  const int num_lines = plane->lines_size();
+  int64_t total_events = 0;
+  for (const XLine& line : plane->lines()) {
+    total_events += line.events_size();
+  }
+  if (num_lines <= 1 || total_events < 4096) {
+    for (XLine& line : *plane->mutable_lines()) {
+      SortXLine(&line);
+    }
+    return;
+  }
+  tsl::thread::ThreadPool pool(tsl::Env::Default(), "SortXPlane",
+                               std::min(num_lines, 16));
+  for (int i = 0; i < num_lines; ++i) {
+    XLine* line = plane->mutable_lines(i);
+    if (line->events_size() <= 1) {
+      continue;
+    }
+    pool.Schedule([line]() { SortXLine(line); });
   }
 }
 

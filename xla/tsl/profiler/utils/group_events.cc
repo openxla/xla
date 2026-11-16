@@ -15,8 +15,11 @@ limitations under the License.
 
 #include "xla/tsl/profiler/utils/group_events.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <queue>
@@ -37,6 +40,7 @@ limitations under the License.
 #include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/lib/gtl/map_util.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/utils/tf_xplane_visitor.h"
 #include "xla/tsl/profiler/utils/timespan.h"
@@ -45,6 +49,7 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
 #include "xla/tsl/profiler/utils/xplane_visitor.h"
+#include "xla/tsl/util/sorted_range.h"
 
 namespace tsl {
 namespace profiler {
@@ -193,6 +198,30 @@ void SetContextGroup(const GroupingEventStats& stats, EventNode* event,
     } else {
       ((*context_groups)[*stats.consumer_type][*stats.consumer_id])
           .no_pid_context_group.consumers.push_back(event);
+    }
+  }
+}
+
+void MergeContextGroup(ContextGroup* src, ContextGroup* dst) {
+  dst->producers.insert(dst->producers.end(),
+                        std::make_move_iterator(src->producers.begin()),
+                        std::make_move_iterator(src->producers.end()));
+  dst->consumers.insert(dst->consumers.end(),
+                        std::make_move_iterator(src->consumers.begin()),
+                        std::make_move_iterator(src->consumers.end()));
+}
+
+void MergeContextGroupMap(ContextGroupMap* src, ContextGroupMap* dst) {
+  for (auto& [context_type, id_group_map] : tsl::KeySortedRange(*src)) {
+    auto& dst_id_group_map = (*dst)[context_type];
+    for (auto& [context_id, pid_group] : tsl::KeySortedRange(id_group_map)) {
+      auto& dst_pid_group = dst_id_group_map[context_id];
+      MergeContextGroup(&pid_group.no_pid_context_group,
+                        &dst_pid_group.no_pid_context_group);
+      for (auto& [pid, group] :
+           tsl::KeySortedRange(pid_group.pid_context_groups)) {
+        MergeContextGroup(&group, &dst_pid_group.pid_context_groups[pid]);
+      }
     }
   }
 }
@@ -561,33 +590,95 @@ void EventForest::ConnectIntraThread(XPlane* plane, XPlaneVisitor* visitor,
   if (absl::StartsWith(visitor->Name(), kTpuPlanePrefix)) {
     ConnectIntraThreadTPU(plane, visitor, context_groups);
   } else {
-    for (auto& line : *plane->mutable_lines()) {
-      std::vector<EventNode*> parent_nodes;
+    const int num_lines = plane->lines_size();
+    int64_t total_events = 0;
+    for (const auto& line : plane->lines()) {
+      total_events += line.events_size();
+    }
+    if (num_lines <= 1 || total_events < 4096) {
+      for (auto& line : *plane->mutable_lines()) {
+        std::vector<EventNode*> parent_nodes;
+        for (auto& event : *line.mutable_events()) {
+          XEventVisitor event_visitor(visitor, &line, &event);
+          int64_t event_type = GetEventType(is_host_plane, event_visitor);
+          EventNode* cur_node = &event_node_map_[event_type].emplace_back(
+              std::move(event_visitor));
+          GroupingEventStats stats(cur_node->GetEventVisitor());
+          if (stats.root_level.has_value()) {
+            cur_node->SetRootLevel(*stats.root_level);
+          }
+          // Update `context_groups` for `ConnectInterThread`.
+          SetContextGroup(stats, cur_node, context_groups);
+          // Async events are ignored when processing the nesting relationship.
+          if (!stats.is_async) {
+            while (!parent_nodes.empty()) {
+              EventNode* parent_node = parent_nodes.back();
+              if (parent_node->GetEventVisitor().GetTimespan().Includes(
+                      cur_node->GetEventVisitor().GetTimespan())) {
+                parent_node->AddChild(cur_node);
+                break;
+              }
+              parent_nodes.pop_back();
+            }
+            parent_nodes.push_back(cur_node);
+          }
+        }
+      }
+      return;
+    }
+
+    // Phase 1: Allocate EventNodes in event_node_map_ in deterministic order.
+    std::vector<std::vector<EventNode*>> line_nodes(num_lines);
+    for (int i = 0; i < num_lines; ++i) {
+      XLine& line = (*plane->mutable_lines())[i];
+      auto& nodes = line_nodes[i];
+      nodes.reserve(line.events_size());
       for (auto& event : *line.mutable_events()) {
         XEventVisitor event_visitor(visitor, &line, &event);
         int64_t event_type = GetEventType(is_host_plane, event_visitor);
-        EventNode* cur_node =
-            &event_node_map_[event_type].emplace_back(std::move(event_visitor));
-        GroupingEventStats stats(cur_node->GetEventVisitor());
-        if (stats.root_level.has_value()) {
-          cur_node->SetRootLevel(*stats.root_level);
-        }
-        // Update `context_groups` for `ConnectInterThread`.
-        SetContextGroup(stats, cur_node, context_groups);
-        // Async events are ignored when processing the nesting relationship.
-        if (!stats.is_async) {
-          while (!parent_nodes.empty()) {
-            EventNode* parent_node = parent_nodes.back();
-            if (parent_node->GetEventVisitor().GetTimespan().Includes(
-                    cur_node->GetEventVisitor().GetTimespan())) {
-              parent_node->AddChild(cur_node);
-              break;
-            }
-            parent_nodes.pop_back();
-          }
-          parent_nodes.push_back(cur_node);
-        }
+        nodes.push_back(&event_node_map_[event_type].emplace_back(
+            std::move(event_visitor)));
       }
+    }
+
+    // Phase 2: Extract GroupingEventStats, build intra-line hierarchy, and
+    // collect context groups in parallel across lines.
+    std::vector<ContextGroupMap> local_context_groups(num_lines);
+    {
+      tsl::thread::ThreadPool pool(tsl::Env::Default(), "ConnectIntraThread",
+                                   std::min(num_lines, 16));
+      for (int i = 0; i < num_lines; ++i) {
+        pool.Schedule([&, i]() {
+          std::vector<EventNode*> parent_nodes;
+          ContextGroupMap* local_groups = &local_context_groups[i];
+          for (EventNode* cur_node : line_nodes[i]) {
+            GroupingEventStats stats(cur_node->GetEventVisitor());
+            if (stats.root_level.has_value()) {
+              cur_node->SetRootLevel(*stats.root_level);
+            }
+            SetContextGroup(stats, cur_node, local_groups);
+            if (!stats.is_async) {
+              while (!parent_nodes.empty()) {
+                EventNode* parent_node = parent_nodes.back();
+                if (parent_node->GetEventVisitor().GetTimespan().Includes(
+                        cur_node->GetEventVisitor().GetTimespan())) {
+                  parent_node->AddChild(cur_node);
+                  break;
+                }
+                parent_nodes.pop_back();
+              }
+              parent_nodes.push_back(cur_node);
+            }
+          }
+          std::vector<EventNode*>().swap(line_nodes[i]);
+        });
+      }
+    }
+    line_nodes.clear();
+    line_nodes.shrink_to_fit();
+    for (int i = 0; i < num_lines; ++i) {
+      MergeContextGroupMap(&local_context_groups[i], context_groups);
+      local_context_groups[i].clear();
     }
   }
 }
@@ -884,9 +975,115 @@ void EventForest::AddPlanes(XPlaneVisitorFactory visitor_factory,
 void EventForest::ConnectEvents(
     const std::vector<InterThreadConnectInfo>& connect_info_list) {
   ContextGroupMap context_groups;
-  for (auto& plane_visitor : planes_) {
-    ConnectIntraThread(plane_visitor.first, &plane_visitor.second,
-                       &context_groups);
+  std::vector<size_t> tpu_plane_indices;
+  for (size_t i = 0; i < planes_.size(); ++i) {
+    if (absl::StartsWith(planes_[i].second.Name(), kTpuPlanePrefix)) {
+      tpu_plane_indices.push_back(i);
+    } else {
+      ConnectIntraThread(planes_[i].first, &planes_[i].second, &context_groups);
+    }
+  }
+  if (tpu_plane_indices.size() <= 1) {
+    for (size_t idx : tpu_plane_indices) {
+      ConnectIntraThreadTPU(planes_[idx].first, &planes_[idx].second,
+                            &context_groups);
+    }
+  } else {
+    struct TpuPlaneGroupingState {
+      XPlane* plane = nullptr;
+      XPlaneVisitor* visitor = nullptr;
+      XLine* grouping_line = nullptr;
+      std::vector<EventNode*> parent_nodes;
+      ContextGroupMap local_context_groups;
+    };
+    std::vector<TpuPlaneGroupingState> states(tpu_plane_indices.size());
+    for (size_t i = 0; i < tpu_plane_indices.size(); ++i) {
+      XPlane* plane = planes_[tpu_plane_indices[i]].first;
+      XPlaneVisitor* visitor = &planes_[tpu_plane_indices[i]].second;
+      std::optional<int64_t> tc_id = GetTensorCoreId(visitor->Name());
+      std::optional<int64_t> sc_id = GetSparseCoreId(visitor->Name());
+      if (!tc_id.has_value() && !sc_id.has_value()) {
+        LOG(ERROR) << "TensorCore or SparseCore ID is missing. Skipping "
+                      "grouping for device plane: "
+                   << visitor->Name();
+        continue;
+      }
+      XLine* grouping_line = GetGroupingLineForTPU(plane);
+      if (grouping_line == nullptr) {
+        LOG(ERROR) << "No grouping line found. Skipping grouping for device "
+                      "plane: "
+                   << visitor->Name();
+        continue;
+      }
+      states[i].plane = plane;
+      states[i].visitor = visitor;
+      states[i].grouping_line = grouping_line;
+      states[i].parent_nodes.reserve(grouping_line->events_size());
+      for (auto& event : *grouping_line->mutable_events()) {
+        XEventVisitor event_visitor(visitor, grouping_line, &event);
+        int64_t event_type =
+            GetEventType(/*is_host_plane=*/false, event_visitor);
+        EventNode* step_node =
+            &event_node_map_[event_type].emplace_back(std::move(event_visitor));
+        GroupingEventStats stats(step_node->GetEventVisitor());
+        states[i].parent_nodes.push_back(step_node);
+        SetContextGroup(stats, step_node, &states[i].local_context_groups);
+      }
+    }
+    {
+      tsl::thread::ThreadPool pool(tsl::Env::Default(), "ConnectIntraThreadTPU",
+                                   std::min<int>(tpu_plane_indices.size(), 16));
+      for (size_t i = 0; i < states.size(); ++i) {
+        if (states[i].plane == nullptr) {
+          continue;
+        }
+        pool.Schedule([&, i]() {
+          XPlane* plane = states[i].plane;
+          XPlaneVisitor* visitor = states[i].visitor;
+          XLine* grouping_line = states[i].grouping_line;
+          const auto& parent_nodes = states[i].parent_nodes;
+          ContextGroupMap* local_groups = &states[i].local_context_groups;
+          for (auto& line : *plane->mutable_lines()) {
+            if (&line == grouping_line) {
+              continue;
+            }
+            int parent_index = 0;
+            for (auto& event : *line.mutable_events()) {
+              XEventVisitor event_visitor(visitor, &line, &event);
+              GroupingEventStats stats(event_visitor);
+              while (parent_index < parent_nodes.size() &&
+                     parent_nodes[parent_index]
+                             ->GetEventVisitor()
+                             .GetTimespan()
+                             .end_ps() <=
+                         event_visitor.GetTimespan().begin_ps()) {
+                parent_index++;
+              }
+              if (parent_index == parent_nodes.size()) {
+                break;
+              }
+              if (parent_nodes[parent_index]
+                      ->GetEventVisitor()
+                      .GetTimespan()
+                      .Includes(event_visitor.GetTimespan())) {
+                SetContextGroup(stats, parent_nodes[parent_index],
+                                local_groups);
+              }
+            }
+          }
+        });
+      }
+    }
+    for (size_t i = 0; i < states.size(); ++i) {
+      if (states[i].plane == nullptr) {
+        continue;
+      }
+      MergeContextGroupMap(&states[i].local_context_groups, &context_groups);
+      if (GetTensorCoreId(states[i].visitor->Name()).has_value()) {
+        tensor_core_root_events_per_core_.emplace_back(
+            std::move(states[i].parent_nodes));
+      }
+    }
   }
   ConnectInterThread(connect_info_list);
   ConnectContextGroups(context_groups);
