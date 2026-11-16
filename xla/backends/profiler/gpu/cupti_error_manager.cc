@@ -83,6 +83,11 @@ CUptiResult CuptiErrorManager::ActivityEnable(CUpti_ActivityKind kind) {
     auto f = std::bind(&CuptiErrorManager::ActivityDisable, this, kind);
     RegisterUndoFunction(f);
   } else {
+    if (kind == CUPTI_ACTIVITY_KIND_ENVIRONMENT) {
+      ALLOW_ERROR(error, CUPTI_ERROR_NOT_SUPPORTED);
+      ALLOW_ERROR(error, CUPTI_ERROR_NOT_COMPATIBLE);
+      ALLOW_ERROR(error, CUPTI_ERROR_INVALID_KIND);
+    }
     LOG(ERROR) << "ActivityEnable() error on activity kind: " << kind;
   }
   LOG_AND_DISABLE_IF_ERROR(error);
@@ -175,6 +180,11 @@ CUptiResult CuptiErrorManager::ActivityEnableV2(
                        kind, nullptr);
     RegisterUndoFunction(f);
   } else {
+    if (kind == CUPTI_ACTIVITY_KIND_ENVIRONMENT) {
+      ALLOW_ERROR(error, CUPTI_ERROR_NOT_SUPPORTED);
+      ALLOW_ERROR(error, CUPTI_ERROR_NOT_COMPATIBLE);
+      ALLOW_ERROR(error, CUPTI_ERROR_INVALID_KIND);
+    }
     LOG(ERROR) << "ActivityEnableV2() error on activity kind: " << kind;
   }
   LOG_AND_DISABLE_IF_ERROR(error);
