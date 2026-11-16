@@ -18,6 +18,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -25,17 +26,19 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/time/time.h"
+#include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
-#include "xla/autotune_results.pb.h"
-#include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #if GOOGLE_CUDA
 #include "xla/backends/gpu/autotuner/cublaslt.h"
@@ -47,21 +50,34 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/dot_algorithm_rewriter.h"
 #include "xla/backends/gpu/transforms/gemm_rewriter.h"
 #include "xla/backends/gpu/transforms/scaled_dot_rewriter.h"
+#include "xla/error_spec.h"
+#include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/layout_util.h"
+#include "xla/literal.h"
+#include "xla/literal_comparison.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/platform_util.h"
+#include "xla/service/service_executable_run_options.h"
+#include "xla/service/shaped_buffer.h"
+#include "xla/service/transfer_manager.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -555,6 +571,41 @@ class CublasFissionBackendTest : public HloHardwareIndependentTestBase {
     }
     return *configs[0].estimated_runtime;
   }
+
+  absl::StatusOr<Literal> ExecuteOnGpu(Executable* executable,
+                                       absl::Span<const Literal* const> args) {
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
+                          stream_executor_->CreateStream());
+    ABSL_ASSIGN_OR_RETURN(TransferManager * transfer_manager,
+                          TransferManager::GetForPlatform(platform_));
+    se::StreamExecutorAddressAllocator allocator(stream_executor_);
+
+    std::vector<ScopedShapedBuffer> owned_args;
+    std::vector<const ShapedBuffer*> arg_ptrs;
+    owned_args.reserve(args.size());
+    arg_ptrs.reserve(args.size());
+    for (const Literal* arg : args) {
+      ABSL_ASSIGN_OR_RETURN(
+          ScopedShapedBuffer buffer,
+          transfer_manager->AllocateScopedShapedBuffer(
+              arg->shape(), &allocator, stream_executor_->device_ordinal()));
+      ABSL_RETURN_IF_ERROR(transfer_manager->TransferLiteralToDevice(
+          stream.get(), *arg, buffer));
+      owned_args.push_back(std::move(buffer));
+      arg_ptrs.push_back(&owned_args.back());
+    }
+
+    ExecutableRunOptions run_options;
+    run_options.set_stream(stream.get());
+    run_options.set_allocator(&allocator);
+    ServiceExecutableRunOptions service_run_options(run_options);
+
+    ABSL_ASSIGN_OR_RETURN(
+        ScopedShapedBuffer result_buffer,
+        executable->ExecuteOnStream(&service_run_options, arg_ptrs));
+    return transfer_manager->TransferLiteralFromDevice(stream.get(),
+                                                       result_buffer);
+  }
 };
 
 TEST_F(CublasFissionBackendTest, ApplyConfigReplacesFusionWithControlDeps) {
@@ -1023,6 +1074,336 @@ TEST_F(
   EXPECT_THAT(estimated_configs,
               Each(Field(&CodegenBackend::EstimatedConfig::estimated_runtime,
                          Eq(std::nullopt))));
+}
+
+constexpr absl::string_view kLayoutChangingCopyPrologueHlo = R"(
+    HloModule module
+
+    gemm_fusion {
+      param_1 = f32[64,4]{0,1} parameter(1)
+      copy = f32[64,4]{1,0} copy(param_1)
+      param_0 = f32[4,64]{1,0} parameter(0)
+      ROOT dot = f32[64,64]{1,0} dot(copy, param_0),
+          lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    }
+
+    ENTRY main {
+      param_0 = f32[4,64]{1,0} parameter(0)
+      param_1 = f32[64,4]{0,1} parameter(1)
+      ROOT fusion = f32[64,64]{1,0} fusion(param_0, param_1),
+          kind=kCustom, calls=gemm_fusion,
+          backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+    })";
+
+absl::Status VerifyNormalizedFissionModule(const HloModule& module,
+                                           bool expect_transpose) {
+  const HloComputation& entry = *module.entry_computation();
+  for (const HloComputation* comp : module.computations()) {
+    if (absl::c_any_of(comp->instructions(), [](const HloInstruction* i) {
+          return i->opcode() == HloOpcode::kCopy;
+        })) {
+      return absl::FailedPreconditionError(
+          absl::Substitute("Expected no kCopy instructions in module, got:\n$0",
+                           module.ToString()));
+    }
+  }
+  if (absl::c_none_of(entry.instructions(), [](const HloInstruction* i) {
+        return i->opcode() == HloOpcode::kCustomCall &&
+               absl::StrContains(i->custom_call_target(), "matmul");
+      })) {
+    return absl::FailedPreconditionError(absl::Substitute(
+        "Expected matmul custom call in entry computation, got:\n$0",
+        module.ToString()));
+  }
+  if (expect_transpose) {
+    auto has_transpose = [](const HloInstruction* i) {
+      if (i->opcode() == HloOpcode::kTranspose) {
+        return true;
+      }
+      return i->opcode() == HloOpcode::kFusion &&
+             absl::c_any_of(i->fused_instructions(),
+                            [](const HloInstruction* fused) {
+                              return fused->opcode() == HloOpcode::kTranspose;
+                            });
+    };
+    if (absl::c_none_of(entry.instructions(), has_transpose)) {
+      return absl::FailedPreconditionError(
+          absl::Substitute("Expected kTranspose in entry computation, got:\n$0",
+                           module.ToString()));
+    }
+  }
+  return absl::OkStatus();
+}
+
+Literal MakePatternMatrix(int64_t rows, int64_t cols,
+                          absl::Span<const int64_t> minor_to_major,
+                          float scale) {
+  Shape shape =
+      ShapeUtil::MakeShapeWithDenseLayout(F32, {rows, cols}, minor_to_major);
+  Literal literal(shape);
+  for (int64_t r = 0; r < rows; ++r) {
+    for (int64_t c = 0; c < cols; ++c) {
+      literal.Set<float>({r, c}, scale * static_cast<float>(r * 13 + c + 1));
+    }
+  }
+  return literal;
+}
+
+Literal ComputeMatmulReference(const Literal& lhs, const Literal& rhs,
+                               absl::Span<const int64_t> out_minor_to_major) {
+  int64_t m = lhs.shape().dimensions(0);
+  int64_t k = lhs.shape().dimensions(1);
+  int64_t n = rhs.shape().dimensions(1);
+  Shape out_shape =
+      ShapeUtil::MakeShapeWithDenseLayout(F32, {m, n}, out_minor_to_major);
+  Literal out(out_shape);
+  for (int64_t i = 0; i < m; ++i) {
+    for (int64_t j = 0; j < n; ++j) {
+      double acc = 0.0;
+      for (int64_t p = 0; p < k; ++p) {
+        acc += static_cast<double>(lhs.Get<float>({i, p})) *
+               static_cast<double>(rhs.Get<float>({p, j}));
+      }
+      out.Set<float>({i, j}, static_cast<float>(acc));
+    }
+  }
+  return out;
+}
+
+TEST_F(CublasFissionBackendTest, CompileLayoutChangingCopyInPrologue) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kLayoutChangingCopyPrologueHlo));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                       fission_backend_->GetSupportedConfigs(*fusion));
+  ASSERT_THAT(configs, Not(IsEmpty()));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
+                       fission_backend_->Compile(*fusion, *configs[0]));
+  ASSERT_NE(executable, nullptr);
+
+  Literal param_0 = MakePatternMatrix(4, 64, {1, 0}, 0.01f);
+  Literal param_1 = MakePatternMatrix(64, 4, {0, 1}, 0.02f);
+  Literal expected = ComputeMatmulReference(param_1, param_0, {1, 0});
+  ASSERT_OK_AND_ASSIGN(Literal actual,
+                       ExecuteOnGpu(executable.get(), {&param_0, &param_1}));
+  EXPECT_OK(literal_comparison::Near(expected, actual, ErrorSpec{1e-2, 1e-2},
+                                     /*detailed_message=*/true,
+                                     /*miscompare_callback=*/nullptr));
+}
+
+TEST_F(CublasFissionBackendTest,
+       ApplyConfigAndRunBackendWithLayoutChangingCopy) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kLayoutChangingCopyPrologueHlo));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                       fission_backend_->GetSupportedConfigs(*fusion));
+  ASSERT_THAT(configs, Not(IsEmpty()));
+
+  ASSERT_OK(fission_backend_->ApplyConfig(*fusion, *configs[0]));
+  EXPECT_THAT(VerifyNormalizedFissionModule(*module, /*expect_transpose=*/true),
+              IsOk());
+
+  Compiler::CompileOptions options;
+  options.embed_hlo_module = false;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> executable,
+      compiler_->RunBackend(std::move(module), stream_executor_, options));
+  ASSERT_NE(executable, nullptr);
+
+  Literal param_0 = MakePatternMatrix(4, 64, {1, 0}, 0.01f);
+  Literal param_1 = MakePatternMatrix(64, 4, {0, 1}, 0.02f);
+  Literal expected = ComputeMatmulReference(param_1, param_0, {1, 0});
+  ASSERT_OK_AND_ASSIGN(Literal actual,
+                       ExecuteOnGpu(executable.get(), {&param_0, &param_1}));
+  EXPECT_OK(literal_comparison::Near(expected, actual, ErrorSpec{1e-2, 1e-2},
+                                     /*detailed_message=*/true,
+                                     /*miscompare_callback=*/nullptr));
+}
+
+TEST_F(CublasFissionBackendTest,
+       GetSupportedConfigsWithEstimatesLayoutChangingCopy) {
+  if (IsRocm(stream_executor_)) {
+    GTEST_SKIP() << "HipblasLtBackend does not support config estimates.";
+  }
+
+  ASSERT_OK_AND_ASSIGN(absl::Duration estimate,
+                       GetFirstEstimate(kLayoutChangingCopyPrologueHlo));
+  EXPECT_GT(estimate, absl::ZeroDuration());
+}
+
+TEST_F(CublasFissionBackendTest, CompileLayoutChangingCopyInEpilogue) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule module
+
+    gemm_fusion {
+      param_0 = f32[64,4]{1,0} parameter(0)
+      param_1 = f32[4,64]{1,0} parameter(1)
+      dot = f32[64,64]{1,0} dot(param_0, param_1),
+          lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ROOT copy = f32[64,64]{0,1} copy(dot)
+    }
+
+    ENTRY main {
+      param_0 = f32[64,4]{1,0} parameter(0)
+      param_1 = f32[4,64]{1,0} parameter(1)
+      ROOT fusion = f32[64,64]{0,1} fusion(param_0, param_1),
+          kind=kCustom, calls=gemm_fusion,
+          backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+    })";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                       fission_backend_->GetSupportedConfigs(*fusion));
+  ASSERT_THAT(configs, Not(IsEmpty()));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
+                       fission_backend_->Compile(*fusion, *configs[0]));
+  ASSERT_NE(executable, nullptr);
+
+  Literal param_0 = MakePatternMatrix(64, 4, {1, 0}, 0.01f);
+  Literal param_1 = MakePatternMatrix(4, 64, {1, 0}, 0.02f);
+  Literal expected = ComputeMatmulReference(param_0, param_1, {0, 1});
+  ASSERT_OK_AND_ASSIGN(Literal actual,
+                       ExecuteOnGpu(executable.get(), {&param_0, &param_1}));
+  EXPECT_OK(literal_comparison::Near(expected, actual, ErrorSpec{1e-2, 1e-2},
+                                     /*detailed_message=*/true,
+                                     /*miscompare_callback=*/nullptr));
+
+  ASSERT_OK(fission_backend_->ApplyConfig(*fusion, *configs[0]));
+  EXPECT_THAT(
+      VerifyNormalizedFissionModule(*module, /*expect_transpose=*/false),
+      IsOk());
+}
+
+TEST_F(CublasFissionBackendTest,
+       RunHloPassesWrapsStandaloneEpilogueTransposeFromCopy) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule module
+
+    gemm_fusion {
+      param_0 = f32[2,64,4]{2,1,0} parameter(0)
+      param_1 = f32[2,4,64]{2,1,0} parameter(1)
+      dot = f32[2,64,64]{2,1,0} dot(param_0, param_1),
+          lhs_batch_dims={0}, rhs_batch_dims={0},
+          lhs_contracting_dims={2}, rhs_contracting_dims={1}
+      ROOT copy = f32[2,64,64]{0,2,1} copy(dot)
+    }
+
+    ENTRY main {
+      param_0 = f32[2,64,4]{2,1,0} parameter(0)
+      param_1 = f32[2,4,64]{2,1,0} parameter(1)
+      ROOT fusion = f32[2,64,64]{0,2,1} fusion(param_0, param_1),
+          kind=kCustom, calls=gemm_fusion,
+          backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+    })";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                       fission_backend_->GetSupportedConfigs(*fusion));
+  ASSERT_THAT(configs, Not(IsEmpty()));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
+                       fission_backend_->Compile(*fusion, *configs[0]));
+  ASSERT_NE(executable, nullptr);
+
+  ASSERT_OK(fission_backend_->ApplyConfig(*fusion, *configs[0]));
+  EXPECT_THAT(VerifyNormalizedFissionModule(*module, /*expect_transpose=*/true),
+              IsOk());
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                       fission_backend_->RunHloPasses(
+                           std::move(module), Compiler::CompileOptions{}));
+  const HloComputation* optimized_entry = optimized_module->entry_computation();
+  EXPECT_TRUE(absl::c_none_of(optimized_entry->instructions(),
+                              [](const HloInstruction* i) {
+                                return i->opcode() == HloOpcode::kTranspose;
+                              }))
+      << optimized_module->ToString();
+  EXPECT_TRUE(absl::c_any_of(
+      optimized_entry->instructions(),
+      [](const HloInstruction* i) {
+        return i->opcode() == HloOpcode::kFusion &&
+               absl::c_any_of(i->fused_instructions(),
+                              [](const HloInstruction* fused) {
+                                return fused->opcode() == HloOpcode::kTranspose;
+                              });
+      }))
+      << optimized_module->ToString();
+}
+
+TEST_F(CublasFissionBackendTest, LoopFusionWithoutInteriorLayoutsDoesNotCrash) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule module
+
+    loop_fusion {
+      param_0 = f32[48]{0} parameter(0)
+      broadcast = f32[256,14,14,48]{3,2,1,0} broadcast(param_0), dimensions={3}
+      param_1 = f32[256,14,14,48]{3,2,1,0} parameter(1)
+      ROOT add = f32[256,14,14,48]{3,2,1,0} add(broadcast, param_1)
+    }
+
+    ENTRY main {
+      param_0 = f32[48]{0} parameter(0)
+      param_1 = f32[256,14,14,48]{3,2,1,0} parameter(1)
+      ROOT fusion = f32[256,14,14,48]{3,2,1,0} fusion(param_0, param_1),
+          kind=kLoop, calls=loop_fusion
+    })";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+  // Mirror LayoutAssignment::SetFusionLayouts clearing interior layouts of
+  // non-custom fusion computations.
+  for (HloInstruction* fused :
+       fusion->fused_instructions_computation()->instructions()) {
+    if (fused->opcode() != HloOpcode::kParameter &&
+        fused != fusion->fused_expression_root()) {
+      LayoutUtil::ClearLayout(fused->mutable_shape());
+    }
+  }
+  EXPECT_THAT(fission_backend_->GetSupportedConfigs(*fusion),
+              IsOkAndHolds(IsEmpty()));
+}
+
+TEST_F(CublasFissionBackendTest, GemmFusionWithNonBitcastReshapeSucceeds) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule module
+
+    gemm_fusion {
+      param_0 = f32[2,64,4]{1,2,0} parameter(0)
+      reshape = f32[128,4]{1,0} reshape(param_0)
+      param_1 = f32[4,64]{1,0} parameter(1)
+      ROOT dot = f32[128,64]{1,0} dot(reshape, param_1),
+          lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    }
+
+    ENTRY main {
+      param_0 = f32[2,64,4]{1,2,0} parameter(0)
+      param_1 = f32[4,64]{1,0} parameter(1)
+      ROOT fusion = f32[128,64]{1,0} fusion(param_0, param_1),
+          kind=kCustom, calls=gemm_fusion,
+          backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+    })";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                       fission_backend_->GetSupportedConfigs(*fusion));
+  ASSERT_THAT(configs, Not(IsEmpty()));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
+                       fission_backend_->Compile(*fusion, *configs[0]));
+  ASSERT_NE(executable, nullptr);
+  EXPECT_THAT(fission_backend_->ApplyConfig(*fusion, *configs[0]), IsOk());
 }
 
 }  // namespace
