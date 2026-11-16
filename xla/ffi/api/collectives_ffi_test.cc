@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -242,23 +243,88 @@ TEST(CollectivesFfiTest, GetCommunicatorPropagatesCallbackError) {
 TEST(CollectivesFfiTest, GetCommunicatorWithRankInfoRequiresMetadataSupport) {
   XLA_FFI_Collectives_Extension ext =
       MakeFakeCollectivesExtension(nullptr, nullptr, nullptr);
-  ext.extension_base.id.minor_version = 2;
   ext.get_communicator = [](const XLA_FFI_Collectives_Extension*,
-                            XLA_FFI_Communicator_Get_Args* args) {
-    ADD_FAILURE() << "Metadata lookup must not call a 0.2 callback";
-    args->communicator = kFakeCommunicator;
+                            XLA_FFI_Communicator_Get_Args*) {
+    ADD_FAILURE() << "Metadata lookup must not call an unsupported callback";
     return static_cast<XLA_FFI_Error*>(nullptr);
   };
 
-  ErrorOr<CommunicatorWithRankInfo> info =
-      Communicator(Api(), &ext)
-          .GetCommunicatorWithRankInfo(GroupMode::kCrossReplica, {},
-                                       /*communication_id=*/0);
-  ASSERT_TRUE(info.has_error());
-  EXPECT_EQ(info.error().errc(), ErrorCode::kUnimplemented);
-  EXPECT_THAT(
-      info.error().message(),
-      HasSubstr("Communicator metadata requires collectives extension"));
+  const struct {
+    int32_t major;
+    int32_t minor;
+  } cases[] = {
+      {Collectives::kMajorVersion, 2},
+      {Collectives::kMajorVersion + 1, Collectives::kMinorVersion},
+  };
+  for (const auto& test_case : cases) {
+    SCOPED_TRACE(test_case.major);
+    SCOPED_TRACE(test_case.minor);
+    ext.extension_base.id.major_version = test_case.major;
+    ext.extension_base.id.minor_version = test_case.minor;
+    ErrorOr<CommunicatorWithRankInfo> info =
+        Communicator(Api(), &ext)
+            .GetCommunicatorWithRankInfo(GroupMode::kCrossReplica, {},
+                                         /*communication_id=*/0);
+    ASSERT_TRUE(info.has_error());
+    EXPECT_EQ(info.error().errc(), ErrorCode::kUnimplemented);
+    EXPECT_THAT(
+        info.error().message(),
+        HasSubstr("Communicator metadata requires collectives extension"));
+  }
+}
+
+TEST(CollectivesFfiTest, GetCommunicatorWithRankInfoValidatesMetadata) {
+  struct TestCase {
+    const char* name;
+    std::optional<int32_t> rank;
+    std::optional<int32_t> size;
+    bool valid;
+  } cases[] = {
+      {"missing_outputs", std::nullopt, std::nullopt, false},
+      {"missing_rank", std::nullopt, 2, false},
+      {"missing_size", 0, std::nullopt, false},
+      {"zero_size", 0, 0, false},
+      {"negative_size", 0, -1, false},
+      {"negative_rank", -1, 2, false},
+      {"rank_equal_to_size", 2, 2, false},
+      {"rank_greater_than_size", 3, 2, false},
+      {"rank_zero", 0, 2, true},
+  };
+  for (auto& test_case : cases) {
+    SCOPED_TRACE(test_case.name);
+    XLA_FFI_Collectives_Extension ext = MakeFakeCollectivesExtension(
+        reinterpret_cast<XLA_FFI_CollectivesState*>(&test_case), nullptr,
+        [](const XLA_FFI_Collectives_Extension* self,
+           XLA_FFI_Communicator_Get_Args* args) {
+          const auto& test_case =
+              *reinterpret_cast<const TestCase*>(self->state);
+          EXPECT_EQ(args->rank, -1);
+          EXPECT_EQ(args->size, -1);
+          args->communicator = kFakeCommunicator;
+          if (test_case.rank.has_value()) {
+            args->rank = *test_case.rank;
+          }
+          if (test_case.size.has_value()) {
+            args->size = *test_case.size;
+          }
+          return static_cast<XLA_FFI_Error*>(nullptr);
+        });
+
+    ErrorOr<CommunicatorWithRankInfo> info =
+        Communicator(Api(), &ext)
+            .GetCommunicatorWithRankInfo(GroupMode::kCrossReplica, {},
+                                         /*communication_id=*/0);
+    if (test_case.valid) {
+      ASSERT_FALSE(info.has_error());
+      EXPECT_EQ(info->communicator, kFakeCommunicator);
+      EXPECT_EQ(info->rank, *test_case.rank);
+      EXPECT_EQ(info->size, *test_case.size);
+    } else {
+      ASSERT_TRUE(info.has_error());
+      EXPECT_EQ(info.error().errc(), ErrorCode::kInternal);
+      EXPECT_EQ(info.error().message(), "Invalid communicator rank or size");
+    }
+  }
 }
 
 TEST(CollectivesFfiTest, RequestAndGetCommunicatorWithRankInfo) {

@@ -376,25 +376,32 @@ absl::Status CheckPublicApiCommunicatorRank(
   args.num_groups = 1;
   args.rank = -1;
   args.size = -1;
+  args.struct_size =
+      XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator);
+  ABSL_RETURN_IF_ERROR(
+      ffi::TakeError(extension->get_communicator(extension, &args)));
+  EXPECT_EQ(args.communicator, info.communicator);
+  EXPECT_EQ(args.rank, -1);
+  EXPECT_EQ(args.size, -1);
+
   for (size_t struct_size : {
-           XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator),
+           XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator) - 1,
            XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, size) - 1,
        }) {
+    SCOPED_TRACE(struct_size);
     args.struct_size = struct_size;
-    ABSL_RETURN_IF_ERROR(
-        ffi::TakeError(extension->get_communicator(extension, &args)));
-    EXPECT_EQ(args.communicator, info.communicator);
+    args.communicator = nullptr;
+    args.rank = -1;
+    args.size = -1;
+    EXPECT_THAT(ffi::TakeError(extension->get_communicator(extension, &args)),
+                absl_testing::StatusIs(
+                    absl::StatusCode::kInvalidArgument,
+                    ::testing::HasSubstr(
+                        "Unexpected XLA_FFI_Communicator_Get_Args size")));
+    EXPECT_EQ(args.communicator, nullptr);
     EXPECT_EQ(args.rank, -1);
     EXPECT_EQ(args.size, -1);
   }
-
-  args.struct_size =
-      XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator) - 1;
-  EXPECT_THAT(ffi::TakeError(extension->get_communicator(extension, &args)),
-              absl_testing::StatusIs(
-                  absl::StatusCode::kInvalidArgument,
-                  ::testing::HasSubstr(
-                      "Unexpected XLA_FFI_Communicator_Get_Args size")));
   se::DeviceAddressBase output = rank->device_memory();
   return stream->Memset32(&output, static_cast<uint32_t>(info.rank),
                           output.size());

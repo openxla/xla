@@ -45,6 +45,8 @@ extern "C" {
 // Minor versions add backward-compatible fields or callbacks. Callers and
 // implementations must honor struct_size; incompatible changes require a major
 // version bump.
+// The 0.2 C ABI remains supported for six months starting 2026-12-01;
+// compatibility code may be removed on or after 2027-06-01.
 #define XLA_FFI_Extension_Collectives 129
 #define XLA_FFI_Extension_Collectives_MajorVersion 0
 #define XLA_FFI_Extension_Collectives_MinorVersion 3

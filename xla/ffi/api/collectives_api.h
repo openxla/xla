@@ -110,7 +110,8 @@ class CommunicatorContextBase {
       GroupMode group_mode, const std::vector<std::vector<int64_t>>& groups,
       int64_t communication_id) {
     // Before 0.3, the callback fills only the communicator handle.
-    if (ext_->extension_base.id.minor_version < 3) {
+    if (ext_->extension_base.id.major_version != 0 ||
+        ext_->extension_base.id.minor_version < 3) {
       return StatusOr<CommunicatorWithRankInfo>(ErrorPolicy::FromErrorCode(
           XLA_FFI_Error_Code_UNIMPLEMENTED,
           "Communicator metadata requires collectives extension 0.3 or newer"));
@@ -122,9 +123,15 @@ class CommunicatorContextBase {
     args.groups = raw_groups.data();
     args.num_groups = raw_groups.size();
     args.communication_id = communication_id;
+    args.rank = -1;
+    args.size = -1;
     if (XLA_FFI_Error* err = ext_->get_communicator(ext_, &args)) {
       return StatusOr<CommunicatorWithRankInfo>(
           ErrorPolicy::TakeError(api_, err));
+    }
+    if (args.size <= 0 || args.rank < 0 || args.rank >= args.size) {
+      return StatusOr<CommunicatorWithRankInfo>(ErrorPolicy::FromErrorCode(
+          XLA_FFI_Error_Code_INTERNAL, "Invalid communicator rank or size"));
     }
     return CommunicatorWithRankInfo{args.communicator, args.rank, args.size};
   }
@@ -221,6 +228,7 @@ struct CollectivesExtensionBase {
       XLA_FFI_Extension_Collectives_MinorVersion;
 
   // The communicator/window ABI starts at 0.2; methods guard newer features.
+  // TODO(mgoldfarb): Remove 0.2 runtime support on or after 2027-06-01.
   static bool Support(int32_t major_version, int32_t minor_version) {
     return major_version == kMajorVersion && minor_version >= 2;
   }
