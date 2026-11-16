@@ -188,7 +188,11 @@ absl::Status CommunicatorGetImpl(const XLA_FFI_Collectives_Extension* self,
   }
   constexpr size_t kV02ArgsSize =
       XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator);
-  const bool has_rank_info = args->struct_size != kV02ArgsSize;
+  if (args->struct_size < kV02ArgsSize) {
+    return ActualStructSizeIsGreaterOrEqual("XLA_FFI_Communicator_Get_Args",
+                                            kV02ArgsSize, args->struct_size);
+  }
+  const bool has_rank_info = args->struct_size > kV02ArgsSize;
   if (has_rank_info) {
     ABSL_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
         "XLA_FFI_Communicator_Get_Args",
