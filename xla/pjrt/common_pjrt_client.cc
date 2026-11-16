@@ -76,6 +76,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_device_event.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/device_event_utils.h"
+#include "xla/pjrt/dynamic_pad_to_static.h"
 #include "xla/pjrt/dynamic_shapes.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/host_memory_spaces.h"
@@ -3705,7 +3706,12 @@ absl::Status CommonPjRtLoadedExecutable::ExecutePrepare(
   // fails with OOM.
   launch_args.device = device;
   DeviceAndAssignment device_and_assign;
-  device_and_assign.device = device;
+  if (absl::StatusOr<PjRtMemorySpace*> default_memory_space =
+          device->default_memory_space();
+      default_memory_space.ok()) {
+    device_and_assign.default_memory_space =
+        (*default_memory_space)->ToCApiPtr();
+  }
   device_and_assign.local_device_id = device->local_device_id();
   device_and_assign.global_device_id = device->global_device_id();
   device_and_assign.process_index = device->process_index();

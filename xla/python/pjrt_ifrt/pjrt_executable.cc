@@ -837,6 +837,7 @@ absl::StatusOr<std::string> PjRtExecutable::CommonMetadata::Serialize(
   metadata.set_portable(is_portable);
 
   if (outputs_bundle_slice_sizes.has_value()) {
+    metadata.set_has_outputs_bundle_slice_sizes(true);
     metadata.mutable_outputs_bundle_slice_sizes()->Add(
         outputs_bundle_slice_sizes->begin(), outputs_bundle_slice_sizes->end());
   }
@@ -981,7 +982,8 @@ PjRtExecutable::CommonMetadata::Deserialize(
   }
 
   std::optional<std::vector<int>> outputs_bundle_slice_sizes;
-  if (!metadata.outputs_bundle_slice_sizes().empty()) {
+  if (metadata.has_outputs_bundle_slice_sizes() ||
+      !metadata.outputs_bundle_slice_sizes().empty()) {
     outputs_bundle_slice_sizes.emplace(
         metadata.outputs_bundle_slice_sizes().begin(),
         metadata.outputs_bundle_slice_sizes().end());
@@ -1182,6 +1184,10 @@ PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
       return InvalidArgument(
           "Only PjRtCompatibleArray is supported, but argument %d is %s", i,
           args[i] ? args[i]->DebugString() : "null");
+    }
+    if (pjrt_array->IsDeleted()) {
+      return InvalidArgument("Argument %d has already been deleted or donated",
+                             i);
     }
     if (pjrt_array->pjrt_buffers().size() != num_computations) {
       return InvalidArgument(

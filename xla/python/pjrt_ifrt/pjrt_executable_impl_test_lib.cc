@@ -49,10 +49,15 @@ limitations under the License.
 #include "xla/python/ifrt/host_callback.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/rtti.h"
+#include "xla/python/ifrt/serdes.h"
+#include "xla/python/ifrt/serdes.pb.h"
+#include "xla/python/ifrt/serdes_test_util.h"
+#include "xla/python/ifrt/serdes_version.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/test_util.h"
 #include "xla/python/ifrt/topology.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt/value.h"
 #include "xla/python/pjrt_ifrt/executable_metadata.pb.h"
 #include "xla/python/pjrt_ifrt/pjrt_host_callback.h"
@@ -75,6 +80,8 @@ using ::absl_testing::IsOk;
 using ::absl_testing::StatusIs;
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
+using ::testing::IsEmpty;
+using ::testing::Optional;
 using ::testing::SizeIs;
 using ::tsl::proto_testing::EqualsProto;
 
@@ -182,14 +189,19 @@ TEST(PjRtExecutableImplTest, CompileAndLoadSeparately) {
       /*devices=*/DeviceListRef(), /*loaded_host_callbacks=*/
       std::vector<tsl::RCReference<LoadedHostCallback>>(),
       /*outputs_bundle_slice_sizes=*/std::nullopt));
-  ASSERT_OK_AND_ASSIGN(
-      std::vector<tsl::Future<LoadedExecutableRef>> loaded_executable_futures,
-      client->Load(executables, absl::MakeSpan(load_options)));
+  std::vector<tsl::Future<LoadedExecutableRef>> loaded_executable_futures;
+  {
+    UserContextScope user_context_scope(test_util::MakeUserContext(100));
+    ASSERT_OK_AND_ASSIGN(
+        loaded_executable_futures,
+        client->Load(executables, absl::MakeSpan(load_options)));
+  }
   ASSERT_THAT(loaded_executable_futures, SizeIs(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_executable,
                        loaded_executable_futures[0].Await());
   ASSERT_NE(loaded_executable, nullptr);
   EXPECT_EQ(loaded_executable->name(), "add_one");
+  EXPECT_EQ(loaded_executable->user_context()->Id(), UserContextId(100));
   ASSERT_TRUE(loaded_executable->devices().has_value());
   EXPECT_THAT((*loaded_executable->devices())->devices(),
               ElementsAre(device0, device1));
@@ -197,6 +209,8 @@ TEST(PjRtExecutableImplTest, CompileAndLoadSeparately) {
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_executable_default_devices,
                        loaded_executable_futures[1].Await());
   ASSERT_NE(loaded_executable_default_devices, nullptr);
+  EXPECT_EQ(loaded_executable_default_devices->user_context()->Id(),
+            UserContextId(100));
   ASSERT_TRUE(loaded_executable_default_devices->devices().has_value());
   EXPECT_THAT((*loaded_executable_default_devices->devices())->devices(),
               ElementsAre(device0, device1));
@@ -739,6 +753,93 @@ TEST(PjRtExecutableImplTest, ExecutableSerializationWithTupledParameters) {
               EqualsProto(metadata.parameter_specs(1).shape()));
 }
 
+TEST(PjRtExecutableImplTest, ExecuteWithDonatedCrossDeviceCopySourceFails) {
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Client> client, test_util::GetClient());
+  absl::Span<Device* const> devices = client->addressable_devices();
+  if (devices.size() < 2) {
+    GTEST_SKIP() << "Requires at least 2 addressable devices.";
+  }
+  Compiler* const compiler = client->GetDefaultCompiler();
+  ASSERT_OK_AND_ASSIGN(DeviceListRef device0_list,
+                       client->MakeDeviceList({devices[0]}));
+  ASSERT_OK_AND_ASSIGN(DeviceListRef device1_list,
+                       client->MakeDeviceList({devices[1]}));
+
+  xla::CompileOptions compile_options;
+  ExecutableBuildOptions& build_options =
+      compile_options.executable_build_options;
+  build_options.set_device_ordinal(devices[0]->Id().value());
+  build_options.set_num_replicas(1);
+  build_options.set_num_partitions(1);
+  build_options.set_use_spmd_partitioning(true);
+  DeviceAssignment device_assignment(1, 1);
+  device_assignment(0, 0) = devices[0]->Id().value();
+  build_options.set_device_assignment(device_assignment);
+
+  mlir::MLIRContext context;
+  ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                       xla::ParseMlirModuleString(kModuleAddOne, context));
+  ASSERT_OK_AND_ASSIGN(
+      LoadedExecutableRef loaded_executable,
+      compiler
+          ->CompileAndLoad(std::make_unique<HloProgram>(*module),
+                           std::make_unique<XlaCompileOptions>(compile_options,
+                                                               device0_list))
+          .Await());
+
+  std::vector<float> data(6, 1.0f);
+  ASSERT_OK_AND_ASSIGN(
+      ArrayRef src_array,
+      client->MakeArrayFromHostBuffer(
+          data.data(), DType(DType::kF32), Shape({2, 3}),
+          /*byte_strides=*/std::nullopt,
+          SingleDeviceSharding::Create(devices[0], MemoryKind()),
+          /*layout=*/nullptr,
+          Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+          /*host_buffer_hold=*/nullptr));
+  std::vector<ArrayRef> to_copy = {src_array};
+  ASSERT_OK_AND_ASSIGN(std::vector<ArrayRef> copied,
+                       client->CopyArrays(absl::MakeSpan(to_copy), device1_list,
+                                          /*memory_kind=*/std::nullopt,
+                                          ArrayCopySemantics::kDonateInput));
+  ASSERT_THAT(copied, SizeIs(1));
+
+  LoadedExecutable::ExecuteOptions execute_options;
+  execute_options.fill_status = true;
+  EXPECT_THAT(
+      loaded_executable->Execute(absl::MakeSpan(&src_array, 1), execute_options,
+                                 /*devices=*/std::nullopt),
+      StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(PjRtExecutableImplTest, EmptyOutputsBundleSliceSizesCompileOptionsSerDes) {
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Client> client, test_util::GetClient());
+  Device* const device = client->addressable_devices().front();
+  ASSERT_OK_AND_ASSIGN(DeviceListRef device_list,
+                       client->MakeDeviceList({device}));
+
+  xla::CompileOptions compile_options;
+  auto xla_compile_options =
+      std::make_unique<XlaCompileOptions>(compile_options, device_list);
+  xla_compile_options->outputs_bundle_slice_sizes = std::vector<int>{};
+
+  for (const SerDesVersion& version : test_util::AllSupportedSerDesVersions()) {
+    absl::StatusOr<Serialized> serialized_options = Serialize(
+        *xla_compile_options, std::make_unique<SerializeOptions>(version));
+    if (version.version_number() < SerDesVersionNumber(7)) {
+      EXPECT_THAT(serialized_options,
+                  StatusIs(absl::StatusCode::kFailedPrecondition));
+      continue;
+    }
+    ASSERT_OK(serialized_options);
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<XlaCompileOptions> deserialized_options,
+        Deserialize<XlaCompileOptions>(*serialized_options,
+                                       /*options=*/nullptr));
+    EXPECT_THAT(deserialized_options->outputs_bundle_slice_sizes,
+                Optional(IsEmpty()));
+  }
+}
 }  // namespace
 }  // namespace ifrt
 }  // namespace xla

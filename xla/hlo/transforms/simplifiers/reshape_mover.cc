@@ -273,7 +273,8 @@ bool ReshapeMover::IsReshapeMoveCandidate(HloInstruction* instruction) {
   // intermediate buffer size and blocking convert fusion into downstream
   // consumers, while fighting ConvertMover. Rearranges that only insert,
   // delete, or permute degenerate dimensions of size 1 stay allowed.
-  if (instruction->opcode() == HloOpcode::kConvert &&
+  if (options_.keep_rearrange_before_widening_convert &&
+      instruction->opcode() == HloOpcode::kConvert &&
       primitive_util::BitWidth(rearrange->shape().element_type()) <
           primitive_util::BitWidth(instruction->shape().element_type()) &&
       !OnlyInsertsDeletesOrPermutes1SizedDims(rearrange) &&
@@ -482,6 +483,9 @@ class ReshapeMoverFactory : public HloPassFactory {
     ReshapeMoverOptions reshape_mover_options;
     reshape_mover_options.reshape_of_1d_broadcast_is_cheap =
         options.Get<bool>("reshape_of_1d_broadcast_is_cheap").value_or(false);
+    reshape_mover_options.keep_rearrange_before_widening_convert =
+        options.Get<bool>("keep_rearrange_before_widening_convert")
+            .value_or(false);
     return std::make_unique<ReshapeMover>(reshape_mover_options);
   }
 };
