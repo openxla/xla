@@ -310,12 +310,21 @@ std::unique_ptr<AutotunerCacheInterface> CreateAutotunerCache(
     return nullptr;
   }
 
-  std::string cache_dir = debug_options.xla_gpu_per_fusion_autotune_cache_dir();
+  // Prefer the new autotune cache fields, but fall back to their deprecated
+  // xla_gpu_* counterparts so that values set by existing users still apply.
+  std::string cache_dir =
+      !debug_options.xla_autotune_cache_dir().empty()
+          ? debug_options.xla_autotune_cache_dir()
+          : debug_options.xla_gpu_per_fusion_autotune_cache_dir();
+  DebugOptions::AutotuneCacheMode cache_mode =
+      debug_options.xla_autotune_cache_mode() !=
+              DebugOptions::AUTOTUNE_CACHE_MODE_UNSPECIFIED
+          ? debug_options.xla_autotune_cache_mode()
+          : debug_options.xla_gpu_experimental_autotune_cache_mode();
 
   if (!debug_options.xla_gpu_use_new_autotune_cache_format()) {
-    return std::make_unique<LegacyCache>(
-        cache_dir, debug_options.xla_gpu_experimental_autotune_cache_mode(),
-        target_config.device_description);
+    return std::make_unique<LegacyCache>(cache_dir, cache_mode,
+                                         target_config.device_description);
   }
 
   AutotuneCacheContext cache_ctx =
@@ -323,9 +332,8 @@ std::unique_ptr<AutotunerCacheInterface> CreateAutotunerCache(
   auto primary = std::make_unique<InMemoryStore>();
   std::unique_ptr<AutotuneCacheStore> secondary = nullptr;
   if (!cache_dir.empty()) {
-    secondary = std::make_unique<DirectoryStore>(
-        cache_dir,
-        GetCacheMode(debug_options.xla_gpu_experimental_autotune_cache_mode()));
+    secondary =
+        std::make_unique<DirectoryStore>(cache_dir, GetCacheMode(cache_mode));
   }
   KeyMatchingMode matching_mode =
       debug_options.xla_autotune_cache_require_strict_codegen_match()
@@ -350,6 +358,7 @@ ConfigAssigner::Options GetConfigAssignerOptions(
       !debug_options.xla_gpu_exhaustive_tiling_search();
 
   options.expect_all_instructions_in_cache =
+      debug_options.xla_fail_on_autotune_cache_miss() ||
       debug_options.xla_gpu_require_complete_aot_autotune_results();
   options.dump_hlos =
       debug_options.xla_gpu_dump_autotuned_gemm_fusions() ||
