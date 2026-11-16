@@ -1333,6 +1333,13 @@ PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
     status = JoinFutures(absl::MakeSpan(*returned_pjrt_futures));
   }
 
+  for (const int idx : common_metadata_.donatable_input_indices) {
+    if (!options.non_donatable_input_indices.contains(idx) && idx >= 0 &&
+        idx < args.size()) {
+      args[idx]->Delete();
+    }
+  }
+
   if (!all_loaded_host_callbacks_->empty()) {
     // For host callbacks to work, returned futures must be supported so that we
     // can use the futures to extend the lifetime of the host callbacks until
