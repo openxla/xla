@@ -482,7 +482,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_reduce_window_rewrite_base_length(16);
 
-  opts.set_xla_gpu_require_complete_aot_autotune_results(false);
+  opts.set_xla_fail_on_autotune_cache_miss(false);
 
   opts.set_xla_gpu_enable_host_memory_offloading(false);
 
@@ -492,7 +492,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_syntax_sugar_async_ops(false);
 
-  opts.set_xla_gpu_per_fusion_autotune_cache_dir("");
+  opts.set_xla_autotune_cache_dir("");
 
   opts.set_xla_gpu_use_new_autotune_cache_format(true);
   opts.set_xla_autotune_cache_require_strict_codegen_match(false);
@@ -507,8 +507,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_candidate_configs_file("");
 
-  opts.set_xla_gpu_experimental_autotune_cache_mode(
-      DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE);
+  opts.set_xla_autotune_cache_mode(DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE);
 
   opts.set_xla_autotune_rtol(0.1f);
   opts.set_xla_gpu_autotune_flush_l2_cache(true);
@@ -1296,18 +1295,17 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         return false;
       };
 
-  // Custom "sub-parser" for xla_gpu_experimental_autotune_cache_mode.
-  auto setter_for_xla_gpu_experimental_autotune_cache_mode =
-      [debug_options](const std::string& value) {
-        DebugOptions::AutotuneCacheMode autotune_cache_mode;
-        if (!DebugOptions::AutotuneCacheMode_Parse(value,
-                                                   &autotune_cache_mode)) {
-          return false;
-        }
-        debug_options->set_xla_gpu_experimental_autotune_cache_mode(
-            autotune_cache_mode);
-        return true;
-      };
+  // Custom "sub-parser" for xla_autotune_cache_mode and its deprecated alias
+  // xla_gpu_experimental_autotune_cache_mode.
+  auto setter_for_xla_autotune_cache_mode = [debug_options](
+                                                const std::string& value) {
+    DebugOptions::AutotuneCacheMode autotune_cache_mode;
+    if (!DebugOptions::AutotuneCacheMode_Parse(value, &autotune_cache_mode)) {
+      return false;
+    }
+    debug_options->set_xla_autotune_cache_mode(autotune_cache_mode);
+    return true;
+  };
 
   // Custom "sub-parser" lambda for xla_step_marker_location.
   auto setter_for_xla_step_marker_location = [debug_options](
@@ -2849,27 +2847,52 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "possible."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_dump_autotune_results_to",
-      string_setter_for(&DebugOptions::set_xla_gpu_dump_autotune_results_to),
-      debug_options->xla_gpu_dump_autotune_results_to(),
-      "File to write autotune results to. It will be a binary file unless the "
+      string_setter_for(&DebugOptions::set_xla_dump_autotune_cache_to),
+      debug_options->xla_dump_autotune_cache_to(),
+      "[Deprecated, use --xla_dump_autotune_cache_to instead] File to write "
+      "autotune results to. It will be a binary file unless the "
       "name ends with .txt or .textproto. Warning: The results are written at "
       "every compilation, possibly multiple times per process. This only works "
       "on CUDA. In tests, the TEST_UNDECLARED_OUTPUTS_DIR prefix can be used "
       "to write to their output directory."));
   flag_list->push_back(tsl::Flag(
+      "xla_dump_autotune_cache_to",
+      string_setter_for(&DebugOptions::set_xla_dump_autotune_cache_to),
+      debug_options->xla_dump_autotune_cache_to(),
+      "File to write autotune cache results to. It will be a binary file "
+      "unless the name ends with .txt or .textproto. Warning: The results are "
+      "written at every compilation, possibly multiple times per process. In "
+      "tests, the TEST_UNDECLARED_OUTPUTS_DIR prefix can be used to write to "
+      "their output directory."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_load_autotune_results_from",
-      string_setter_for(&DebugOptions::set_xla_gpu_load_autotune_results_from),
-      debug_options->xla_gpu_load_autotune_results_from(),
-      "File to load autotune results from. It will be considered a binary file "
+      string_setter_for(&DebugOptions::set_xla_load_autotune_cache_from),
+      debug_options->xla_load_autotune_cache_from(),
+      "[Deprecated, use --xla_load_autotune_cache_from instead] File to load "
+      "autotune results from. It will be considered a binary file "
       "unless the name ends with .txt or .textproto. It will be loaded at most "
       "once per process. This only works on CUDA. In tests, the TEST_WORKSPACE "
       "prefix can be used to load files from their data dependencies."));
   flag_list->push_back(tsl::Flag(
+      "xla_load_autotune_cache_from",
+      string_setter_for(&DebugOptions::set_xla_load_autotune_cache_from),
+      debug_options->xla_load_autotune_cache_from(),
+      "File to load autotune cache results from. It will be considered a "
+      "binary file unless the name ends with .txt or .textproto. It will be "
+      "loaded at most once per process. In tests, the TEST_WORKSPACE prefix "
+      "can be used to load files from their data dependencies."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_require_complete_aot_autotune_results",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_require_complete_aot_autotune_results),
-      debug_options->xla_gpu_require_complete_aot_autotune_results(),
-      "Whether to require complete AOT autotuning results."));
+      bool_setter_for(&DebugOptions::set_xla_fail_on_autotune_cache_miss),
+      debug_options->xla_fail_on_autotune_cache_miss(),
+      "[Deprecated, use --xla_fail_on_autotune_cache_miss instead] Whether to "
+      "require complete AOT autotuning results."));
+  flag_list->push_back(tsl::Flag(
+      "xla_fail_on_autotune_cache_miss",
+      bool_setter_for(&DebugOptions::set_xla_fail_on_autotune_cache_miss),
+      debug_options->xla_fail_on_autotune_cache_miss(),
+      "Whether to require complete AOT autotuning results and fail compilation "
+      "on a cache miss."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_auto_spmd_partitioning_memory_budget_gb",
       int32_setter_for(
@@ -3233,26 +3256,42 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 "possible."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_per_fusion_autotune_cache_dir",
-      string_setter_for(
-          &DebugOptions::set_xla_gpu_per_fusion_autotune_cache_dir),
-      debug_options->xla_gpu_per_fusion_autotune_cache_dir(),
-      "Experimental: Maintain a per-fusion autotune cache in the given "
-      "directory. XLA will try to read existing results when they are needed "
-      "and write new results when they are determined. The directory must "
-      "exist. Cache invalidation has to be handled by the user (e.g. please "
-      "use an empty directory if you want to start with an empty cache). XLA "
-      "version checks must be done by the user (e.g. if you want to use "
-      "separate caches for different versions of XLA, please use different "
-      "directories). Default: no cache."));
+      string_setter_for(&DebugOptions::set_xla_autotune_cache_dir),
+      debug_options->xla_autotune_cache_dir(),
+      "[Deprecated, use --xla_autotune_cache_dir instead] Maintain a "
+      "per-fusion autotune cache in the given directory. XLA will try to read "
+      "existing results when they are needed and write new results when they "
+      "are determined. The directory must exist. Cache invalidation has to be "
+      "handled by the user (e.g. please use an empty directory if you want to "
+      "start with an empty cache). XLA version checks must be done by the user "
+      "(e.g. if you want to use separate caches for different versions of XLA, "
+      "please use different directories). Default: no cache."));
+  flag_list->push_back(tsl::Flag(
+      "xla_autotune_cache_dir",
+      string_setter_for(&DebugOptions::set_xla_autotune_cache_dir),
+      debug_options->xla_autotune_cache_dir(),
+      "Maintain a per-instruction autotune cache in the given directory. XLA "
+      "will try to read existing results when they are needed and write new "
+      "results when they are determined. The directory must exist. Default: no "
+      "cache."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_autotune_cache_mode",
-      setter_for_xla_gpu_experimental_autotune_cache_mode,
+      setter_for_xla_autotune_cache_mode,
       DebugOptions::AutotuneCacheMode_Name(
-          debug_options->xla_gpu_experimental_autotune_cache_mode()),
-      "Experimental: Specify the behavior of per kernel autotuning "
-      "cache. Supported modes: read (provides readonly access to "
-      "the cache), update (loads if the cache exists, runs autotuning "
-      "and dumps the result otherwise). Default: update."));
+          debug_options->xla_autotune_cache_mode()),
+      "[Deprecated, use --xla_autotune_cache_mode instead] Specify the "
+      "behavior of per kernel autotuning cache. Supported modes: read "
+      "(provides readonly access to the cache), update (loads if the cache "
+      "exists, runs autotuning and dumps the result otherwise). Default: "
+      "update."));
+  flag_list->push_back(tsl::Flag(
+      "xla_autotune_cache_mode", setter_for_xla_autotune_cache_mode,
+      DebugOptions::AutotuneCacheMode_Name(
+          debug_options->xla_autotune_cache_mode()),
+      "Specify the behavior of the autotuning cache. Supported modes: read "
+      "(provides readonly access to the cache), update (loads if the cache "
+      "exists, runs autotuning and dumps the result otherwise), write_only "
+      "(does not read the cache). Default: update."));
 
   flag_list->push_back(tsl::Flag(
       "xla_gpu_use_new_autotune_cache_format",
