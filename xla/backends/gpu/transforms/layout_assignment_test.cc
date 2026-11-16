@@ -40,8 +40,10 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/service/computation_layout.h"
+#include "xla/service/gpu/conv_layout_normalization.h"
 #include "xla/service/hlo_verifier.h"
 #include "xla/service/layout_assignment.h"
+#include "xla/service/layout_normalization.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
@@ -1623,6 +1625,79 @@ TEST_F(LayoutAssignmentTest, DynamicSliceInLoopChangesLayoutForAllGather) {
               ::testing::ElementsAre(1, 0, 2));
   EXPECT_EQ(CountCopiesOfSize(module.get(), 8 * 16 * 32), 0)
       << module->ToString();
+}
+
+TEST_F(LayoutAssignmentTest,
+       LayoutChangingDynamicSliceExistsOnlyBeforeLayoutNormalization) {
+  // Same module as DynamicSliceChangesLayoutForAllGather. Between
+  // GpuLayoutAssignment and LayoutNormalization the module is valid according
+  // to GpuLayoutAssignment::InstructionCanChangeLayoutBeforeNormalization, but
+  // not according to the stricter LayoutAssignment::InstructionCanChangeLayout
+  // that the layout-sensitive verifiers of the GPU compiler use. After
+  // LayoutNormalization the stricter predicate holds.
+  const char* hlo_text = R"(
+  HloModule module
+
+  ENTRY main {
+    weights = f32[8,16,32]{2,1,0} parameter(0)
+    i = s32[] parameter(1)
+    zero = s32[] constant(0)
+    layer = f32[1,16,32]{2,1,0} dynamic-slice(weights, i, zero, zero), dynamic_slice_sizes={1,16,32}
+    ROOT gathered = f32[1,16,64]{2,1,0} all-gather(layer), dimensions={2}, replica_groups={{0,1}}
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                        default_device_description_);
+  EXPECT_THAT(layout_assignment.Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  const HloInstruction* layer = FindInstruction(module.get(), "layer");
+  ASSERT_THAT(layer, NotNull());
+  ASSERT_NE(layer->shape().layout(), layer->operand(0)->shape().layout())
+      << module->ToString();
+
+  auto verify = [&](HloPredicate instruction_can_change_layout) {
+    HloVerifier verifier(
+        HloVerifierOpts{}.MakeLayoutSensitive().WithInstructionCanChangeLayout(
+            instruction_can_change_layout));
+    return verifier.Run(module.get()).status();
+  };
+
+  EXPECT_THAT(
+      verify(
+          GpuLayoutAssignment::InstructionCanChangeLayoutBeforeNormalization),
+      absl_testing::IsOk())
+      << module->ToString();
+  EXPECT_THAT(verify(LayoutAssignment::InstructionCanChangeLayout),
+              absl_testing::StatusIs(
+                  ::testing::_,
+                  ::testing::HasSubstr("Instruction shouldn't change layouts")))
+      << module->ToString();
+
+  LayoutNormalization layout_normalization(&NormalizeLayoutForGpuCustomCalls);
+  EXPECT_THAT(layout_normalization.Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  EXPECT_THAT(verify(LayoutAssignment::InstructionCanChangeLayout),
+              absl_testing::IsOk())
+      << module->ToString();
+  // The layout change is now done by a transpose.
+  bool has_transpose = false;
+  for (const HloInstruction* instruction :
+       module->entry_computation()->instructions()) {
+    if (instruction->opcode() == HloOpcode::kDynamicSlice) {
+      EXPECT_EQ(instruction->shape().layout(),
+                instruction->operand(0)->shape().layout())
+          << module->ToString();
+    }
+    has_transpose |= instruction->opcode() == HloOpcode::kTranspose;
+  }
+  EXPECT_TRUE(has_transpose) << module->ToString();
 }
 
 TEST_F(LayoutAssignmentTest, SliceKeepsOperandLayoutWithoutOtherRequirement) {

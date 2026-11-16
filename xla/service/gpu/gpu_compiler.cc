@@ -2308,6 +2308,12 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   }
 
   HloPassPipeline pipeline("post-layout_assignment", compilation_stats);
+  // This verifier intentionally uses the strict
+  // LayoutAssignment::InstructionCanChangeLayout and not
+  // GpuLayoutAssignment::InstructionCanChangeLayoutBeforeNormalization.
+  // Layout-changing slices exist only between GpuLayoutAssignment and
+  // LayoutNormalization, and the strict predicate catches any that leak past
+  // normalization.
   AddHloVerifier(&pipeline,
                  HloVerifierOpts{}
                      .MakeLayoutSensitive()

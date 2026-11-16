@@ -976,12 +976,16 @@ static bool IsSliceOrDynamicSlice(const HloInstruction* instruction) {
       instruction);
 }
 
+/* static */
+bool GpuLayoutAssignment::InstructionCanChangeLayoutBeforeNormalization(
+    const HloInstruction* instruction) {
+  return IsSliceOrDynamicSlice(instruction) ||
+         LayoutAssignment::InstructionCanChangeLayout(instruction);
+}
+
 bool GpuLayoutAssignment::InstructionCanChangeLayoutInstance(
     const HloInstruction* instruction) {
-  if (IsSliceOrDynamicSlice(instruction)) {
-    return true;
-  }
-  return LayoutAssignment::InstructionCanChangeLayoutInstance(instruction);
+  return InstructionCanChangeLayoutBeforeNormalization(instruction);
 }
 
 // Returns true if `operand`, the sliced operand of a slice or dynamic-slice,

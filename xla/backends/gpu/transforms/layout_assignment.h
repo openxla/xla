@@ -44,6 +44,18 @@ class GpuLayoutAssignment : public LayoutAssignment {
         device_description_(device_description) {}
   ~GpuLayoutAssignment() override = default;
 
+  // Determines whether an instruction can change layouts in HLO produced by
+  // GpuLayoutAssignment, i.e. between GpuLayoutAssignment and
+  // LayoutNormalization. In addition to the instructions accepted by
+  // LayoutAssignment::InstructionCanChangeLayout, a slice or dynamic-slice may
+  // produce its result in a layout that differs from the layout of the sliced
+  // operand. LayoutNormalization rewrites such a slice into a
+  // layout-preserving slice followed by a transpose, so after normalization
+  // the stricter LayoutAssignment::InstructionCanChangeLayout holds again and
+  // is the predicate layout-sensitive verifiers must use.
+  static bool InstructionCanChangeLayoutBeforeNormalization(
+      const HloInstruction* instruction);
+
  protected:
   absl::Status AddBackendConstraints(LayoutConstraints* constraints) override;
 
@@ -84,6 +96,7 @@ class GpuLayoutAssignment : public LayoutAssignment {
   // layout is still passed on to the sliced operand, as a non-mandatory
   // preference, if that operand can be produced in any layout at no cost and is
   // only used by slices (see ChooseOperandLayoutFromOutputLayout).
+  // Forwards to InstructionCanChangeLayoutBeforeNormalization.
   bool InstructionCanChangeLayoutInstance(
       const HloInstruction* instruction) override;
 
