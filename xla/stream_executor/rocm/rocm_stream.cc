@@ -406,40 +406,17 @@ void InternalHostCallback(void* data) {
 
 absl::Status RocmStream::DoHostCallbackWithStatus(
     absl::AnyInvocable<absl::Status() &&> callback) {
-  return DoHostCallbackWithStatus(std::move(callback), nullptr);
-}
-
-absl::Status RocmStream::DoHostCallbackWithStatus(
-    absl::AnyInvocable<absl::Status() &&> callback,
-    absl::AnyInvocable<void(absl::Status) &&> error_cb) {
-  // `error_cb` has to be reachable both from the enqueued callback and from
-  // the enqueue-failure path below, so keep it in a shared owner. Only one of
-  // the two paths ever runs it.
-  auto error_cb_ptr =
-      std::make_shared<absl::AnyInvocable<void(absl::Status) &&>>(
-          std::move(error_cb));
-  auto callback_ptr = new absl::AnyInvocable<void() &&>(
-      [cb = std::move(callback), error_cb_ptr]() mutable {
+  auto callback_ptr =
+      new absl::AnyInvocable<void() &&>([cb = std::move(callback)]() mutable {
         absl::Status s = std::move(cb)();
         if (!s.ok()) {
           LOG(WARNING) << "Host callback failed: " << s;
-          if (*error_cb_ptr) {
-            std::move (*error_cb_ptr)(s);
-          }
         }
       });
-  absl::Status status = ToStatus(
+  return ToStatus(
       hipLaunchHostFunc(stream_handle_, (hipHostFn_t)InternalHostCallback,
                         callback_ptr),
       "unable to add host callback");
-  if (!status.ok()) {
-    // The callback was never handed to HIP, so we still own it.
-    delete callback_ptr;
-    if (*error_cb_ptr) {
-      std::move (*error_cb_ptr)(status);
-    }
-  }
-  return status;
 }
 
 namespace {
