@@ -106,6 +106,47 @@ HloComputation* MakeReduction(const HloOpcode type, HloModule* module) {
 
 using AllReduceCombinerTest = HloHardwareIndependentTestBase;
 
+TEST_F(AllReduceCombinerTest, CombinesSmallerCollectivesAfterSizeLimit) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule module, replica_count=2
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT sum = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  pa = f32[2097152] parameter(0)
+  pb = f32[6291456] parameter(1)
+  pc = f32[2097152] parameter(2)
+  a = f32[2097152] all-reduce(pa), replica_groups={{0,1}}, to_apply=add
+  b = f32[6291456] all-reduce(pb), replica_groups={{0,1}}, to_apply=add
+  c = f32[2097152] all-reduce(pc), replica_groups={{0,1}}, to_apply=add
+  ROOT out = (f32[2097152], f32[6291456], f32[2097152]) tuple(a, b, c)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  EXPECT_THAT(
+      AllReduceCombiner(30 * 1024 * 1024, kMaxCombineCount).Run(module.get()),
+      absl_testing::IsOkAndHolds(true));
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->operand(0)->opcode(), HloOpcode::kGetTupleElement);
+  ASSERT_EQ(root->operand(2)->opcode(), HloOpcode::kGetTupleElement);
+  const HloInstruction* combined = root->operand(0)->operand(0);
+  ASSERT_EQ(combined->opcode(), HloOpcode::kAllReduce);
+  ASSERT_EQ(combined->operand_count(), 2);
+  EXPECT_EQ(combined->operand(0),
+            module->entry_computation()->parameter_instruction(0));
+  EXPECT_EQ(combined->operand(1),
+            module->entry_computation()->parameter_instruction(2));
+  EXPECT_EQ(root->operand(2)->operand(0), combined);
+  EXPECT_EQ(root->operand(0)->tuple_index(), 0);
+  EXPECT_EQ(root->operand(2)->tuple_index(), 1);
+  EXPECT_THAT(root->operand(1), op::AllReduce(op::Parameter(1)));
+}
+
 // Tests combination of several AllReduce instructions.
 TEST_F(AllReduceCombinerTest, CombineAllReduces) {
   auto module = CreateNewVerifiedModule();

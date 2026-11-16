@@ -74,7 +74,7 @@ TEST(CollectiveCombinerUtilsTest, CombinesSmallerCandidatesAfterSizeLimit) {
           [&](absl::Span<HloInstruction* const> instructions) {
             std::vector<std::string> names;
             for (const HloInstruction* instruction : instructions) {
-              names.push_back(instruction->name());
+              names.emplace_back(instruction->name());
             }
             groups.push_back(std::move(names));
             return absl::OkStatus();
