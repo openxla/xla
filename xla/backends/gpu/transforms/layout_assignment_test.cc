@@ -1741,9 +1741,9 @@ TEST_F(LayoutAssignmentTest, SliceKeepsOperandLayoutWithoutOtherRequirement) {
 }
 
 TEST_F(LayoutAssignmentTest, DynamicSliceOfFreeOperandKeepsOperandLayout) {
-  // The sliced array is produced in whatever layout is assigned to it and is
-  // only used by the slice, so it takes the layout the all-gather needs and the
-  // slice does not have to change the layout.
+  // The sliced array is neither a parameter nor loop state, so the slice keeps
+  // the layout of its operand and the array takes the layout the all-gather
+  // needs.
   for (absl::string_view weights_op :
        {"broadcast(scalar), dimensions={}", "broadcast(vector), dimensions={1}",
         "iota(), iota_dimension=1", "constant({...})"}) {
@@ -1818,46 +1818,11 @@ TEST_F(LayoutAssignmentTest, SliceOfFreeOperandKeepsOperandLayout) {
       << module->ToString();
 }
 
-TEST_F(LayoutAssignmentTest, DynamicSliceOfOperandWithOtherUserChangesLayout) {
-  // The sliced array has a user that is not a slice, so the layout needed by
-  // the all-gather is provided by the slice and does not reach the array.
-  const char* hlo_text = R"(
-  HloModule module
-
-  ENTRY main {
-    i = s32[] parameter(0)
-    scalar = f32[] parameter(1)
-    weights = f32[8,16,32]{2,1,0} broadcast(scalar), dimensions={}
-    zero = s32[] constant(0)
-    layer = f32[1,16,32]{2,1,0} dynamic-slice(weights, i, zero, zero), dynamic_slice_sizes={1,16,32}
-    gathered = f32[1,16,64]{2,1,0} all-gather(layer), dimensions={2}, replica_groups={{0,1}}
-    neg = f32[8,16,32]{2,1,0} negate(weights)
-    ROOT result = (f32[1,16,64]{2,1,0}, f32[8,16,32]{2,1,0}) tuple(gathered, neg)
-  })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(hlo_text));
-  AssignLayouts(module.get());
-
-  const HloInstruction* layer = FindInstruction(module.get(), "layer");
-  ASSERT_THAT(layer, NotNull());
-  const HloInstruction* weights = layer->operand(0);
-  EXPECT_EQ(weights->opcode(), HloOpcode::kBroadcast) << module->ToString();
-  EXPECT_THAT(weights->shape().layout().minor_to_major(),
-              ::testing::ElementsAre(2, 1, 0));
-  EXPECT_THAT(layer->shape().layout().minor_to_major(),
-              ::testing::ElementsAre(1, 0, 2));
-  // The sliced array is not copied: the only other arrays of its size are its
-  // negation and the element of the result tuple that forwards the negation.
-  EXPECT_THAT(ArraysOfSize(module.get(), 8 * 16 * 32),
-              ::testing::UnorderedElementsAre(
-                  weights, FindInstruction(module.get(), "neg"),
-                  GmockMatch(m::GetTupleElement(m::Tuple(), 1))))
-      << module->ToString();
-}
-
-TEST_F(LayoutAssignmentTest, DynamicSliceOfElementwiseOperandChangesLayout) {
-  // An elementwise producer would pass the layout on to its own operand, here
-  // a parameter with a fixed layout, so the slice provides the layout.
+TEST_F(LayoutAssignmentTest,
+       DynamicSliceOfElementwiseOperandKeepsOperandLayout) {
+  // The sliced array is computed from a parameter. Only a slice of an array
+  // with a fixed layout changes the layout, so the layout the all-gather needs
+  // reaches the computed array and the slice keeps the layout of its operand.
   const char* hlo_text = R"(
   HloModule module
 
@@ -1878,12 +1843,51 @@ TEST_F(LayoutAssignmentTest, DynamicSliceOfElementwiseOperandChangesLayout) {
   const HloInstruction* weights = layer->operand(0);
   EXPECT_EQ(weights->opcode(), HloOpcode::kNegate) << module->ToString();
   EXPECT_THAT(weights->shape().layout().minor_to_major(),
-              ::testing::ElementsAre(2, 1, 0));
+              ::testing::ElementsAre(1, 0, 2));
   EXPECT_THAT(layer->shape().layout().minor_to_major(),
               ::testing::ElementsAre(1, 0, 2));
-  // The sliced array is not copied.
-  EXPECT_THAT(ArraysOfSize(module.get(), 8 * 16 * 32),
-              ::testing::UnorderedElementsAre(weights, weights->operand(0)))
+}
+
+TEST_F(LayoutAssignmentTest, SliceOfComputedArrayKeepsOperandLayout) {
+  // `probs` is computed in this computation and has two users: a slice, whose
+  // result has to be in the default layout, and a reduction followed by a
+  // transpose, which would prefer `probs` in the layout {3,1,2,0}. The slice
+  // does not change the layout, so its layout reaches `probs` and wins over the
+  // preference of the reduction. Otherwise `probs` and everything it is
+  // computed from would take the layout preferred by the small reduction
+  // result, and the slice would have to transpose the large array.
+  const char* hlo_text = R"(
+  HloModule module
+
+  add {
+    x = f32[] parameter(0)
+    y = f32[] parameter(1)
+    ROOT sum = f32[] add(x, y)
+  }
+
+  ENTRY main {
+    p = f32[4,64,8,65]{3,2,1,0} parameter(0)
+    logits = f32[4,8,64,65]{3,2,1,0} transpose(p), dimensions={0,2,1,3}
+    probs = f32[4,8,64,65]{3,2,1,0} exponential(logits)
+    sliced = f32[4,8,64,64]{3,2,1,0} slice(probs), slice={[0:4], [0:8], [0:64], [0:64]}
+    zero = f32[] constant(0)
+    sums = f32[4,8,64]{2,1,0} reduce(probs, zero), dimensions={3}, to_apply=add
+    sums_t = f32[4,64,8]{2,1,0} transpose(sums), dimensions={0,2,1}
+    ROOT result = (f32[4,8,64,64]{3,2,1,0}, f32[4,64,8]{2,1,0}) tuple(sliced, sums_t)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  AssignLayouts(module.get());
+
+  const HloInstruction* sliced = FindInstruction(module.get(), "sliced");
+  ASSERT_THAT(sliced, NotNull());
+  const HloInstruction* probs = sliced->operand(0);
+  EXPECT_EQ(probs->opcode(), HloOpcode::kExp) << module->ToString();
+  EXPECT_THAT(probs->shape().layout().minor_to_major(),
+              ::testing::ElementsAre(3, 2, 1, 0))
+      << module->ToString();
+  EXPECT_THAT(sliced->shape().layout().minor_to_major(),
+              ::testing::ElementsAre(3, 2, 1, 0))
       << module->ToString();
 }
 

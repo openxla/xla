@@ -49,12 +49,16 @@ class GpuLayoutAssignment : public LayoutAssignment {
   // LayoutNormalization. In addition to the instructions accepted by
   // LayoutAssignment::InstructionCanChangeLayout, a slice or dynamic-slice may
   // produce its result in a layout that differs from the layout of the sliced
-  // operand. This lets a consumer that requires a particular layout get it
-  // from the slice itself, instead of forcing that layout onto the (possibly
-  // much larger) sliced operand. LayoutNormalization rewrites such a slice into
-  // a layout-preserving slice followed by a transpose, so after normalization
-  // the stricter LayoutAssignment::InstructionCanChangeLayout holds again and
-  // is the predicate layout-sensitive verifiers must use.
+  // operand. GpuLayoutAssignment assigns such a layout only to a slice of an
+  // array with a fixed layout (a parameter or loop state), so that a consumer
+  // that requires a particular layout gets it from the slice itself, instead
+  // of forcing that layout onto the (possibly much larger) sliced array. The
+  // predicate accepts every slice, because the passes that run before
+  // LayoutNormalization may replace the operand of such a slice.
+  // LayoutNormalization rewrites the slice into a layout-preserving slice
+  // followed by a transpose, so after normalization the stricter
+  // LayoutAssignment::InstructionCanChangeLayout holds again and is the
+  // predicate layout-sensitive verifiers must use.
   static bool InstructionCanChangeLayoutBeforeNormalization(
       const HloInstruction* instruction);
 
@@ -91,7 +95,9 @@ class GpuLayoutAssignment : public LayoutAssignment {
 
   bool PropagateReductionLayoutToOperand(const HloInstruction* user) override;
 
-  // Forwards to InstructionCanChangeLayoutBeforeNormalization.
+  // Like LayoutAssignment::InstructionCanChangeLayoutInstance, but a slice or
+  // dynamic-slice of an array with a fixed layout (a parameter or loop state)
+  // can change the layout.
   bool InstructionCanChangeLayoutInstance(
       const HloInstruction* instruction) override;
 

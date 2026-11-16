@@ -983,34 +983,28 @@ bool GpuLayoutAssignment::InstructionCanChangeLayoutBeforeNormalization(
          LayoutAssignment::InstructionCanChangeLayout(instruction);
 }
 
-bool GpuLayoutAssignment::InstructionCanChangeLayoutInstance(
-    const HloInstruction* instruction) {
-  return InstructionCanChangeLayoutBeforeNormalization(instruction);
+// Returns true if `instruction` is a slice or dynamic-slice of an array whose
+// layout is fixed outside of the computation that slices it: a parameter, or
+// an element of a parameter or of the result of a while loop, such as loop
+// state. Changing the layout of such an array converts all of it, possibly
+// outside of the loop that slices it.
+static bool IsSliceOfFixedLayoutOperand(const HloInstruction* instruction) {
+  if (!IsSliceOrDynamicSlice(instruction)) {
+    return false;
+  }
+  const HloInstruction* operand = instruction->operand(0);
+  while (operand->opcode() == HloOpcode::kGetTupleElement) {
+    operand = operand->operand(0);
+  }
+  return HloPredicateIsOp<HloOpcode::kParameter, HloOpcode::kWhile>(operand);
 }
 
-// Returns true if `operand`, the sliced operand of a slice or dynamic-slice,
-// can be produced in any layout at no cost, and choosing its layout affects
-// nothing but the slices of it:
-//  - it is materialized directly in the assigned layout (constant, iota,
-//    broadcast) and has no operand of rank > 1 that would inherit the layout.
-//    This excludes parameters and loop state, whose layout is fixed elsewhere,
-//    and elementwise producers, which pass the layout on to their operands;
-//  - all of its users slice it.
-static bool SlicedOperandLayoutIsFree(const HloInstruction* operand) {
-  if (!HloPredicateIsOp<HloOpcode::kConstant, HloOpcode::kIota,
-                        HloOpcode::kBroadcast>(operand)) {
-    return false;
+bool GpuLayoutAssignment::InstructionCanChangeLayoutInstance(
+    const HloInstruction* instruction) {
+  if (IsSliceOrDynamicSlice(instruction)) {
+    return IsSliceOfFixedLayoutOperand(instruction);
   }
-  if (absl::c_any_of(operand->operands(), [](const HloInstruction* input) {
-        return !input->shape().IsArray() ||
-               input->shape().dimensions().size() > 1;
-      })) {
-    return false;
-  }
-  return absl::c_all_of(
-      operand->users(), [operand](const HloInstruction* user) {
-        return IsSliceOrDynamicSlice(user) && user->operand(0) == operand;
-      });
+  return LayoutAssignment::InstructionCanChangeLayoutInstance(instruction);
 }
 
 // GPU specific layout alignment for reshapes.
@@ -1130,16 +1124,14 @@ GpuLayoutAssignment::ChooseOperandLayoutFromOutputLayout(
   const HloInstruction* operand = instruction->operand(operand_no);
   CHECK(instruction->shape().IsArray());
   CHECK(operand->shape().IsArray());
-  // A slice provides the layout required by its consumers itself, so that the
-  // layout does not have to be forced onto the sliced operand, which may be
-  // much larger and have a fixed layout (e.g. a parameter or loop state). The
-  // only exception is an operand whose layout is free: preferring the layout
-  // of the slice result for it keeps the slice layout-preserving. The caller
-  // applies this as a non-mandatory constraint.
-  if (IsSliceOrDynamicSlice(instruction) && operand_no == 0) {
-    return SlicedOperandLayoutIsFree(operand)
-               ? std::make_unique<Layout>(output_layout)
-               : nullptr;
+  // A slice of an array with a fixed layout (a parameter or loop state)
+  // provides the layout required by its consumers itself, so that the layout
+  // is not forced onto the sliced array, which may be much larger than the
+  // slice. Any other slice keeps the layout of its operand, like an
+  // elementwise operation: the operand is computed here and can be produced in
+  // the layout the consumers of the slice need.
+  if (IsSliceOfFixedLayoutOperand(instruction) && operand_no == 0) {
+    return nullptr;
   }
 
   if (!ShapeUtil::IsScalar(operand->shape()) &&
@@ -1191,10 +1183,10 @@ GpuLayoutAssignment::ChooseOutputLayoutFromOperandLayout(
     return std::make_unique<Layout>(operand_layout);
   }
 
-  // A slice can change the layout, but keeping the layout of the sliced
-  // operand is the cheapest choice unless a consumer needs a different one
-  // (see ChooseOperandLayoutFromOutputLayout).
-  if (IsSliceOrDynamicSlice(user) && operand_no == 0) {
+  // A slice of an array with a fixed layout can change the layout, but
+  // keeping the layout of the sliced operand is the cheapest choice unless a
+  // consumer needs a different one (see ChooseOperandLayoutFromOutputLayout).
+  if (IsSliceOfFixedLayoutOperand(user) && operand_no == 0) {
     return std::make_unique<Layout>(operand_layout);
   }
 
