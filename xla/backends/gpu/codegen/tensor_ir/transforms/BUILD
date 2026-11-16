@@ -66,5 +66,6 @@ cc_library(
         "@llvm-project//mlir:TransformUtils",
         "@stablehlo//:stablehlo_ops",
         "@tensor_ir//:NVTensorIRDialect",
+        "@tsl//tsl/platform:tensor_float_32_utils",
     ],
 )

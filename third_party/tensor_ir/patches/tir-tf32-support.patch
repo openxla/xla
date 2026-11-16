@@ -1,0 +1,321 @@
+diff --git a/include/tensor_ir/Dialect/TensorAttrs.td b/include/tensor_ir/Dialect/TensorAttrs.td
+index 35382e5..661aeb0 100644
+--- a/include/tensor_ir/Dialect/TensorAttrs.td
++++ b/include/tensor_ir/Dialect/TensorAttrs.td
+@@ -37,6 +37,11 @@ def IntegerOverflowAttr
+   let assemblyFormat = "`<` $value `>`";
+ }
+ 
++def InputPrecisionAttr
++    : EnumAttr<TensorIR_Dialect, InputPrecision, "input_precision"> {
++  let assemblyFormat = "`<` $value `>`";
++}
++
+ 
+ class TensorIRAttr<string name, string attrMnemonic, list<Trait> traits=[]> : AttrDef<TensorIR_Dialect, name, traits> {
+   let mnemonic = attrMnemonic;
+diff --git a/include/tensor_ir/Dialect/TensorEnums.td b/include/tensor_ir/Dialect/TensorEnums.td
+index cebf55a..b961006 100644
+--- a/include/tensor_ir/Dialect/TensorEnums.td
++++ b/include/tensor_ir/Dialect/TensorEnums.td
+@@ -42,6 +42,14 @@ def IntegerOverflow : I32EnumAttr<"IntegerOverflow", "integer overflow policy",
+   }];
+ }
+ 
++def InputPrecision : I32EnumAttr<"InputPrecision", "input precision for operations", [
++    I32EnumAttrCase<"IEEE", 0, "ieee">,
++    I32EnumAttrCase<"TF32", 1, "tf32">
++  ]> {
++  let cppNamespace = TensorIR_Dialect.cppNamespace;
++  let genSpecializedAttr = 0;
++}
++
+ def TilePaddingZero : I32EnumAttrCase<"Zero", 0, "zero">;
+ def TilePaddingNegZero : I32EnumAttrCase<"NegZero", 1, "neg_zero">;
+ def TilePaddingNaN : I32EnumAttrCase<"NaN", 2, "nan">;
+diff --git a/include/tensor_ir/Dialect/TensorOps.td b/include/tensor_ir/Dialect/TensorOps.td
+index 2ca6c0e..8bdaa84 100644
+--- a/include/tensor_ir/Dialect/TensorOps.td
++++ b/include/tensor_ir/Dialect/TensorOps.td
+@@ -993,6 +993,18 @@ def TensorIR_MatmulOp : TensorIR_Op<"matmul", [
+     * right_triangle: Same choices and zero-input promise as left_triangle,
+       applied to B's logical innermost [K, N] dimensions. Both parameters
+       may be set; the K loop uses the intersection of their allowed ranges.
++    * input_precision: Optional `#nv_tensor_ir.input_precision<ieee>` (the
++      default) or `#nv_tensor_ir.input_precision<tf32>`. Controls how f32
++      inputs use tensor cores. Only f32 matmuls (f32 `A`, `B`, and `C`) may
++      use `tf32`; other element types must use `ieee`, which has no effect
++      on them.
++      - `ieee`: f32 operands are multiplied at full f32 precision. Tensor
++        cores do not support this, so the current backend computes the
++        product with FMA instructions, which is much slower.
++      - `tf32`: both `A` and `B` are rounded to tf32 (round-to-nearest-even)
++        before the multiply, so the product can run on tensor cores. The
++        accumulator and result stay f32. This trades input precision for
++        throughput.
+ 
+     The numerical semantics follow CUDA Tile matrix-multiply-accumulate
+     operations (`mmaf` and `mmai`) for their supported type combinations.
+@@ -1043,7 +1055,8 @@ def TensorIR_MatmulOp : TensorIR_Op<"matmul", [
+     Arg<Optional<TensorIR_TensorType>,
+         "Optional initial accumulator for Matmul">:$acc,
+     OptionalAttr<TriangleAttr>:$left_triangle,
+-    OptionalAttr<TriangleAttr>:$right_triangle
++    OptionalAttr<TriangleAttr>:$right_triangle,
++    DefaultValuedAttr<InputPrecisionAttr, "InputPrecision::IEEE">:$input_precision
+   );
+   let results = (outs
+     Arg<TensorIR_TensorType, "Output of Matmul">:$c
+@@ -1080,6 +1093,7 @@ def TensorIR_MatmulOp : TensorIR_Op<"matmul", [
+   let assemblyFormat = [{
+     `(` $a `,` $b `)`
+      (`accum` `(` $acc^ `:` type($acc) `)`)?
++    (`input_precision` `=` $input_precision^)?
+      prop-dict attr-dict `:`
+      `(` type($a) `,` type($b) `)` `->` type($c)
+   }];
+diff --git a/lib/Conversion/TensorToCudaTile/AffineMapImpl.cpp b/lib/Conversion/TensorToCudaTile/AffineMapImpl.cpp
+index 54de2a1..37ed2f9 100644
+--- a/lib/Conversion/TensorToCudaTile/AffineMapImpl.cpp
++++ b/lib/Conversion/TensorToCudaTile/AffineMapImpl.cpp
+@@ -3272,6 +3272,19 @@ public:
+ 
+     Value mmaResTile;
+     if (isFloat) {
++      if (matmulOp.getInputPrecision() == InputPrecision::TF32) {
++        auto tf32Type = rewriter.getTF32Type();
++        auto aType = cuda_tile::TileType::get(
++            cast<cuda_tile::TileType>(aTile.getType()).getShape(), tf32Type);
++        auto bType = cuda_tile::TileType::get(
++            cast<cuda_tile::TileType>(bTile.getType()).getShape(), tf32Type);
++        auto rounding = cuda_tile::RoundingModeAttr::get(
++            getContext(), cuda_tile::RoundingMode::NEAREST_EVEN);
++        aTile = cuda_tile::FToFOp::create(rewriter, matmulOp.getLoc(), aType,
++                                          aTile, rounding);
++        bTile = cuda_tile::FToFOp::create(rewriter, matmulOp.getLoc(), bType,
++                                          bTile, rounding);
++      }
+       mmaResTile = cuda_tile::MmaFOp::create(rewriter, matmulOp.getLoc(), aTile,
+                                              bTile, accTile);
+     } else {
+diff --git a/lib/Conversion/TensorToCudaTile/OutlinedComputeOps.cpp b/lib/Conversion/TensorToCudaTile/OutlinedComputeOps.cpp
+index f6c27dc..62c6a96 100644
+--- a/lib/Conversion/TensorToCudaTile/OutlinedComputeOps.cpp
++++ b/lib/Conversion/TensorToCudaTile/OutlinedComputeOps.cpp
+@@ -1257,6 +1257,18 @@ public:
+               : createConstant(rewriter, op.getLoc(), *resultType, int64_t{0}));
+     }
+ 
++    if (op.getInputPrecision() == InputPrecision::TF32) {
++      auto tf32Type = rewriter.getTF32Type();
++      auto lhsType = cuda_tile::TileType::get(lhsShape, tf32Type);
++      auto rhsType = cuda_tile::TileType::get(rhsShape, tf32Type);
++      auto rounding = cuda_tile::RoundingModeAttr::get(
++          getContext(), cuda_tile::RoundingMode::NEAREST_EVEN);
++      operands[0] = cuda_tile::FToFOp::create(rewriter, op->getLoc(), lhsType,
++                                              operands[0], rounding);
++      operands[1] = cuda_tile::FToFOp::create(rewriter, op->getLoc(), rhsType,
++                                              operands[1], rounding);
++    }
++
+     Value result;
+     if (resultElementType.isFloat()) {
+       result = cuda_tile::MmaFOp::create(rewriter, op.getLoc(),
+diff --git a/lib/Dialect/TensorOps.cpp b/lib/Dialect/TensorOps.cpp
+index a5eaf8c..7b4834c 100644
+--- a/lib/Dialect/TensorOps.cpp
++++ b/lib/Dialect/TensorOps.cpp
+@@ -1722,6 +1722,17 @@ LogicalResult MatmulOp::verify() {
+               "got "
+            << getAcc().getType() << " and " << getC().getType();
+   }
++
++  if (getInputPrecision() == InputPrecision::TF32) {
++    auto isF32 = [](TypedValue<RankedTensorType> type) -> bool {
++      return type.getType().getElementType().isF32();
++    };
++    if (!(isF32(getA()) && isF32(getB()) && isF32(getC()))) {
++      return emitOpError() << "tf32 input precision can be used only with f32 "
++                              "element data type";
++    }
++  }
++
+   return success();
+ }
+ 
+diff --git a/lib/Transform/FormGrid.cpp b/lib/Transform/FormGrid.cpp
+index 12a04d9..65c4e05 100644
+--- a/lib/Transform/FormGrid.cpp
++++ b/lib/Transform/FormGrid.cpp
+@@ -1901,7 +1901,8 @@ private:
+     }
+     auto tiledMatmul = MatmulOp::create(
+         builder, matmul.getLoc(), mmaResultType, lhs, rhs, Value{},
+-        matmul.getLeftTriangleAttr(), matmul.getRightTriangleAttr());
++        matmul.getLeftTriangleAttr(), matmul.getRightTriangleAttr(),
++        matmul.getInputPrecisionAttr());
+     tiledMatmul->setAttr("nv_tensor_ir.contraction_shape",
+                          builder.getDenseI64ArrayAttr(plan.contractionShape));
+     tiledMatmul->setAttr("nv_tensor_ir.lhs_source_shape",
+diff --git a/lib/Transform/RewriteUnsupportedOps.cpp b/lib/Transform/RewriteUnsupportedOps.cpp
+index b139067..c63b17d 100644
+--- a/lib/Transform/RewriteUnsupportedOps.cpp
++++ b/lib/Transform/RewriteUnsupportedOps.cpp
+@@ -76,15 +76,17 @@ public:
+ 
+     auto destType = cvtResType(resElemTy);
+ 
++    llvm::SmallVector<Value, 3> operands{op.getA(), op.getB()};
+     Location loc = op->getLoc();
+     Value acc = op.getAcc();
+     if (acc) {
+       acc = ConvertOp::create(rewriter, loc, acc, destType);
++      operands.push_back(acc);
+     }
+ 
+     auto newResTy = RankedTensorType::get(resTy.getShape(), destType);
+     auto newOp =
+-        MatmulOp::create(rewriter, loc, newResTy, op.getA(), op.getB(), acc);
++        MatmulOp::create(rewriter, loc, newResTy, operands, op->getAttrs());
+     auto newCvtOp = ConvertOp::create(rewriter, loc, newOp, resElemTy);
+ 
+     rewriter.replaceAllOpUsesWith(op, newCvtOp);
+diff --git a/lib/Transform/TileReductions.cpp b/lib/Transform/TileReductions.cpp
+index c9cf5b2..1395438 100644
+--- a/lib/Transform/TileReductions.cpp
++++ b/lib/Transform/TileReductions.cpp
+@@ -1621,7 +1621,8 @@ static LogicalResult stripMineMatmul(RewriterBase &builder, MatmulOp matmul,
+   }
+ 
+   Value localResult =
+-      MatmulOp::create(builder, loc, resultType, localLhs, localRhs, carried);
++      MatmulOp::create(builder, loc, resultType, localLhs, localRhs, carried,
++                       nullptr, nullptr, matmul.getInputPrecisionAttr());
+   setContractionLoopYields(builder, loopNest.loops, localResult);
+ 
+   // 9. Wire yields and replace original MatmulOp.
+diff --git a/python/src/nv_tensor_ir/dsl/module_builder.py b/python/src/nv_tensor_ir/dsl/module_builder.py
+index c809e81..d5fc771 100644
+--- a/python/src/nv_tensor_ir/dsl/module_builder.py
++++ b/python/src/nv_tensor_ir/dsl/module_builder.py
+@@ -335,6 +335,7 @@ def _build_node(
+             values[rhs],
+             left_triangle=_triangle(node.kwargs.get("left_triangle")),
+             right_triangle=_triangle(node.kwargs.get("right_triangle")),
++            input_precision=_precision(node.kwargs.get("input_precision")),
+             loc=loc,
+         )
+     else:
+@@ -403,6 +404,15 @@ def _triangle(triangle: str | None):
+     ]
+ 
+ 
++def _precision(precision: str | None):
++    if precision is None:
++        return None
++    return {
++        "ieee": nv_tensor_ir.InputPrecision.IEEE,
++        "tf32": nv_tensor_ir.InputPrecision.TF32,
++    }[precision]
++
++
+ def _comparator(comparator: object):
+     if not isinstance(comparator, str):
+         return comparator
+diff --git a/python/src/nv_tensor_ir/dsl/ops.py b/python/src/nv_tensor_ir/dsl/ops.py
+index 6f316c5..49037c2 100644
+--- a/python/src/nv_tensor_ir/dsl/ops.py
++++ b/python/src/nv_tensor_ir/dsl/ops.py
+@@ -1053,6 +1053,7 @@ def matmul(
+     dtype: object | None = None,
+     left_triangle: str | None = None,
+     right_triangle: str | None = None,
++    input_precision: str | None = None,
+ ) -> TracedTensor:
+     """Multiply tensors, optionally declaring triangular operands.
+ 
+@@ -1063,4 +1064,6 @@ def matmul(
+     """
+     lhs_tensor = _ensure_traced(lhs, "matmul")
+     rhs_tensor = _ensure_traced(rhs, "matmul")
+-    return _trace_matmul(lhs_tensor, rhs_tensor, dtype, left_triangle, right_triangle)
++    return _trace_matmul(
++        lhs_tensor, rhs_tensor, dtype, left_triangle, right_triangle, input_precision
++    )
+diff --git a/python/src/nv_tensor_ir/dsl/tracing.py b/python/src/nv_tensor_ir/dsl/tracing.py
+index 4fd08eb..0778d56 100644
+--- a/python/src/nv_tensor_ir/dsl/tracing.py
++++ b/python/src/nv_tensor_ir/dsl/tracing.py
+@@ -584,17 +584,24 @@ def _matmul(
+     result_dtype: object | None = None,
+     left_triangle: str | None = None,
+     right_triangle: str | None = None,
++    input_precision: str | None = None,
+ ) -> TracedTensor:
+     if left_triangle is not None and left_triangle not in ("upper", "lower"):
+         raise ValueError("left_triangle must be 'upper', 'lower', or None")
+     if right_triangle is not None and right_triangle not in ("upper", "lower"):
+         raise ValueError("right_triangle must be 'upper', 'lower', or None")
++    if input_precision is not None and input_precision not in ("ieee", "tf32"):
++        raise ValueError("input_precision must be 'ieee', 'tf32', or None")
+     return lhs._graph.add_node(
+         NodeKind.MATMUL,
+         "matmul",
+         (lhs._id, rhs._id),
+         _matmul_result_info(lhs, rhs, result_dtype),
+-        kwargs={"left_triangle": left_triangle, "right_triangle": right_triangle},
++        kwargs={
++            "left_triangle": left_triangle,
++            "right_triangle": right_triangle,
++            "input_precision": input_precision,
++        },
+     )
+ 
+ 
+diff --git a/test/Conversion/TensorToCudaTile/matmul.mlir b/test/Conversion/TensorToCudaTile/matmul.mlir
+index 1c32d7d..cde70de 100644
+--- a/test/Conversion/TensorToCudaTile/matmul.mlir
++++ b/test/Conversion/TensorToCudaTile/matmul.mlir
+@@ -1,5 +1,19 @@
+ // RUN: tensor_ir-opt -materialize-default-strides -discover-iteration-space-info -convert-tensor-to-cuda-tile="codegen-strategy=affine_map" -split-input-file %s | FileCheck %s
+ 
++// Tests that tf32 input precision rounds both f32 operands to tf32 before the
++// tensor-core MMA while the accumulator stays f32.
++// CHECK-LABEL: @matmul_tf32_static
++// CHECK: mmaf %{{.*}}, %{{.*}}, %{{.*}} : tile<{{.*}}xtf32>, tile<{{.*}}xtf32>, tile<{{.*}}xf32>
++nv_tensor_ir.graph @matmul_tf32_static(
++  %a: tensor<128x64xf32>,
++  %b: tensor<64x128xf32>) -> (
++    tensor<128x128xf32>) {
++  %c = matmul(%a, %b) input_precision = <tf32> : (tensor<128x64xf32>, tensor<64x128xf32>) -> tensor<128x128xf32>
++  results %c : tensor<128x128xf32>
++}
++
++// -----
++
+ module {
+   nv_tensor_ir.graph @matmul_f32_static(
+     %a: tensor<128x64xf32>,
+diff --git a/test/Dialect/matmul-invalid.mlir b/test/Dialect/matmul-invalid.mlir
+index f35fccd..bb7afc9 100644
+--- a/test/Dialect/matmul-invalid.mlir
++++ b/test/Dialect/matmul-invalid.mlir
+@@ -113,3 +113,15 @@ nv_tensor_ir.graph @matmul_dynamic_and_unit(%a: tensor<?x3x5xf32>, %b: tensor<1x
+   %result = matmul(%a, %b) : (tensor<?x3x5xf32>, tensor<1x5x7xf32>) -> tensor<?x3x7xf32>
+   results %result : tensor<?x3x7xf32>
+ }
++
++// -----
++
++nv_tensor_ir.graph @matmulTf32InputPrecisionWithF16(
++  %a: tensor<16x32xf16>,
++  %b: tensor<32x8xf16>
++) -> tensor<16x8xf16> {
++  // expected-error@below {{tf32 input precision can be used only with f32 element data type}}
++  %result = matmul(%a, %b) input_precision = <tf32>
++      : (tensor<16x32xf16>, tensor<32x8xf16>) -> tensor<16x8xf16>
++  results %result : tensor<16x8xf16>
++}
+-- 
+2.43.0
+
