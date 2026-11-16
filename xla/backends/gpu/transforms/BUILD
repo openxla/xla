@@ -2605,6 +2605,7 @@ xla_cc_test(
     name = "move_copy_to_users_test",
     srcs = ["move_copy_to_users_test.cc"],
     deps = [
+        ":layout_assignment",
         ":move_copy_to_users",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",

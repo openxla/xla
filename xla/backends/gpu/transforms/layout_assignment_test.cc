@@ -1889,6 +1889,162 @@ TEST_F(LayoutAssignmentTest, DynamicSliceOfElementwiseOperandChangesLayout) {
       << module->ToString();
 }
 
+// Returns all instructions in `module` that produce an array of `num_elements`
+// elements.
+std::vector<const HloInstruction*> ArraysOfSize(const HloModule* module,
+                                                int64_t num_elements) {
+  std::vector<const HloInstruction*> arrays;
+  for (const HloComputation* computation : module->computations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      if (instruction->shape().IsArray() &&
+          ShapeUtil::ElementsIn(instruction->shape()) == num_elements) {
+        arrays.push_back(instruction);
+      }
+    }
+  }
+  return arrays;
+}
+
+TEST_F(LayoutAssignmentTest, SliceOfParameterChangesLayoutForAllGather) {
+  // The all-gather needs dimension 2 to be the most major dimension. The slice
+  // provides that layout and reads the parameter, which has a fixed layout,
+  // directly: nothing converts the whole parameter.
+  for (absl::string_view layer :
+       {"slice(weights), slice={[3:4], [0:16], [0:32]}",
+        "dynamic-slice(weights, i, zero, zero), "
+        "dynamic_slice_sizes={1,16,32}"}) {
+    SCOPED_TRACE(layer);
+    const std::string hlo_text = absl::Substitute(
+        R"(
+    HloModule module
+
+    ENTRY main {
+      weights = f32[8,16,32]{2,1,0} parameter(0)
+      i = s32[] parameter(1)
+      zero = s32[] constant(0)
+      layer = f32[1,16,32]{2,1,0} $0
+      ROOT gathered = f32[1,16,64]{2,1,0} all-gather(layer), dimensions={2}, replica_groups={{0,1}}
+    })",
+        layer);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(hlo_text));
+
+    ComputationLayout computation_layout(
+        module->entry_computation()->ComputeProgramShape(),
+        /*ignore_layouts=*/false);
+    GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                          default_device_description_);
+    EXPECT_THAT(layout_assignment.Run(module.get()),
+                absl_testing::IsOkAndHolds(true));
+
+    const HloInstruction* weights =
+        module->entry_computation()->parameter_instruction(0);
+    EXPECT_THAT(weights->shape().layout().minor_to_major(),
+                ::testing::ElementsAre(2, 1, 0));
+    const HloInstruction* layer_instruction =
+        FindInstruction(module.get(), "layer");
+    ASSERT_THAT(layer_instruction, NotNull());
+    EXPECT_EQ(layer_instruction->operand(0), weights) << module->ToString();
+    EXPECT_THAT(layer_instruction->shape().layout().minor_to_major(),
+                ::testing::ElementsAre(1, 0, 2));
+    const HloInstruction* gathered = FindInstruction(module.get(), "gathered");
+    ASSERT_THAT(gathered, NotNull());
+    EXPECT_EQ(gathered->operand(0), layer_instruction) << module->ToString();
+    // The parameter is the only array of its size: there is no copy,
+    // transpose or other conversion of it.
+    EXPECT_THAT(ArraysOfSize(module.get(), 8 * 16 * 32),
+                ::testing::ElementsAre(weights))
+        << module->ToString();
+  }
+}
+
+TEST_F(LayoutAssignmentTest, SliceOfLoopStateChangesLayoutForAllGather) {
+  // Same as above, but the sliced array is carried through a while loop. The
+  // slice reads the loop state directly, and the array is converted neither
+  // inside nor outside of the loop.
+  for (absl::string_view layer :
+       {"slice(stack), slice={[3:4], [0:16], [0:32]}",
+        "dynamic-slice(stack, i, zero, zero), dynamic_slice_sizes={1,16,32}"}) {
+    SCOPED_TRACE(layer);
+    const std::string hlo_text = absl::Substitute(
+        R"(
+    HloModule module
+
+    body {
+      p = (s32[], f32[8,16,32]{2,1,0}, f32[1,16,64]{2,1,0}) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      stack = f32[8,16,32]{2,1,0} get-tuple-element(p), index=1
+      zero = s32[] constant(0)
+      layer = f32[1,16,32]{2,1,0} $0
+      gathered = f32[1,16,64]{2,1,0} all-gather(layer), dimensions={2}, replica_groups={{0,1}}
+      one = s32[] constant(1)
+      next = s32[] add(i, one)
+      ROOT result = (s32[], f32[8,16,32]{2,1,0}, f32[1,16,64]{2,1,0}) tuple(next, stack, gathered)
+    }
+
+    condition {
+      p = (s32[], f32[8,16,32]{2,1,0}, f32[1,16,64]{2,1,0}) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      limit = s32[] constant(8)
+      ROOT lt = pred[] compare(i, limit), direction=LT
+    }
+
+    ENTRY main {
+      weights = f32[8,16,32]{2,1,0} parameter(0)
+      acc = f32[1,16,64]{2,1,0} parameter(1)
+      zero = s32[] constant(0)
+      init = (s32[], f32[8,16,32]{2,1,0}, f32[1,16,64]{2,1,0}) tuple(zero, weights, acc)
+      ROOT loop = (s32[], f32[8,16,32]{2,1,0}, f32[1,16,64]{2,1,0}) while(init), condition=condition, body=body
+    })",
+        layer);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(hlo_text));
+
+    ComputationLayout computation_layout(
+        module->entry_computation()->ComputeProgramShape(),
+        /*ignore_layouts=*/false);
+    GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                          default_device_description_);
+    EXPECT_THAT(layout_assignment.Run(module.get()),
+                absl_testing::IsOkAndHolds(true));
+
+    const HloInstruction* layer_instruction =
+        FindInstruction(module.get(), "layer");
+    ASSERT_THAT(layer_instruction, NotNull());
+    EXPECT_THAT(layer_instruction->shape().layout().minor_to_major(),
+                ::testing::ElementsAre(1, 0, 2));
+    // The slice reads element 1 of the loop state.
+    const HloInstruction* stack = layer_instruction->operand(0);
+    EXPECT_THAT(stack, GmockMatch(m::GetTupleElement(m::Parameter(0), 1)))
+        << module->ToString();
+    EXPECT_THAT(stack->shape().layout().minor_to_major(),
+                ::testing::ElementsAre(2, 1, 0));
+    // The array is carried through the loop in the layout of the parameter.
+    const HloInstruction* loop = FindInstruction(module.get(), "loop");
+    ASSERT_THAT(loop, NotNull());
+    EXPECT_THAT(loop->shape().tuple_shapes(1).layout().minor_to_major(),
+                ::testing::ElementsAre(2, 1, 0));
+    // Every array of the size of the sliced array is the parameter or an
+    // element of a tuple it was put into, in the layout of the parameter:
+    // there is no copy, transpose or other conversion of it.
+    std::vector<const HloInstruction*> arrays =
+        ArraysOfSize(module.get(), 8 * 16 * 32);
+    EXPECT_THAT(arrays,
+                ::testing::Contains(
+                    module->entry_computation()->parameter_instruction(0)));
+    for (const HloInstruction* array : arrays) {
+      EXPECT_THAT(array->opcode(),
+                  ::testing::AnyOf(HloOpcode::kParameter,
+                                   HloOpcode::kGetTupleElement))
+          << array->ToString() << "\n"
+          << module->ToString();
+      EXPECT_THAT(array->shape().layout().minor_to_major(),
+                  ::testing::ElementsAre(2, 1, 0))
+          << array->ToString();
+    }
+  }
+}
+
 struct ScaledDotLayoutTestCase {
   std::string name;
   // Shapes of lhs, rhs, lhs_scale, rhs_scale and the output, followed by the

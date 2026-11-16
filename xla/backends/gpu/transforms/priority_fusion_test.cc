@@ -2665,5 +2665,70 @@ ENTRY main {
   RunAndFilecheckHloRewrite(kHloText, std::move(priority_fusion_),
                             /*expected=*/std::nullopt);
 }
+
+// GpuLayoutAssignment lets a slice produce its result in a layout that differs
+// from the layout of the sliced array, and LayoutNormalization turns such a
+// slice into a slice in the layout of the sliced array followed by a transpose.
+// The modules below are what these two passes produce for a slice of
+// f32[8,16,32]{2,1,0} whose result is consumed in layout {1,0,2}. The slice
+// and the transpose have to end up in one fusion, so that changing the layout
+// of the slice does not cost an additional kernel.
+TEST_F(PriorityFusionTest, FusesSliceWithTransposeOfLayoutChangingSlice) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    HloModule module
+
+    ENTRY main {
+      weights = f32[8,16,32]{2,1,0} parameter(0)
+      slice = f32[1,16,32]{2,1,0} slice(weights), slice={[3:4], [0:16], [0:32]}
+      transpose = f32[32,1,16]{2,1,0} transpose(slice), dimensions={2,0,1}
+      bitcast = f32[1,16,32]{1,0,2} bitcast(transpose)
+      ROOT gathered = f32[1,16,64]{1,0,2} all-gather(bitcast), replica_groups={{0,1}}, dimensions={2}
+    })"));
+
+  EXPECT_THAT(priority_fusion_.Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  const HloInstruction* fusion = nullptr;
+  ASSERT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::AllGather(m::Bitcast(m::Fusion(&fusion, m::Parameter(0))))))
+      << module->ToString();
+  EXPECT_THAT(fusion->fused_expression_root(),
+              GmockMatch(m::Transpose(m::Slice(m::Parameter(0)))))
+      << module->ToString();
+}
+
+TEST_F(PriorityFusionTest,
+       FusesDynamicSliceWithTransposeOfLayoutChangingDynamicSlice) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    HloModule module
+
+    ENTRY main {
+      weights = f32[8,16,32]{2,1,0} parameter(0)
+      i = s32[] parameter(1)
+      zero = s32[] constant(0)
+      dynamic-slice = f32[1,16,32]{2,1,0} dynamic-slice(weights, i, zero, zero), dynamic_slice_sizes={1,16,32}
+      transpose = f32[32,1,16]{2,1,0} transpose(dynamic-slice), dimensions={2,0,1}
+      bitcast = f32[1,16,32]{1,0,2} bitcast(transpose)
+      ROOT gathered = f32[1,16,64]{1,0,2} all-gather(bitcast), replica_groups={{0,1}}, dimensions={2}
+    })"));
+
+  EXPECT_THAT(priority_fusion_.Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  const HloInstruction* fusion = nullptr;
+  ASSERT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::AllGather(m::Bitcast(
+                  m::Fusion(&fusion, m::Parameter(0), m::Parameter(1))))))
+      << module->ToString();
+  EXPECT_THAT(
+      fusion->fused_expression_root(),
+      GmockMatch(m::Transpose(m::DynamicSlice(
+          m::Parameter(0), m::Parameter(1), m::Constant(), m::Constant()))))
+      << module->ToString();
+}
+
 }  // namespace gpu
 }  // namespace xla

@@ -22,6 +22,7 @@ limitations under the License.
 #include <optional>
 
 #include "absl/strings/string_view.h"
+#include "xla/backends/gpu/transforms/layout_assignment.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/layout_assignment.h"
@@ -311,6 +312,65 @@ ENTRY main {
 )";
 
   CheckMoveCopyToUsers(hlo, std::nullopt);
+}
+
+// In the GPU compiler MoveCopyToUsers runs between GpuLayoutAssignment and
+// LayoutNormalization, where a slice or dynamic-slice may produce its result in
+// a layout that differs from the layout of the sliced operand.
+class MoveCopyToUsersLayoutChangingSliceTest
+    : public HloHardwareIndependentTestBase {
+ public:
+  MoveCopyToUsersLayoutChangingSliceTest()
+      : HloHardwareIndependentTestBase(
+            /*verifier_layout_sensitive=*/true,
+            /*allow_mixed_precision_in_hlo_verifier=*/true,
+            gpu::GpuLayoutAssignment::
+                InstructionCanChangeLayoutBeforeNormalization) {}
+};
+
+TEST_F(MoveCopyToUsersLayoutChangingSliceTest, Slice) {
+  // The slice moves in front of the copy and takes the layout of the copied
+  // array. The copy then produces the layout the slice had, so the user of the
+  // slice still gets the layout it needs and only the slice is copied.
+  const char* hlo = R"(
+HloModule module
+
+ENTRY main {
+  input = f32[8,16,32]{2,1,0} parameter(0)
+  copy = f32[8,16,32]{0,1,2} copy(input)
+  layer = f32[1,16,32]{1,0,2} slice(copy), slice={[3:4], [0:16], [0:32]}
+  ROOT gathered = f32[1,16,64]{1,0,2} all-gather(layer), dimensions={2}, replica_groups={{0,1}}
+}
+)";
+
+  RunAndFilecheckHloRewrite(hlo, MoveCopyToUsers{}, R"(
+// CHECK: [[input:%[^ ]+]] = f32[8,16,32]{2,1,0} parameter(0)
+// CHECK: [[slice:%[^ ]+]] = f32[1,16,32]{2,1,0} slice([[input]]), slice={[3:4], [0:16], [0:32]}
+// CHECK: [[copy:%[^ ]+]] = f32[1,16,32]{1,0,2} copy([[slice]])
+// CHECK: ROOT {{.*}} = f32[1,16,64]{1,0,2} all-gather([[copy]])
+)");
+}
+
+TEST_F(MoveCopyToUsersLayoutChangingSliceTest, DynamicSlice) {
+  const char* hlo = R"(
+HloModule module
+
+ENTRY main {
+  input = f32[8,16,32]{2,1,0} parameter(0)
+  i = s32[] parameter(1)
+  zero = s32[] constant(0)
+  copy = f32[8,16,32]{0,1,2} copy(input)
+  layer = f32[1,16,32]{1,0,2} dynamic-slice(copy, i, zero, zero), dynamic_slice_sizes={1,16,32}
+  ROOT gathered = f32[1,16,64]{1,0,2} all-gather(layer), dimensions={2}, replica_groups={{0,1}}
+}
+)";
+
+  RunAndFilecheckHloRewrite(hlo, MoveCopyToUsers{}, R"(
+// CHECK: [[input:%[^ ]+]] = f32[8,16,32]{2,1,0} parameter(0)
+// CHECK: [[ds:%[^ ]+]] = f32[1,16,32]{2,1,0} dynamic-slice([[input]], {{.*}}), dynamic_slice_sizes={1,16,32}
+// CHECK: [[copy:%[^ ]+]] = f32[1,16,32]{1,0,2} copy([[ds]])
+// CHECK: ROOT {{.*}} = f32[1,16,64]{1,0,2} all-gather([[copy]])
+)");
 }
 
 }  // namespace
