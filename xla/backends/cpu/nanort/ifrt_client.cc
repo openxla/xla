@@ -166,7 +166,7 @@ class NanoValue : public xla::ifrt::RTTIExtends<Self, Base> {
 class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
  public:
   // An owning pointer to the underlying buffer (can be allocated for NanoArray,
-  // or "owned" via the `on_done_with_host_buffer` callback passed by the user).
+  // or "owned" via `host_buffer_hold` passed by the user).
   //
   // We use a shared_ptr because for some operations (like disassembly) we can
   // just alias the memory, but we still need to support deletion of the
@@ -214,7 +214,7 @@ class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
       NanoIfrtClient* client, void* data, ifrt::DType dtype,
       const ifrt::Shape& shape, ifrt::ShardingRef sharding,
       std::optional<absl::Span<const int64_t>> byte_strides, bool make_copy,
-      std::function<void()> on_done_with_host_buffer) {
+      std::shared_ptr<const void> host_buffer_hold) {
     bool layout_compatible = LayoutCompatible(dtype, shape, byte_strides);
     bool aligned = reinterpret_cast<uintptr_t>(data) % MinAlign() == 0;
 
@@ -241,21 +241,17 @@ class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
       }
       // We're done with the input buffer, so we can allow the caller to clean
       // it up.
-      if (on_done_with_host_buffer) {
-        on_done_with_host_buffer();
-      }
+      host_buffer_hold.reset();
 
       return tsl::TakeRef(new NanoArray(
           client, dtype, shape, std::move(owned_data), std::move(sharding)));
     }
 
     // We can create a view into the user's buffer, but we must take ownership
-    // of it via the provided callback.
-    if (ABSL_PREDICT_FALSE(on_done_with_host_buffer)) {
+    // of it via the provided hold.
+    if (ABSL_PREDICT_FALSE(host_buffer_hold != nullptr)) {
       return tsl::TakeRef(new NanoArray(
-          client, dtype, shape,
-          OwnedDataPtr(data, [done = std::move(on_done_with_host_buffer)](
-                                 void* ptr) { done(); }),
+          client, dtype, shape, OwnedDataPtr(std::move(host_buffer_hold), data),
           std::move(sharding)));
     }
 
@@ -955,6 +951,11 @@ class NanoExecutable final
   absl::StatusOr<ExecuteResult> Execute(
       absl::Span<ifrt::ArrayRef> args, const ExecuteOptions& options,
       std::optional<ifrt::DeviceListRef> devices) override {
+    if (devices.has_value() &&
+        (*devices == nullptr || **devices != *devices_)) {
+      return InvalidArgument(
+          "Cannot execute with devices that differ from the bound devices");
+    }
     if (ABSL_PREDICT_FALSE(args.size() != input_shardings_.size())) {
       return InvalidArgument(
           "Number of arguments %d is not what executable expects %d",
@@ -1485,7 +1486,7 @@ absl::StatusOr<ifrt::ArrayRef> NanoIfrtClient::MakeArrayFromHostBuffer(
     std::optional<absl::Span<const int64_t>> byte_strides,
     ifrt::ShardingRef sharding, ifrt::LayoutRef layout,
     HostBufferSemantics semantics,
-    std::function<void()> on_done_with_host_buffer) {
+    std::shared_ptr<const void> host_buffer_hold) {
   if (layout != nullptr) {
     return absl::InvalidArgumentError(absl::StrFormat(
         "NanoIfrtClient does not support custom layouts, but got layout: %v",
@@ -1504,7 +1505,7 @@ absl::StatusOr<ifrt::ArrayRef> NanoIfrtClient::MakeArrayFromHostBuffer(
   }
   return NanoArray::FromBuffer(this, const_cast<void*>(data), dtype, shape,
                                std::move(sharding), byte_strides, make_copy,
-                               std::move(on_done_with_host_buffer));
+                               std::move(host_buffer_hold));
 }
 
 absl::StatusOr<std::vector<ifrt::ArrayRef>>

@@ -46,6 +46,12 @@ using ::absl_testing::IsOkAndHolds;
 
 class ReshapeMoverTest : public HloHardwareIndependentTestBase {
  protected:
+  static ReshapeMoverOptions KeepRearrangeBeforeWideningConvertOptions() {
+    ReshapeMoverOptions options;
+    options.keep_rearrange_before_widening_convert = true;
+    return options;
+  }
+
   // ReshapeMover relies on algsimp for cleanup.
   absl::Status RunPass(HloModule* module, bool change_expected,
                        ReshapeMoverOptions options = ReshapeMoverOptions{},
@@ -541,6 +547,40 @@ TEST_F(ReshapeMoverTest, DoesNotTargetCallOps) {
   EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(false));
 }
 
+TEST_F(ReshapeMoverTest,
+       SinkNonTrivialReshapeAndTransposeAcrossWideningConvertByDefault) {
+  const std::string reshape_hlo = R"hlo(
+    HloModule test
+    ENTRY test {
+      p0 = bf16[4,1024,6144] parameter(0)
+      r0 = bf16[1,1024,4,6144] reshape(p0)
+      ROOT c0 = f32[1,1024,4,6144] convert(r0)
+    }
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto reshape_module,
+                       ParseAndReturnVerifiedModule(reshape_hlo));
+  EXPECT_THAT(ReshapeMover().Run(reshape_module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(reshape_module->entry_computation()->root_instruction(),
+              GmockMatch(m::Reshape(m::Convert(m::Parameter(0)))));
+
+  const std::string transpose_hlo = R"hlo(
+    HloModule test
+    ENTRY test {
+      p0 = bf16[4,1024] parameter(0)
+      t0 = bf16[1024,4] transpose(p0), dimensions={1,0}
+      ROOT c0 = f32[1024,4] convert(t0)
+    }
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto transpose_module,
+                       ParseAndReturnVerifiedModule(transpose_hlo));
+  ASSERT_OK(RunPass(transpose_module.get(), /*change_expected=*/true,
+                    ReshapeMoverOptions{}, /*run_algsimp=*/true));
+  EXPECT_THAT(transpose_module->entry_computation()->root_instruction(),
+              GmockMatch(m::Transpose(m::Convert(m::Parameter(0)))));
+}
+
 TEST_F(ReshapeMoverTest, DoNotSinkNonTrivialReshapeAcrossWideningConvert) {
   const std::string hlo_string = R"hlo(
     HloModule test
@@ -552,7 +592,9 @@ TEST_F(ReshapeMoverTest, DoNotSinkNonTrivialReshapeAcrossWideningConvert) {
   )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
-  EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(false));
+  EXPECT_THAT(ReshapeMover(KeepRearrangeBeforeWideningConvertOptions())
+                  .Run(module.get()),
+              IsOkAndHolds(false));
 }
 
 TEST_F(ReshapeMoverTest, DoNotSinkTransposeAcrossWideningConvert) {
@@ -566,7 +608,9 @@ TEST_F(ReshapeMoverTest, DoNotSinkTransposeAcrossWideningConvert) {
   )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
-  EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(false));
+  EXPECT_THAT(ReshapeMover(KeepRearrangeBeforeWideningConvertOptions())
+                  .Run(module.get()),
+              IsOkAndHolds(false));
 }
 
 TEST_F(ReshapeMoverTest, SinkSizeOneDimReshapeAcrossWideningConvert) {
@@ -580,7 +624,9 @@ TEST_F(ReshapeMoverTest, SinkSizeOneDimReshapeAcrossWideningConvert) {
   )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
-  EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(ReshapeMover(KeepRearrangeBeforeWideningConvertOptions())
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Reshape(m::Convert(m::Parameter(0)))));
 }
@@ -596,7 +642,9 @@ TEST_F(ReshapeMoverTest, SinkSizeOneDimTransposeAcrossWideningConvert) {
   )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
-  EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(ReshapeMover(KeepRearrangeBeforeWideningConvertOptions())
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Transpose(
                   m::Convert(m::Transpose(m::Transpose(m::Parameter(0)))))));
@@ -613,7 +661,9 @@ TEST_F(ReshapeMoverTest, SinkReshapeAcrossNarrowingConvert) {
   )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
-  EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(ReshapeMover(KeepRearrangeBeforeWideningConvertOptions())
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Reshape(m::Convert(m::Parameter(0)))));
 }
@@ -629,7 +679,9 @@ TEST_F(ReshapeMoverTest, SinkReshapeAcrossSameWidthConvert) {
   )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
-  EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(ReshapeMover(KeepRearrangeBeforeWideningConvertOptions())
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Reshape(m::Convert(m::Parameter(0)))));
 }
@@ -646,8 +698,9 @@ TEST_F(ReshapeMoverTest, SinkReshapeUpToWideningConvert) {
   )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
-  EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(true));
-  EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(false));
+  ReshapeMover pass(KeepRearrangeBeforeWideningConvertOptions());
+  EXPECT_THAT(pass.Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(pass.Run(module.get()), IsOkAndHolds(false));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Convert(m::Reshape(m::Negate(m::Parameter(0))))));
 }
@@ -667,7 +720,9 @@ TEST_F(ReshapeMoverTest, SinkReshapeOfConvolutionAcrossWideningConvert) {
   )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
-  EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(ReshapeMover(KeepRearrangeBeforeWideningConvertOptions())
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Reshape(m::Convert(
                   m::Convolution(m::Parameter(0), m::Parameter(1))))));
@@ -688,7 +743,8 @@ TEST_F(ReshapeMoverTest, SinkTransposeOfDotAcrossWideningConvert) {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   ASSERT_OK(RunPass(module.get(), /*change_expected=*/true,
-                    ReshapeMoverOptions{}, /*run_algsimp=*/true));
+                    KeepRearrangeBeforeWideningConvertOptions(),
+                    /*run_algsimp=*/true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Transpose(
                   m::Convert(m::Dot(m::Parameter(0), m::Parameter(1))))));
@@ -711,7 +767,9 @@ TEST_F(ReshapeMoverTest,
   )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
-  EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(ReshapeMover(KeepRearrangeBeforeWideningConvertOptions())
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Reshape(m::Convert(m::Convert(
                   m::Convolution(m::Parameter(0), m::Parameter(1)))))));
@@ -731,7 +789,9 @@ TEST_F(ReshapeMoverTest, DoNotSinkReshapeOfConvertedAddAcrossWideningConvert) {
   )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
-  EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(false));
+  EXPECT_THAT(ReshapeMover(KeepRearrangeBeforeWideningConvertOptions())
+                  .Run(module.get()),
+              IsOkAndHolds(false));
 }
 
 TEST_F(ReshapeMoverTest, SinkReshapeAcrossWideningConvertIntoRearrangeUser) {
@@ -747,7 +807,8 @@ TEST_F(ReshapeMoverTest, SinkReshapeAcrossWideningConvertIntoRearrangeUser) {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   ASSERT_OK(RunPass(module.get(), /*change_expected=*/true,
-                    ReshapeMoverOptions{}, /*run_algsimp=*/true));
+                    KeepRearrangeBeforeWideningConvertOptions(),
+                    /*run_algsimp=*/true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Convert(m::Parameter(0))));
 }
@@ -772,7 +833,9 @@ TEST_F(ReshapeMoverTest,
   )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
-  EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(ReshapeMover(KeepRearrangeBeforeWideningConvertOptions())
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Reshape(m::Convert(m::ReducePrecision(
                   m::Convert(m::Op().WithOpcode(HloOpcode::kRaggedDot)))))));
@@ -793,7 +856,9 @@ TEST_F(ReshapeMoverTest, DoNotSinkReshapeAcrossWideningConvertWithMixedUsers) {
   )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
-  EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(false));
+  EXPECT_THAT(ReshapeMover(KeepRearrangeBeforeWideningConvertOptions())
+                  .Run(module.get()),
+              IsOkAndHolds(false));
 }
 
 TEST_F(ReshapeMoverTest,
@@ -809,7 +874,9 @@ TEST_F(ReshapeMoverTest,
   )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
-  EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(false));
+  EXPECT_THAT(ReshapeMover(KeepRearrangeBeforeWideningConvertOptions())
+                  .Run(module.get()),
+              IsOkAndHolds(false));
 }
 
 TEST_F(ReshapeMoverTest, DoNotSinkReshapeAcrossPredAndComplexWideningConverts) {
@@ -826,7 +893,9 @@ TEST_F(ReshapeMoverTest, DoNotSinkReshapeAcrossPredAndComplexWideningConverts) {
   )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
-  EXPECT_THAT(ReshapeMover().Run(module.get()), IsOkAndHolds(false));
+  EXPECT_THAT(ReshapeMover(KeepRearrangeBeforeWideningConvertOptions())
+                  .Run(module.get()),
+              IsOkAndHolds(false));
 }
 
 }  // namespace
