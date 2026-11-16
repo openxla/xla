@@ -198,7 +198,6 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_profile_printer_data.pb.h"
 #include "xla/service/hlo_verifier.h"
-#include "xla/service/instruction_fusion.h"
 #include "xla/service/layout_assignment.h"
 #include "xla/service/llvm_compiler.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
@@ -838,10 +837,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     auto& embedded_pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>(
         "embedded_scatter_expansion");
     embedded_pipeline.AddPass<ScatterExpander>(
-        ScatterExpander::kEliminateAllScatters,
-        [](const HloInstruction* instr) {
-          return InstructionFusion::IsEmbeddedComputation(instr->parent());
-        });
+        ScatterExpander::kEliminateEmbeddedScatters);
     embedded_pipeline.AddPass<EmbeddedWhileLoopUnroller>();
   } else {
     pipeline.AddPass<ScatterExpander>(ScatterExpander::kEliminateAllScatters);
