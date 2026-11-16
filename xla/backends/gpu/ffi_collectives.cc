@@ -186,18 +186,15 @@ absl::Status CommunicatorGetImpl(const XLA_FFI_Collectives_Extension* self,
   if (args == nullptr) {
     return InvalidArgument("XLA_FFI_Communicator_Get_Args is null");
   }
-  constexpr size_t kV02ArgsSize =
+  constexpr size_t kV02ArgSize =
       XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator);
-  if (args->struct_size < kV02ArgsSize) {
-    return ActualStructSizeIsGreaterOrEqual("XLA_FFI_Communicator_Get_Args",
-                                            kV02ArgsSize, args->struct_size);
-  }
-  const bool has_rank_info = args->struct_size > kV02ArgsSize;
-  if (has_rank_info) {
-    ABSL_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
-        "XLA_FFI_Communicator_Get_Args",
-        XLA_FFI_Communicator_Get_Args_STRUCT_SIZE, args->struct_size));
-  }
+  constexpr size_t kV03ArgSize =
+      XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, size);
+  const size_t required_size =
+      args->struct_size <= kV02ArgSize ? kV02ArgSize : kV03ArgSize;
+  ABSL_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_Communicator_Get_Args", required_size, args->struct_size));
+  const bool has_rank_info = args->struct_size >= kV03ArgSize;
 
   GpuCollectivesState* state = AsState(self);
   if (state == nullptr || state->collective_params == nullptr) {
