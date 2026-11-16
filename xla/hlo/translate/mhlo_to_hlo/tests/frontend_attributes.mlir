@@ -134,3 +134,44 @@ func.func @main(%arg0: tensor<8xf32>, %arg1: tensor<f32>) -> tensor<f32> {
 // CHECK:       get-tuple-element(%[[ALL_REDUCE]]), index=1
 // CHECK-NOT:   frontend_attributes={
 // CHECK:       ROOT
+
+// -----
+
+// Tests that the get-tuple-elements unpacking an infeed do not inherit its
+// frontend_attributes.
+
+func.func @main(%arg0: !mhlo.token) -> tensor<3x3xi32> {
+  %0:2 = "mhlo.infeed"(%arg0) <{infeed_config = "foobar", layout = [[0, 1]]}> {mhlo.frontend_attributes = {_xla_stream_annotation = "collective"}} : (!mhlo.token) -> (tensor<3x3xi32>, !mhlo.token)
+  func.return %0#0 : tensor<3x3xi32>
+}
+
+// CHECK:  ENTRY
+// CHECK:       %[[INFEED:.*]] = ((s32[3,3]), token[]) infeed
+// CHECK-SAME:  frontend_attributes={_xla_stream_annotation="collective"}
+// CHECK:       get-tuple-element(%[[INFEED]]), index=0
+// CHECK-NOT:   frontend_attributes={
+// CHECK:       get-tuple-element({{.*}}), index=0
+// CHECK-NOT:   frontend_attributes={
+// CHECK:       get-tuple-element(%[[INFEED]]), index=1
+// CHECK-NOT:   frontend_attributes={
+
+// -----
+
+// Tests that the get-tuple-elements unpacking a recv-done do not inherit the
+// recv's frontend_attributes.
+
+func.func @main(%arg0: !mhlo.token) -> tensor<3x4xi32> {
+  %0:2 = "mhlo.recv"(%arg0) {
+    channel_handle = #mhlo.channel_handle<handle = 5, type = 3>,
+    is_host_transfer = true,
+    mhlo.frontend_attributes = {_xla_stream_annotation = "collective"}
+  } : (!mhlo.token) -> (tensor<3x4xi32>, !mhlo.token)
+  func.return %0#0 : tensor<3x4xi32>
+}
+
+// CHECK:  ENTRY
+// CHECK:       %[[RECV_DONE:.*]] = (s32[3,4], token[]) recv-done
+// CHECK:       get-tuple-element(%[[RECV_DONE]]), index=0
+// CHECK-NOT:   frontend_attributes={
+// CHECK:       get-tuple-element(%[[RECV_DONE]]), index=1
+// CHECK-NOT:   frontend_attributes={
