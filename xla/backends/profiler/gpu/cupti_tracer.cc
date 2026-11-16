@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -1131,6 +1132,30 @@ const char* GetCuptiErrorString(CuptiInterface* cupti_interface,
   return err_str;
 }
 
+// Evaluates the result of enabling a single CUPTI activity kind. Returns true
+// if enabled, false if optional environment telemetry failed and was skipped,
+// or an error status if a required activity failed.
+absl::StatusOr<bool> CheckActivityEnableResult(CuptiInterface* cupti_interface,
+                                               CUpti_ActivityKind activity,
+                                               absl::string_view api_name,
+                                               CUptiResult err) {
+  if (ABSL_PREDICT_TRUE(err == CUPTI_SUCCESS)) {
+    return true;
+  }
+  const char* errstr = GetCuptiErrorString(cupti_interface, err);
+  if (activity == CUPTI_ACTIVITY_KIND_ENVIRONMENT) {
+    LOG(WARNING) << "CUPTI_ACTIVITY_KIND_ENVIRONMENT failed to enable via "
+                 << api_name << " (error " << static_cast<int>(err) << ": "
+                 << errstr << "); skipping environment telemetry.";
+    return false;
+  }
+  LOG(ERROR) << "function " << api_name << " failed with error " << errstr;
+  if (err == CUPTI_ERROR_INSUFFICIENT_PRIVILEGES) {
+    return absl::PermissionDeniedError("CUPTI needs root access");
+  }
+  return absl::InternalError(absl::StrCat("CUPTI call error: ", errstr));
+}
+
 // Warns once per process if a session selects graph-level tracing while
 // command buffer telemetry has recorded node annotations. CUPTI then reports
 // one record per graph launch instead of one per graph node, so the collector
@@ -1791,6 +1816,8 @@ absl::Status CuptiTracer::EnableActivityTracing() {
       }
     }
 
+    std::vector<CUpti_ActivityKind> enabled_activities;
+    enabled_activities.reserve(option_->activities_selected.size());
     if (using_v2_subscriber_api_) {
       RETURN_IF_CUPTI_ERROR(ActivityRegisterCallbacksV2(
           subscriber_, RequestCuptiActivityBuffer_v2,
@@ -1803,7 +1830,16 @@ absl::Status CuptiTracer::EnableActivityTracing() {
           // No V2 equivalent exists for this call.
           ConfigureActivityUnifiedMemoryCounter(true);
         }
-        RETURN_IF_CUPTI_ERROR(ActivityEnableV2(subscriber_, activity, nullptr));
+        ABSL_ASSIGN_OR_RETURN(
+            bool enabled,
+            CheckActivityEnableResult(
+                cupti_interface_, activity,
+                "ActivityEnableV2(subscriber_, activity, nullptr)",
+                cupti_interface_->ActivityEnableV2(subscriber_, activity,
+                                                   nullptr)));
+        if (enabled) {
+          enabled_activities.push_back(activity);
+        }
       }
     } else {
       RETURN_IF_CUPTI_ERROR(ActivityRegisterCallbacks(
@@ -1815,9 +1851,17 @@ absl::Status CuptiTracer::EnableActivityTracing() {
         if (activity == CUPTI_ACTIVITY_KIND_UNIFIED_MEMORY_COUNTER) {
           ConfigureActivityUnifiedMemoryCounter(true);
         }
-        RETURN_IF_CUPTI_ERROR(ActivityEnable(activity));
+        ABSL_ASSIGN_OR_RETURN(
+            bool enabled,
+            CheckActivityEnableResult(
+                cupti_interface_, activity, "ActivityEnable(activity)",
+                cupti_interface_->ActivityEnable(activity)));
+        if (enabled) {
+          enabled_activities.push_back(activity);
+        }
       }
     }
+    option_->activities_selected = std::move(enabled_activities);
     std::move(reset_multi_subscriber_graph_trace).Cancel();
   }
   activity_tracing_enabled_ = true;
