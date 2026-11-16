@@ -572,8 +572,7 @@ absl::Status MoveCopyDown(
     InstructionAndIndex instruction_and_index;
     Shape shape_before_copy;
     Shape shape_after_copy;
-    // The layout the instruction had (at the given index) before its layout was
-    // updated here.
+    // Layout of the instruction (at index) before MoveCopyDown rewrote it.
     Layout original_layout;
   };
   std::vector<InstructionAndShapes> stack = {InstructionAndShapes(
@@ -621,25 +620,23 @@ absl::Status MoveCopyDown(
         // Sinking the layout-changing copy past a Slice/DynamicSlice
         // (slice(copy(x)) -> copy(slice(x))) shrinks both the pre-copy slice
         // output (shape_before_copy) and the sunk copy output
-        // (shape_after_copy) to the slice result dimensions. Preserve each
-        // layout and call UpdateLayout to recompute dimension-dependent
-        // attributes (e.g., tiling) for the sliced shape.
+        // (shape_after_copy) to the slice result dimensions. The slice keeps
+        // the layout of shape_before_copy. If the slice has the dimension
+        // order of its operand, the copy keeps producing the layout of
+        // shape_after_copy. Otherwise (a backend such as GPU may let a slice
+        // change the layout) the copy has to produce the layout assigned to
+        // the slice, which its users expect; the slice itself is made
+        // layout-preserving below. UpdateLayout recomputes dimension-dependent
+        // attributes (e.g., tiling) for the sliced shapes.
         Shape new_shape_before_copy = instruction->shape();
         *new_shape_before_copy.mutable_layout() = shape_before_copy.layout();
         pass->UpdateLayout(&new_shape_before_copy);
         shape_before_copy = new_shape_before_copy;
 
         Shape new_shape_after_copy = instruction->shape();
-        // A backend may let a Slice/DynamicSlice change the layout (the GPU
-        // layout assignment does, so that a consumer gets the layout it
-        // requires from the slice instead of from the sliced operand). The
-        // slice is made layout-preserving below, so the copy moved after it
-        // has to produce the layout that was assigned to the slice, which is
-        // the one the users of the slice expect.
-        const bool slice_changes_layout =
-            instruction->shape().layout().minor_to_major() !=
-            current_instruction_and_shapes.original_layout.minor_to_major();
-        if (!slice_changes_layout) {
+        if (Layout::Equal().MinorToMajorOnly()(
+                instruction->shape().layout(),
+                current_instruction_and_shapes.original_layout)) {
           *new_shape_after_copy.mutable_layout() = shape_after_copy.layout();
         }
         pass->UpdateLayout(&new_shape_after_copy);

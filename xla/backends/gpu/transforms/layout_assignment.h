@@ -49,8 +49,10 @@ class GpuLayoutAssignment : public LayoutAssignment {
   // LayoutNormalization. In addition to the instructions accepted by
   // LayoutAssignment::InstructionCanChangeLayout, a slice or dynamic-slice may
   // produce its result in a layout that differs from the layout of the sliced
-  // operand. LayoutNormalization rewrites such a slice into a
-  // layout-preserving slice followed by a transpose, so after normalization
+  // operand. This lets a consumer that requires a particular layout get it
+  // from the slice itself, instead of forcing that layout onto the (possibly
+  // much larger) sliced operand. LayoutNormalization rewrites such a slice into
+  // a layout-preserving slice followed by a transpose, so after normalization
   // the stricter LayoutAssignment::InstructionCanChangeLayout holds again and
   // is the predicate layout-sensitive verifiers must use.
   static bool InstructionCanChangeLayoutBeforeNormalization(
@@ -89,13 +91,6 @@ class GpuLayoutAssignment : public LayoutAssignment {
 
   bool PropagateReductionLayoutToOperand(const HloInstruction* user) override;
 
-  // On GPU a slice or dynamic-slice may produce its result in a layout that
-  // differs from the layout of the sliced operand. This lets a consumer that
-  // requires a particular layout get it from the slice itself, instead of
-  // forcing that layout onto the (possibly much larger) sliced operand. The
-  // layout is still passed on to the sliced operand, as a non-mandatory
-  // preference, if that operand can be produced in any layout at no cost and is
-  // only used by slices (see ChooseOperandLayoutFromOutputLayout).
   // Forwards to InstructionCanChangeLayoutBeforeNormalization.
   bool InstructionCanChangeLayoutInstance(
       const HloInstruction* instruction) override;

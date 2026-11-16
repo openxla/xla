@@ -2666,14 +2666,12 @@ ENTRY main {
                             /*expected=*/std::nullopt);
 }
 
-// GpuLayoutAssignment lets a slice produce its result in a layout that differs
-// from the layout of the sliced array, and LayoutNormalization turns such a
-// slice into a slice in the layout of the sliced array followed by a transpose.
-// The modules below are what these two passes produce for a slice of
-// f32[8,16,32]{2,1,0} whose result is consumed in layout {1,0,2}. The slice
-// and the transpose have to end up in one fusion, so that changing the layout
-// of the slice does not cost an additional kernel.
-TEST_F(PriorityFusionTest, FusesSliceWithTransposeOfLayoutChangingSlice) {
+// The modules below are what GpuLayoutAssignment and LayoutNormalization
+// produce for a slice of f32[8,16,32]{2,1,0} whose result is consumed in layout
+// {1,0,2}: a slice in the layout of the sliced array followed by a transpose.
+// The slice and the transpose have to end up in one fusion, so that changing
+// the layout of the slice does not cost an additional kernel.
+TEST_F(PriorityFusionTest, FusesNormalizedLayoutChangingSlice) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(R"(
     HloModule module
@@ -2699,8 +2697,7 @@ TEST_F(PriorityFusionTest, FusesSliceWithTransposeOfLayoutChangingSlice) {
       << module->ToString();
 }
 
-TEST_F(PriorityFusionTest,
-       FusesDynamicSliceWithTransposeOfLayoutChangingDynamicSlice) {
+TEST_F(PriorityFusionTest, FusesNormalizedLayoutChangingDynamicSlice) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(R"(
     HloModule module
@@ -2725,8 +2722,8 @@ TEST_F(PriorityFusionTest,
       << module->ToString();
   EXPECT_THAT(
       fusion->fused_expression_root(),
-      GmockMatch(m::Transpose(m::DynamicSlice(
-          m::Parameter(0), m::Parameter(1), m::Constant(), m::Constant()))))
+      GmockMatch(m::Transpose(m::DynamicSlice(m::Parameter(0), m::Parameter(1),
+                                              m::Constant(), m::Constant()))))
       << module->ToString();
 }
 

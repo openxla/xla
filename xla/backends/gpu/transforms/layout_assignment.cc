@@ -1007,9 +1007,10 @@ static bool SlicedOperandLayoutIsFree(const HloInstruction* operand) {
       })) {
     return false;
   }
-  return absl::c_all_of(operand->users(), [&](const HloInstruction* user) {
-    return IsSliceOrDynamicSlice(user) && user->operand(0) == operand;
-  });
+  return absl::c_all_of(
+      operand->users(), [operand](const HloInstruction* user) {
+        return IsSliceOrDynamicSlice(user) && user->operand(0) == operand;
+      });
 }
 
 // GPU specific layout alignment for reshapes.
@@ -1191,11 +1192,8 @@ GpuLayoutAssignment::ChooseOutputLayoutFromOperandLayout(
   }
 
   // A slice can change the layout, but keeping the layout of the sliced
-  // operand is the cheapest choice unless a consumer needs a different one.
-  // The reverse direction is restricted in ChooseOperandLayoutFromOutputLayout:
-  // a layout required by a consumer of the slice is provided by the slice and
-  // reaches the sliced operand only as a preference, and only if the layout of
-  // that operand is free.
+  // operand is the cheapest choice unless a consumer needs a different one
+  // (see ChooseOperandLayoutFromOutputLayout).
   if (IsSliceOrDynamicSlice(user) && operand_no == 0) {
     return std::make_unique<Layout>(operand_layout);
   }

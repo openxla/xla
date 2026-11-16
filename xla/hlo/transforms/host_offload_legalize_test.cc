@@ -71,6 +71,29 @@ class HostOffloadLegalizeTest : public HloHardwareIndependentTestBase {
     }
     return RunHloPass(pass, module);
   }
+
+  // Expects that HostOffloadLegalize turned
+  //   stack -> copy -> layer (slice) -> MoveToDevice -> root
+  // into
+  //   stack -> layer (slice) -> MoveToDevice -> copy -> root
+  // where the slice reads the offloaded array `stack` in its layout {2,1,0} and
+  // preserves it, and the moved copy produces `copy_layout`.
+  void ExpectCopyMovedAfterSlice(HloModule* module, const Layout& copy_layout) {
+    EXPECT_EQ(FindInstruction(module, "copy"), nullptr);
+    const HloInstruction* layer = FindInstruction(module, "layer");
+    ASSERT_NE(layer, nullptr);
+    EXPECT_EQ(layer->operand(0), FindInstruction(module, "stack"));
+    EXPECT_EQ(layer->shape().layout(), LayoutUtil::MakeLayout({2, 1, 0}));
+    const HloInstruction* new_copy =
+        module->entry_computation()->root_instruction()->operand(0);
+    ASSERT_EQ(new_copy->opcode(), HloOpcode::kCopy);
+    EXPECT_EQ(new_copy->shape().layout(), copy_layout);
+    const HloInstruction* to_device = new_copy->operand(0);
+    EXPECT_TRUE(to_device->IsCustomCall(
+        memory_annotations::kMoveToDeviceCustomCallTarget));
+    EXPECT_EQ(to_device->shape().layout(), LayoutUtil::MakeLayout({2, 1, 0}));
+    EXPECT_EQ(to_device->operand(0), layer);
+  }
 };
 
 TEST_F(HostOffloadLegalizeTest, TestWithAsyncCall) {
@@ -841,21 +864,8 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloadLegalize(module.get()));
 
   EXPECT_TRUE(changed);
-  EXPECT_EQ(FindInstruction(module.get(), "copy"), nullptr);
-  HloInstruction* layer = FindInstruction(module.get(), "layer");
-  ASSERT_NE(layer, nullptr);
-  EXPECT_EQ(layer->operand(0), FindInstruction(module.get(), "stack"));
-  EXPECT_EQ(layer->shape().layout(), LayoutUtil::MakeLayout({2, 1, 0}));
-  // The copy is moved after the slice and still produces its original layout.
-  const HloInstruction* new_copy =
-      module->entry_computation()->root_instruction()->operand(0);
-  ASSERT_EQ(new_copy->opcode(), HloOpcode::kCopy);
-  EXPECT_EQ(new_copy->shape().layout(), LayoutUtil::MakeLayout({2, 0, 1}));
-  const HloInstruction* to_device = new_copy->operand(0);
-  EXPECT_TRUE(to_device->IsCustomCall(
-      memory_annotations::kMoveToDeviceCustomCallTarget));
-  EXPECT_EQ(to_device->shape().layout(), LayoutUtil::MakeLayout({2, 1, 0}));
-  EXPECT_EQ(to_device->operand(0), layer);
+  // The copy still produces its original layout.
+  ExpectCopyMovedAfterSlice(module.get(), LayoutUtil::MakeLayout({2, 0, 1}));
 }
 
 // A backend may let a dynamic-slice change the layout. The copy moved after
@@ -881,22 +891,8 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloadLegalize(module.get()));
 
   EXPECT_TRUE(changed);
-  EXPECT_EQ(FindInstruction(module.get(), "copy"), nullptr);
-  // The slice reads the offloaded array in its layout and preserves it.
-  HloInstruction* layer = FindInstruction(module.get(), "layer");
-  ASSERT_NE(layer, nullptr);
-  EXPECT_EQ(layer->operand(0), FindInstruction(module.get(), "stack"));
-  EXPECT_EQ(layer->shape().layout(), LayoutUtil::MakeLayout({2, 1, 0}));
   // The user of the slice still gets the layout assigned to the slice.
-  const HloInstruction* new_copy =
-      module->entry_computation()->root_instruction()->operand(0);
-  ASSERT_EQ(new_copy->opcode(), HloOpcode::kCopy);
-  EXPECT_EQ(new_copy->shape().layout(), LayoutUtil::MakeLayout({1, 0, 2}));
-  const HloInstruction* to_device = new_copy->operand(0);
-  EXPECT_TRUE(to_device->IsCustomCall(
-      memory_annotations::kMoveToDeviceCustomCallTarget));
-  EXPECT_EQ(to_device->shape().layout(), LayoutUtil::MakeLayout({2, 1, 0}));
-  EXPECT_EQ(to_device->operand(0), layer);
+  ExpectCopyMovedAfterSlice(module.get(), LayoutUtil::MakeLayout({1, 0, 2}));
 }
 
 TEST_F(HostOffloadLegalizeTest, MoveCopyOverLayoutChangingSlice) {
@@ -917,20 +913,8 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloadLegalize(module.get()));
 
   EXPECT_TRUE(changed);
-  EXPECT_EQ(FindInstruction(module.get(), "copy"), nullptr);
-  HloInstruction* layer = FindInstruction(module.get(), "layer");
-  ASSERT_NE(layer, nullptr);
-  EXPECT_EQ(layer->operand(0), FindInstruction(module.get(), "stack"));
-  EXPECT_EQ(layer->shape().layout(), LayoutUtil::MakeLayout({2, 1, 0}));
-  const HloInstruction* new_copy =
-      module->entry_computation()->root_instruction()->operand(0);
-  ASSERT_EQ(new_copy->opcode(), HloOpcode::kCopy);
-  EXPECT_EQ(new_copy->shape().layout(), LayoutUtil::MakeLayout({1, 0, 2}));
-  const HloInstruction* to_device = new_copy->operand(0);
-  EXPECT_TRUE(to_device->IsCustomCall(
-      memory_annotations::kMoveToDeviceCustomCallTarget));
-  EXPECT_EQ(to_device->shape().layout(), LayoutUtil::MakeLayout({2, 1, 0}));
-  EXPECT_EQ(to_device->operand(0), layer);
+  // The user of the slice still gets the layout assigned to the slice.
+  ExpectCopyMovedAfterSlice(module.get(), LayoutUtil::MakeLayout({1, 0, 2}));
 }
 
 }  // namespace

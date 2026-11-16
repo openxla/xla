@@ -258,24 +258,21 @@ int GetBitwidth(PrimitiveType type) {
 }
 
 bool IsContiguousSlice(const HloInstruction& instr) {
-  // A slice that produces its result in a different layout than its operand
-  // rearranges the elements, so its result is not a contiguous region of the
-  // operand buffer.
-  auto preserves_layout = [](const Shape& full_shape,
-                             const Shape& slice_shape) {
-    return Layout::Equal().MinorToMajorOnly()(full_shape.layout(),
-                                              slice_shape.layout());
-  };
+  // A slice or dynamic-slice whose result has a different dimension order
+  // than its operand rearranges the elements, so the result is not a
+  // contiguous region of the operand buffer. A dynamic-update-slice cannot
+  // change the layout.
+  Layout::Equal same_dimension_order = Layout::Equal().MinorToMajorOnly();
   if (auto slice = DynCast<HloSliceInstruction>(&instr)) {
     const Shape& full_shape = slice->operand(0)->shape();
     const Shape& slice_shape = slice->shape();
-    return preserves_layout(full_shape, slice_shape) &&
+    return same_dimension_order(full_shape.layout(), slice_shape.layout()) &&
            IsContiguousSlice(full_shape, slice_shape, slice->slice_strides());
 
   } else if (auto slice = DynCast<HloDynamicSliceInstruction>(&instr)) {
     const Shape& full_shape = slice->operand(0)->shape();
     const Shape& slice_shape = slice->shape();
-    return preserves_layout(full_shape, slice_shape) &&
+    return same_dimension_order(full_shape.layout(), slice_shape.layout()) &&
            IsContiguousSlice(full_shape, slice_shape, std::nullopt);
 
   } else if (auto slice = DynCast<HloDynamicUpdateSliceInstruction>(&instr)) {

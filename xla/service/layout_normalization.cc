@@ -112,7 +112,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     return absl::OkStatus();
   }
 
-  // Slice is normalized in the layout of its operand, analoguous to elementwise
+  // Slice is normalized in the layout of its operand, analogous to elementwise
   // unary, by transposing the elements inside the metadata. A slice whose
   // result layout differs from its operand layout is followed by a transpose.
   absl::Status HandleSlice(HloInstruction* hlo) override {
@@ -787,7 +787,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     return HandleTernary(hlo);
   }
 
-  // DynamicSlice is normalized in the layout of its operand, analoguous to
+  // DynamicSlice is normalized in the layout of its operand, analogous to
   // elementwise unary, by transposing the elements inside the metadata, as well
   // as the operands specifying dimension sizes. A dynamic-slice whose result
   // layout differs from its operand layout is followed by a transpose.
@@ -905,35 +905,37 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     return absl::OkStatus();
   }
 
-  // `normalized_slice` is the normalized form of a slice that has the logical
-  // shape of `s` and the layout `operand_layout` of the sliced operand. Returns
-  // an instruction of shape `s`, inserting a transpose if the layout of `s`
-  // orders the dimensions differently than `operand_layout`.
+  // Returns `normalized_slice`, the normalized form of a slice whose operand
+  // has layout `operand_layout`, converted to `result_shape`; inserts a
+  // transpose if the dimension orders differ.
   absl::StatusOr<HloInstruction*> ConvertSliceToResultLayout(
       HloInstruction* normalized_slice, const Layout& operand_layout,
-      const Shape& s) {
+      const Shape& result_shape) {
     // A slice may only reorder the dimensions. The transpose below does not
     // repack sub-byte elements or move data to another memory space, so every
     // other layout attribute has to match the operand.
     Layout expected_layout = operand_layout;
     expected_layout.mutable_minor_to_major()->assign(
-        s.layout().minor_to_major().begin(), s.layout().minor_to_major().end());
-    TF_RET_CHECK(s.layout() == expected_layout)
+        result_shape.layout().minor_to_major().begin(),
+        result_shape.layout().minor_to_major().end());
+    TF_RET_CHECK(result_shape.layout() == expected_layout)
         << "The layout of a slice may differ from the layout of its operand "
            "only in the dimension order, got slice layout "
-        << s.layout() << " and operand layout " << operand_layout;
-    if (Layout::Equal().MinorToMajorOnly()(s.layout(), operand_layout)) {
-      return MaybeBitcast(normalized_slice, s);
+        << result_shape.layout() << " and operand layout " << operand_layout;
+    if (Layout::Equal().MinorToMajorOnly()(result_shape.layout(),
+                                           operand_layout)) {
+      return MaybeBitcast(normalized_slice, result_shape);
     }
     std::vector<int64_t> operand_perm =
         InversePermutation(ToTransposeDimensions(operand_layout));
-    std::vector<int64_t> result_perm = ToTransposeDimensions(s.layout());
+    std::vector<int64_t> result_perm =
+        ToTransposeDimensions(result_shape.layout());
     HloInstruction* transpose =
         normalized_slice->AddInstruction(HloInstruction::CreateTranspose(
-            Normalize(s), normalized_slice,
+            Normalize(result_shape), normalized_slice,
             ComposePermutations(operand_perm, result_perm)));
     SetVisited(*transpose);
-    return MaybeBitcast(transpose, s);
+    return MaybeBitcast(transpose, result_shape);
   }
 
   std::vector<HloInstruction*> GetNewStartIdxs(
