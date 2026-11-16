@@ -220,6 +220,7 @@ bool IsFusible(const HloInstruction& instr) {
     case HloOpcode::kCopy:
     case HloOpcode::kIota:
     case HloOpcode::kConstant:
+    case HloOpcode::kMap:
     case HloOpcode::kReduce:
     case HloOpcode::kBroadcast:
     case HloOpcode::kConcatenate:

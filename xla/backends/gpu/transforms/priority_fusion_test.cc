@@ -2665,5 +2665,37 @@ ENTRY main {
   RunAndFilecheckHloRewrite(kHloText, std::move(priority_fusion_),
                             /*expected=*/std::nullopt);
 }
+
+// Verifies that PriorityFusion fuses elementwise producers and consumers
+// together with a `map` instruction into a single `kLoop` fusion.
+TEST_F(PriorityFusionTest, FusesProducerAndConsumerAroundMap) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule test_module
+
+mapper {
+  x = f32[] parameter(0)
+  ROOT y = f32[] exponential(x)
+}
+
+ENTRY main {
+  p0 = f32[1024]{0} parameter(0)
+  p1 = f32[1024]{0} parameter(1)
+  prod = f32[1024]{0} add(p0, p1)
+  mapped = f32[1024]{0} map(prod), dimensions={0}, to_apply=mapper
+  ROOT cons = f32[1024]{0} multiply(mapped, p0)
+})hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  EXPECT_THAT(priority_fusion_.Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, GmockMatch(m::Fusion(m::Parameter(0), m::Parameter(1))));
+  EXPECT_EQ(root->fusion_kind(), HloInstruction::FusionKind::kLoop);
+  EXPECT_THAT(
+      root->fused_expression_root(),
+      GmockMatch(m::Multiply(m::Map(m::Add(m::Parameter(0), m::Parameter(1))),
+                             m::Parameter(0))));
+}
 }  // namespace gpu
 }  // namespace xla

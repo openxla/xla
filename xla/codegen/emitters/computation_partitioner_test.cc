@@ -18,6 +18,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <string>
+#include <vector>
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/AffineExpr.h"
@@ -534,6 +535,198 @@ TEST_F(ComputationPartitionerTest, EmbeddedComputationSubgraphWithIndexRanges) {
   EXPECT_EQ(PrintAndErase(CreateSubgraphMlirFunction(dus_subgraph, builder)),
             "func.func private @compare_dus(i32, i32, "
             "index {xla.range = [0 : index, 2 : index]}) -> i32");
+}
+
+// Verifies that PartitionedComputations transitively discovers computations
+// called through nested map, conditional, while, and call instructions.
+TEST_F(ComputationPartitionerTest, TransitiveControlFlowDiscovery) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+
+    helper {
+      x = f32[] parameter(0)
+      ROOT neg = f32[] negate(x)
+    }
+
+    while_cond {
+      p = (s32[], f32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      n = s32[] constant(4)
+      ROOT cmp = pred[] compare(i, n), direction=LT
+    }
+
+    while_body {
+      p = (s32[], f32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      v = f32[] get-tuple-element(p), index=1
+      one = s32[] constant(1)
+      i_next = s32[] add(i, one)
+      v_next = f32[] call(v), to_apply=helper
+      ROOT next = (s32[], f32[]) tuple(i_next, v_next)
+    }
+
+    true_branch {
+      x = f32[] parameter(0)
+      zero = s32[] constant(0)
+      init = (s32[], f32[]) tuple(zero, x)
+      loop = (s32[], f32[]) while(init), condition=while_cond, body=while_body
+      ROOT res = f32[] get-tuple-element(loop), index=1
+    }
+
+    false_branch {
+      empty = () parameter(0)
+      ROOT z = f32[] constant(0)
+    }
+
+    mapper {
+      x = f32[] parameter(0)
+      z = f32[] constant(0)
+      lt = pred[] compare(x, z), direction=LT
+      empty = () tuple()
+      ROOT r = f32[] conditional(lt, x, empty),
+        true_computation=true_branch, false_computation=false_branch
+    }
+
+    fused_computation {
+      p0 = f32[8] parameter(0)
+      ROOT m = f32[8] map(p0), dimensions={0}, to_apply=mapper
+    }
+
+    ENTRY main {
+      p0 = f32[8] parameter(0)
+      ROOT f = f32[8] fusion(p0), kind=kLoop, calls=fused_computation
+    })"));
+
+  auto* fusion = module->GetComputationWithName("fused_computation");
+  ASSERT_NE(fusion, nullptr);
+  PartitionedComputations computations(fusion, &mlir_context_);
+
+  std::vector<std::string> names;
+  for (const auto& partitioned : computations.partitioned_computations()) {
+    names.emplace_back(partitioned.computation().name());
+  }
+  EXPECT_THAT(names, UnorderedElementsAre(
+                         "fused_computation", "mapper", "true_branch",
+                         "false_branch", "while_cond", "while_body", "helper"));
+}
+
+// Verifies that CreateSubgraphMlirFunction flattens nested tuple parameters and
+// results into scalar leaf types and omits empty-tuple parameters.
+TEST_F(ComputationPartitionerTest, NestedTupleSubgraphFunctionSignature) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+
+    callee {
+      p0 = ((s32[], f32[]), s64[]) parameter(0)
+      p1 = () parameter(1)
+      inner = (s32[], f32[]) get-tuple-element(p0), index=0
+      i = s32[] get-tuple-element(inner), index=0
+      x = f32[] get-tuple-element(inner), index=1
+      k = s64[] get-tuple-element(p0), index=1
+      pair = (s32[], s64[]) tuple(i, k)
+      ROOT out = (f32[], (s32[], s64[])) tuple(x, pair)
+    }
+
+    ENTRY main {
+      c0 = s32[] constant(1)
+      c1 = f32[] constant(2)
+      c2 = s64[] constant(3)
+      inner = (s32[], f32[]) tuple(c0, c1)
+      arg0 = ((s32[], f32[]), s64[]) tuple(inner, c2)
+      arg1 = () tuple()
+      ROOT res = (f32[], (s32[], s64[])) call(arg0, arg1), to_apply=callee
+    })"));
+
+  auto* callee = module->GetComputationWithName("callee");
+  ASSERT_NE(callee, nullptr);
+  PartitionedComputation computation(callee, &mlir_context_);
+
+  mlir::ImplicitLocOpBuilder builder(mlir::UnknownLoc::get(&mlir_context_),
+                                     &mlir_context_);
+  EXPECT_EQ(PrintAndErase(CreateSubgraphMlirFunction(
+                computation.GetRootSubgraph(), builder)),
+            "func.func private @callee_out(i32, f32, i64) -> (f32, i32, i64)");
+}
+
+// Verifies that a while loop whose tuple result is unpacked by multiple
+// get-tuple-element instructions stays in a single subgraph with its init tuple
+// and consumers.
+TEST_F(ComputationPartitionerTest, WhileWithMultipleGetTupleElements) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+
+    while_cond {
+      p = (s32[], f32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      n = s32[] constant(3)
+      ROOT cmp = pred[] compare(i, n), direction=LT
+    }
+
+    while_body {
+      p = (s32[], f32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      v = f32[] get-tuple-element(p), index=1
+      one = s32[] constant(1)
+      i_next = s32[] add(i, one)
+      v_next = f32[] add(v, v)
+      ROOT next = (s32[], f32[]) tuple(i_next, v_next)
+    }
+
+    ENTRY main {
+      c0 = s32[] constant(0)
+      x = f32[] parameter(0)
+      init = (s32[], f32[]) tuple(c0, x)
+      loop = (s32[], f32[]) while(init), condition=while_cond, body=while_body
+      out_i = s32[] get-tuple-element(loop), index=0
+      out_v = f32[] get-tuple-element(loop), index=1
+      i_f32 = f32[] convert(out_i)
+      ROOT out = f32[] add(i_f32, out_v)
+    })"));
+
+  PartitionedComputation computation(module->entry_computation(),
+                                     &mlir_context_);
+  constexpr auto kExpected = R"(PartitionedComputation main:
+      SUBGRAPH main_out {
+        %c0 = s32[] constant(0)
+        %x = f32[] parameter(0)
+        %init = (s32[], f32[]) tuple(%c0, %x)
+        %loop = (s32[], f32[]) while(%init), condition=%while_cond, body=%while_body
+        %out_i = s32[] get-tuple-element(%loop), index=0
+        %i_f32 = f32[] convert(%out_i)
+        %out_v = f32[] get-tuple-element(%loop), index=1
+        ROOT %out = f32[] add(%i_f32, %out_v)
+      })";
+  EXPECT_EQ(computation.ToString(6), kExpected);
+}
+
+// Verifies that an empty-tuple `()` subgraph (such as an unused `()` parameter
+// or shared `()` argument to `conditional` branches) produces a zero-argument,
+// zero-result MLIR function without crashing on empty `tuple_shapes()`.
+TEST_F(ComputationPartitionerTest, EmptyTupleSubgraphSignature) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+
+    branch {
+      empty = () parameter(0)
+      ROOT z = f32[] constant(0)
+    }
+
+    ENTRY main {
+      p = pred[] parameter(0)
+      empty = () tuple()
+      ROOT r = f32[] conditional(p, empty, empty),
+        true_computation=branch, false_computation=branch
+    })"));
+
+  auto* branch = module->GetComputationWithName("branch");
+  ASSERT_NE(branch, nullptr);
+  PartitionedComputation computation(branch, &mlir_context_);
+  mlir::ImplicitLocOpBuilder builder(mlir::UnknownLoc::get(&mlir_context_),
+                                     &mlir_context_);
+  const auto& empty_subgraph =
+      computation.FindSubgraph(branch->parameter_instruction(0));
+  EXPECT_EQ(PrintAndErase(CreateSubgraphMlirFunction(empty_subgraph, builder)),
+            "func.func private @branch_empty() attributes {no_compute = true}");
 }
 
 }  // namespace

@@ -73,7 +73,21 @@ llvm::SmallVector<mlir::Type> ShapeToMlirTypes(const Shape& shape,
   types.reserve(shape.IsTuple() ? shape.tuple_shapes().size() : 1);
   ShapeUtil::ForEachLeafShape(
       shape, [&](const Shape& subshape, const ShapeIndex&) {
-        types.push_back(TensorShapeToMlirType(subshape, b));
+        if (subshape.IsArray()) {
+          types.push_back(TensorShapeToMlirType(subshape, b));
+        }
+      });
+  return types;
+}
+
+llvm::SmallVector<mlir::Type> ShapeToElementTypes(const Shape& shape,
+                                                  mlir::OpBuilder& b) {
+  llvm::SmallVector<mlir::Type> types;
+  ShapeUtil::ForEachLeafShape(
+      shape, [&](const Shape& subshape, const ShapeIndex&) {
+        if (subshape.IsArray()) {
+          types.push_back(PrimitiveTypeToMlirType(subshape.element_type(), b));
+        }
       });
   return types;
 }

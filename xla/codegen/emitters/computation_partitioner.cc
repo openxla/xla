@@ -60,16 +60,31 @@ namespace {
 
 using ::mlir::MLIRContext;
 
-int Arity(const Shape& shape) {
-  return shape.IsTuple() ? shape.tuple_shapes().size() : 1;
-}
+int Arity(const Shape& shape) { return ShapeUtil::GetLeafCount(shape); }
 
-const Shape& TupleShape(const Shape& shape, int index) {
-  return shape.IsTuple() ? shape.tuple_shapes(index) : shape;
+const Shape* FirstLeafArrayShape(const Shape& shape) {
+  const Shape* result = nullptr;
+  ShapeUtil::ForEachLeafShape(shape,
+                              [&](const Shape& subshape, const ShapeIndex&) {
+                                if (result == nullptr && subshape.IsArray()) {
+                                  result = &subshape;
+                                }
+                              });
+  return result;
 }
 
 std::vector<IndexingMapSet> ComputeOperandIndexingMaps(
     const HloInstruction* instr, MLIRContext* mlir_context) {
+  // Control-flow ops, internal tuples, and tuple-returning `get-tuple-element`s
+  // have no array-indexing map in `indexing_analysis.cc`.
+  if (HloPredicateIsOp<HloOpcode::kWhile, HloOpcode::kConditional,
+                       HloOpcode::kCall>(instr) ||
+      (instr->opcode() == HloOpcode::kTuple && !instr->users().empty()) ||
+      (instr->opcode() == HloOpcode::kGetTupleElement &&
+       !instr->shape().IsArray())) {
+    return std::vector<IndexingMapSet>(instr->operand_count(),
+                                       {IndexingMap::GetUndefined()});
+  }
   std::vector<IndexingMapSet> indexing_maps_per_operand;
   // For some ops, there is no indexing map implemented for the operands (e.g.
   // scatter) or there are multiple results and the common iteration space is
@@ -79,8 +94,10 @@ std::vector<IndexingMapSet> ComputeOperandIndexingMaps(
     int64_t num_operands = instr->operand_count();
     indexing_maps_per_operand.reserve(num_operands);
     for (int64_t i = 0; i < num_operands; ++i) {
+      const Shape* op_leaf = FirstLeafArrayShape(instr->operand(i)->shape());
       indexing_maps_per_operand.push_back(
-          {CreateIdentityMap(instr->operand(i)->shape(), mlir_context)});
+          {op_leaf != nullptr ? CreateIdentityMap(*op_leaf, mlir_context)
+                              : IndexingMap::GetUndefined()});
     }
   } else {
     auto operands_indexing =
@@ -291,54 +308,24 @@ PartitionedComputation::PartitionedComputation(
   }
 
   subgraphs_.reserve(functions.size());
-  for (auto&& [function_id, instructions] : llvm::enumerate(functions)) {
-    std::vector<const HloInstruction*> roots;
-    std::vector<IndexingMap> root_indexing;
-    const xla::Shape* first_root_shape = nullptr;
-    bool has_no_compute = true;
-    for (auto* instruction : instructions) {
-      has_no_compute &= HasNoCompute(instruction);
-      if (id_to_subgraph_data[instr_to_id[instruction]].is_root) {
-        roots.push_back(instruction);
-        if (first_root_shape) {
-          CHECK(!instruction->shape().IsTuple())
-              << "Internal tuples are not supported";
-          if (ShapeUtil::EqualIgnoringElementType(*first_root_shape,
-                                                  instruction->shape())) {
-            root_indexing.push_back(root_indexing.front());
-          } else {
-            // Bitcast from the first root to the target shape.
-            root_indexing.push_back(GetBitcastMap(
-                *first_root_shape, instruction->shape(), mlir_context));
-          }
-        } else {
-          first_root_shape = &instruction->shape();
-          while (first_root_shape->IsTuple()) {
-            first_root_shape = &first_root_shape->tuple_shapes()[0];
-          }
-          root_indexing.push_back(
-              CreateIdentityMap(*first_root_shape, mlir_context));
-        }
-      }
-    }
+  for (const auto& instructions : functions) {
+    CHECK(!instructions.empty());
+    const HloInstruction* root = instructions.back();
+    CHECK(id_to_subgraph_data[instr_to_id[root]].is_root);
 
-    CHECK(first_root_shape);
-    std::vector<int64_t> ranges{first_root_shape->dimensions().begin(),
-                                first_root_shape->dimensions().end()};
+    const Shape* leaf_shape = FirstLeafArrayShape(root->shape());
+    absl::Span<const int64_t> dims = leaf_shape != nullptr
+                                         ? leaf_shape->dimensions()
+                                         : absl::Span<const int64_t>{};
 
-    CHECK(!roots.empty()) << "No roots found";
-    std::string name = llvm_ir::SanitizeFunctionName(absl::StrCat(
-        roots.front()->parent()->name(), "_",
-        absl::StrJoin(roots, "_", [](std::string* out, const auto* root) {
-          absl::StrAppend(out, root->name());
-        })));
     subgraphs_.push_back(Subgraph{
-        /* .name = */ std::move(name),
+        /* .name = */ llvm_ir::SanitizeFunctionName(
+            absl::StrCat(root->parent()->name(), "_", root->name())),
         /* .instructions = */ {instructions.begin(), instructions.end()},
-        /* .roots = */ std::move(roots),
-        /* .index_ranges = */ std::move(ranges),
-        /* .root_indexing = */ std::move(root_indexing),
-        /* .has_no_compute = */ has_no_compute});
+        /* .roots = */ {root},
+        /* .index_ranges = */ {dims.begin(), dims.end()},
+        /* .root_indexing = */ {CreateIdentityMap(dims, mlir_context)},
+        /* .has_no_compute = */ absl::c_all_of(instructions, HasNoCompute)});
   }
 
   for (const auto& subgraph : subgraphs_) {
@@ -473,6 +460,14 @@ CallTargetProvider PartitionedComputations::CreateCallTargetProvider(
   };
 }
 
+int64_t NumFlattenedParameters(const HloComputation& computation) {
+  int64_t count = 0;
+  for (const HloInstruction* param : computation.parameter_instructions()) {
+    count += ShapeUtil::GetLeafCount(param->shape());
+  }
+  return count;
+}
+
 mlir::func::FuncOp CreateSubgraphMlirFunction(
     const PartitionedComputation::Subgraph& subgraph,
     mlir::ImplicitLocOpBuilder& b) {
@@ -480,28 +475,22 @@ mlir::func::FuncOp CreateSubgraphMlirFunction(
   llvm::SmallVector<mlir::Type> parameter_types;
   llvm::SmallVector<mlir::Type> result_types;
 
-  auto element_type = [&](const auto& shape) {
-    return PrimitiveTypeToMlirType(shape.element_type(), b);
-  };
-
   for (auto* root : subgraph.roots) {
-    for (auto ty : ShapeToMlirTypes(root->shape(), b)) {
-      result_types.push_back(
-          mlir::cast<mlir::RankedTensorType>(ty).getElementType());
-    }
+    result_types.append(ShapeToElementTypes(root->shape(), b));
   }
 
   llvm::SmallVector<mlir::DictionaryAttr> arg_attrs;
-  // We support the entry computation here for convenience of testing. The entry
-  // computation is never code generated here.
+  // Emit one MLIR argument per flattened parameter leaf: `tensor<...>` buffers
+  // for fusion (and test entry) computations, or scalar element types for
+  // called computations (`map`, `reduce`, `while`, `conditional`, `call`).
   const bool is_fusion_or_entry =
       computation->IsFusionComputation() || computation->IsEntryComputation();
   for (const HloInstruction* param : computation->parameter_instructions()) {
-    parameter_types.push_back(is_fusion_or_entry
-                                  ? TensorShapeToMlirType(param->shape(), b)
-                                  : element_type(param->shape()));
-    arg_attrs.emplace_back();
+    parameter_types.append(is_fusion_or_entry
+                               ? ShapeToMlirTypes(param->shape(), b)
+                               : ShapeToElementTypes(param->shape(), b));
   }
+  arg_attrs.resize(parameter_types.size());
   for (int64_t size : subgraph.index_ranges) {
     parameter_types.push_back(b.getIndexType());
     arg_attrs.emplace_back(mlir::DictionaryAttr::get(
@@ -518,9 +507,9 @@ mlir::func::FuncOp CreateSubgraphMlirFunction(
   // Each value writes only its own slots, so iteration order does not matter.
   // NOLINTNEXTLINE(*-custom-deterministic-iteration-order)
   for (auto [value, start] : subgraph.injected_value_starts) {
-    for (int index = 0; index < Arity(value->shape()); ++index) {
-      parameter_types[operand_offset + start + index] =
-          element_type(TupleShape(value->shape(), index));
+    for (auto [index, leaf_ty] :
+         llvm::enumerate(ShapeToElementTypes(value->shape(), b))) {
+      parameter_types[operand_offset + start + index] = leaf_ty;
     }
   }
   auto ty = b.getFunctionType(parameter_types, result_types);
