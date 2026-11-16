@@ -13,19 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/literal.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/test.h"
 
@@ -34,14 +33,15 @@ namespace {
 
 // Tests NCCL group execution.
 
-class NcclGroupExecutionTest : public HloTestBase {
+class NcclGroupExecutionTest : public HloTestBase,
+                               public ::testing::WithParamInterface<bool> {
  public:
   NcclGroupExecutionTest() {
     VLOG(1) << "Running with " << test_runner().device_count() << " devices";
   }
 };
 
-TEST_F(NcclGroupExecutionTest, NcclGroupSendRecvNoWhileLoop) {
+TEST_P(NcclGroupExecutionTest, NcclGroupSendRecvNoWhileLoop) {
   // TODO (rosiezou): remove the channel_id=0 workaround once it is optional.
   const absl::string_view kModuleStr = R"(
   HloModule module_main, entry_computation_layout={()->(f32[], f32[])}
@@ -100,6 +100,8 @@ TEST_F(NcclGroupExecutionTest, NcclGroupSendRecvNoWhileLoop) {
 
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  config.mutable_debug_options()
+      .set_xla_gpu_experimental_explicit_launch_ordering(GetParam());
   std::unique_ptr<VerifiedHloModule> module;
   ASSERT_OK_AND_ASSIGN(module,
                        ParseAndReturnVerifiedModule(kModuleStr, config));
@@ -117,7 +119,7 @@ TEST_F(NcclGroupExecutionTest, NcclGroupSendRecvNoWhileLoop) {
   EXPECT_EQ(results[3].ToStringWithoutShapeOneline(), "( 0, 2000 )");
 }
 
-TEST_F(NcclGroupExecutionTest, BidirectionalCommunication) {
+TEST_P(NcclGroupExecutionTest, BidirectionalCommunication) {
   const absl::string_view kModuleStr = R"(
   HloModule module_main, entry_computation_layout={()->(u32[], u32[])}, replica_count=4
 
@@ -146,6 +148,8 @@ TEST_F(NcclGroupExecutionTest, BidirectionalCommunication) {
 
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  config.mutable_debug_options()
+      .set_xla_gpu_experimental_explicit_launch_ordering(GetParam());
   std::unique_ptr<VerifiedHloModule> module;
   ASSERT_OK_AND_ASSIGN(module,
                        ParseAndReturnVerifiedModule(kModuleStr, config));
@@ -160,6 +164,9 @@ TEST_F(NcclGroupExecutionTest, BidirectionalCommunication) {
   EXPECT_EQ(results[2].ToStringWithoutShapeOneline(), "( 1, 3 )");
   EXPECT_EQ(results[3].ToStringWithoutShapeOneline(), "( 2, 0 )");
 }
+
+INSTANTIATE_TEST_SUITE_P(ExplicitLaunchOrdering, NcclGroupExecutionTest,
+                         ::testing::Bool());
 
 }  // namespace
 

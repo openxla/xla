@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -27,24 +24,39 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "absl/base/casts.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/functional/any_invocable.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
+#include "xla/backends/gpu/collectives/mock_gpu_collectives.h"
+#include "xla/backends/gpu/collectives/mock_gpu_communicator.h"
+#include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
+#include "xla/backends/gpu/runtime/collective_group_thunk.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_state.h"
+#include "xla/backends/gpu/runtime/launch_ordering.h"
+#include "xla/backends/gpu/runtime/p2p_thunk_common.h"
+#include "xla/backends/gpu/runtime/recv_thunk.h"
+#include "xla/backends/gpu/runtime/send_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_test_utils.h"
@@ -509,6 +521,138 @@ TEST(AllToAllThunkTest, RunAllToAllSetsIsRmaFromBufferMemorySpace) {
   ASSERT_OK(RunAllToAll(/*has_split_dimension=*/false, collective_space_buffers,
                         *stream, comm));
   EXPECT_EQ(comm.last_is_rma(), true);
+}
+
+// With launch ordering the largest collective that is not a send or a receive
+// launches alone after the group of the others, and it alone has the event.
+TEST(CollectiveGroupThunkTest, LaunchOrderingLaunchesLargestCollectiveAlone) {
+  using ::testing::_;
+  using ::testing::ElementsAre;
+  using ::testing::NiceMock;
+  se::StreamExecutor* executor = GpuExecutor();
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+
+  DeviceAssignment device_assignment(/*replica_count=*/1,
+                                     /*computation_count=*/1);
+  device_assignment(0, 0) = 0;
+  ServiceExecutableRunOptions run_options;
+  run_options.mutable_run_options()->set_stream(stream.get());
+  run_options.mutable_run_options()->set_device_assignment(&device_assignment);
+  ASSERT_OK_AND_ASSIGN(
+      CollectiveParams collective_params,
+      CollectiveParams::Create(run_options,
+                               /*async_streams=*/{}, LocalDeviceId(0)));
+
+  // The calls of one group come between the entries group and end.
+  std::vector<std::string> launches;
+  int depth = 0;
+  auto in_group = [&](absl::FunctionRef<absl::Status()> calls) {
+    if (depth++ == 0) {
+      launches.push_back("group");
+    }
+    absl::Status status = calls();
+    if (--depth == 0) {
+      launches.push_back("end");
+    }
+    return status;
+  };
+  auto record = [&](const char* call) {
+    return [&launches, call]() -> Future<> {
+      launches.push_back(call);
+      return absl::OkStatus();
+    };
+  };
+  NiceMock<MockGpuCollectives> collectives;
+  ON_CALL(collectives, GroupLaunch(_, _))
+      .WillByDefault([&](absl::Span<const GpuCommunicator* const>,
+                         absl::FunctionRef<absl::Status()> calls) {
+        return in_group(calls);
+      });
+  collective_params.collectives = &collectives;
+
+  ReplicaGroup replica_group;
+  replica_group.add_replica_ids(0);
+  P2PConfig config;
+  config.config.operand_element_type = {F32};
+  config.config.replica_groups = {replica_group};
+  config.config.group_mode = COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA;
+  config.id_to_source_target[0] = {.source = 0, .target = 0};
+
+  // Sends and receives use the communicator with id 1, the others id 0.
+  std::vector<std::shared_ptr<LockableGpuClique>> cliques;
+  AcquiredCliquesMap cliques_map;
+  for (int id : {0, 1}) {
+    auto communicator = std::make_unique<NiceMock<MockGpuCommunicator>>();
+    ON_CALL(*communicator, GroupExecute(_))
+        .WillByDefault(
+            [&](absl::AnyInvocable<absl::Status()&&> calls) -> Future<> {
+              return in_group([&] { return std::move(calls)(); });
+            });
+    ON_CALL(*communicator, Send(_, _, _, _, _)).WillByDefault(record("send"));
+    ON_CALL(*communicator, Recv(_, _, _, _, _)).WillByDefault(record("recv"));
+    ON_CALL(*communicator, LaunchAllGather(_, _, _, _, _, _))
+        .WillByDefault([&](se::DeviceAddressBase, se::DeviceAddressBase,
+                           PrimitiveType, size_t count,
+                           const Communicator::Executor& on, bool) {
+          bool event = absl::down_cast<const GpuCollectives::Executor&>(on)
+                           .launch_event() != nullptr;
+          launches.push_back(
+              absl::StrCat("all-gather ", count, event ? " with event" : ""));
+          return absl::OkStatus();
+        });
+    ASSERT_OK_AND_ASSIGN(
+        GpuCliqueKey clique_key,
+        GetGpuCliqueKey(collective_params, config.config.replica_groups,
+                        config.config.group_mode, CommunicationId(id)));
+    absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators;
+    communicators.emplace(RankId(0), std::move(communicator));
+    cliques.push_back(std::make_shared<LockableGpuClique>(
+        clique_key, std::nullopt, std::move(communicators),
+        /*peer_access_enabled=*/true, std::make_shared<CancellationToken>()));
+    cliques_map.emplace(clique_key, std::make_shared<LockableGpuClique::Lock>(
+                                        cliques.back()->Acquire()));
+  }
+  CollectiveCliques collective_cliques(std::move(cliques_map));
+
+  // The send and the receive hold the largest buffers of the group.
+  BufferAllocation allocation(/*index=*/0, 16 * sizeof(float), /*color=*/0);
+  auto buffer = [&](int64_t elements) {
+    ShapedSlice slice{
+        BufferAllocation::Slice(&allocation, 0, elements * sizeof(float)),
+        ShapeUtil::MakeShape(F32, {elements})};
+    return CollectiveThunk::Buffer{.element_count = elements,
+                                   .source_buffer = slice,
+                                   .destination_buffer = slice,
+                                   .source_memory_space = 0,
+                                   .destination_memory_space = 0};
+  };
+  ThunkSequence thunks;
+  thunks.Emplace<AllGatherThunk>(
+      Thunk::ThunkInfo(), config.config,
+      std::vector<CollectiveThunk::Buffer>{buffer(8)});
+  thunks.Emplace<SendThunk>(Thunk::ThunkInfo(), config, buffer(16), "send");
+  thunks.Emplace<RecvThunk>(Thunk::ThunkInfo(), config, buffer(16), "recv");
+  thunks.Emplace<AllGatherThunk>(
+      Thunk::ThunkInfo(), config.config,
+      std::vector<CollectiveThunk::Buffer>{buffer(4)});
+  CollectiveGroupThunk group(Thunk::ThunkInfo(), Thunk::kGroup,
+                             std::move(thunks));
+
+  se::DeviceAddress<float> memory = executor->AllocateArray<float>(16, 0);
+  se::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations allocations({memory}, 0, &allocator);
+  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
+      run_options, allocations, stream.get(),
+      /*command_buffer_trace_stream=*/stream.get(), &collective_params,
+      &collective_cliques, /*collective_memory=*/nullptr);
+  LaunchOrdering ordering(
+      executor->GetOrConstructResource<LaunchEventPool>(executor));
+  params.launch_ordering = &ordering;
+
+  ASSERT_OK(group.ExecuteOnStream(params));
+  EXPECT_THAT(launches,
+              ElementsAre("group", "send", "recv", "all-gather 4", "end",
+                          "group", "all-gather 8 with event", "end"));
 }
 
 }  // namespace

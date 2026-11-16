@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -67,6 +68,10 @@ class CollectiveGroupThunk : public TracedCommand {
   std::string ToString(int indent) const override;
 
  private:
+  // Launches the thunks that the filter accepts as one group.
+  absl::Status ExecuteGroup(const ExecuteParams& params,
+                            absl::FunctionRef<bool(const Thunk&)> in_group);
+
   ThunkExecutor executor_;
 };
 

@@ -84,6 +84,8 @@ class ThunkExecutor {
   absl::Status Prepare(const Thunk::PrepareParams& params);
   absl::Status Initialize(const Thunk::InitializeParams& params);
   absl::Status ExecuteOnStream(const Thunk::ExecuteParams& params);
+  absl::Status ExecuteOnStream(const Thunk::ExecuteParams& params,
+                               absl::FunctionRef<bool(const Thunk&)> filter);
 
   const ThunkSequence& thunks() const { return thunks_; }
   ThunkSequence& thunks() { return thunks_; }

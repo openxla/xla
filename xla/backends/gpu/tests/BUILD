@@ -1307,7 +1307,7 @@ xla_test(
         "//xla:literal",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/service:hlo_module_config",
-        "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:test",

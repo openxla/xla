@@ -87,12 +87,21 @@ absl::Status ThunkExecutor::Initialize(const Thunk::InitializeParams& params) {
 
 absl::Status ThunkExecutor::ExecuteOnStream(
     const Thunk::ExecuteParams& params) {
+  return ExecuteOnStream(params, [](const Thunk&) { return true; });
+}
+
+absl::Status ThunkExecutor::ExecuteOnStream(
+    const Thunk::ExecuteParams& params,
+    absl::FunctionRef<bool(const Thunk&)> filter) {
   auto* progress_tracker = ScopedProgressTracker::installed;
   auto* definition_tracker = ScopedDefinitionTracker::installed;
   int32_t device_ordinal = params.stream->parent()->device_ordinal();
 
   for (size_t i = 0; i < thunks_.size(); ++i) {
     const std::unique_ptr<Thunk>& thunk = thunks_[i];
+    if (!filter(*thunk)) {
+      continue;
+    }
     tsl::profiler::TraceMe trace(thunk->profile_annotation());
 
     std::optional<tsl::profiler::ScopedAnnotation> annotation =
