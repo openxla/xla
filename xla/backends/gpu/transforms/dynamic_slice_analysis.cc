@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/overflow_util.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
@@ -290,7 +291,7 @@ static std::optional<InitStep> GetInitStepForVariable(
     return std::nullopt;
   }
   int64_t tuple_idx = gte->tuple_index();
-  if (config.has_known_induction_variable() &&
+  if (config.has_known_induction_variable() && config.has_known_init_step() &&
       config.known_induction_variable().tuple_index() == tuple_idx) {
     return InitStep{config.known_init_step().init(),
                     config.known_init_step().step()};
@@ -391,12 +392,17 @@ static std::optional<StaggeredVariable> TryResolveStaggeredVariable(
   if (!init_value) {
     return std::nullopt;
   }
-  int64_t expected_init_value =
-      config->known_init_step().init() - config->known_init_step().step();
-  if (*init_value != expected_init_value) {
+  // Check `init_value + step == init` rather than computing `init - step`: the
+  // backend config fields are unvalidated, so the subtraction could overflow.
+  std::optional<int64_t> reconstructed_init =
+      OverflowSafeAdd(*init_value, config->known_init_step().step());
+  if (!reconstructed_init ||
+      *reconstructed_init != config->known_init_step().init()) {
     VLOG(5) << "Staggered slot " << staggered_index << " of "
             << while_loop->name() << " starts at " << *init_value
-            << " instead of init - step = " << expected_init_value << ".";
+            << " which is not init - step for init="
+            << config->known_init_step().init()
+            << ", step=" << config->known_init_step().step() << ".";
     return std::nullopt;
   }
 

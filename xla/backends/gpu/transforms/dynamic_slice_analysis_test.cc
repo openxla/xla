@@ -240,14 +240,16 @@ TEST_F(DynamicSliceAnalysisTest, ResolvedDynamicVariableUsesItsInitAndStep) {
 }
 
 // A non-induction variable needs both init and step. A partial entry is not
-// completed from the induction variable's known_init_step.
+// completed from the induction variable's known_init_step. The HloVerifier
+// rejects such entries, so the module is left unverified to exercise the
+// analysis' defensive handling.
 TEST_F(DynamicSliceAnalysisTest, PartialDynamicVariableIsNotAnalyzed) {
   for (absl::string_view entry : {R"({"init":"2","tuple_index":"2"})",
                                   R"({"step":"1","tuple_index":"2"})"}) {
     SCOPED_TRACE(entry);
     ASSERT_OK_AND_ASSIGN(
         auto module,
-        ParseAndReturnVerifiedModule(PrefetchCounterHlo(
+        ParseAndReturnUnverifiedModule(PrefetchCounterHlo(
             std::string(R"({"tuple_index":"0"},)") + std::string(entry))));
     ASSERT_OK_AND_ASSIGN(auto desc, AnalyzeByName(module.get(), "slice"));
     EXPECT_FALSE(desc.has_value());
@@ -290,12 +292,13 @@ std::string InductionVariableSliceHlo(absl::string_view dynamic_variables) {
          std::string(dynamic_variables) + "]}\n    }";
 }
 
-// An induction variable entry that agrees with known_init_step, fully or
-// partially, does not change the result: offset = 2*256, stride = 3*256.
+// An induction variable entry that agrees with known_init_step, or sets
+// neither init nor step, does not change the result: offset = 2*256,
+// stride = 3*256.
 TEST_F(DynamicSliceAnalysisTest, InductionVariableEntryAgreeingIsAnalyzed) {
   for (absl::string_view entry :
        {R"({"init":"2","step":"3","tuple_index":"0"})",
-        R"({"step":"3","tuple_index":"0"})", R"({"tuple_index":"0"})"}) {
+        R"({"tuple_index":"0"})"}) {
     SCOPED_TRACE(entry);
     ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(
                                           InductionVariableSliceHlo(entry)));

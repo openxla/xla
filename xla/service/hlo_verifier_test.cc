@@ -4497,7 +4497,7 @@ std::string WhileWithDynamicVariablesHlo(absl::string_view dynamic_variables) {
 TEST_F(HloVerifierTest, WhileInductionVariableEntryAgreeingWithInitStep) {
   for (absl::string_view entries :
        {"", R"({"init":"2","step":"3","tuple_index":"0"})",
-        R"({"step":"3","tuple_index":"0"})", R"({"tuple_index":"0"})",
+        R"({"tuple_index":"0"})",
         R"({"init":"0","step":"1","tuple_index":"1"})"}) {
     SCOPED_TRACE(entries);
     ASSERT_OK_AND_ASSIGN(
@@ -4510,7 +4510,7 @@ TEST_F(HloVerifierTest, WhileInductionVariableEntryAgreeingWithInitStep) {
 TEST_F(HloVerifierTest, WhileInductionVariableEntryContradictingInitStep) {
   for (absl::string_view entries :
        {R"({"init":"0","step":"3","tuple_index":"0"})",
-        R"({"step":"1","tuple_index":"0"})"}) {
+        R"({"init":"2","step":"1","tuple_index":"0"})"}) {
     SCOPED_TRACE(entries);
     ASSERT_OK_AND_ASSIGN(
         auto module,
@@ -4519,6 +4519,24 @@ TEST_F(HloVerifierTest, WhileInductionVariableEntryContradictingInitStep) {
         verifier().Run(module.get()),
         absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition,
                                HasSubstr("disagrees with known_init_step")));
+  }
+}
+
+TEST_F(HloVerifierTest, WhileDynamicVariableEntryWithOnlyInitOrStep) {
+  // Half-populated entries violate the "set both or neither" contract, for the
+  // induction variable (index 0) and any other variable (index 1) alike.
+  for (absl::string_view entries : {R"({"step":"3","tuple_index":"0"})",
+                                    R"({"init":"2","tuple_index":"0"})",
+                                    R"({"step":"1","tuple_index":"1"})",
+                                    R"({"init":"0","tuple_index":"1"})"}) {
+    SCOPED_TRACE(entries);
+    ASSERT_OK_AND_ASSIGN(
+        auto module,
+        ParseAndReturnUnverifiedModule(WhileWithDynamicVariablesHlo(entries)));
+    EXPECT_THAT(verifier().Run(module.get()),
+                absl_testing::StatusIs(
+                    absl::StatusCode::kFailedPrecondition,
+                    HasSubstr("must set both init and step or neither")));
   }
 }
 
