@@ -131,8 +131,7 @@ class FakeHttpRequest : public CurlHttpRequest {
     EXPECT_EQ(expected_request_, actual_request())
         << "Unexpected HTTP request.";
     if (buffer_) {
-      buffer_->insert(buffer_->begin(), response_.data(),
-                      response_.data() + response_.size());
+      buffer_->insert(buffer_->begin(), response_.begin(), response_.end());
     } else if (direct_result_buffer_ != nullptr) {
       size_t bytes_to_copy =
           std::min<size_t>(direct_result_buffer_size_, response_.size());
