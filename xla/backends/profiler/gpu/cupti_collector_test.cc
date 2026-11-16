@@ -275,6 +275,191 @@ TEST(CuptiCollectorTest, ExportEnvironmentEvents) {
   EXPECT_EQ(num_planes_to_check, 1);
 }
 
+TEST(CuptiCollectorTest, ExportEnvironmentEventsInAggregatedTracing) {
+  CuptiTracerCollectorOptions options;
+  options.num_gpus = 1;
+  options.aggregated_tracing = true;
+  std::unique_ptr<CuptiTraceCollector> collector =
+      CreateCuptiCollector(options, /*start_walltime_ns=*/0,
+                           /*start_gputime_ns=*/50);
+
+  collector->AddEvent(CuptiTracerEvent{
+      /*type=*/CuptiTracerEventType::Environment,
+      /*source=*/CuptiTracerEventSource::Activity,
+      /*name=*/"power_mw",
+      /*annotation=*/"",
+      /*nvtx_range=*/"",
+      /*start_time_ns=*/100,
+      /*end_time_ns=*/100,
+      /*device_id=*/0,
+      /*correlation_id=*/0,
+      /*thread_id=*/0,
+      /*context_id=*/0,
+      /*stream_id=*/0,
+      /*graph_id=*/0,
+      /*scope_range_id=*/0,
+      /*graph_node_id=*/0,
+      /*environment_info=*/{{/*metric_value=*/1000}},
+  });
+
+  collector->AddEvent(CuptiTracerEvent{
+      /*type=*/CuptiTracerEventType::Environment,
+      /*source=*/CuptiTracerEventSource::Activity,
+      /*name=*/"power_mw",
+      /*annotation=*/"",
+      /*nvtx_range=*/"",
+      /*start_time_ns=*/150,
+      /*end_time_ns=*/150,
+      /*device_id=*/0,
+      /*correlation_id=*/0,
+      /*thread_id=*/0,
+      /*context_id=*/0,
+      /*stream_id=*/0,
+      /*graph_id=*/0,
+      /*scope_range_id=*/0,
+      /*graph_node_id=*/0,
+      /*environment_info=*/{{/*metric_value=*/1200}},
+  });
+
+  collector->AddEvent(CuptiTracerEvent{
+      /*type=*/CuptiTracerEventType::Environment,
+      /*source=*/CuptiTracerEventSource::Activity,
+      /*name=*/"gpu_temp_c",
+      /*annotation=*/"",
+      /*nvtx_range=*/"",
+      /*start_time_ns=*/110,
+      /*end_time_ns=*/110,
+      /*device_id=*/0,
+      /*correlation_id=*/0,
+      /*thread_id=*/0,
+      /*context_id=*/0,
+      /*stream_id=*/0,
+      /*graph_id=*/0,
+      /*scope_range_id=*/0,
+      /*graph_node_id=*/0,
+      /*environment_info=*/{{/*metric_value=*/65}},
+  });
+
+  XSpace space;
+  collector->Export(&space, /*end_gpu_ns=*/210);
+
+  const tensorflow::profiler::XPlane* gpu_plane =
+      tsl::profiler::FindPlaneWithName(space, tsl::profiler::GpuPlaneName(0));
+  ASSERT_NE(gpu_plane, nullptr);
+  ASSERT_EQ(gpu_plane->lines_size(), 1);
+  EXPECT_EQ(gpu_plane->lines(0).name(), tsl::profiler::kCounterEventsLineName);
+  EXPECT_EQ(gpu_plane->lines(0).events_size(), 3);
+  absl::flat_hash_map<std::string, absl::flat_hash_map<uint64_t, double>>
+      counter_events_values;
+  for (const auto& event : gpu_plane->lines(0).events()) {
+    counter_events_values[gpu_plane->event_metadata()
+                              .at(event.metadata_id())
+                              .name()][event.offset_ps()] =
+        event.stats(0).double_value();
+  }
+  EXPECT_THAT(counter_events_values,
+              UnorderedElementsAre(
+                  Pair("power_mw", UnorderedElementsAre(Pair(50000, 1000.0),
+                                                        Pair(100000, 1200.0))),
+                  Pair("gpu_temp_c", UnorderedElementsAre(Pair(60000, 65.0)))));
+}
+
+TEST(CuptiCollectorTest, ExportEnvironmentEventsSkipsOutOfRangeTimestamps) {
+  CuptiTracerCollectorOptions options;
+  options.num_gpus = 1;
+  std::unique_ptr<CuptiTraceCollector> collector =
+      CreateCuptiCollector(options, /*start_walltime_ns=*/100,
+                           /*start_gputime_ns=*/100);
+
+  // Timestamp 0 (failed timestamp collection in CUPTI) and pre-start timestamp
+  // 50 should be skipped without uint64_t underflow.
+  collector->AddEvent(CuptiTracerEvent{
+      /*type=*/CuptiTracerEventType::Environment,
+      /*source=*/CuptiTracerEventSource::Activity,
+      /*name=*/"power_mw",
+      /*annotation=*/"",
+      /*nvtx_range=*/"",
+      /*start_time_ns=*/0,
+      /*end_time_ns=*/0,
+      /*device_id=*/0,
+      /*correlation_id=*/0,
+      /*thread_id=*/0,
+      /*context_id=*/0,
+      /*stream_id=*/0,
+      /*graph_id=*/0,
+      /*scope_range_id=*/0,
+      /*graph_node_id=*/0,
+      /*environment_info=*/{{/*metric_value=*/900}},
+  });
+  collector->AddEvent(CuptiTracerEvent{
+      /*type=*/CuptiTracerEventType::Environment,
+      /*source=*/CuptiTracerEventSource::Activity,
+      /*name=*/"power_mw",
+      /*annotation=*/"",
+      /*nvtx_range=*/"",
+      /*start_time_ns=*/50,
+      /*end_time_ns=*/50,
+      /*device_id=*/0,
+      /*correlation_id=*/0,
+      /*thread_id=*/0,
+      /*context_id=*/0,
+      /*stream_id=*/0,
+      /*graph_id=*/0,
+      /*scope_range_id=*/0,
+      /*graph_node_id=*/0,
+      /*environment_info=*/{{/*metric_value=*/950}},
+  });
+  // In-range event at 150 ns (offset 50 ns = 50000 ps).
+  collector->AddEvent(CuptiTracerEvent{
+      /*type=*/CuptiTracerEventType::Environment,
+      /*source=*/CuptiTracerEventSource::Activity,
+      /*name=*/"power_mw",
+      /*annotation=*/"",
+      /*nvtx_range=*/"",
+      /*start_time_ns=*/150,
+      /*end_time_ns=*/150,
+      /*device_id=*/0,
+      /*correlation_id=*/0,
+      /*thread_id=*/0,
+      /*context_id=*/0,
+      /*stream_id=*/0,
+      /*graph_id=*/0,
+      /*scope_range_id=*/0,
+      /*graph_node_id=*/0,
+      /*environment_info=*/{{/*metric_value=*/1100}},
+  });
+  // Post-end event at 250 ns should be skipped.
+  collector->AddEvent(CuptiTracerEvent{
+      /*type=*/CuptiTracerEventType::Environment,
+      /*source=*/CuptiTracerEventSource::Activity,
+      /*name=*/"power_mw",
+      /*annotation=*/"",
+      /*nvtx_range=*/"",
+      /*start_time_ns=*/250,
+      /*end_time_ns=*/250,
+      /*device_id=*/0,
+      /*correlation_id=*/0,
+      /*thread_id=*/0,
+      /*context_id=*/0,
+      /*stream_id=*/0,
+      /*graph_id=*/0,
+      /*scope_range_id=*/0,
+      /*graph_node_id=*/0,
+      /*environment_info=*/{{/*metric_value=*/1300}},
+  });
+
+  XSpace space;
+  collector->Export(&space, /*end_gpu_ns=*/200);
+
+  const tensorflow::profiler::XPlane* gpu_plane =
+      tsl::profiler::FindPlaneWithName(space, tsl::profiler::GpuPlaneName(0));
+  ASSERT_NE(gpu_plane, nullptr);
+  ASSERT_EQ(gpu_plane->lines_size(), 1);
+  ASSERT_EQ(gpu_plane->lines(0).events_size(), 1);
+  EXPECT_EQ(gpu_plane->lines(0).events(0).offset_ps(), 50000);
+  EXPECT_EQ(gpu_plane->lines(0).events(0).stats(0).double_value(), 1100.0);
+}
+
 TEST(PmSamplesTest, PopulateCounterLineSkipsNan) {
   XSpace space;
   tsl::profiler::XPlaneBuilder plane_builder(space.add_planes());
