@@ -255,24 +255,6 @@ double PowCpuBf16F32AbsErr(NativeT left, NativeT right) {
     return std::numeric_limits<NativeRefT>::min();
   }
 
-  // TODO(b/359325328): pow computation for subnormal bases is different from
-  // std::pow.
-  //
-  // If the base is subnormal, the output computation selects a different base.
-  // The minimum value ever chosen is slightly greater than the 1e-91 used
-  // below. We return an absolute error from this value to the "real" output.
-  //
-  // Because the exponent (right) can be any floating point value, this allows
-  // an arbitrary absolute error for subnormal values.
-  if (IsSubnormal(left)) {
-    NativeT output_as_bf16 = static_cast<NativeT>(output);
-    auto expected = std::pow(1e-91, static_cast<double>(right));
-    auto err = std::abs(expected - output_as_bf16);
-    if (!std::isnan(err)) {
-      return err;
-    }
-  }
-
   return 0.0;
 }
 

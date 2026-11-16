@@ -1829,6 +1829,61 @@ TEST_F(ArrayElementwiseOpTest, PowNonIntegerF32s) {
                              error_spec_);
 }
 
+TEST_F(ArrayElementwiseOpTest, PowF32SubnormalOperands) {
+  // Only XLA:CPU treats subnormal inputs as zero.
+  if (!test::DeviceTypeIs(test::kCpu)) {
+    GTEST_SKIP() << "Subnormal flushing is specific to the CPU backend.";
+  }
+  XlaBuilder builder(TestName());
+  constexpr float kInf = std::numeric_limits<float>::infinity();
+  const float sub = std::numeric_limits<float>::min() / 2;
+  const float tiny = std::numeric_limits<float>::denorm_min();
+  // Parameters keep the operands from being constant-folded on the host.
+  const Literal lhs_literal =
+      LiteralUtil::CreateR1<float>({sub, tiny, sub, -sub, -sub, 2.0f, -2.0f});
+  auto lhs = Parameter(&builder, 0, lhs_literal.shape(), "lhs");
+  const Literal rhs_literal =
+      LiteralUtil::CreateR1<float>({0.5f, 0.3f, -0.5f, 3.0f, -3.0f, tiny, sub});
+  auto rhs = Parameter(&builder, 1, rhs_literal.shape(), "rhs");
+  // Compare bits: the usual tolerance accepts tiny wrong values and -0 for +0.
+  BitcastConvertType(Pow(lhs, rhs), U32);
+
+  // pow(+-0, y) for the first five pairs and pow(x, 0) for the last two.
+  auto bits = [](float value) { return absl::bit_cast<uint32_t>(value); };
+  ComputeAndCompareR1<uint32_t>(
+      &builder,
+      {bits(0.0f), bits(0.0f), bits(kInf), bits(-0.0f), bits(-kInf), bits(1.0f),
+       bits(1.0f)},
+      {&lhs_literal, &rhs_literal});
+}
+
+TEST_F(ArrayElementwiseOpTest, PowF64SubnormalOperands) {
+  // Only XLA:CPU treats subnormal inputs as zero.
+  if (!test::DeviceTypeIs(test::kCpu)) {
+    GTEST_SKIP() << "Subnormal flushing is specific to the CPU backend.";
+  }
+  XlaBuilder builder(TestName());
+  constexpr double kInf = std::numeric_limits<double>::infinity();
+  const double sub = std::numeric_limits<double>::min() / 2;
+  const double tiny = std::numeric_limits<double>::denorm_min();
+  // Parameters keep the operands from being constant-folded on the host.
+  const Literal lhs_literal =
+      LiteralUtil::CreateR1<double>({sub, tiny, sub, -sub, -sub, 2.0, -2.0});
+  auto lhs = Parameter(&builder, 0, lhs_literal.shape(), "lhs");
+  const Literal rhs_literal =
+      LiteralUtil::CreateR1<double>({0.5, 0.3, -0.5, 3.0, -3.0, tiny, sub});
+  auto rhs = Parameter(&builder, 1, rhs_literal.shape(), "rhs");
+  // Compare bits: the usual tolerance accepts tiny wrong values and -0 for +0.
+  BitcastConvertType(Pow(lhs, rhs), U64);
+
+  // pow(+-0, y) for the first five pairs and pow(x, 0) for the last two.
+  auto bits = [](double value) { return absl::bit_cast<uint64_t>(value); };
+  ComputeAndCompareR1<uint64_t>(&builder,
+                                {bits(0.0), bits(0.0), bits(kInf), bits(-0.0),
+                                 bits(-kInf), bits(1.0), bits(1.0)},
+                                {&lhs_literal, &rhs_literal});
+}
+
 TEST_F(ArrayElementwiseOpTest, PowC64s) {
   SetFastMathDisabled(true);
   XlaBuilder builder(TestName());
