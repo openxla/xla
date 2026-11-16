@@ -2871,6 +2871,35 @@ TEST_F(TpuOpsVerificationTest, MemRefPadOpInvalidBounds) {
       StatusIs(_, HasSubstr("must not exceed the tile-aligned bound (16)")));
 }
 
+TEST_F(TpuOpsVerificationTest, MemRefReshapeOpDynamicSizes) {
+  auto in_layout = TiledLayoutAttr::getContiguous(
+      builder().getContext(), {xla::Tile({1, 128})},
+      {ShapedType::kDynamic, 1, 128});
+  auto out_layout = TiledLayoutAttr::getContiguous(
+      builder().getContext(), {xla::Tile({1, 128})},
+      {ShapedType::kDynamic, ShapedType::kDynamic, 128});
+  auto hbm = MemorySpaceAttr::get(builder().getContext(), MemorySpace::kHbm);
+  Value source =
+      Create<memref::AllocaOp>(MemRefType::get({ShapedType::kDynamic, 1, 128},
+                                               i32(), in_layout, hbm),
+                               ValueRange{Create<arith::ConstantIndexOp>(64)})
+          .getMemref();
+  Value d0 = Create<arith::ConstantIntOp>(8, /*width=*/32);
+  Value d1 = Create<arith::ConstantIntOp>(8, /*width=*/32);
+  auto out_type =
+      MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic, 128}, i32(),
+                      out_layout, hbm);
+
+  EXPECT_THAT(
+      VerifyOp(Create<MemRefReshapeOp>(out_type, source, ValueRange{d0, d1})),
+      absl_testing::IsOk());
+  EXPECT_THAT(
+      VerifyOp(Create<MemRefReshapeOp>(out_type, source, ValueRange{d0})),
+      StatusIs(_, HasSubstr("Expected 2 dynamic sizes, got 1.")));
+  EXPECT_THAT(VerifyOp(Create<MemRefReshapeOp>(out_type, source)),
+              StatusIs(_, HasSubstr("Multiple result dynamic dimensions")));
+}
+
 TEST_F(TpuOpsVerificationTest, ConcatenateOpValid) {
   Value lhs = ConstantF32Vector(/*shape=*/{4, 128}, /*values=*/{1.0f});
   Value rhs = ConstantF32Vector(/*shape=*/{8, 128}, /*values=*/{2.0f});
