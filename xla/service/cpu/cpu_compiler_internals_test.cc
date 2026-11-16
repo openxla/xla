@@ -13,9 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -24,6 +21,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
@@ -56,9 +55,12 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/service/compiled_module.h"
+#include "xla/service/cpu/cpu_aot_compilation_result.h"
 #include "xla/service/cpu/cpu_compiler.h"
 #include "xla/service/cpu/cpu_executable.h"
 #include "xla/service/cpu/cpu_options.h"
+#include "xla/service/cpu/test_target_triple_helper.h"
 #include "xla/service/cpu/thunk_emitter.h"
 #include "xla/service/executable.h"
 #include "xla/service/llvm_compiler.h"
@@ -262,6 +264,36 @@ TEST_F(CpuCompilerInternalsTest, ZeroParallelCodegenSplitCountReturnsError) {
       absl_testing::StatusIs(
           absl::StatusCode::kInternal,
           ::testing::HasSubstr("xla_cpu_parallel_codegen_split_count")));
+}
+
+TEST_F(CpuCompilerInternalsTest, AotCompilationRejectsStorageComplexTypes) {
+  for (const char* type : {"c32", "bc32"}) {
+    SCOPED_TRACE(type);
+    const std::string text =
+        absl::StrCat(R"hlo(
+      HloModule storage_complex_aot
+
+      ENTRY main {
+        ROOT root = )hlo",
+                     type,
+                     R"hlo([2] constant({(0.5, -0.25), (1.5, 2)})
+      }
+    )hlo");
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                         ParseAndReturnVerifiedModule(text));
+    CpuCompiler cpu_compiler;
+
+    CpuAotCompilationOptions aot_compilation_options(
+        /*triple=*/kTargetTripleForHost, /*cpu_name=*/kTargetCpuForHost,
+        /*features=*/"",
+        /*entry_point_name=*/"main",
+        CpuAotCompilationOptions::RelocationModel::BigPic);
+
+    EXPECT_THAT(cpu_compiler.CompileAheadOfTime(std::move(hlo_module),
+                                                aot_compilation_options),
+                absl_testing::StatusIs(absl::StatusCode::kUnimplemented,
+                                       ::testing::HasSubstr(type)));
+  }
 }
 
 TEST_F(CpuCompilerInternalsTest, IdenticalSmallWhileLoopsShareKernel) {

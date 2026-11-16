@@ -167,7 +167,13 @@ absl::StatusOr<mlir::DenseElementsAttr> CreateDenseElementsAttrFromLiteral(
       absl::StatusOr<mlir::DenseElementsAttr>>(
       [&](auto primitive_type_constant)
           -> absl::StatusOr<mlir::DenseElementsAttr> {
-        if constexpr (primitive_util::IsArrayType(primitive_type_constant)) {
+        if constexpr (primitive_type_constant == C32 ||
+                      primitive_type_constant == BC32) {
+          return Unimplemented(
+              "C32/BC32 literals are not supported by the HLO-to-MHLO "
+              "conversion yet");
+        } else if constexpr (primitive_util::IsArrayType(
+                                 primitive_type_constant)) {
           return CreateDenseAttrFromLiteral<
               primitive_util::NativeTypeOf<primitive_type_constant>>(type,
                                                                      literal);

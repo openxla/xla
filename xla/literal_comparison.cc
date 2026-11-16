@@ -34,7 +34,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -42,6 +41,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "Eigen/Core"
 #include "xla/error_spec.h"
 #include "xla/fp_util.h"
 #include "xla/index_util.h"
@@ -259,7 +259,7 @@ inline double RoundUpTo1SigFig(double val) {
 }
 
 // Base class for NearComparator<NativeT> factored out to avoid duplicating
-// type-independent state, setup, and error formatting across all 17
+// type-independent state, setup, and error formatting across
 // floating-point and complex primitive type instantiations.
 class NearComparatorBase {
  protected:
@@ -625,7 +625,7 @@ class NearComparator : private NearComparatorBase {
   // Compares the two given elements from the expected and actual literals at
   // the given literal_index and keeps track of various mismatch statistics.
   template <typename T>
-  void CompareValues(T expected, T actual, int64_t linear_index) {
+  void CompareScalarValues(T expected, T actual, int64_t linear_index) {
     double abs_error;
     double rel_error;
     int float_distance = -1;
@@ -742,19 +742,18 @@ class NearComparator : private NearComparatorBase {
     mismatches_.data<bool>()[linear_index] = true;
   }
 
-  // For complex types, we compare real and imaginary parts individually.
   template <typename T>
-  void CompareValues(std::complex<T> expected, std::complex<T> actual,
-                     int64_t linear_index) {
-    const auto both_parts_mismatch = num_mismatches_ + 2;
-    CompareValues<T>(expected.real(), actual.real(), linear_index);
-    CompareValues<T>(expected.imag(), actual.imag(), linear_index);
-    if (num_mismatches_ == both_parts_mismatch) {
-      // The mismatch counter had been incremented by each CompareValues() call,
-      // which means that both real and imaginary parts of the passed-in complex
-      // values are different. However, the counter should reflect a single
-      // mismatch between these complex values.
-      num_mismatches_--;
+  void CompareValues(T expected, T actual, int64_t linear_index) {
+    if constexpr (is_complex_v<T>) {
+      const auto both_parts_mismatch = num_mismatches_ + 2;
+      CompareScalarValues(expected.real(), actual.real(), linear_index);
+      CompareScalarValues(expected.imag(), actual.imag(), linear_index);
+      if (num_mismatches_ == both_parts_mismatch) {
+        // Both component mismatches belong to one complex element.
+        num_mismatches_--;
+      }
+    } else {
+      CompareScalarValues(expected, actual, linear_index);
     }
   }
 

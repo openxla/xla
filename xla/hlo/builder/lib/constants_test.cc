@@ -15,13 +15,13 @@ limitations under the License.
 
 #include "xla/hlo/builder/lib/constants.h"
 
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <limits>
 
+#include <gtest/gtest.h>
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/testlib/test.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/shape_util.h"
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
@@ -56,6 +56,50 @@ TEST_F(ConstantsTest, ConstantR0WithTypeF32) {
   ComputeAndCompareR0<float>(&builder, -7, {});
   ConstantR0WithType(&builder, xla::F32, 0.5);
   ComputeAndCompareR0<float>(&builder, 0.5, {});
+}
+
+TEST_F(ConstantsTest, ConstantR0WithTypeC64LargeIntegerRoundsDirectly) {
+  constexpr int64_t kValue = (int64_t{1} << 62) + (int64_t{1} << 38) + 1;
+  XlaBuilder builder(TestName());
+  ConstantR0WithType(&builder, xla::C64, kValue);
+  ComputeAndCompareR0<complex64>(&builder, static_cast<complex64>(kValue), {},
+                                 ErrorSpec(0.0));
+}
+
+TEST_F(ConstantsTest, ConstantR0WithTypeBC32LargeIntegerRoundsDirectly) {
+  constexpr int64_t kValue =
+      (int64_t{1} << 62) + (int64_t{3} << 54) - (int64_t{1} << 38) - 1;
+  XlaBuilder builder(TestName());
+  ConstantR0WithType(&builder, xla::BC32, kValue);
+  ASSERT_OK_AND_ASSIGN(XlaComputation computation, builder.Build());
+
+  const HloComputationProto* entry_computation = nullptr;
+  for (const HloComputationProto& computation_proto :
+       computation.proto().computations()) {
+    if (computation_proto.id() == computation.proto().entry_computation_id()) {
+      entry_computation = &computation_proto;
+    }
+  }
+  ASSERT_NE(entry_computation, nullptr);
+  const HloInstructionProto* root = nullptr;
+  for (const HloInstructionProto& instruction :
+       entry_computation->instructions()) {
+    if (instruction.id() == entry_computation->root_id()) {
+      root = &instruction;
+    }
+  }
+  ASSERT_NE(root, nullptr);
+  EXPECT_EQ(root->opcode(), "constant");
+  EXPECT_EQ(root->literal().shape().element_type(), xla::BC32);
+  ASSERT_EQ(root->literal().bc32s().size(), 4);
+  const uint16_t real = static_cast<uint16_t>(
+      static_cast<uint8_t>(root->literal().bc32s()[0]) |
+      (static_cast<uint8_t>(root->literal().bc32s()[1]) << 8));
+  const uint16_t imag = static_cast<uint16_t>(
+      static_cast<uint8_t>(root->literal().bc32s()[2]) |
+      (static_cast<uint8_t>(root->literal().bc32s()[3]) << 8));
+  EXPECT_EQ(real, 0x5e81);
+  EXPECT_EQ(imag, 0);
 }
 
 TEST_F(ConstantsTest, ScalarLikeS32) {

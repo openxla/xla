@@ -44,7 +44,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "tsl/platform/cpu_info.h"
 #include "xla/index_util.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -62,6 +61,7 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/cpu_info.h"
 
 namespace xla {
 
@@ -717,6 +717,10 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
 
 /* static */ bool ShapeUtil::ElementIsComplex(const Shape& shape) {
   return primitive_util::IsComplexType(shape.element_type());
+}
+
+/* static */ bool ShapeUtil::TouchesStorageComplexTypes(const Shape& shape) {
+  return HasPrimitiveType(shape, C32) || HasPrimitiveType(shape, BC32);
 }
 
 /* static */ bool ShapeUtil::ElementIsFloating(const Shape& shape) {

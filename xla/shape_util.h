@@ -655,6 +655,10 @@ class ShapeUtil {
   // Returns whether the element type of the shape is complex.
   static bool ElementIsComplex(const Shape& shape);
 
+  // Returns whether the shape, including buffer-wrapped and tuple-nested
+  // sub-shapes, contains an array whose element type is C32 or BC32.
+  static bool TouchesStorageComplexTypes(const Shape& shape);
+
   // Returns whether the element type has the given bit width.
   static bool ElementHasBitWidth(const Shape& shape, int bits);
 

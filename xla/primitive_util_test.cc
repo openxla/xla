@@ -15,16 +15,16 @@ limitations under the License.
 
 #include "xla/primitive_util.h"
 
-#include <gtest/gtest.h>
-
 #include <initializer_list>
 #include <string>
 
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/types.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -121,6 +121,23 @@ INSTANTIATE_TEST_SUITE_P(FloatTypeTests, FloatTypeTest,
                              {F64, 11, 53, 1023, -1021, 1024},
                          }));
 
+TEST(PrimitiveUtilTest, StorageComplexTypeMappings) {
+  EXPECT_EQ(primitive_util::NativeToPrimitiveType<complex32>(), C32);
+  EXPECT_EQ(primitive_util::NativeToPrimitiveType<bcomplex32>(), BC32);
+  EXPECT_EQ(primitive_util::BitWidth(C32), 32);
+  EXPECT_EQ(primitive_util::BitWidth(BC32), 32);
+  EXPECT_EQ(primitive_util::ByteWidth(C32), 4);
+  EXPECT_EQ(primitive_util::ByteWidth(BC32), 4);
+  EXPECT_TRUE(primitive_util::IsComplexType(C32));
+  EXPECT_TRUE(primitive_util::IsComplexType(BC32));
+  EXPECT_EQ(primitive_util::ComplexComponentType(C32), F16);
+  EXPECT_EQ(primitive_util::ComplexComponentType(BC32), BF16);
+  EXPECT_EQ(primitive_util::ComplexType(F16), C32);
+  EXPECT_EQ(primitive_util::ComplexType(BF16), BC32);
+  EXPECT_EQ(primitive_util::LowercasePrimitiveTypeName(C32), "c32");
+  EXPECT_EQ(primitive_util::LowercasePrimitiveTypeName(BC32), "bc32");
+}
+
 TEST(PrimitiveUtilTest, CastPreservesValues) {
   bool expecteds[PrimitiveType_ARRAYSIZE][PrimitiveType_ARRAYSIZE] = {};
 
@@ -132,67 +149,75 @@ TEST(PrimitiveUtilTest, CastPreservesValues) {
   };
 
   set_true(PRED, {PRED, S1, S2, S4, S8, S16, S32, S64, U1, U2, U4, U8, U16});
-  set_true(PRED, {U32, U64, F16, F32, F64, C64, BF16, C128, F8E5M2, F8E4M3});
+  set_true(PRED, {U32, U64, F16, F32, F64, C32, C64, BF16, BC32, C128, F8E5M2,
+                  F8E4M3});
   set_true(PRED, {F8E4M3FN, F8E4M3B11FNUZ, F8E5M2FNUZ, F8E4M3FNUZ, F8E3M4});
   set_true(PRED, {F4E2M1FN, F6E3M2FN, F6E2M3FN});
 
-  set_true(S1, {S1, S2, S4, S8, S16, S32, S64, F16, F32, F64, C64});
-  set_true(S1, {BF16, C128, F8E5M2, F8E4M3, F8E4M3FN, F8E4M3B11FNUZ});
+  set_true(S1, {S1, S2, S4, S8, S16, S32, S64, F16, F32, F64, C32, C64});
+  set_true(S1, {BF16, BC32, C128, F8E5M2, F8E4M3, F8E4M3FN, F8E4M3B11FNUZ});
   set_true(S1, {F8E5M2FNUZ, F8E4M3FNUZ, F8E3M4, F4E2M1FN, F6E3M2FN, F6E2M3FN});
 
-  set_true(S2, {S2, S4, S8, S16, S32, S64, F16, F32, F64, C64, BF16});
+  set_true(S2,
+           {S2, S4, S8, S16, S32, S64, F16, F32, F64, C32, C64, BF16, BC32});
   set_true(S2, {C128, F8E5M2, F8E4M3, F8E4M3FN, F8E4M3B11FNUZ, F8E5M2FNUZ});
   set_true(S2, {F8E4M3FNUZ, F8E3M4, F4E2M1FN, F6E3M2FN, F6E2M3FN});
 
-  set_true(S4, {S4, S8, S16, S32, S64, F16, F32, F64, C64, BF16, C128});
+  set_true(S4,
+           {S4, S8, S16, S32, S64, F16, F32, F64, C32, C64, BF16, BC32, C128});
   set_true(S4, {F8E5M2, F8E4M3, F8E4M3FN, F8E4M3B11FNUZ, F8E5M2FNUZ});
   set_true(S4, {F8E4M3FNUZ, F8E3M4, F6E3M2FN});
 
-  set_true(S8, {S8, S16, S32, S64, F16, F32, F64, C64, BF16, C128});
+  set_true(S8, {S8, S16, S32, S64, F16, F32, F64, C32, C64, BF16, BC32, C128});
   set_true(S16, {S16, S32, S64, F32, F64, C64, C128});
   set_true(S32, {S32, S64, F64, C128});
   set_true(S64, {S64});
 
   set_true(U1, {S2, S4, S8, S16, S32, S64, U1, U2, U4, U8, U16, U32});
-  set_true(U1, {U64, F16, F32, F64, C64, BF16, C128, F8E5M2, F8E4M3});
+  set_true(U1,
+           {U64, F16, F32, F64, C32, C64, BF16, BC32, C128, F8E5M2, F8E4M3});
   set_true(U1, {F8E4M3FN, F8E4M3B11FNUZ, F8E5M2FNUZ, F8E4M3FNUZ, F8E3M4});
   set_true(U1, {F4E2M1FN, F6E3M2FN, F6E2M3FN});
 
-  set_true(U2, {S4, S8, S16, S32, S64, U2, U4, U8, U16, U32, U64, F16});
-  set_true(U2, {F32, F64, C64, BF16, C128, F8E5M2, F8E4M3, F8E4M3FN});
+  set_true(U2, {S4, S8, S16, S32, S64, U2, U4, U8, U16, U32, U64, F16, C32});
+  set_true(U2, {F32, F64, C64, BF16, BC32, C128, F8E5M2, F8E4M3, F8E4M3FN});
   set_true(U2, {F8E4M3B11FNUZ, F8E5M2FNUZ, F8E4M3FNUZ, F8E3M4, F4E2M1FN,
                 F6E3M2FN, F6E2M3FN});
 
-  set_true(U4, {S8, S16, S32, S64, U4, U8, U16, U32, U64, F16, F32});
-  set_true(U4, {F64, C64, BF16, C128, F8E4M3, F8E4M3FN, F8E4M3B11FNUZ});
+  set_true(U4, {S8, S16, S32, S64, U4, U8, U16, U32, U64, F16, F32, C32});
+  set_true(U4, {F64, C64, BF16, BC32, C128, F8E4M3, F8E4M3FN, F8E4M3B11FNUZ});
   set_true(U4, {F8E4M3FNUZ, F8E3M4});
 
-  set_true(U8, {S16, S32, S64, U8, U16, U32, U64, F16, F32, F64, C64});
-  set_true(U8, {BF16, C128});
+  set_true(U8, {S16, S32, S64, U8, U16, U32, U64, F16, F32, F64, C32, C64});
+  set_true(U8, {BF16, BC32, C128});
 
   set_true(U16, {S32, S64, U16, U32, U64, F32, F64, C64, C128});
   set_true(U32, {S64, U32, U64, F64, C128});
   set_true(U64, {U64});
-  set_true(F16, {F16, F32, F64, C64, C128});
+  set_true(F16, {F16, F32, F64, C32, C64, C128});
   set_true(F32, {F32, F64, C64, C128});
   set_true(F64, {F64, C128});
   set_true(C64, {C64, C128});
-  set_true(BF16, {F32, F64, C64, BF16, C128});
+  set_true(BF16, {F32, F64, C64, BF16, BC32, C128});
+  set_true(C32, {C32, C64, C128});
+  set_true(BC32, {BC32, C64, C128});
   set_true(C128, {C128});
-  set_true(F8E5M2, {F16, F32, F64, C64, BF16, C128, F8E5M2});
-  set_true(F8E4M3, {F16, F32, F64, C64, BF16, C128, F8E4M3});
-  set_true(F8E4M3FN, {F16, F32, F64, C64, BF16, C128, F8E4M3FN});
-  set_true(F8E4M3B11FNUZ, {F16, F32, F64, C64, BF16, C128, F8E4M3B11FNUZ});
-  set_true(F8E5M2FNUZ, {F16, F32, F64, C64, BF16, C128, F8E5M2FNUZ});
-  set_true(F8E4M3FNUZ, {F16, F32, F64, C64, BF16, C128, F8E4M3FNUZ});
-  set_true(F8E3M4, {F16, F32, F64, C64, BF16, C128, F8E3M4});
-  set_true(F4E2M1FN, {F16, F32, F64, C64, BF16, C128, F8E5M2, F8E4M3});
+  set_true(F8E5M2, {F16, F32, F64, C32, C64, BF16, BC32, C128, F8E5M2});
+  set_true(F8E4M3, {F16, F32, F64, C32, C64, BF16, BC32, C128, F8E4M3});
+  set_true(F8E4M3FN, {F16, F32, F64, C32, C64, BF16, BC32, C128, F8E4M3FN});
+  set_true(F8E4M3B11FNUZ,
+           {F16, F32, F64, C32, C64, BF16, BC32, C128, F8E4M3B11FNUZ});
+  set_true(F8E5M2FNUZ, {F16, F32, F64, C32, C64, BF16, BC32, C128, F8E5M2FNUZ});
+  set_true(F8E4M3FNUZ, {F16, F32, F64, C32, C64, BF16, BC32, C128, F8E4M3FNUZ});
+  set_true(F8E3M4, {F16, F32, F64, C32, C64, BF16, BC32, C128, F8E3M4});
+  set_true(F4E2M1FN,
+           {F16, F32, F64, C32, C64, BF16, BC32, C128, F8E5M2, F8E4M3});
   set_true(F4E2M1FN, {F8E4M3FN, F8E3M4, F4E2M1FN, F6E3M2FN, F6E2M3FN});
-  set_true(F6E3M2FN, {F16, F32, F64, C64, BF16, C128, F8E5M2, F8E4M3, F8E4M3FN,
-                      F6E3M2FN});
-  set_true(F6E2M3FN, {F16, F32, F64, C64, BF16, C128, F8E4M3, F8E4M3FN, F8E3M4,
-                      F6E2M3FN});
-  set_true(F8E8M0FNU, {F32, F64, C64, BF16, C128, F8E8M0FNU});
+  set_true(F6E3M2FN, {F16, F32, F64, C32, C64, BF16, BC32, C128, F8E5M2, F8E4M3,
+                      F8E4M3FN, F6E3M2FN});
+  set_true(F6E2M3FN, {F16, F32, F64, C32, C64, BF16, BC32, C128, F8E4M3,
+                      F8E4M3FN, F8E3M4, F6E2M3FN});
+  set_true(F8E8M0FNU, {F32, F64, C64, BF16, BC32, C128, F8E8M0FNU});
 
   for (int from_type_int = PrimitiveType_MIN;
        from_type_int < PrimitiveType_ARRAYSIZE; ++from_type_int) {

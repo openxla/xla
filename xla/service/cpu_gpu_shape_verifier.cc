@@ -18,16 +18,49 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
-#include "tsl/platform/errors.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/hlo_verifier.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
+
+namespace {
+
+absl::Status VerifyShapeHasNoUnsupportedStorageComplexTypes(
+    const Shape& shape, absl::string_view backend_name) {
+  return ShapeUtil::ForEachSubshapeWithStatus(
+      shape,
+      [backend_name](const Shape& subshape, const ShapeIndex&) -> absl::Status {
+        if (!subshape.IsArray() ||
+            !ShapeUtil::TouchesStorageComplexTypes(subshape)) {
+          return absl::OkStatus();
+        }
+        return absl::UnimplementedError(absl::StrFormat(
+            "The XLA %s backend does not support element type %s yet.",
+            backend_name,
+            primitive_util::LowercasePrimitiveTypeName(
+                subshape.element_type())));
+      });
+}
+
+}  // namespace
+
+absl::Status VerifyNoUnsupportedStorageComplexTypes(
+    const HloModule& module, absl::string_view backend_name) {
+  for (const HloComputation* computation : module.computations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      ABSL_RETURN_IF_ERROR(VerifyShapeHasNoUnsupportedStorageComplexTypes(
+          instruction->shape(), backend_name));
+    }
+  }
+  return absl::OkStatus();
+}
 
 absl::Status CpuGpuShapeVerifier::Preprocess(HloInstruction* hlo) {
   ABSL_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(

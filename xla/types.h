@@ -21,9 +21,10 @@ limitations under the License.
 #include <limits>
 #include <type_traits>
 
-#include "Eigen/Core"  // IWYU pragma: export
 #include "absl/numeric/int128.h"
 #include "absl/strings/str_cat.h"
+#include "Eigen/Core"  // IWYU pragma: export
+#include "ml_dtypes/include/complex_types.h"
 #include "ml_dtypes/include/intn.h"
 #include "tsl/platform/ml_dtypes.h"  // IWYU pragma: export
 
@@ -47,11 +48,24 @@ using ::Eigen::half;      // NOLINT(misc-unused-using-decls)
 
 using complex64 = std::complex<float>;
 using complex128 = std::complex<double>;
+using complex32 = ml_dtypes::complex32;
+using bcomplex32 = ml_dtypes::bcomplex32;
+
+static_assert(sizeof(complex32) == 4, "complex32 must be 4 bytes");
+static_assert(sizeof(bcomplex32) == 4, "bcomplex32 must be 4 bytes");
+static_assert(std::is_standard_layout_v<complex32>);
+static_assert(std::is_standard_layout_v<bcomplex32>);
+static_assert(std::is_trivially_copyable_v<complex32>);
+static_assert(std::is_trivially_copyable_v<bcomplex32>);
 
 template <class T>
 struct is_complex : std::false_type {};
 template <class T>
 struct is_complex<std::complex<T>> : std::true_type {};
+template <>
+struct is_complex<ml_dtypes::complex32> : std::true_type {};
+template <>
+struct is_complex<ml_dtypes::bcomplex32> : std::true_type {};
 
 template <typename T>
 inline constexpr bool is_complex_v = is_complex<T>::value;

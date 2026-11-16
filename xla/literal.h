@@ -41,7 +41,6 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/platform/platform.h"
 #include "xla/array.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
@@ -65,6 +64,7 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/platform.h"
 
 namespace xla {
 
@@ -2018,18 +2018,22 @@ NativeT LiteralBase::GetFirstElement() const {
 
 template <typename T>
 int64_t LiteralBase::CountEqual(T value) const {
-  PrimitiveType ty = shape().element_type();
-  if (!primitive_util::IsArrayType(ty)) {
-    return 0;
+  if constexpr (is_complex_v<T>) {
+    return CountEqual<typename T::value_type>(value);
+  } else {
+    PrimitiveType ty = shape().element_type();
+    if (!primitive_util::IsArrayType(ty)) {
+      return 0;
+    }
+    Literal scalar(ShapeUtil::MakeScalarShape(ty));
+    return primitive_util::ArrayTypeSwitch(
+        [&](auto primitive_type_constant) -> int64_t {
+          using NativeT = primitive_util::NativeTypeOf<primitive_type_constant>;
+          scalar.Set<NativeT>({}, static_cast<NativeT>(value));
+          return root_piece().CountAll(scalar);
+        },
+        ty);
   }
-  Literal scalar(ShapeUtil::MakeScalarShape(ty));
-  return primitive_util::ArrayTypeSwitch(
-      [&](auto primitive_type_constant) -> int64_t {
-        using NativeT = primitive_util::NativeTypeOf<primitive_type_constant>;
-        scalar.Set<NativeT>({}, static_cast<NativeT>(value));
-        return root_piece().CountAll(scalar);
-      },
-      ty);
 }
 
 template <typename T>
@@ -2042,7 +2046,9 @@ int64_t LiteralBase::CountEqual(std::complex<T> value) const {
   return primitive_util::ComplexTypeSwitch(
       [&](auto primitive_type_constant) -> int64_t {
         using NativeT = primitive_util::NativeTypeOf<primitive_type_constant>;
-        scalar.Set<NativeT>({}, static_cast<NativeT>(value));
+        using ComponentT = typename NativeT::value_type;
+        scalar.Set<NativeT>({}, NativeT(static_cast<ComponentT>(value.real()),
+                                        static_cast<ComponentT>(value.imag())));
         return root_piece().CountAll(scalar);
       },
       ty);
