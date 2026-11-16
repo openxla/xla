@@ -105,6 +105,7 @@ cc_library(
         "//xla/hlo/transforms/simplifiers:batch_dot_simplification",
         "//xla/hlo/transforms/simplifiers:bfloat16_conversion_folding",
         "//xla/hlo/transforms/simplifiers:broadcast_canonicalizer",
+        "//xla/hlo/transforms/simplifiers:comparison_canonicalizer",
         "//xla/hlo/transforms/simplifiers:conditional_canonicalizer",
         "//xla/hlo/transforms/simplifiers:convert_mover",
         "//xla/hlo/transforms/simplifiers:convert_operand_folding",
