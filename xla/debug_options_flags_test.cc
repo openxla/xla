@@ -587,5 +587,60 @@ TEST(DebugOptions, ResetFlagValuesPreservesCudaDataDirFromEnv) {
   ResetFlagValues();
   ParseDebugOptionFlagsFromEnv(/*reset_envvar=*/true);
 }
+
+TEST(DebugOptions, ApplyLoadTimeDebugOptionsOverridesAppliesSetFields) {
+  DebugOptions target;
+  target.set_xla_dump_to("/compile/dump");
+  target.set_xla_gpu_experimental_nccl_window_symmetric(false);
+  target.set_xla_gpu_execution_terminate_timeout("inf");
+  target.set_xla_gpu_device_execution_terminate_timeout("inf");
+  target.set_xla_gpu_execution_progress_tracking(0);
+  target.set_xla_gpu_executable_warn_stuck_timeout_seconds(10);
+  target.set_xla_gpu_executable_terminate_timeout_seconds(30);
+  target.set_xla_backend_optimization_level(1);
+
+  DebugOptions load_time;
+  load_time.set_xla_dump_to("/serve/dump");
+  load_time.set_xla_gpu_experimental_nccl_window_symmetric(true);
+  load_time.set_xla_gpu_execution_terminate_timeout("300s");
+  load_time.set_xla_gpu_device_execution_terminate_timeout("600s");
+  load_time.set_xla_gpu_execution_progress_tracking(5);
+  load_time.set_xla_gpu_executable_warn_stuck_timeout_seconds(15);
+  load_time.set_xla_gpu_executable_terminate_timeout_seconds(45);
+  load_time.set_xla_backend_optimization_level(3);
+
+  ApplyLoadTimeDebugOptionsOverrides(load_time, &target);
+
+  EXPECT_EQ(target.xla_dump_to(), "/serve/dump");
+  EXPECT_TRUE(target.xla_gpu_experimental_nccl_window_symmetric());
+  EXPECT_EQ(target.xla_gpu_execution_terminate_timeout(), "300s");
+  EXPECT_EQ(target.xla_gpu_device_execution_terminate_timeout(), "600s");
+  EXPECT_EQ(target.xla_gpu_execution_progress_tracking(), 5);
+  EXPECT_EQ(target.xla_gpu_executable_warn_stuck_timeout_seconds(), 15);
+  EXPECT_EQ(target.xla_gpu_executable_terminate_timeout_seconds(), 45);
+  EXPECT_EQ(target.xla_backend_optimization_level(), 1);
+}
+
+TEST(DebugOptions, ApplyLoadTimeDebugOptionsOverridesPreservesUnsetFields) {
+  DebugOptions target;
+  target.set_xla_dump_to("/compile/dump");
+  target.set_xla_gpu_experimental_nccl_window_symmetric(true);
+  target.set_xla_gpu_execution_terminate_timeout("300s");
+  target.set_xla_gpu_device_execution_terminate_timeout("600s");
+  target.set_xla_gpu_execution_progress_tracking(5);
+  target.set_xla_gpu_executable_warn_stuck_timeout_seconds(15);
+  target.set_xla_gpu_executable_terminate_timeout_seconds(45);
+
+  DebugOptions unset_load_time;
+  ApplyLoadTimeDebugOptionsOverrides(unset_load_time, &target);
+
+  EXPECT_EQ(target.xla_dump_to(), "/compile/dump");
+  EXPECT_TRUE(target.xla_gpu_experimental_nccl_window_symmetric());
+  EXPECT_EQ(target.xla_gpu_execution_terminate_timeout(), "300s");
+  EXPECT_EQ(target.xla_gpu_device_execution_terminate_timeout(), "600s");
+  EXPECT_EQ(target.xla_gpu_execution_progress_tracking(), 5);
+  EXPECT_EQ(target.xla_gpu_executable_warn_stuck_timeout_seconds(), 15);
+  EXPECT_EQ(target.xla_gpu_executable_terminate_timeout_seconds(), 45);
+}
 }  // namespace
 }  // namespace xla
