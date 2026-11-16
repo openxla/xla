@@ -192,12 +192,16 @@ TEST(CollectivesFfiTest, ExtensionVersionCompatibility) {
         FakeRequestCommunicator, nullptr);
     ext.extension_base.id.major_version = test_case.major;
     ext.extension_base.id.minor_version = test_case.minor;
-    ext.get_communicator = [](const XLA_FFI_Collectives_Extension*,
+    ext.get_communicator = [](const XLA_FFI_Collectives_Extension* self,
                               XLA_FFI_Communicator_Get_Args* args) {
-      EXPECT_EQ(
-          args->struct_size,
-          XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator));
+      EXPECT_EQ(args->struct_size, XLA_FFI_Communicator_Get_Args_STRUCT_SIZE);
+      EXPECT_EQ(args->rank, -1);
+      EXPECT_EQ(args->size, -1);
       args->communicator = kFakeCommunicator;
+      if (self->extension_base.id.minor_version >= 3) {
+        args->rank = 0;
+        args->size = 1;
+      }
       return static_cast<XLA_FFI_Error*>(nullptr);
     };
     InvokeContext context;

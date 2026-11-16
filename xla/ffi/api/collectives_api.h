@@ -93,12 +93,13 @@ class CommunicatorContextBase {
       int64_t communication_id) {
     std::vector<XLA_FFI_ReplicaGroup> raw_groups = ToRawGroups(groups);
     XLA_FFI_Communicator_Get_Args args = {};
-    args.struct_size =
-        XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator);
+    args.struct_size = XLA_FFI_Communicator_Get_Args_STRUCT_SIZE;
     args.group_mode = static_cast<XLA_FFI_CollectiveGroupMode>(group_mode);
     args.groups = raw_groups.data();
     args.num_groups = raw_groups.size();
     args.communication_id = communication_id;
+    args.rank = -1;
+    args.size = -1;
     if (XLA_FFI_Error* err = ext_->get_communicator(ext_, &args)) {
       return StatusOr<XLA_FFI_Communicator*>(ErrorPolicy::TakeError(api_, err));
     }
