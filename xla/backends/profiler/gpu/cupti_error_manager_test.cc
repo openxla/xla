@@ -137,6 +137,10 @@ class CuptiSubscribeConflictErrorTest
     : public CuptiErrorManagerTest,
       public ::testing::WithParamInterface<CUptiResult> {};
 
+class CuptiEnvironmentActivityErrorTest
+    : public CuptiErrorManagerTest,
+      public ::testing::WithParamInterface<CUptiResult> {};
+
 // Verifies that failed EnableProfiling() does not kill an application.
 TEST_F(CuptiErrorManagerTest, GpuTraceActivityEnableTest) {
   // Enforces the order of execution below.
@@ -433,6 +437,32 @@ INSTANTIATE_TEST_SUITE_P(
     NonfatalSubscribeErrors, CuptiSubscribeConflictErrorTest,
     ::testing::Values(CUPTI_ERROR_MAX_LIMIT_REACHED,
                       CUPTI_ERROR_MULTIPLE_SUBSCRIBERS_NOT_SUPPORTED));
+
+TEST_P(CuptiEnvironmentActivityErrorTest, DoesNotDisableCupti) {
+  const CUptiResult result = GetParam();
+  auto* const v2_subscriber =
+      reinterpret_cast<CUpti_SubscriberHandle>(uintptr_t{1});
+  EXPECT_CALL(*mock_, ActivityEnable(CUPTI_ACTIVITY_KIND_ENVIRONMENT))
+      .WillOnce(Return(result));
+  EXPECT_CALL(
+      *mock_,
+      ActivityEnableV2(v2_subscriber, CUPTI_ACTIVITY_KIND_ENVIRONMENT, nullptr))
+      .WillOnce(Return(result));
+
+  EXPECT_EQ(
+      cupti_error_manager_->ActivityEnable(CUPTI_ACTIVITY_KIND_ENVIRONMENT),
+      result);
+  EXPECT_EQ(cupti_error_manager_->ActivityEnableV2(
+                v2_subscriber, CUPTI_ACTIVITY_KIND_ENVIRONMENT, nullptr),
+            result);
+  EXPECT_FALSE(CuptiDisabled());
+}
+
+INSTANTIATE_TEST_SUITE_P(NonfatalEnvironmentActivityErrors,
+                         CuptiEnvironmentActivityErrorTest,
+                         ::testing::Values(CUPTI_ERROR_NOT_SUPPORTED,
+                                           CUPTI_ERROR_NOT_COMPATIBLE,
+                                           CUPTI_ERROR_INVALID_KIND));
 
 }  // namespace test
 }  // namespace profiler

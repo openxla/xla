@@ -468,7 +468,7 @@ class PerDeviceCollector {
     if (IsCudaGraphLaunchCallback(event)) {
       graph_launch_streams_[event.correlation_id] = event.stream_id;
     }
-    if (aggregated_tracing) {
+    if (aggregated_tracing && event.type != CuptiTracerEventType::Environment) {
       if (event.start_time_ns < start_gpu_ns_) {
         return;
       }
@@ -496,6 +496,9 @@ class PerDeviceCollector {
     } else {
       VLOG(9) << "AddDeviceEvent: non-aggregated event: " << event.name;
       events_.emplace_back(std::move(event));
+      if (aggregated_tracing) {
+        aggregated_event_occurrence_count_.emplace_back(1);
+      }
     }
   }
 
@@ -600,12 +603,19 @@ class PerDeviceCollector {
     if (first_env_event != events_.end()) {
       VLOG(1) << "Processing " << events_.end() - first_env_event
               << " environment events";
-      XLineBuilder counter_line = device_plane->GetOrCreateCounterLine();
       for (auto it = first_env_event; it != events_.end(); ++it) {
         const auto& event = *it;
+        if (event.start_time_ns < start_gpu_ns_ ||
+            event.start_time_ns > end_gpu_ns) {
+          VLOG(2) << "Ignoring environment event with timestamp out of range: "
+                  << event.name << " start_time_ns=" << event.start_time_ns
+                  << " range=[" << start_gpu_ns_ << ", " << end_gpu_ns << "]";
+          continue;
+        }
         VLOG(3) << "Environment event: " << event.name << " "
                 << event.start_time_ns << " "
                 << event.environment_info.metric_value;
+        XLineBuilder counter_line = device_plane->GetOrCreateCounterLine();
         // Create a metadata for each metric (e.g., "power_mw", "gpu_temp_c").
         XEventMetadata* event_metadata =
             device_plane->GetOrCreateEventMetadata(event.name);
