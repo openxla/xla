@@ -428,18 +428,26 @@ LogicalResult MemRefReshapeOp::verify() {
   if (is_static && input_static_elements != result_static_elements) {
     return emitOpError("Input and result number of elements don't match.");
   }
-  if (result_dynamic_dims > 1) {
-    return emitOpError(
-        "Multiple result dynamic dimensions (their values are ambiguous).");
-  }
-  // The above checks are fundamental, the following is simply unimplemented:
-  if (!is_static && (input_dynamic_dims > 1 ||
-                     input_static_elements != result_static_elements)) {
-    // inferResultLayout relies on this check. Make sure to update it when
-    // removing this.
-    return emitOpError(
-        "Not implemented: Input with multiple dynamic dimensions or a changing "
-        "single dynamic dimension.");
+  if (!getDynamicSizes().empty()) {
+    if (static_cast<int64_t>(getDynamicSizes().size()) != result_dynamic_dims) {
+      return emitOpError("Expected ")
+             << result_dynamic_dims << " dynamic sizes, got "
+             << getDynamicSizes().size() << ".";
+    }
+  } else {
+    if (result_dynamic_dims > 1) {
+      return emitOpError(
+          "Multiple result dynamic dimensions (their values are ambiguous).");
+    }
+    // The above checks are fundamental, the following is simply unimplemented:
+    if (!is_static && (input_dynamic_dims > 1 ||
+                       input_static_elements != result_static_elements)) {
+      // inferResultLayout relies on this check. Make sure to update it when
+      // removing this.
+      return emitOpError(
+          "Not implemented: Input with multiple dynamic dimensions or a "
+          "changing single dynamic dimension.");
+    }
   }
   FAILUREOR_ASSIGN_OR_RETURN(
       const MemRefLayoutAttrInterface expected_result_layout,
@@ -530,6 +538,27 @@ FailureOr<MemRefLayoutAttrInterface> MemRefReshapeOp::inferResultLayout(
     const ArrayRef<int64_t> input_first_tile = input_tiles.front().dimensions();
     const int64_t input_first_tile_rank = input_first_tile.size();
     const int64_t input_untiled_rank = input_rank - input_first_tile_rank;
+    int64_t input_static_elements = 1;
+    int64_t result_static_elements = 1;
+    int64_t input_dynamic_dims = 0;
+    int64_t result_dynamic_dims = 0;
+    for (const int64_t dim : input_shape) {
+      if (ShapedType::isDynamic(dim)) {
+        ++input_dynamic_dims;
+      } else {
+        input_static_elements *= dim;
+      }
+    }
+    for (const int64_t dim : result_shape) {
+      if (ShapedType::isDynamic(dim)) {
+        ++result_dynamic_dims;
+      } else {
+        result_static_elements *= dim;
+      }
+    }
+    const bool dynamic_dims_unchanged =
+        input_dynamic_dims <= 1 && result_dynamic_dims <= 1 &&
+        input_static_elements == result_static_elements;
 
     const TiledLayoutAttr preserved_tile_layout = [&]() -> TiledLayoutAttr {
       if (result_rank < input_first_tile_rank) {
@@ -547,20 +576,22 @@ FailureOr<MemRefLayoutAttrInterface> MemRefReshapeOp::inferResultLayout(
       // Excluding leading ones, tiled dimensions must remain unchanged, with
       // the possible exception of the first. Dimensions can be folded into or
       // unfolded from it if it is tile-aligned in both the input and result.
-      // NOTE: This relies on the verifier enforcing that, if there is a dynamic
-      //       dimension, it is preserved between input and result.
       auto input_dim_it = input_shape.end() - input_first_tile_rank + i;
       auto result_dim_it = result_shape.end() - input_first_tile_rank + i;
-      bool can_preserve_tiling = *input_dim_it == *result_dim_it ||
-                                 (ShapedType::isStatic(*input_dim_it) &&
-                                  ShapedType::isStatic(*result_dim_it) &&
-                                  *input_dim_it % input_first_tile[i] == 0 &&
-                                  *result_dim_it % input_first_tile[i] == 0);
+      bool can_preserve_tiling =
+          (dynamic_dims_unchanged && *input_dim_it == *result_dim_it) ||
+          (ShapedType::isStatic(*input_dim_it) &&
+           ShapedType::isStatic(*result_dim_it) &&
+           (*input_dim_it == *result_dim_it ||
+            (*input_dim_it % input_first_tile[i] == 0 &&
+             *result_dim_it % input_first_tile[i] == 0)));
       ++i;
       ++input_dim_it;
       ++result_dim_it;
       for (; i < input_first_tile_rank; ++i, ++input_dim_it, ++result_dim_it) {
-        can_preserve_tiling &= *input_dim_it == *result_dim_it;
+        can_preserve_tiling &=
+            *input_dim_it == *result_dim_it &&
+            (dynamic_dims_unchanged || ShapedType::isStatic(*input_dim_it));
       }
       if (!can_preserve_tiling) {
         return nullptr;
@@ -571,7 +602,7 @@ FailureOr<MemRefLayoutAttrInterface> MemRefReshapeOp::inferResultLayout(
       return MemRefLayoutAttrInterface(preserved_tile_layout);
     }
     const TiledLayoutAttr reshaped_tile_layout = [&]() -> TiledLayoutAttr {
-      if (input_tiles.size() != 1) {
+      if (input_tiles.size() != 1 || !dynamic_dims_unchanged) {
         return nullptr;
       }
       // To reason about the reshape, it can be helpful to conceptually view it
