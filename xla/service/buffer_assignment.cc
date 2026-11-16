@@ -1250,6 +1250,22 @@ absl::Status BufferAssignment::CombineTempAllocations(
     return false;
   };
 
+  const int64_t page_size_bytes =
+      static_cast<int64_t>(module_->config().page_size_kib()) * 1024;
+  // Only default memory space (Color(0)) temporary allocations are paged.
+  auto is_paged_color = [&](BufferValue::Color color) {
+    return page_size_bytes > 0 && color == LogicalBuffer::Color(0);
+  };
+  auto page_pack_rank =
+      [&](const BufferAllocation& alloc) -> std::pair<int, int64_t> {
+    if (!is_paged_color(alloc.color()) || !alloc.HeapTraces().empty()) {
+      return {0, 0};
+    }
+    // Place heap simulator pages before standalone allocations that default to
+    // page_id 0, then pack larger standalone allocations first.
+    return {1, -alloc.size()};
+  };
+
   std::stable_sort(first_temp_it, allocations_.end(),
                    [&](const BufferAllocation& a, const BufferAllocation& b) {
                      bool a_zero = has_zero_fixed_offset_fn(a);
@@ -1257,12 +1273,31 @@ absl::Status BufferAssignment::CombineTempAllocations(
                      if (a_zero != b_zero) {
                        return a_zero > b_zero;
                      }
-                     return false;
+                     return page_pack_rank(a) < page_pack_rank(b);
                    });
 
   // Holds the pointer to a combined allocation of each (color, page), if any.
   absl::flat_hash_map<std::pair<BufferValue::Color, int64_t>, BufferAllocation*>
       combined_allocation_map;
+  std::vector<BufferAllocation*> paged_combined_allocations;
+  absl::flat_hash_set<int64_t> used_page_ids;
+  int64_t next_page_id = 0;
+  if (page_size_bytes > 0) {
+    for (auto it = first_temp_it; it != allocations_.end(); ++it) {
+      if (is_paged_color(it->color())) {
+        next_page_id = std::max(next_page_id, it->page_id() + 1);
+      }
+    }
+  }
+  auto claim_page_id = [&](int64_t preferred_page) -> int64_t {
+    if (preferred_page >= 0 && used_page_ids.insert(preferred_page).second) {
+      return preferred_page;
+    }
+    while (!used_page_ids.insert(next_page_id).second) {
+      ++next_page_id;
+    }
+    return next_page_id++;
+  };
 
   // Walk over the run of temp allocations, collecting the allocations belonging
   // to the same color.
@@ -1273,6 +1308,7 @@ absl::Status BufferAssignment::CombineTempAllocations(
     }
     BufferValue::Color color = temp_allocation.color();
     int64_t page = temp_allocation.page_id();
+    const bool use_page_constraint = is_paged_color(color);
     bool has_fixed_offset = false;
     bool all_fixed_offsets_are_zero = true;
     if (fixed_offset.has_value()) {
@@ -1291,51 +1327,104 @@ absl::Status BufferAssignment::CombineTempAllocations(
     // Allocations with non-zero fixed offset requirements cannot be safely
     // merged into a combined allocation at base 0.
     if (has_fixed_offset && !all_fixed_offsets_are_zero) {
+      if (use_page_constraint) {
+        temp_allocation.set_page_id(claim_page_id(page));
+      }
       combined_allocations.push_back(std::move(temp_allocation));
       continue;
     }
 
-    auto combined_it = combined_allocation_map.find({color, page});
-    if (combined_it == combined_allocation_map.end()) {
-      // We have found the first temp allocation of this color. Collect
-      // the other temp allocations of the same color into it subject to the
-      // size constraint.
-      VLOG(1) << "Combined temp allocation for color " << color << " page "
-              << page << " is: " << temp_allocation;
-      combined_allocations.push_back(std::move(temp_allocation));
-      combined_allocation_map.emplace(std::make_pair(color, page),
-                                      &combined_allocations.back());
-      continue;
-    }
-    // Any subsequent fixed-offset-0 allocation interfered with the first one
-    // during MaybeAssignBuffer and cannot be shifted to a non-zero base offset.
-    if (has_fixed_offset) {
-      combined_allocations.push_back(std::move(temp_allocation));
-      continue;
-    }
-    if (combined_it->second->size() + temp_allocation.size() >=
-        multiheap_size_constraint_per_heap_) {
-      // We cannot put more into the current combined_it. So, appoint a new
-      // combined_it.
-      VLOG(1) << "Due to size constraint, reset temp allocation for color "
-              << color << " to: " << temp_allocation;
-      combined_allocations.push_back(std::move(temp_allocation));
-      combined_it->second = &combined_allocations.back();
-      continue;
+    int64_t alignment = color_alignment_(color);
+    BufferAllocation* combined_allocation = nullptr;
+    if (use_page_constraint) {
+      // An allocation with a zero fixed offset must start at offset 0 of its
+      // own page; allocations without a fixed offset may still pack above it.
+      if (!has_fixed_offset && !used_page_ids.contains(page)) {
+        const int64_t assigned_page = claim_page_id(page);
+        temp_allocation.set_page_id(assigned_page);
+        VLOG(1) << "Combined temp allocation for color " << color << " page "
+                << assigned_page << " is: " << temp_allocation;
+        combined_allocations.push_back(std::move(temp_allocation));
+        combined_allocation_map.emplace(std::make_pair(color, assigned_page),
+                                        &combined_allocations.back());
+        paged_combined_allocations.push_back(&combined_allocations.back());
+        continue;
+      }
+      if (!has_fixed_offset) {
+        auto preferred_it = combined_allocation_map.find({color, page});
+        if (preferred_it != combined_allocation_map.end() &&
+            RoundUpTo(preferred_it->second->size(), alignment) +
+                    temp_allocation.size() <=
+                page_size_bytes) {
+          combined_allocation = preferred_it->second;
+        } else {
+          for (BufferAllocation* candidate : paged_combined_allocations) {
+            if (RoundUpTo(candidate->size(), alignment) +
+                    temp_allocation.size() <=
+                page_size_bytes) {
+              combined_allocation = candidate;
+              break;
+            }
+          }
+        }
+      }
+      if (combined_allocation == nullptr) {
+        const int64_t new_page = claim_page_id(page);
+        temp_allocation.set_page_id(new_page);
+        VLOG(1) << "Due to page constraint, assigning new page " << new_page
+                << " for color " << color << ": " << temp_allocation;
+        combined_allocations.push_back(std::move(temp_allocation));
+        combined_allocation_map.emplace(std::make_pair(color, new_page),
+                                        &combined_allocations.back());
+        paged_combined_allocations.push_back(&combined_allocations.back());
+        continue;
+      }
+    } else {
+      auto combined_it = combined_allocation_map.find({color, page});
+      if (combined_it == combined_allocation_map.end()) {
+        // We have found the first temp allocation of this color. Collect
+        // the other temp allocations of the same color into it subject to the
+        // size constraint.
+        VLOG(1) << "Combined temp allocation for color " << color << " page "
+                << page << " is: " << temp_allocation;
+        combined_allocations.push_back(std::move(temp_allocation));
+        combined_allocation_map.emplace(std::make_pair(color, page),
+                                        &combined_allocations.back());
+        continue;
+      }
+      // Any subsequent fixed-offset-0 allocation interfered with the first one
+      // during MaybeAssignBuffer and cannot be shifted to a non-zero base
+      // offset.
+      if (has_fixed_offset) {
+        combined_allocations.push_back(std::move(temp_allocation));
+        continue;
+      }
+      if (combined_it->second->size() + temp_allocation.size() >=
+          multiheap_size_constraint_per_heap_) {
+        // We cannot put more into the current combined_it. So, appoint a new
+        // combined_it.
+        VLOG(1) << "Due to size constraint, reset temp allocation for color "
+                << color << " to: " << temp_allocation;
+        combined_allocations.push_back(std::move(temp_allocation));
+        combined_it->second = &combined_allocations.back();
+        continue;
+      }
+      combined_allocation = combined_it->second;
     }
 
     // If we got here, temp_allocation is still valid, since all the paths
     // that `std::move` it continue.
-    BufferAllocation* combined_allocation = combined_it->second;
-    VLOG(1) << "Combined allocation absorbing temp allocation: "
-            << temp_allocation;
+    VLOG(1) << "Combined allocation (page " << combined_allocation->page_id()
+            << ") absorbing temp allocation: " << temp_allocation;
 
     // Each temp allocation is placed end-to-end, accounting for alignment.
     // The offset of each buffer in the combined allocation is computed from
     // the base offset of the allocation.
-    int64_t alignment = color_alignment_(color);
     const int64_t base = RoundUpTo(combined_allocation->size(), alignment);
     combined_allocation->set_size(base + temp_allocation.size());
+    if (!temp_allocation.is_tuple()) {
+      combined_allocation->set_is_tuple(false);
+    }
     for (const auto& buffer_offset_size : temp_allocation.assigned_buffers_) {
       const HloValue* value = buffer_offset_size.first;
       const int64_t offset = buffer_offset_size.second.offset;

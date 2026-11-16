@@ -6772,6 +6772,194 @@ TEST_F(BufferAssignmentTest, MultiPage) {
               UnorderedElementsAre(Pair(0, 2800), Pair(1, 400)));
 }
 
+TEST_F(BufferAssignmentTest,
+       MultiPageCombineTempAllocationsPacksIntoExistingPage) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule MultiPageCombinePacksIntoExistingPage, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[700]{0} parameter(0)
+  p1 = f32[100]{0} parameter(1)
+  a = f32[700]{0} negate(p0)
+  b = f32[100]{0} exponential(p1)
+  tup = (f32[700]{0}, f32[100]{0}) tuple(a, b)
+  gte0 = f32[700]{0} get-tuple-element(tup), index=0
+  gte1 = f32[100]{0} get-tuple-element(tup), index=1
+  slice0 = f32[4]{0} slice(gte0), slice={[0:4]}
+  slice1 = f32[4]{0} slice(gte1), slice={[0:4]}
+  ROOT out = f32[4]{0} add(slice0, slice1)
+}
+)hlo";
+
+  // `a` (2800B, page 0) and `b` (400B, page 1) live concurrently under a 3 KiB
+  // (3072B) page cap. `tup` (16B, default page_id=0) overflows page 0 once
+  // aligned to 512B (3072 + 16 > 3072), so CombineTempAllocations packs it into
+  // page 1 at offset 512 without allocating a third page.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  module->mutable_config().set_page_size_kib(3);
+
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.colorer = BufferAssigner::DefaultColorer();
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> buffers,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 512; }, std::move(opts)));
+
+  std::vector<std::pair<int64_t, int64_t>> pages_and_sizes;
+  for (const BufferAllocation& alloc : buffers->Allocations()) {
+    if (alloc.IsPreallocatedTempBuffer()) {
+      EXPECT_LE(alloc.size(), 3 * 1024);
+      EXPECT_FALSE(alloc.is_tuple());
+      pages_and_sizes.push_back({alloc.page_id(), alloc.size()});
+    }
+  }
+  EXPECT_THAT(pages_and_sizes,
+              UnorderedElementsAre(Pair(0, 2800), Pair(1, 528)));
+
+  const HloInstruction* tup =
+      module->entry_computation()->GetInstructionWithName("tup");
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice tup_slice,
+                       buffers->GetUniqueTopLevelSlice(tup));
+  EXPECT_EQ(tup_slice.allocation()->page_id(), 1);
+  EXPECT_EQ(tup_slice.offset(), 512);
+}
+
+TEST_F(BufferAssignmentTest,
+       MultiPageCombineTempAllocationsAllocatesAndReusesNewPage) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule MultiPageCombineAllocatesAndReusesNewPage, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[700]{0} parameter(0)
+  a = f32[700]{0} negate(p0)
+  tup0 = (f32[700]{0}, f32[700]{0}) tuple(a, p0)
+  tup1 = (f32[700]{0}, f32[700]{0}) tuple(p0, a)
+  gte0 = f32[700]{0} get-tuple-element(tup0), index=0
+  gte1 = f32[700]{0} get-tuple-element(tup1), index=1
+  sum = f32[700]{0} add(gte0, gte1)
+  ROOT out = f32[4]{0} slice(sum), slice={[0:4]}
+}
+)hlo";
+
+  // Heap simulation fills page 0 (`a`, 2800B) and page 1 (`sum`, 2800B). With
+  // 512B alignment and a 3072B page limit, `tup0` (16B) fits in neither page
+  // and starts new page 2 at offset 0, while `tup1` (16B) packs into page 2 at
+  // offset 512 rather than creating page 3.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  module->mutable_config().set_page_size_kib(3);
+
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.colorer = BufferAssigner::DefaultColorer();
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> buffers,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 512; }, std::move(opts)));
+
+  std::vector<std::pair<int64_t, int64_t>> pages_and_sizes;
+  for (const BufferAllocation& alloc : buffers->Allocations()) {
+    if (alloc.IsPreallocatedTempBuffer()) {
+      EXPECT_LE(alloc.size(), 3 * 1024);
+      pages_and_sizes.push_back({alloc.page_id(), alloc.size()});
+    }
+  }
+  EXPECT_THAT(pages_and_sizes,
+              UnorderedElementsAre(Pair(0, 2800), Pair(1, 2800), Pair(2, 528)));
+
+  const HloInstruction* tup0 =
+      module->entry_computation()->GetInstructionWithName("tup0");
+  const HloInstruction* tup1 =
+      module->entry_computation()->GetInstructionWithName("tup1");
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice slice0,
+                       buffers->GetUniqueTopLevelSlice(tup0));
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice slice1,
+                       buffers->GetUniqueTopLevelSlice(tup1));
+  EXPECT_EQ(slice0.allocation()->page_id(), 2);
+  EXPECT_EQ(slice1.allocation()->page_id(), 2);
+  EXPECT_NE(slice0.offset(), slice1.offset());
+}
+
+TEST_F(BufferAssignmentTest,
+       MultiPageCombineTempAllocationsPreservesFixedOffsetsAndUniquePages) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule MultiPageCombineFixedOffsets, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[700]{0} parameter(0)
+  p1 = f32[100]{0} parameter(1)
+  fixed_zero = f32[100]{0} negate(p1)
+  fixed_nonzero = f32[100]{0} exponential(p1)
+  heap_buf = f32[700]{0} abs(p0)
+  tup = (f32[100]{0}, f32[100]{0}) tuple(fixed_zero, fixed_nonzero)
+  gte0 = f32[100]{0} get-tuple-element(tup), index=0
+  gte1 = f32[100]{0} get-tuple-element(tup), index=1
+  sum_fixed = f32[100]{0} add(gte0, gte1)
+  slice_heap = f32[100]{0} slice(heap_buf), slice={[0:100]}
+  sum_all = f32[100]{0} add(sum_fixed, slice_heap)
+  ROOT out = f32[4]{0} slice(sum_all), slice={[0:4]}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  module->mutable_config().set_page_size_kib(3);
+
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.colorer = BufferAssigner::DefaultColorer();
+  opts.fixed_offset = [](const HloAliasAnalysis&, const HloInstruction* instr,
+                         const ShapeIndex&) -> std::optional<int64_t> {
+    if (instr->name() == "fixed_zero") {
+      return 0;
+    }
+    if (instr->name() == "fixed_nonzero") {
+      return 512;
+    }
+    return std::nullopt;
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> buffers,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 512; }, std::move(opts)));
+
+  absl::flat_hash_set<int64_t> seen_pages;
+  for (const BufferAllocation& alloc : buffers->Allocations()) {
+    if (alloc.IsPreallocatedTempBuffer() &&
+        alloc.color() == LogicalBuffer::Color(0)) {
+      EXPECT_LE(alloc.size(), 3 * 1024);
+      EXPECT_TRUE(seen_pages.insert(alloc.page_id()).second);
+    }
+  }
+
+  ASSERT_OK_AND_ASSIGN(
+      BufferAllocation::Slice zero_slice,
+      buffers->GetUniqueTopLevelSlice(
+          module->entry_computation()->GetInstructionWithName("fixed_zero")));
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice nonzero_slice,
+                       buffers->GetUniqueTopLevelSlice(
+                           module->entry_computation()->GetInstructionWithName(
+                               "fixed_nonzero")));
+  EXPECT_EQ(zero_slice.offset(), 0);
+  EXPECT_EQ(nonzero_slice.offset(), 512);
+  // Nothing may merge onto an allocation with a nonzero fixed offset.
+  EXPECT_EQ(nonzero_slice.allocation()->assigned_buffers().size(), 1);
+}
+
 // Verifies that BufferAssignment builds successfully when using a dependency
 // ordering, which triggers
 // DefaultBufferAllocationsManagerForComputationsWithoutOrdering.
