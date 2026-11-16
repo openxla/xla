@@ -149,6 +149,11 @@ absl::StatusOr<xla::Shape> ReadDynamicShapeMetadata(
       int32_t runtime_size = 0;
       std::memcpy(&runtime_size, metadata.data() + i * sizeof(int32_t),
                   sizeof(runtime_size));
+      if (runtime_size < 0) {
+        return absl::InvalidArgumentError(absl::StrFormat(
+            "Output dynamic dimension %d has negative size %d for shape (%s)",
+            i, runtime_size, shape.ToString(true)));
+      }
       output_shape.set_dimensions(i, runtime_size);
     }
   }

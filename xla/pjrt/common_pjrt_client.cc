@@ -3807,6 +3807,64 @@ absl::Span<int const> CommonPjRtLoadedExecutable::ParametersThatMayBeDonated()
   return parameters_that_may_be_donated_;
 }
 
+namespace {
+
+// Returns whether `expected_shape` and `actual_shape` have compatible
+// `dynamic_shape_metadata_prefix_bytes()` for a `kPrefix` dynamic parameter.
+// Precondition: `expected_shape.has_layout() && actual_shape.has_layout()`.
+bool AreDynamicShapeMetadataPrefixesCompatible(const Shape& expected_shape,
+                                               const Shape& actual_shape) {
+  const int64_t expected_prefix =
+      expected_shape.layout().dynamic_shape_metadata_prefix_bytes();
+  const int64_t actual_prefix =
+      actual_shape.layout().dynamic_shape_metadata_prefix_bytes();
+  if (expected_prefix == actual_prefix) {
+    return true;
+  }
+  // Unprefixed static buffers (`M(0)`) may feed dynamic parameters (`M(n)`);
+  // static dimensions are checked directly against bounds. Static buffers
+  // carrying `M(n > 0)` are not sliced by `PrepareArguments`, so their prefix
+  // must match `expected_prefix`.
+  if (actual_shape.is_static()) {
+    return actual_prefix == 0;
+  }
+  // Dynamic buffers with `M(n)` may feed `PadRealToStatic` parameters (`M(0)`)
+  // because `PrepareArguments` slices the prefix off.
+  return expected_prefix == 0;
+}
+
+// Returns whether `expected_shape` and `actual_shape` have compatible layouts
+// (ignoring tiles) for a `kPrefix` dynamic parameter.
+bool ArePrefixDynamicParameterLayoutsCompatible(const Shape& expected_shape,
+                                                const Shape& actual_shape) {
+  if (expected_shape.has_layout() != actual_shape.has_layout()) {
+    return false;
+  }
+  if (!expected_shape.has_layout()) {
+    return true;
+  }
+  if (!AreDynamicShapeMetadataPrefixesCompatible(expected_shape,
+                                                 actual_shape)) {
+    return false;
+  }
+  const Layout& expected_layout = expected_shape.layout();
+  const Layout& actual_layout = actual_shape.layout();
+  if (expected_layout.dynamic_shape_metadata_prefix_bytes() ==
+      actual_layout.dynamic_shape_metadata_prefix_bytes()) {
+    return Layout::Equal().IgnoreTiles()(expected_layout, actual_layout);
+  }
+  // Normalize the prefix on a local Layout copy so `Layout::Equal` compares all
+  // remaining layout fields without failing once `Layout::Equal` includes
+  // `dynamic_shape_metadata_prefix_bytes`.
+  Layout normalized_actual_layout = actual_layout;
+  normalized_actual_layout.set_dynamic_shape_metadata_prefix_bytes(
+      expected_layout.dynamic_shape_metadata_prefix_bytes());
+  return Layout::Equal().IgnoreTiles()(expected_layout,
+                                       normalized_actual_layout);
+}
+
+}  // namespace
+
 absl::Status CommonPjRtLoadedExecutable::CheckBufferCompatibilities(
     const ExecuteOptions& options,
     absl::Span<const PjRtRawBufferRef> input_buffers,
@@ -3829,8 +3887,8 @@ absl::Status CommonPjRtLoadedExecutable::CheckBufferCompatibilities(
         argument_handles[i]->memory_space()->kind_id());
 
     bool expected_shape_dynamic = !expected_shape.is_static();
-    if (expected_shape_dynamic && ds_kind == PjRtDynamicShapeKind::kPrefix) {
-      // Both shapes dynamic of kPrefix kind.
+    if (expected_shape_dynamic && expected_shape.IsArray() &&
+        ds_kind == PjRtDynamicShapeKind::kPrefix) {
       // Element type check
       if (expected_shape.element_type() != actual_shape.element_type()) {
         return error::RuntimeProgramInputMismatch(
@@ -3849,14 +3907,16 @@ absl::Status CommonPjRtLoadedExecutable::CheckBufferCompatibilities(
             actual_shape.dimensions().size());
       }
       // Layout check
-      if (!xla::LayoutUtil::LayoutsInShapesEqual(
-              expected_shape, actual_shape,
-              xla::Layout::Equal().IgnoreTiles())) {
+      if (!ArePrefixDynamicParameterLayoutsCompatible(expected_shape,
+                                                      actual_shape)) {
         return error::RuntimeProgramInputMismatch(
             "Executable(%s) expected parameter %d to have layout %s but "
             "got buffer with layout %s",
-            name(), i, expected_shape.layout().ToString(),
-            actual_shape.layout().ToString());
+            name(), i,
+            expected_shape.has_layout() ? expected_shape.layout().ToString()
+                                        : "<none>",
+            actual_shape.has_layout() ? actual_shape.layout().ToString()
+                                      : "<none>");
       }
       // Bounds check
       bool needs_runtime_bounds_check = false;
@@ -3874,6 +3934,21 @@ absl::Status CommonPjRtLoadedExecutable::CheckBufferCompatibilities(
               "size %lld, but got buffer with size %lld",
               name(), i, d, expected_dim, actual_dim);
         }
+        if (!actual_dim_is_static && expected_dim_is_static) {
+          // Physical layout and strides for a static expected dimension require
+          // the buffer's upper bound to match `expected_dim`, and its runtime
+          // size must also equal `expected_dim`.
+          if (actual_dim != expected_dim) {
+            std::string actual_dim_str = actual_dim == Shape::kUnboundedSize
+                                             ? "?"
+                                             : absl::StrCat("<=", actual_dim);
+            return error::RuntimeProgramInputMismatch(
+                "Executable(%s) expected parameter %d dimension %d static "
+                "size %lld, but got buffer with dynamic dimension %s",
+                name(), i, d, expected_dim, actual_dim_str);
+          }
+          needs_runtime_bounds_check = true;
+        }
         if (actual_dim_is_static &&
             expected_shape.is_bounded_dynamic_dimension(d) &&
             actual_dim > expected_dim) {
@@ -3887,30 +3962,45 @@ absl::Status CommonPjRtLoadedExecutable::CheckBufferCompatibilities(
         }
         if (!actual_dim_is_static &&
             expected_shape.is_bounded_dynamic_dimension(d) &&
-            actual_dim > expected_dim) {
+            (actual_dim == Shape::kUnboundedSize ||
+             actual_dim > expected_dim)) {
           // If expected dimension is bounded dynamic and actual dimension is
           // dynamic, we need to check the size at runtime if bounded dimension
-          // of actual exceeds the bounded dimension of expected.
+          // of actual exceeds the bounded dimension of expected (or is
+          // unbounded).
           needs_runtime_bounds_check = true;
         }
       }
-      // When we compile a module that feeds into PadRealToStatic (converts
-      // dynamic shape into static shape), the
-      // dynamic_shape_metadata_prefix_bytes gets overwritten to 0. A dynamic
-      // shape whose prefix bytes are zero requires the framework to keep track
-      // of and enforce the expected shape constraints.
+      // When a dynamic buffer is produced for a PadRealToStatic parameter
+      // without a metadata prefix, dynamic_shape_metadata_prefix_bytes is 0.
+      // A dynamic buffer whose prefix bytes are zero requires the framework to
+      // keep track of and enforce the expected shape constraints.
       const bool dynamic_shape_checks_are_external =
-          expected_shape.layout().dynamic_shape_metadata_prefix_bytes() == 0;
+          !actual_shape.has_layout() ||
+          actual_shape.layout().dynamic_shape_metadata_prefix_bytes() == 0;
       if (needs_runtime_bounds_check && !dynamic_shape_checks_are_external) {
         ABSL_ASSIGN_OR_RETURN(Shape actual_logical_shape,
                               argument_handles[i]->logical_on_device_shape());
         for (int d = 0; d < expected_shape.dimensions().size(); ++d) {
-          if (!expected_shape.is_bounded_dynamic_dimension(d)) {
-            continue;
-          }
           int64_t expected_dim = expected_shape.dimensions(d);
           int64_t actual_logical_dim = actual_logical_shape.dimensions(d);
-          if (actual_logical_dim > expected_dim) {
+          if (expected_shape.is_static_dimension(d)) {
+            if (actual_logical_dim != expected_dim) {
+              return error::RuntimeProgramInputMismatch(
+                  "Executable(%s) expected parameter %d dimension %d static "
+                  "size %lld, but got buffer with size %lld",
+                  name(), i, d, expected_dim, actual_logical_dim);
+            }
+            continue;
+          }
+          if (actual_logical_dim < 0) {
+            return error::RuntimeProgramInputMismatch(
+                "Executable(%s) expected parameter %d dimension %d runtime "
+                "size >= 0, but got buffer with size %lld",
+                name(), i, d, actual_logical_dim);
+          }
+          if (expected_shape.is_bounded_dynamic_dimension(d) &&
+              actual_logical_dim > expected_dim) {
             return error::RuntimeProgramInputMismatch(
                 "Executable(%s) expected parameter %d dimension %d runtime "
                 "size <= %lld, but got buffer with size %lld",

@@ -128,6 +128,21 @@ absl::StatusOr<xla::Shape>
 CpuTopologyDescription::MakeCanonicalShapeForMemorySpace(
     int memory_space_kind_id, xla::Shape shape,
     const xla::Layout* layout) const {
+  if (platform_id_ == xla::TpuId() && layout != nullptr &&
+      (layout->dynamic_shape_metadata_prefix_bytes() != 0 ||
+       !layout->tiles().empty())) {
+    xla::Layout cpu_layout = *layout;
+    cpu_layout.set_dynamic_shape_metadata_prefix_bytes(0);
+    cpu_layout.clear_tiles();
+    ABSL_ASSIGN_OR_RETURN(
+        xla::Shape canonical,
+        MakeDefaultCpuBufferShape(std::move(shape), &cpu_layout));
+    canonical.mutable_layout()->mutable_tiles()->assign(layout->tiles().begin(),
+                                                        layout->tiles().end());
+    canonical.mutable_layout()->set_dynamic_shape_metadata_prefix_bytes(
+        layout->dynamic_shape_metadata_prefix_bytes());
+    return canonical;
+  }
   return MakeDefaultCpuBufferShape(std::move(shape), layout);
 }
 

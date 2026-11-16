@@ -18,22 +18,29 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "benchmark/benchmark.h"  // IWYU pragma: keep
 #include "tsl/profiler/lib/scoped_memory_debug_annotation.h"
+#include "xla/backends/cpu/target_machine_options.h"
+#include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -42,15 +49,20 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
+#include "xla/pjrt/plugin/xla_cpu/cpu_topology.h"
+#include "xla/pjrt/plugin/xla_cpu/cpu_topology_description.h"
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
+#include "xla/pjrt/raw_buffer.h"
 #include "xla/primitive_util.h"
 #include "xla/runtime/device_id.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/types.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -59,6 +71,11 @@ namespace {
 using ::absl_testing::IsOk;
 using ::absl_testing::StatusIs;
 using ::testing::ElementsAre;
+using ::testing::HasSubstr;
+using ::testing::Matcher;
+using ::testing::TestParamInfo;
+using ::testing::TestWithParam;
+using ::testing::Values;
 
 TEST(TransferIncarnationsTest, EmptySnapshotReturnsNullopt) {
   ASSERT_OK_AND_ASSIGN(auto transfer_incarnations,
@@ -449,6 +466,413 @@ TEST(CommonPjRtClientExecuteTest,
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> out3,
                        results[3]->ToLiteral().Await());
   EXPECT_THAT(out3->data<int32_t>(), ElementsAre(5, 6));
+}
+
+constexpr absl::string_view kDynamicParameterHlo = R"hlo(
+  HloModule dynamic_param_with_prefix
+
+  ENTRY main {
+    p0 = f32[<=4,2]{1,0} parameter(0)
+    ROOT out = f32[2]{0} constant({1.0, 2.0})
+  }
+)hlo";
+
+constexpr absl::string_view kPadRealToStaticHlo = R"hlo(
+  HloModule pad_real_to_static
+
+  ENTRY main {
+    p0 = f32[<=4,2]{1,0} parameter(0)
+    d0 = s32[] parameter(1)
+    d1 = s32[] parameter(2)
+    ROOT out = f32[4,2]{1,0} custom-call(p0, d0, d1),
+        custom_call_target="PadRealToStatic"
+  }
+)hlo";
+
+absl::StatusOr<std::unique_ptr<PjRtClient>> MakePrefixDynamicTestClient() {
+  CpuTopologyDescription topology(
+      TpuId(), TpuName(), "fake",
+      CpuTopology(/*cpu_devices=*/{{0, 0}}, cpu::TargetMachineOptions()));
+  CpuClientOptions options;
+  options.cpu_device_count = 1;
+  options.topology = &topology;
+  return GetXlaPjrtCpuClient(std::move(options));
+}
+
+absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoadForClient(
+    PjRtClient& client, absl::string_view hlo_text,
+    std::optional<std::vector<Shape>> argument_layouts = std::nullopt) {
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<PjRtClient> compiler_client,
+                        GetXlaPjrtCpuClient(CpuClientOptions{}));
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
+                        ParseAndReturnUnverifiedModule(hlo_text, {}));
+  XlaComputation computation(hlo_module->ToProto());
+  CompileOptions compile_options;
+  compile_options.argument_layouts = std::move(argument_layouts);
+  compile_options.executable_build_options.set_run_backend_only(true);
+  compile_options.executable_build_options.mutable_debug_options()
+      ->set_xla_cpu_mock_custom_calls(true);
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<PjRtExecutable> compiled,
+                        compiler_client->Compile(computation, compile_options));
+  return client.Load(std::move(compiled), LoadOptions{});
+}
+
+absl::StatusOr<std::unique_ptr<PjRtBuffer>> TransferLiteralToDevice(
+    PjRtClient& client, const LiteralSlice& literal,
+    PjRtMemorySpace* memory_space, absl::string_view device_layout = "") {
+  std::optional<Layout> parsed_layout;
+  if (!device_layout.empty()) {
+    ABSL_ASSIGN_OR_RETURN(parsed_layout, ParseLayout(device_layout));
+  }
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client.BufferFromHostLiteral(
+          literal, memory_space,
+          parsed_layout.has_value() ? &*parsed_layout : nullptr));
+  ABSL_RETURN_IF_ERROR(buffer->GetReadyFuture().Await());
+  return buffer;
+}
+
+template <typename T>
+std::shared_ptr<const Literal> MakeR2Literal(
+    std::initializer_list<std::initializer_list<T>> values) {
+  return std::make_shared<Literal>(LiteralUtil::CreateR2<T>(values));
+}
+
+std::shared_ptr<const Literal> MakeR3FloatLiteral(
+    std::initializer_list<std::initializer_list<std::initializer_list<float>>>
+        values) {
+  return std::make_shared<Literal>(LiteralUtil::CreateR3<float>(values));
+}
+
+std::shared_ptr<const Literal> MakeBoundedDynamicR2Literal(
+    std::initializer_list<std::initializer_list<float>> values,
+    absl::Span<const int64_t> bounds, const std::vector<bool>& dynamic_dims) {
+  return std::make_shared<Literal>(
+      LiteralUtil::CreateR2<float>(values).ToBoundedDynamic(
+          ShapeUtil::MakeShape(F32, bounds, dynamic_dims)));
+}
+
+struct BufferCompatibilityTestCase {
+  std::string test_name;
+  std::shared_ptr<const Literal> input;
+  std::string device_layout;
+  Matcher<absl::Status> status_matcher;
+};
+
+class PrefixDynamicParameterTest
+    : public TestWithParam<BufferCompatibilityTestCase> {};
+
+TEST_P(PrefixDynamicParameterTest, ValidatesBufferCompatibility) {
+  const BufferCompatibilityTestCase& tc = GetParam();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       MakePrefixDynamicTestClient());
+  PjRtDevice* device = client->addressable_devices()[0];
+  ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * default_space,
+                       device->default_memory_space());
+  ASSERT_OK_AND_ASSIGN(Shape expected_param_shape,
+                       ParseShape("f32[<=4,2]{1,0:T(8,128)M(1024)}"));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtLoadedExecutable> executable,
+                       CompileAndLoadForClient(*client, kDynamicParameterHlo,
+                                               {{expected_param_shape}}));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> arg,
+      TransferLiteralToDevice(*client, *tc.input, default_space,
+                              tc.device_layout));
+
+  EXPECT_THAT(executable->ExecuteSharded({arg.get()}, device, ExecuteOptions{})
+                  .status(),
+              tc.status_matcher);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    CommonPjRtClientExecute, PrefixDynamicParameterTest,
+    Values(
+        BufferCompatibilityTestCase{
+            .test_name = "AcceptsStaticBufferWithinDynamicBound",
+            .input = MakeR2Literal<float>({{1.0f, 2.0f}, {3.0f, 4.0f}}),
+            .status_matcher = IsOk(),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "AcceptsStaticBufferWithDifferentTiles",
+            .input = MakeR2Literal<float>({{1.0f, 2.0f}, {3.0f, 4.0f}}),
+            .device_layout = "{1,0:T(4,128)}",
+            .status_matcher = IsOk(),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "AcceptsStaticBufferAtDynamicBound",
+            .input = MakeR2Literal<float>(
+                {{1.0f, 2.0f}, {3.0f, 4.0f}, {5.0f, 6.0f}, {7.0f, 8.0f}}),
+            .status_matcher = IsOk(),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "AcceptsStaticBufferWithMatchingMetadataPrefix",
+            .input = MakeR2Literal<float>({{1.0f, 2.0f}, {3.0f, 4.0f}}),
+            .device_layout = "{1,0:M(1024)}",
+            .status_matcher = IsOk(),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "RejectsStaticBufferWithMismatchedMetadataPrefix",
+            .input = MakeR2Literal<float>({{1.0f, 2.0f}, {3.0f, 4.0f}}),
+            .device_layout = "{1,0:M(512)}",
+            .status_matcher =
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("expected parameter 0 to have layout")),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "RejectsStaticBufferExceedingDynamicBound",
+            .input = MakeR2Literal<float>({{1.0f, 2.0f},
+                                           {3.0f, 4.0f},
+                                           {5.0f, 6.0f},
+                                           {7.0f, 8.0f},
+                                           {9.0f, 10.0f}}),
+            .status_matcher = StatusIs(
+                absl::StatusCode::kInvalidArgument,
+                HasSubstr("dimension 0 runtime size <= 4, but got buffer with "
+                          "size 5")),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "RejectsStaticBufferMismatchingStaticDimension",
+            .input = MakeR2Literal<float>({{1.0f, 2.0f, 3.0f},
+                                           {4.0f, 5.0f, 6.0f}}),
+            .status_matcher = StatusIs(
+                absl::StatusCode::kInvalidArgument,
+                HasSubstr("dimension 1 static size 2, but got buffer with "
+                          "size 3")),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "RejectsTransposedMinorToMajorLayout",
+            .input = MakeR2Literal<float>({{1.0f, 2.0f}, {3.0f, 4.0f}}),
+            .device_layout = "{0,1}",
+            .status_matcher =
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("expected parameter 0 to have layout")),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "RejectsWrongElementType",
+            .input = MakeR2Literal<int32_t>({{1, 2}, {3, 4}}),
+            .status_matcher = StatusIs(
+                absl::StatusCode::kInvalidArgument,
+                HasSubstr("expected parameter 0 to have element type F32 but "
+                          "got buffer with element type S32")),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "RejectsWrongRank",
+            .input = MakeR3FloatLiteral({{{1.0f}, {2.0f}}, {{3.0f}, {4.0f}}}),
+            .status_matcher = StatusIs(
+                absl::StatusCode::kInvalidArgument,
+                HasSubstr("expected parameter 0 to have rank 2 but got buffer "
+                          "with rank 3")),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "RejectsDynamicBufferWithoutMetadataPrefix",
+            .input = MakeBoundedDynamicR2Literal(
+                {{1.0f, 2.0f}, {3.0f, 4.0f}}, /*bounds=*/{4, 2},
+                /*dynamic_dims=*/{true, false}),
+            .status_matcher =
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("expected parameter 0 to have layout")),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "RejectsDynamicBufferWithMismatchedMetadataPrefix",
+            .input = MakeBoundedDynamicR2Literal(
+                {{1.0f, 2.0f}, {3.0f, 4.0f}}, /*bounds=*/{4, 2},
+                /*dynamic_dims=*/{true, false}),
+            .device_layout = "{1,0:M(512)}",
+            .status_matcher =
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("expected parameter 0 to have layout")),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "AcceptsNarrowerBoundDynamicBuffer",
+            .input =
+                MakeBoundedDynamicR2Literal({{1.0f, 2.0f}}, /*bounds=*/{2, 2},
+                                            /*dynamic_dims=*/{true, false}),
+            .device_layout = "{1,0:M(1024)}",
+            .status_matcher = IsOk(),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "AcceptsWiderBoundDynamicBufferAtBound",
+            .input = MakeBoundedDynamicR2Literal(
+                {{1.0f, 2.0f}, {3.0f, 4.0f}, {5.0f, 6.0f}, {7.0f, 8.0f}},
+                /*bounds=*/{8, 2}, /*dynamic_dims=*/{true, false}),
+            .device_layout = "{1,0:M(1024)}",
+            .status_matcher = IsOk(),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "RejectsWiderBoundDynamicBufferExceedingBound",
+            .input = MakeBoundedDynamicR2Literal(
+                {{1.0f, 2.0f},
+                 {3.0f, 4.0f},
+                 {5.0f, 6.0f},
+                 {7.0f, 8.0f},
+                 {9.0f, 10.0f},
+                 {11.0f, 12.0f}},
+                /*bounds=*/{8, 2}, /*dynamic_dims=*/{true, false}),
+            .device_layout = "{1,0:M(1024)}",
+            .status_matcher = StatusIs(
+                absl::StatusCode::kInvalidArgument,
+                HasSubstr("dimension 0 runtime size <= 4, but got buffer with "
+                          "size 6")),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "RejectsDynamicDimensionMismatchingStaticBound",
+            .input = MakeBoundedDynamicR2Literal({{1.0f, 2.0f}, {3.0f, 4.0f}},
+                                                 /*bounds=*/{4, 4},
+                                                 /*dynamic_dims=*/{true, true}),
+            .device_layout = "{1,0:M(1024)}",
+            .status_matcher = StatusIs(
+                absl::StatusCode::kInvalidArgument,
+                HasSubstr("dimension 1 static size 2, but got buffer with "
+                          "dynamic dimension <=4")),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "RejectsDynamicDimensionMismatchingStaticRuntimeSize",
+            .input = MakeBoundedDynamicR2Literal({{1.0f}, {3.0f}},
+                                                 /*bounds=*/{4, 2},
+                                                 /*dynamic_dims=*/{true, true}),
+            .device_layout = "{1,0:M(1024)}",
+            .status_matcher = StatusIs(
+                absl::StatusCode::kInvalidArgument,
+                HasSubstr("dimension 1 static size 2, but got buffer with "
+                          "size 1")),
+        },
+        BufferCompatibilityTestCase{
+            .test_name =
+                "AcceptsDynamicDimensionMatchingStaticBoundAndRuntimeSize",
+            .input = MakeBoundedDynamicR2Literal({{1.0f, 2.0f}, {3.0f, 4.0f}},
+                                                 /*bounds=*/{4, 2},
+                                                 /*dynamic_dims=*/{true, true}),
+            .device_layout = "{1,0:M(1024)}",
+            .status_matcher = IsOk(),
+        }),
+    [](const TestParamInfo<BufferCompatibilityTestCase>& info) {
+      return info.param.test_name;
+    });
+
+class PadRealToStaticParameterTest
+    : public TestWithParam<BufferCompatibilityTestCase> {};
+
+TEST_P(PadRealToStaticParameterTest, ValidatesBufferCompatibility) {
+  const BufferCompatibilityTestCase& tc = GetParam();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       MakePrefixDynamicTestClient());
+  PjRtDevice* device = client->addressable_devices()[0];
+  ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * default_space,
+                       device->default_memory_space());
+  ASSERT_OK_AND_ASSIGN(Shape param0_layout,
+                       ParseShape("f32[<=4,2]{1,0:T(8,128)M(1024)}"));
+  Shape scalar_s32 = ShapeUtil::MakeShape(S32, {});
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> executable,
+      CompileAndLoadForClient(*client, kPadRealToStaticHlo,
+                              {{param0_layout, scalar_s32, scalar_s32}}));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> arg,
+      TransferLiteralToDevice(*client, *tc.input, default_space,
+                              tc.device_layout));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> d0,
+      TransferLiteralToDevice(
+          *client, LiteralUtil::CreateR0<int32_t>(tc.input->GetDynamicSize(0)),
+          default_space));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> d1,
+      TransferLiteralToDevice(
+          *client, LiteralUtil::CreateR0<int32_t>(tc.input->GetDynamicSize(1)),
+          default_space));
+
+  EXPECT_THAT(executable
+                  ->ExecuteSharded({arg.get(), d0.get(), d1.get()}, device,
+                                   ExecuteOptions{})
+                  .status(),
+              tc.status_matcher);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    CommonPjRtClientExecute, PadRealToStaticParameterTest,
+    Values(
+        BufferCompatibilityTestCase{
+            .test_name = "AcceptsSameBoundPrefixedDynamicBuffer",
+            .input = MakeBoundedDynamicR2Literal(
+                {{10.0f, 20.0f}, {30.0f, 40.0f}}, /*bounds=*/{4, 2},
+                /*dynamic_dims=*/{true, false}),
+            .device_layout = "{1,0:T(8,128)M(1024)}",
+            .status_matcher = IsOk(),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "AcceptsWiderBoundPrefixedDynamicBufferWithinBound",
+            .input = MakeBoundedDynamicR2Literal(
+                {{1.0f, 2.0f}, {3.0f, 4.0f}, {5.0f, 6.0f}}, /*bounds=*/{8, 2},
+                /*dynamic_dims=*/{true, false}),
+            .device_layout = "{1,0:T(8,128)M(1024)}",
+            .status_matcher = IsOk(),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "RejectsWiderBoundPrefixedDynamicBufferExceedingBound",
+            .input = MakeBoundedDynamicR2Literal(
+                {{1.0f, 2.0f},
+                 {3.0f, 4.0f},
+                 {5.0f, 6.0f},
+                 {7.0f, 8.0f},
+                 {9.0f, 10.0f},
+                 {11.0f, 12.0f}},
+                /*bounds=*/{8, 2}, /*dynamic_dims=*/{true, false}),
+            .device_layout = "{1,0:T(8,128)M(1024)}",
+            .status_matcher = StatusIs(
+                absl::StatusCode::kInvalidArgument,
+                HasSubstr("dimension 0 runtime size <= 4, but got buffer with "
+                          "size 6")),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "AcceptsWiderBoundUnprefixedDynamicBuffer",
+            .input = MakeBoundedDynamicR2Literal(
+                {{1.0f, 2.0f}, {3.0f, 4.0f}, {5.0f, 6.0f}}, /*bounds=*/{8, 2},
+                /*dynamic_dims=*/{true, false}),
+            .status_matcher = IsOk(),
+        },
+        BufferCompatibilityTestCase{
+            .test_name = "RejectsStaticBufferWithMetadataPrefix",
+            .input = MakeR2Literal<float>({{1.0f, 2.0f}, {3.0f, 4.0f}}),
+            .device_layout = "{1,0:T(8,128)M(1024)}",
+            .status_matcher =
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("expected parameter 0 to have layout")),
+        }),
+    [](const TestParamInfo<BufferCompatibilityTestCase>& info) {
+      return info.param.test_name;
+    });
+
+TEST(CommonPjRtClientExecuteTest,
+     DynamicParameterRejectsNegativeMetadataDimensionSize) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       MakePrefixDynamicTestClient());
+  PjRtDevice* device = client->addressable_devices()[0];
+  ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * default_space,
+                       device->default_memory_space());
+  ASSERT_OK_AND_ASSIGN(Shape expected_param_shape,
+                       ParseShape("f32[<=4,2]{1,0:T(8,128)M(1024)}"));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtLoadedExecutable> executable,
+                       CompileAndLoadForClient(*client, kDynamicParameterHlo,
+                                               {{expected_param_shape}}));
+  ASSERT_OK_AND_ASSIGN(Shape raw_wider_shape,
+                       ParseShape("f32[<=8,2]{1,0:T(8,128)M(1024)}"));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> corrupt_prefix_arg,
+      client->CreateUninitializedBuffer(raw_wider_shape, default_space));
+  ASSERT_OK_AND_ASSIGN(
+      PjRtRawBufferRef raw_alias,
+      PjRtRawBuffer::CreateRawAliasOfBuffer(corrupt_prefix_arg.get()));
+  const std::array<int32_t, 2> negative_dims = {-1, 2};
+  ASSERT_OK(raw_alias
+                ->CopyRawHostToDevice(negative_dims.data(), /*offset=*/0,
+                                      sizeof(negative_dims))
+                .Await());
+
+  EXPECT_THAT(
+      executable->ExecuteSharded({corrupt_prefix_arg.get()}, device,
+                                 ExecuteOptions{}),
+      StatusIs(absl::StatusCode::kInternal, HasSubstr("negative size -1")));
 }
 
 // NOLINTBEGIN(misc-include-cleaner): benchmark/benchmark.h is the public
