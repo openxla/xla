@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/convert_operand_folder.h"
 
+#include "absl/algorithm/container.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "tsl/platform/errors.h"
@@ -52,6 +53,17 @@ bool IsUpcastConvert(const HloInstruction* hlo) {
     default:
       return false;
   }
+}
+
+// Returns the element type of `operand` once its upcast, if any, is folded.
+PrimitiveType FoldedElementType(const HloInstruction* operand) {
+  if (!IsUpcastConvert(operand)) {
+    return operand->shape().element_type();
+  }
+  while (operand->opcode() != HloOpcode::kConvert) {
+    operand = operand->operand(0);
+  }
+  return operand->operand(0)->shape().element_type();
 }
 
 HloInstruction* EffectiveOperand(HloInstruction* hlo) {
@@ -92,12 +104,12 @@ bool ConvertOperandFolding::InstructionMatchesPattern(
       instruction->opcode() != HloOpcode::kConvolution) {
     return false;
   }
-  for (auto* operand : instruction->operands()) {
-    if (IsUpcastConvert(operand)) {
-      return true;
-    }
+  if (!absl::c_any_of(instruction->operands(), IsUpcastConvert)) {
+    return false;
   }
-  return false;
+  return contraction_filter_ == nullptr ||
+         contraction_filter_(FoldedElementType(instruction->operand(0)),
+                             FoldedElementType(instruction->operand(1)));
 }
 
 absl::StatusOr<HloInstruction*> ConvertOperandFolding::ExpandInstruction(

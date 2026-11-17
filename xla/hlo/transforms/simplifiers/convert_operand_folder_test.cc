@@ -148,6 +148,40 @@ TEST_F(ConvertOperandFoldingTest, OneOperandFolded) {
             op::Shape("s16[2,2]{1,0}")));
 }
 
+// The filter sees the types each dot would have after folding, and only the
+// rejected dot keeps its converts.
+TEST_F(ConvertOperandFoldingTest, FilterRejectsContractionByFoldedTypes) {
+  absl::string_view module_string = R"(
+  HloModule module
+
+  ENTRY main {
+    p0 = f8e4m3fn[2,3]{1,0} parameter(0)
+    p1 = f8e4m3fn[3,2]{1,0} parameter(1)
+    p2 = bf16[2,3]{1,0} parameter(2)
+    c0 = f32[2,3]{1,0} convert(p0)
+    c1 = f32[3,2]{1,0} convert(p1)
+    c2 = f32[2,3]{1,0} convert(p2)
+    t2 = f32[3,2]{0,1} transpose(c2), dimensions={1,0}
+    fp8_dot = f32[2,2]{1,0} dot(c0, c1), lhs_contracting_dims={1},
+                                         rhs_contracting_dims={0}
+    mixed_dot = f32[2,2]{1,0} dot(c0, t2), lhs_contracting_dims={1},
+                                           rhs_contracting_dims={0}
+    ROOT tuple = (f32[2,2]{1,0}, f32[2,2]{1,0}) tuple(fp8_dot, mixed_dot)
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(module_string));
+  ConvertOperandFolding pass([](PrimitiveType lhs, PrimitiveType rhs) {
+    return !(lhs == F8E4M3FN && rhs == F8E4M3FN);
+  });
+  TF_ASSERT_OK_AND_ASSIGN(bool folded, pass.Run(module.get()));
+  EXPECT_TRUE(folded);
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      op::Tuple(
+          op::Dot(op::Convert(op::Parameter(0)), op::Convert(op::Parameter(1))),
+          op::Dot(op::Parameter(0), op::Transpose(op::Parameter(2)))));
+}
+
 TEST_F(ConvertOperandFoldingTest, FoldedWithFormatting) {
   absl::string_view module_string = R"(
   HloModule module

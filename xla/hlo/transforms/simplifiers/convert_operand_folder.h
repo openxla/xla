@@ -16,11 +16,15 @@ limitations under the License.
 #ifndef XLA_HLO_TRANSFORMS_SIMPLIFIERS_CONVERT_OPERAND_FOLDER_H_
 #define XLA_HLO_TRANSFORMS_SIMPLIFIERS_CONVERT_OPERAND_FOLDER_H_
 
+#include <functional>
+#include <utility>
+
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/transforms/expanders/op_expander_pass.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -30,6 +34,16 @@ namespace xla {
 // e.g. s32 hlo(s32 convert(s8), s32 convert(s8)) -> s32 hlo(s8, s8)
 class ConvertOperandFolding : public OpExpanderPass {
  public:
+  // Returns whether a dot or convolution may have its converts folded, given
+  // its lhs and rhs element types after folding. A backend returns false when
+  // contracting those types is less precise than contracting the unfolded
+  // ones, so folding never changes the result.
+  using ContractionFilter =
+      std::function<bool(PrimitiveType lhs, PrimitiveType rhs)>;
+
+  explicit ConvertOperandFolding(ContractionFilter contraction_filter = nullptr)
+      : contraction_filter_(std::move(contraction_filter)) {}
+
   absl::string_view name() const override { return "convert_operand_folding"; }
 
  protected:
@@ -37,6 +51,9 @@ class ConvertOperandFolding : public OpExpanderPass {
 
   absl::StatusOr<HloInstruction*> ExpandInstruction(
       HloInstruction* instruction) override;
+
+ private:
+  ContractionFilter contraction_filter_;
 };
 
 }  // namespace xla
