@@ -472,6 +472,7 @@ xla_test(
         "//xla/runtime:device_id",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:memory_allocation",
+        "//xla/stream_executor:memory_allocator",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",

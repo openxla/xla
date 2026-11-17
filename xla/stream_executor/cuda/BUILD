@@ -1282,6 +1282,7 @@ xla_test(
     deps = [
         ":cuda_device_allocator",
         ":cuda_platform",
+        ":cuda_status",
         "//xla/stream_executor:activate_context",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
