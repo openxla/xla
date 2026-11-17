@@ -25,6 +25,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/cost_model/fusion_analysis_cache.h"
 #include "xla/backends/gpu/cost_model/gpu_hlo_cost_analysis.h"
+#include "xla/backends/gpu/cost_model/gpu_performance_model.h"
 #include "xla/hlo/analysis/hlo_dfs_reachability.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -118,6 +119,7 @@ class MultiOutputFusion : public HloModulePass {
                         invalidate_caches_callback,
                     FusionInfoCache* fusion_info_cache,
                     HloFusionAnalysisCache* fusion_analysis_cache,
+                    GpuPerformanceModel& gpu_performance_model,
                     GpuHloCostAnalysis* cost_analysis);
 
   absl::StatusOr<bool> DoMultiOutputFusion();
