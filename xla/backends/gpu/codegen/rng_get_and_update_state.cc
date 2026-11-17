@@ -20,16 +20,16 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "absl/numeric/bits.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -65,21 +65,62 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
-namespace {
 
-// Use a non zero initial value so the first random number generation passes
-// chi square tests.
-constexpr uint64_t kRngStateInitialLow = 0x7012395ULL;
-constexpr unsigned kGlobalMemoryAddressSpace = 1;
-constexpr int64_t kStateAlignmentBytes = 16;
+std::vector<uint8_t> RngStateInitialBytes() {
+  std::vector<uint8_t> bytes(kRngStateSizeBytes, 0);
+  absl::little_endian::Store64(bytes.data(), kRngStateInitialLow);
+  return bytes;
+}
 
-}  // namespace
+absl::StatusOr<emitters::KernelArguments>
+CreateRngGetAndUpdateStateKernelArguments(
+    const HloRngGetAndUpdateStateInstruction* instr,
+    const BufferAllocation::Slice& state_slice,
+    const BufferAllocation::Slice& out_slice) {
+  TF_RET_CHECK(instr != nullptr);
+  TF_RET_CHECK(state_slice.size() == kRngStateSizeBytes);
+  TF_RET_CHECK(out_slice.size() == kRngStateSizeBytes);
+  TF_RET_CHECK(!state_slice.OverlapsWith(out_slice));
+  const emitters::KernelArguments::BufferAlignment buffer_alignment =
+      GetDefaultBufferAlignment();
+  auto get_alignment = [&](const BufferAllocation::Slice& slice) -> int64_t {
+    const BufferAllocation* alloc = slice.allocation();
+    if (alloc->is_entry_computation_parameter()) {
+      return buffer_alignment.entry_parameter_align_bytes;
+    }
+    if (alloc->is_constant()) {
+      return buffer_alignment.constant_buffer_align_bytes;
+    }
+    return buffer_alignment.xla_allocated_buffer_align_bytes;
+  };
+  auto make_argument = [&](const BufferAllocation::Slice& slice,
+                           int64_t slice_index, bool written, bool aliased) {
+    emitters::KernelArgument argument(instr->shape(), slice);
+    argument.set_slice_index(slice_index);
+    argument.set_alignment(get_alignment(slice));
+    argument.set_written(written);
+    argument.set_aliased(aliased);
+    argument.set_invariant(!aliased);
+    return argument;
+  };
+  // The state is read and written, so it is passed twice: the read only copy
+  // reports BufferUse::Read (defined on input), the written copy
+  // BufferUse::Write. Both share the slice and must not be noalias.
+  std::vector<emitters::KernelArgument> arguments;
+  arguments.push_back(make_argument(state_slice, /*slice_index=*/0,
+                                    /*written=*/false, /*aliased=*/true));
+  arguments.push_back(make_argument(state_slice, /*slice_index=*/0,
+                                    /*written=*/true, /*aliased=*/true));
+  arguments.push_back(make_argument(out_slice, /*slice_index=*/1,
+                                    /*written=*/true, /*aliased=*/false));
+  return emitters::KernelArguments(std::move(arguments));
+}
 
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>>
 CreateRngGetAndUpdateStateMlirModule(
     mlir::MLIRContext& mlir_context,
     const HloRngGetAndUpdateStateInstruction* instr,
-    const BufferAssignment* buffer_assignment,
+    const emitters::KernelArguments& kernel_arguments,
     absl::string_view entry_function_name) {
   TF_RET_CHECK(instr != nullptr);
   TF_RET_CHECK(instr->opcode() == HloOpcode::kRngGetAndUpdateState)
@@ -88,47 +129,42 @@ CreateRngGetAndUpdateStateMlirModule(
   TF_RET_CHECK(Shape::Equal().IgnoreLayout()(instr->shape(),
                                              ShapeUtil::MakeShape(U64, {2})))
       << "Expected u64[2] output shape: " << instr->ToString();
-
-  mlir_context.loadDialect<mlir::LLVM::LLVMDialect>();
+  const std::vector<emitters::KernelArgument>& args = kernel_arguments.args();
+  TF_RET_CHECK(args.size() == 3);
+  TF_RET_CHECK(args[0].slice() == args[1].slice() && !args[0].written() &&
+               args[1].written() && args[2].written())
+      << "Expected (state input, state output, output) kernel arguments";
 
   mlir::OpBuilder builder(&mlir_context);
   mlir::Location loc = mlir::NameLoc::get(builder.getStringAttr(instr->name()));
   mlir::OwningOpRef<mlir::ModuleOp> module = llvm_ir::CreateMlirModuleOp(loc);
   emitters::SetIndexDataLayout(*module, *instr);
 
-  ABSL_ASSIGN_OR_RETURN(mlir::func::FuncOp entry_func,
-                        emitters::EmitKernelApi(
-                            *module, *instr, buffer_assignment,
-                            GetDefaultBufferAlignment(), entry_function_name));
+  mlir::func::FuncOp entry_func = emitters::EmitKernelApi(
+      *module, kernel_arguments, {instr->shape(), instr->shape()},
+      entry_function_name);
   SetBackendKind(&mlir_context, entry_func, BackendKind::kGpu);
 
-  mlir::OpBuilder module_builder =
-      mlir::OpBuilder::atBlockBegin(module->getBody());
   mlir::ImplicitLocOpBuilder b(loc, &mlir_context);
   b.setInsertionPointToStart(entry_func.addEntryBlock());
 
-  mlir::Value out = entry_func.getArgument(0);
-  auto ptr_type = mlir::LLVM::LLVMPointerType::get(&mlir_context,
-                                                   kGlobalMemoryAddressSpace);
+  mlir::Value state_in = entry_func.getArgument(0);
+  mlir::Value state_out = entry_func.getArgument(1);
+  mlir::Value out = entry_func.getArgument(2);
+
   mlir::Type i64_type = b.getI64Type();
-  // Represent the 128 bit state as vector<2xi64> so CUDA/ROCm get 16 byte
-  // vector loads/stores and SPIR-V avoids i128 without losing state bits.
   mlir::VectorType state_type = mlir::VectorType::get({2}, i64_type);
-
-  auto init_attr = mlir::DenseElementsAttr::get(
-      state_type,
-      llvm::ArrayRef<int64_t>{static_cast<int64_t>(kRngStateInitialLow), 0});
-  mlir::LLVM::GlobalOp::create(
-      module_builder, loc, state_type, /*isConstant=*/false,
-      mlir::LLVM::Linkage::Private, "rng_state", init_attr,
-      kStateAlignmentBytes, kGlobalMemoryAddressSpace);
-
-  mlir::Value state_ptr =
-      mlir::LLVM::AddressOfOp::create(b, ptr_type, "rng_state");
-  mlir::Value old_state = mlir::LLVM::LoadOp::create(b, state_type, state_ptr,
-                                                     kStateAlignmentBytes);
-  mlir::Value old_low = mlir::vector::ExtractOp::create(b, old_state, 0);
-  mlir::Value old_high = mlir::vector::ExtractOp::create(b, old_state, 1);
+  mlir::Value c0 = mlir::arith::ConstantIndexOp::create(b, 0);
+  mlir::Value c1 = mlir::arith::ConstantIndexOp::create(b, 1);
+  // Read elements via `tensor.extract` rather than full tensor
+  // `vector.transfer_read`: MLIR's `TransferWriteOp::fold`
+  // (`foldReadInitWrite`) folds `transfer_write(transfer_read(state_in), out)`
+  // to `state_in`, which drops the destination passing store to `out` in
+  // `LowerTensorsPass`.
+  mlir::Value old_low =
+      mlir::tensor::ExtractOp::create(b, state_in, mlir::ValueRange{c0});
+  mlir::Value old_high =
+      mlir::tensor::ExtractOp::create(b, state_in, mlir::ValueRange{c1});
 
   mlir::Value delta =
       mlir::arith::ConstantIntOp::create(b, i64_type, instr->delta());
@@ -138,16 +174,19 @@ CreateRngGetAndUpdateStateMlirModule(
       mlir::arith::ExtUIOp::create(b, i64_type, add_lo.getOverflow());
   mlir::Value new_high = mlir::arith::AddIOp::create(b, old_high, carry);
 
+  mlir::Value old_state = mlir::vector::FromElementsOp::create(
+      b, state_type, mlir::ValueRange{old_low, old_high});
   mlir::Value new_state = mlir::vector::FromElementsOp::create(
       b, state_type, mlir::ValueRange{new_low, new_high});
-  mlir::LLVM::StoreOp::create(b, new_state, state_ptr, kStateAlignmentBytes);
-
-  mlir::Value c0 = mlir::arith::ConstantIndexOp::create(b, 0);
-  mlir::Value updated =
+  mlir::Value updated_state = mlir::vector::TransferWriteOp::create(
+                                  b, new_state, state_out, mlir::ValueRange{c0},
+                                  llvm::ArrayRef<bool>{true})
+                                  .getResult();
+  mlir::Value updated_out =
       mlir::vector::TransferWriteOp::create(
           b, old_state, out, mlir::ValueRange{c0}, llvm::ArrayRef<bool>{true})
           .getResult();
-  mlir::func::ReturnOp::create(b, updated);
+  mlir::func::ReturnOp::create(b, mlir::ValueRange{updated_state, updated_out});
   return module;
 }
 
@@ -158,11 +197,6 @@ AsyncThunkSequence EmitRngGetAndUpdateState(
   TF_RET_CHECK(ir_emitter_context != nullptr);
 
   LaunchDimensions launch_dimensions;
-  ABSL_ASSIGN_OR_RETURN(
-      emitters::KernelArguments kernel_arguments,
-      emitters::KernelArguments::Create(ir_emitter_context->buffer_assignment(),
-                                        GetDefaultBufferAlignment(), instr));
-
   std::string sanitized_kernel_name =
       ir_emitter_context->GetSanitizedUniqueName(std::string(instr->name()));
   Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
@@ -174,11 +208,20 @@ AsyncThunkSequence EmitRngGetAndUpdateState(
   mlir_context->appendDialectRegistry(MlirKernelEmitter::GetDialectRegistry());
   mlir_context->loadAllAvailableDialects();
 
+  std::optional<BufferAllocation::Slice> rng_state_slice =
+      ir_emitter_context->rng_state_slice();
+  TF_RET_CHECK(rng_state_slice.has_value())
+      << "Missing persistent RNG state allocation for " << instr->ToString();
+  ABSL_ASSIGN_OR_RETURN(
+      BufferAllocation::Slice out_slice,
+      ir_emitter_context->buffer_assignment().GetUniqueTopLevelSlice(instr));
+  ABSL_ASSIGN_OR_RETURN(emitters::KernelArguments kernel_arguments,
+                        CreateRngGetAndUpdateStateKernelArguments(
+                            instr, *rng_state_slice, out_slice));
   ABSL_ASSIGN_OR_RETURN(
       mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
       CreateRngGetAndUpdateStateMlirModule(
-          *mlir_context, instr, &ir_emitter_context->buffer_assignment(),
-          sanitized_kernel_name));
+          *mlir_context, instr, kernel_arguments, sanitized_kernel_name));
 
   bool use_pdl = IsPdlEnabled(
       instr->GetModule()->config().debug_options(),

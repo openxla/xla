@@ -18,8 +18,11 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Value.h"
@@ -47,6 +50,19 @@ absl::StatusOr<mlir::func::FuncOp> EmitKernelApi(
     const BufferAssignment* buffer_assignment,
     const KernelArguments::BufferAlignment& buffer_alignment,
     absl::string_view entry_function_name);
+
+// Emits the kernel entry function for prebuilt `arguments`: one tensor
+// parameter per argument, annotated like the overload above, and one tensor
+// result per entry of `result_shapes`.
+mlir::func::FuncOp EmitKernelApi(mlir::ModuleOp module,
+                                 const KernelArguments& arguments,
+                                 absl::Span<const Shape> result_shapes,
+                                 absl::string_view entry_function_name);
+
+// Returns the entry function attributes of `argument`: its slice index,
+// alignment, dereferenceable size, and aliasing and invariance markers.
+mlir::DictionaryAttr GetKernelArgumentAttrs(mlir::Builder& builder,
+                                            const KernelArgument& argument);
 
 void SetIndexDataLayout(mlir::ModuleOp module,
                         const HloInstruction& hlo_instruction,

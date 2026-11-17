@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
@@ -158,26 +159,7 @@ absl::StatusOr<mlir::func::FuncOp> EmitKernelApi(
       return builder.getDictionaryAttr({builder.getNamedAttr(
           kXlaSliceIndexAttr, builder.getIndexAttr(index))});
     }
-
-    const auto& arg = args->args()[index];
-    llvm::SmallVector<mlir::NamedAttribute> attrs;
-    attrs.push_back(builder.getNamedAttr(
-        kXlaSliceIndexAttr, builder.getIndexAttr(arg.slice_index())));
-    attrs.push_back(
-        builder.getNamedAttr(mlir::LLVM::LLVMDialect::getAlignAttrName(),
-                             builder.getIndexAttr(arg.alignment())));
-    attrs.push_back(builder.getNamedAttr(
-        mlir::LLVM::LLVMDialect::getDereferenceableAttrName(),
-        builder.getIndexAttr(arg.slice().size())));
-    if (arg.aliased() || !arg.invariant()) {
-      attrs.push_back(
-          builder.getNamedAttr(kXlaAliasedAttr, builder.getUnitAttr()));
-    }
-    if (arg.invariant() && !arg.written()) {
-      attrs.push_back(
-          builder.getNamedAttr(kXlaInvariantAttr, builder.getUnitAttr()));
-    }
-    return builder.getDictionaryAttr(attrs);
+    return GetKernelArgumentAttrs(builder, args->args()[index]);
   };
 
   auto result_types =
@@ -206,6 +188,57 @@ absl::StatusOr<mlir::func::FuncOp> EmitKernelApi(
   entry_func->setAttr(kXlaEntryAttr, mlir::UnitAttr::get(context));
 
   return entry_func;
+}
+
+mlir::func::FuncOp EmitKernelApi(mlir::ModuleOp module,
+                                 const KernelArguments& arguments,
+                                 absl::Span<const Shape> result_shapes,
+                                 absl::string_view entry_function_name) {
+  mlir::ImplicitLocOpBuilder builder(module.getLoc(), module);
+
+  llvm::SmallVector<mlir::Type> param_types;
+  llvm::SmallVector<mlir::Attribute> arg_attrs;
+  param_types.reserve(arguments.args().size());
+  arg_attrs.reserve(arguments.args().size());
+  for (const KernelArgument& arg : arguments.args()) {
+    param_types.push_back(TensorShapeToMlirType(arg.shape(), builder));
+    arg_attrs.push_back(GetKernelArgumentAttrs(builder, arg));
+  }
+  llvm::SmallVector<mlir::Type> result_types;
+  result_types.reserve(result_shapes.size());
+  for (const Shape& shape : result_shapes) {
+    result_types.push_back(TensorShapeToMlirType(shape, builder));
+  }
+
+  builder.setInsertionPointToStart(module.getBody());
+  mlir::func::FuncOp entry_func = mlir::func::FuncOp::create(
+      builder, entry_function_name,
+      builder.getFunctionType(param_types, result_types));
+  entry_func.setArgAttrsAttr(builder.getArrayAttr(arg_attrs));
+  entry_func->setAttr(kXlaEntryAttr, builder.getUnitAttr());
+  return entry_func;
+}
+
+mlir::DictionaryAttr GetKernelArgumentAttrs(mlir::Builder& builder,
+                                            const KernelArgument& argument) {
+  llvm::SmallVector<mlir::NamedAttribute> attrs;
+  attrs.push_back(builder.getNamedAttr(
+      kXlaSliceIndexAttr, builder.getIndexAttr(argument.slice_index())));
+  attrs.push_back(
+      builder.getNamedAttr(mlir::LLVM::LLVMDialect::getAlignAttrName(),
+                           builder.getIndexAttr(argument.alignment())));
+  attrs.push_back(builder.getNamedAttr(
+      mlir::LLVM::LLVMDialect::getDereferenceableAttrName(),
+      builder.getIndexAttr(argument.slice().size())));
+  if (argument.aliased() || !argument.invariant()) {
+    attrs.push_back(
+        builder.getNamedAttr(kXlaAliasedAttr, builder.getUnitAttr()));
+  }
+  if (argument.invariant() && !argument.written()) {
+    attrs.push_back(
+        builder.getNamedAttr(kXlaInvariantAttr, builder.getUnitAttr()));
+  }
+  return builder.getDictionaryAttr(attrs);
 }
 
 void SetIndexDataLayout(mlir::ModuleOp module,
