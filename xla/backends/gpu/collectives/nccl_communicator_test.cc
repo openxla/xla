@@ -203,6 +203,8 @@ TEST(NcclCommunicatorTest, LargeBufferRegistration) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream1,
                        executors[1]->CreateStream());
 
+  // Use distinct per-GiB patterns to expose repeated or misplaced chunks.
+  // Registration and the transfer below still cover the entire buffer.
   for (uint64_t chunk = 0; chunk < kSize / kGiB; ++chunk) {
     se::DeviceAddressBase part(
         static_cast<char*>(send_addr.opaque()) + chunk * kGiB, kGiB);
@@ -230,6 +232,8 @@ TEST(NcclCommunicatorTest, LargeBufferRegistration) {
   ASSERT_OK(stream0->BlockHostUntilDone());
   ASSERT_OK(stream1->BlockHostUntilDone());
 
+  // Sample both sides of every GiB boundary to check transfers across backing
+  // mappings without copying the entire 6 GiB buffer back to the host.
   for (uint64_t chunk = 0; chunk < kSize / kGiB; ++chunk) {
     for (uint64_t offset :
          {chunk * kGiB, (chunk + 1) * kGiB - sizeof(uint32_t)}) {

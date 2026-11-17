@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_device_allocator.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <cstdint>
+#include <fstream>
 #include <memory>
+#include <string>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -174,9 +175,17 @@ TEST_P(CudaDeviceAllocatorTest, DeallocateDuringStreamCapture) {
   EXPECT_NE(cmd_buf, nullptr);
 }
 
-// Run explicitly on an affected WSL host; CI must not require 6.5 GiB of free
-// GPU memory. The extra byte also exercises a short final backing chunk.
+// Run explicitly and alone on WSL; CI must not require 6.5 GiB of free memory.
+// The extra byte also exercises a short final backing chunk.
 TEST(CudaDeviceAllocatorWslTest, DISABLED_LargeExportableAllocation) {
+  std::ifstream kernel_release_file("/proc/sys/kernel/osrelease");
+  std::string kernel_release;
+  if (!std::getline(kernel_release_file, kernel_release) ||
+      (kernel_release.find("microsoft") == std::string::npos &&
+       kernel_release.find("Microsoft") == std::string::npos)) {
+    GTEST_SKIP() << "Test requires WSL";
+  }
+
   ASSERT_OK_AND_ASSIGN(Platform * platform,
                        PlatformManager::PlatformWithName("CUDA"));
   ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
