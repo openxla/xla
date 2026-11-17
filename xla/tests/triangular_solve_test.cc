@@ -442,6 +442,309 @@ TEST_F(TriangularSolveTest, BatchedLeftUpper) {
                              ErrorSpec(1e-2, 1e-2));
 }
 
+TEST_F(TriangularSolveTest, ExtremeScaleAvoidsBlockInversionFtzAndOverflow) {
+  XlaBuilder builder(TestName());
+  constexpr float kBig = 0x1p123f;
+  constexpr float kTiny = 0x1p-123f;
+  Array2D<float> a_lo({{2 * kBig, kNan, kNan},
+                       {0.5f * kBig, 3 * kBig, kNan},
+                       {0.0f, 0.5f * kBig, 4 * kBig}});
+  Array2D<float> a_up({{2 * kBig, 0.5f * kBig, 0.0f},
+                       {kNan, 3 * kBig, 0.5f * kBig},
+                       {kNan, kNan, 4 * kBig}});
+  Array2D<float> b_big({{kBig}, {kBig}, {kBig}});
+  Array2D<float> a_tiny({{kTiny, 0.0f}, {32 * kTiny, kTiny}});
+  Array2D<float> b_tiny({{kTiny}, {32 * kTiny}});
+
+  // Right-side solves: X @ A = B and X @ A^T = B.
+  Array2D<float> a_right({{4 * kBig, kNan, kNan},
+                          {0.5f * kBig, 4 * kBig, kNan},
+                          {0.0f, 0.5f * kBig, 4 * kBig}});
+  Array2D<float> b_right({{4.5f * kBig, 4.5f * kBig, 4.0f * kBig}});
+  Array2D<float> b_right_t({{4.0f * kBig, 4.5f * kBig, 4.5f * kBig}});
+  Array2D<float> b_tiny_right({{33 * kTiny, kTiny}});
+
+  // Mixed-scale batches of 32x32 matrices: batch=32, size=32 exercises both
+  // SolveByInvertingDiagonalBlocks on CPU (size >= 32) and batched-in-lanes
+  // block inversion on TPU (batch >= 32, size <= 100).
+  constexpr int kBatch = 32;
+  constexpr int kMatSize = 32;
+  Array3D<float> a_bat(kBatch, kMatSize, kMatSize, 0.0f);
+  Array3D<float> b_bat(kBatch, kMatSize, 1, 0.0f);
+  Array3D<float> exp_bat(kBatch, kMatSize, 1, 0.0f);
+  for (int i = 0; i < kBatch; ++i) {
+    if (i % 2 == 0) {
+      for (int r = 0; r < kMatSize; ++r) {
+        a_bat(i, r, r) = 4 * kBig;
+        if (r > 0) {
+          a_bat(i, r, r - 1) = 0.5f * kBig;
+        }
+        b_bat(i, r, 0) = (r == 0 ? 4.0f : 4.5f) * kBig;
+        exp_bat(i, r, 0) = 1.0f;
+      }
+    } else {
+      for (int r = 0; r < kMatSize; ++r) {
+        a_bat(i, r, r) = kTiny;
+        if (r % 2 == 1) {
+          a_bat(i, r, r - 1) = 32 * kTiny;
+          b_bat(i, r, 0) = 32 * kTiny;
+          exp_bat(i, r, 0) = 0.0f;
+        } else {
+          b_bat(i, r, 0) = kTiny;
+          exp_bat(i, r, 0) = 1.0f;
+        }
+      }
+    }
+  }
+
+  // Complex C64 extreme scale under ADJOINT (left_side=true and false).
+  // Pre-fix A^{-1}[1,0] = -(2^-127, 2^-127) falls below FLT_MIN and hits FTZ.
+  constexpr float kCBig = 0x1p121f;
+  Array2D<complex64> a_c64({{complex64(2 * kCBig, 2 * kCBig), kNanC64},
+                            {complex64(0.25f * kCBig, 0.25f * kCBig),
+                             complex64(4 * kCBig, -4 * kCBig)}});
+  Array2D<complex64> b_c64_left({{complex64(3.25f * kCBig, 0.75f * kCBig)},
+                                 {complex64(4 * kCBig, 4 * kCBig)}});
+  Array2D<complex64> b_c64_right({{complex64(2 * kCBig, -2 * kCBig),
+                                   complex64(-3.75f * kCBig, 3.75f * kCBig)}});
+
+  XlaOp p_alo, p_aup, p_bbig, p_atiny, p_btiny, p_aright, p_bright, p_bright_t,
+      p_btiny_r, p_abat, p_bbat, p_ac64, p_bc64l, p_bc64r;
+  Literal d_alo = CreateR2Parameter<float>(a_lo, 0, "a_lo", &builder, &p_alo);
+  Literal d_aup = CreateR2Parameter<float>(a_up, 1, "a_up", &builder, &p_aup);
+  Literal d_bbig =
+      CreateR2Parameter<float>(b_big, 2, "b_big", &builder, &p_bbig);
+  Literal d_atiny =
+      CreateR2Parameter<float>(a_tiny, 3, "a_tiny", &builder, &p_atiny);
+  Literal d_btiny =
+      CreateR2Parameter<float>(b_tiny, 4, "b_tiny", &builder, &p_btiny);
+  Literal d_aright =
+      CreateR2Parameter<float>(a_right, 5, "a_right", &builder, &p_aright);
+  Literal d_bright =
+      CreateR2Parameter<float>(b_right, 6, "b_right", &builder, &p_bright);
+  Literal d_bright_t = CreateR2Parameter<float>(b_right_t, 7, "b_right_t",
+                                                &builder, &p_bright_t);
+  Literal d_btiny_r = CreateR2Parameter<float>(b_tiny_right, 8, "b_tiny_r",
+                                               &builder, &p_btiny_r);
+  Literal d_abat =
+      CreateR3Parameter<float>(a_bat, 9, "a_bat", &builder, &p_abat);
+  Literal d_bbat =
+      CreateR3Parameter<float>(b_bat, 10, "b_bat", &builder, &p_bbat);
+  Literal d_ac64 =
+      CreateR2Parameter<complex64>(a_c64, 11, "a_c64", &builder, &p_ac64);
+  Literal d_bc64l = CreateR2Parameter<complex64>(b_c64_left, 12, "b_c64_l",
+                                                 &builder, &p_bc64l);
+  Literal d_bc64r = CreateR2Parameter<complex64>(b_c64_right, 13, "b_c64_r",
+                                                 &builder, &p_bc64r);
+
+  constexpr auto kNoTrans = TriangularSolveOptions::NO_TRANSPOSE;
+  constexpr auto kTrans = TriangularSolveOptions::TRANSPOSE;
+  constexpr auto kAdjoint = TriangularSolveOptions::ADJOINT;
+  XlaOp r_lo =
+      TriangularSolve(p_alo, p_bbig, /*left_side=*/true,
+                      /*lower=*/true, /*unit_diagonal=*/false, kNoTrans);
+  XlaOp r_up =
+      TriangularSolve(p_aup, p_bbig, /*left_side=*/true,
+                      /*lower=*/false, /*unit_diagonal=*/false, kNoTrans);
+  XlaOp r_bat =
+      TriangularSolve(p_abat, p_bbat, /*left_side=*/true,
+                      /*lower=*/true, /*unit_diagonal=*/false, kNoTrans);
+  XlaOp r_bf16 = ConvertElementType(
+      TriangularSolve(ConvertElementType(p_alo, BF16),
+                      ConvertElementType(p_bbig, BF16), /*left_side=*/true,
+                      /*lower=*/true, /*unit_diagonal=*/false, kNoTrans),
+      F32);
+  XlaOp r_tiny =
+      TriangularSolve(p_atiny, p_btiny, /*left_side=*/true,
+                      /*lower=*/true, /*unit_diagonal=*/false, kNoTrans);
+  XlaOp r_right =
+      TriangularSolve(p_aright, p_bright, /*left_side=*/false,
+                      /*lower=*/true, /*unit_diagonal=*/false, kNoTrans);
+  XlaOp r_right_t =
+      TriangularSolve(p_aright, p_bright_t, /*left_side=*/false,
+                      /*lower=*/true, /*unit_diagonal=*/false, kTrans);
+  XlaOp r_tiny_r =
+      TriangularSolve(p_atiny, p_btiny_r, /*left_side=*/false,
+                      /*lower=*/true, /*unit_diagonal=*/false, kNoTrans);
+  XlaOp r_c64_l =
+      TriangularSolve(p_ac64, p_bc64l, /*left_side=*/true,
+                      /*lower=*/true, /*unit_diagonal=*/false, kAdjoint);
+  XlaOp r_c64_r =
+      TriangularSolve(p_ac64, p_bc64r, /*left_side=*/false,
+                      /*lower=*/true, /*unit_diagonal=*/false, kAdjoint);
+  Tuple(&builder, {r_lo, r_up, r_bat, r_bf16, r_tiny, r_right, r_right_t,
+                   r_tiny_r, r_c64_l, r_c64_r});
+
+  Literal expected = LiteralUtil::MakeTupleOwned(
+      LiteralUtil::CreateR2<float>({{0.5f}, {0.25f}, {0.21875f}}),
+      LiteralUtil::CreateR2<float>({{0.42708334f}, {0.29166666f}, {0.25f}}),
+      LiteralUtil::CreateR3FromArray3D(exp_bat),
+      LiteralUtil::CreateR2<float>({{0.5f}, {0.25f}, {0.21875f}}),
+      LiteralUtil::CreateR2<float>({{1.0f}, {0.0f}}),
+      LiteralUtil::CreateR2<float>({{1.0f, 1.0f, 1.0f}}),
+      LiteralUtil::CreateR2<float>({{1.0f, 1.0f, 1.0f}}),
+      LiteralUtil::CreateR2<float>({{1.0f, 1.0f}}),
+      LiteralUtil::CreateR2<complex64>(
+          {{complex64(0.5f, 1.0f)}, {complex64(1.0f, 0.0f)}}),
+      LiteralUtil::CreateR2<complex64>(
+          {{complex64(1.0f, 0.0f), complex64(0.0f, 1.0f)}}));
+  ComputeAndCompareTuple(
+      &builder, expected,
+      {&d_alo, &d_aup, &d_bbig, &d_atiny, &d_btiny, &d_aright, &d_bright,
+       &d_bright_t, &d_btiny_r, &d_abat, &d_bbat, &d_ac64, &d_bc64l, &d_bc64r},
+      ErrorSpec(1e-3f, 1e-3f));
+}
+
+TEST_F(TriangularSolveTest, MixedScaleDiagonalsAndNearFltMinTransposed) {
+  XlaBuilder builder(TestName());
+  // Mixed diagonal scales that global prescaling would overflow or flush.
+  Array2D<float> a_mix1(
+      {{0x1p-90f, 0.0f, 0.0f}, {0.0f, 0x1p90f, 0.0f}, {0.0f, 0.0f, 0x1p-90f}});
+  Array2D<float> b_mix1({{1.0f}, {1.0f}, {0x1p-90f}});
+
+  Array2D<float> a_mix2(
+      {{0x1p-100f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}});
+  Array2D<float> b_mix2({{0x1p-100f}, {0x1p100f}, {0x1p-100f}});
+
+  Array2D<float> a_mix3({{0x1p10f, 0.0f, 0.0f},
+                         {0x1p120f, 0x1p100f, 0.0f},
+                         {0.0f, 0.0f, 0x1p-120f}});
+  Array2D<float> b_mix3({{0x1p10f}, {0x1p120f}, {0x1p-120f}});
+
+  // Near-FLT_MIN transposed solve: A^T X = B where unfactored A^{-1}[1,0]
+  // = -2^-127 flushes to zero on FTZ targets. Checked with abs=0 so the
+  // relative tolerance is non-vacuous near FLT_MIN.
+  constexpr float kBig = 0x1p123f;
+  Array2D<float> a_near_min({{2 * kBig, 0.0f}, {0.5f * kBig, 4 * kBig}});
+  Array2D<float> b_unit({{1.0f}, {1.0f}});
+
+  XlaOp p_am1, p_bm1, p_am2, p_bm2, p_am3, p_bm3, p_amin, p_bunit;
+  Literal d_am1 =
+      CreateR2Parameter<float>(a_mix1, 0, "a_mix1", &builder, &p_am1);
+  Literal d_bm1 =
+      CreateR2Parameter<float>(b_mix1, 1, "b_mix1", &builder, &p_bm1);
+  Literal d_am2 =
+      CreateR2Parameter<float>(a_mix2, 2, "a_mix2", &builder, &p_am2);
+  Literal d_bm2 =
+      CreateR2Parameter<float>(b_mix2, 3, "b_mix2", &builder, &p_bm2);
+  Literal d_am3 =
+      CreateR2Parameter<float>(a_mix3, 4, "a_mix3", &builder, &p_am3);
+  Literal d_bm3 =
+      CreateR2Parameter<float>(b_mix3, 5, "b_mix3", &builder, &p_bm3);
+  Literal d_amin =
+      CreateR2Parameter<float>(a_near_min, 6, "a_min", &builder, &p_amin);
+  Literal d_bunit =
+      CreateR2Parameter<float>(b_unit, 7, "b_unit", &builder, &p_bunit);
+
+  constexpr auto kNoTrans = TriangularSolveOptions::NO_TRANSPOSE;
+  constexpr auto kTrans = TriangularSolveOptions::TRANSPOSE;
+  XlaOp r_mix1 =
+      TriangularSolve(p_am1, p_bm1, /*left_side=*/true,
+                      /*lower=*/true, /*unit_diagonal=*/false, kNoTrans);
+  XlaOp r_mix2 =
+      TriangularSolve(p_am2, p_bm2, /*left_side=*/true,
+                      /*lower=*/true, /*unit_diagonal=*/false, kNoTrans);
+  XlaOp r_mix3 =
+      TriangularSolve(p_am3, p_bm3, /*left_side=*/true,
+                      /*lower=*/true, /*unit_diagonal=*/false, kNoTrans);
+  XlaOp r_min_t =
+      TriangularSolve(p_amin, p_bunit, /*left_side=*/true,
+                      /*lower=*/true, /*unit_diagonal=*/false, kTrans);
+  Tuple(&builder, {r_mix1, r_mix2, r_mix3, r_min_t});
+
+  Literal expected = LiteralUtil::MakeTupleOwned(
+      LiteralUtil::CreateR2<float>({{0x1p90f}, {0x1p-90f}, {1.0f}}),
+      LiteralUtil::CreateR2<float>({{1.0f}, {0x1p100f}, {0x1p-100f}}),
+      LiteralUtil::CreateR2<float>({{1.0f}, {0.0f}, {1.0f}}),
+      LiteralUtil::CreateR2<float>({{1.75f * 0x1p-125f}, {0x1p-125f}}));
+  ComputeAndCompareTuple(
+      &builder, expected,
+      {&d_am1, &d_bm1, &d_am2, &d_bm2, &d_am3, &d_bm3, &d_amin, &d_bunit},
+      ErrorSpec(0.0f, 1e-3f));
+}
+
+TEST_F(TriangularSolveTest, MultiBlockExtremeAndMixedScale) {
+  XlaBuilder builder(TestName());
+  constexpr int kSize = 132;  // > block_size (128) to exercise multi-block.
+  constexpr float kBig = 0x1p123f;
+
+  Array2D<float> a_big(kSize, kSize, 0.0f);
+  Array2D<float> b_left(kSize, 1, 0.0f);
+  Array2D<float> b_left_t(kSize, 1, 0.0f);
+  Array2D<float> b_right(1, kSize, 0.0f);
+  Array2D<float> b_right_t(1, kSize, 0.0f);
+  Array2D<float> exp_col(kSize, 1, 1.0f);
+  Array2D<float> exp_row(1, kSize, 1.0f);
+  for (int r = 0; r < kSize; ++r) {
+    a_big(r, r) = 4 * kBig;
+    if (r > 0) {
+      a_big(r, r - 1) = 0.5f * kBig;
+    }
+  }
+  a_big(130, 0) = 0.25f * kBig;
+  for (int r = 0; r < kSize; ++r) {
+    float row_sum = 4.0f * kBig + (r > 0 ? 0.5f * kBig : 0.0f) +
+                    (r == 130 ? 0.25f * kBig : 0.0f);
+    float col_sum = 4.0f * kBig + (r + 1 < kSize ? 0.5f * kBig : 0.0f) +
+                    (r == 0 ? 0.25f * kBig : 0.0f);
+    b_left(r, 0) = row_sum;
+    b_left_t(r, 0) = col_sum;
+    b_right(0, r) = col_sum;
+    b_right_t(0, r) = row_sum;
+  }
+
+  // Multi-block with mixed block scales and an off-diagonal coupling block.
+  Array2D<float> a_mixed(kSize, kSize, 0.0f);
+  Array2D<float> b_mixed(kSize, 1, 0.0f);
+  for (int r = 0; r < kSize; ++r) {
+    float scale = (r < 128) ? 0x1p100f : 0x1p-100f;
+    a_mixed(r, r) = scale;
+    b_mixed(r, 0) = scale;
+  }
+  a_mixed(128, 0) = 0x1p-100f;
+  b_mixed(128, 0) = 2 * 0x1p-100f;
+
+  XlaOp p_abig, p_bl, p_blt, p_br, p_brt, p_amix, p_bmix;
+  Literal d_abig =
+      CreateR2Parameter<float>(a_big, 0, "a_big", &builder, &p_abig);
+  Literal d_bl = CreateR2Parameter<float>(b_left, 1, "b_l", &builder, &p_bl);
+  Literal d_blt =
+      CreateR2Parameter<float>(b_left_t, 2, "b_lt", &builder, &p_blt);
+  Literal d_br = CreateR2Parameter<float>(b_right, 3, "b_r", &builder, &p_br);
+  Literal d_brt =
+      CreateR2Parameter<float>(b_right_t, 4, "b_rt", &builder, &p_brt);
+  Literal d_amix =
+      CreateR2Parameter<float>(a_mixed, 5, "a_mix", &builder, &p_amix);
+  Literal d_bmix =
+      CreateR2Parameter<float>(b_mixed, 6, "b_mix", &builder, &p_bmix);
+
+  constexpr auto kNoTrans = TriangularSolveOptions::NO_TRANSPOSE;
+  constexpr auto kTrans = TriangularSolveOptions::TRANSPOSE;
+  XlaOp r_l = TriangularSolve(p_abig, p_bl, /*left_side=*/true, /*lower=*/true,
+                              /*unit_diagonal=*/false, kNoTrans);
+  XlaOp r_lt = TriangularSolve(p_abig, p_blt, /*left_side=*/true,
+                               /*lower=*/true, /*unit_diagonal=*/false, kTrans);
+  XlaOp r_r = TriangularSolve(p_abig, p_br, /*left_side=*/false, /*lower=*/true,
+                              /*unit_diagonal=*/false, kNoTrans);
+  XlaOp r_rt = TriangularSolve(p_abig, p_brt, /*left_side=*/false,
+                               /*lower=*/true, /*unit_diagonal=*/false, kTrans);
+  XlaOp r_mix =
+      TriangularSolve(p_amix, p_bmix, /*left_side=*/true,
+                      /*lower=*/true, /*unit_diagonal=*/false, kNoTrans);
+  Tuple(&builder, {r_l, r_lt, r_r, r_rt, r_mix});
+
+  Literal expected =
+      LiteralUtil::MakeTupleOwned(LiteralUtil::CreateR2FromArray2D(exp_col),
+                                  LiteralUtil::CreateR2FromArray2D(exp_col),
+                                  LiteralUtil::CreateR2FromArray2D(exp_row),
+                                  LiteralUtil::CreateR2FromArray2D(exp_row),
+                                  LiteralUtil::CreateR2FromArray2D(exp_col));
+  ComputeAndCompareTuple(
+      &builder, expected,
+      {&d_abig, &d_bl, &d_blt, &d_br, &d_brt, &d_amix, &d_bmix},
+      ErrorSpec(1e-3f, 1e-3f));
+}
+
 struct TriangularSolveTestSpec {
   std::vector<int64_t> dims;  // [..., m, n] A is mxm, B is mxn
   bool left_side;

@@ -2557,6 +2557,8 @@ xla_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:reference_util",
+        "//xla:types",
+        "//xla/hlo/evaluator:hlo_evaluator",
         "//xla/tests:hlo_pjrt_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
