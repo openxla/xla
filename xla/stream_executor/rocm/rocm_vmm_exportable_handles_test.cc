@@ -15,15 +15,13 @@ limitations under the License.
 
 #include <unistd.h>
 
-#include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <optional>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
-#include "absl/status/status_matchers.h"  // IWYU pragma: keep
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "rocm/include/hip/hip_runtime.h"
 #include "xla/stream_executor/activate_context.h"
@@ -103,7 +101,8 @@ class RocmVmmExportableHandlesTest : public ::testing::Test {
   StreamExecutor* executor_ = nullptr;
 };
 
-// On ROCm 10.0 and newer, a caller that asks for exportable handles gets them.
+// On ROCm 10.0 and newer, a caller that asks for exportable handles gets them,
+// unless this driver, container or device cannot export at all.
 TEST_F(RocmVmmExportableHandlesTest, ExportableHandlesOnSupportedRocm) {
   // ROCm 10.0 ships HIP 7.15; runtime_version() is the HIP version.
   if (executor_->GetDeviceDescription().runtime_version() <
@@ -113,7 +112,55 @@ TEST_F(RocmVmmExportableHandlesTest, ExportableHandlesOnSupportedRocm) {
 
   ASSERT_OK_AND_ASSIGN(hipMemAllocationHandleType handle_type,
                        RequestedHandleType(kExportable));
+  if (handle_type == hipMemHandleTypeNone) {
+    GTEST_SKIP() << "The HIP runtime is new enough, but the granularity query "
+                    "fell back to non-exportable handles.";
+  }
   EXPECT_EQ(handle_type, hipMemHandleTypePosixFileDescriptor);
+}
+
+// Asking for exportable handles must never cost an allocation that does not
+// need them: where fd export is unavailable, the request is dropped instead.
+TEST_F(RocmVmmExportableHandlesTest, ExportableRequestNeverBreaksAllocation) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<RocmRawMemoryAllocation> allocation,
+                       RocmRawMemoryAllocation::Create(
+                           executor_, /*size=*/1024 * 1024, kExportable));
+  EXPECT_NE(allocation->GetHandle(), nullptr);
+}
+
+// Both fallbacks land on hipMemHandleTypeNone properties, so those must
+// allocate.
+TEST_F(RocmVmmExportableHandlesTest, NonExportablePropertiesStillAllocate) {
+  std::unique_ptr<ActivateContext> activation = executor_->Activate();
+  ASSERT_OK_AND_ASSIGN(RocmVmmAllocationParams params,
+                       GetRocmVmmAllocationParams(executor_, kNonExportable));
+  ASSERT_EQ(params.prop.requestedHandleTypes, hipMemHandleTypeNone);
+
+  ASSERT_OK_AND_ASSIGN(
+      hipMemGenericAllocationHandle_t handle,
+      CreateRocmVmmPhysicalAllocation(params.prop, params.granularity));
+  ASSERT_NE(handle, nullptr);
+  EXPECT_EQ(hipMemRelease(handle), hipSuccess);
+}
+
+// Nothing can make a working driver refuse fd export, so the retry is walked
+// with properties hipMemCreate rejects whatever the handle type: what it must
+// not do is report the second failure as a handle.
+TEST_F(RocmVmmExportableHandlesTest, RejectedExportableCreateIsReported) {
+  if (!ExportableHandlesSupported()) {
+    GTEST_SKIP() << "Exportable VMM handles require ROCm 10.0 or newer.";
+  }
+
+  std::unique_ptr<ActivateContext> activation = executor_->Activate();
+  ASSERT_OK_AND_ASSIGN(RocmVmmAllocationParams params,
+                       GetRocmVmmAllocationParams(executor_, kExportable));
+
+  int device_count = 0;
+  ASSERT_EQ(hipGetDeviceCount(&device_count), hipSuccess);
+  params.prop.location.id = device_count;  // One past the last device.
+
+  EXPECT_THAT(CreateRocmVmmPhysicalAllocation(params.prop, params.granularity),
+              ::testing::Not(absl_testing::IsOk()));
 }
 
 // A caller that does not ask for exportable handles never gets them.
@@ -209,12 +256,14 @@ TEST_F(RocmVmmExportableHandlesTest, ExportedDescriptorCanBeImported) {
   EXPECT_EQ(hipMemRelease(imported), hipSuccess);
 }
 
+// Default-constructed, so a default that stopped requesting exportable handles
+// would fail here.
 TEST_F(RocmVmmExportableHandlesTest, VmmAllocatorMemoryIsExportable) {
   if (!ExportableHandlesSupported()) {
     GTEST_SKIP() << "Exportable VMM handles require ROCm 10.0 or newer.";
   }
 
-  RocmVmmAllocator allocator(executor_, kExportable);
+  RocmVmmAllocator allocator(executor_);
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> allocation,
                        allocator.Allocate(/*size=*/1024 * 1024));
   ASSERT_NE(allocation->address().opaque(), nullptr);
@@ -229,8 +278,26 @@ TEST_F(RocmVmmExportableHandlesTest, VmmAllocatorMemoryIsExportable) {
   EXPECT_EQ(hipMemRelease(handle), hipSuccess);
 }
 
+// The option reaches the mapped path as well, not just the raw one.
+TEST_F(RocmVmmExportableHandlesTest, NonExportableVmmAllocatorMemory) {
+  RocmVmmAllocator allocator(executor_, kNonExportable);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> allocation,
+                       allocator.Allocate(/*size=*/1024 * 1024));
+  ASSERT_NE(allocation->address().opaque(), nullptr);
+
+  std::unique_ptr<ActivateContext> activation = executor_->Activate();
+  hipMemGenericAllocationHandle_t handle = nullptr;
+  ASSERT_EQ(
+      hipMemRetainAllocationHandle(&handle, allocation->address().opaque()),
+      hipSuccess);
+
+  EXPECT_NE(TryExportAsPosixFd(handle), hipSuccess);
+  EXPECT_EQ(hipMemRelease(handle), hipSuccess);
+}
+
 // The path that matters in practice: a collective-space buffer from the kVmm
-// allocator, retained and exported the way a collective library would.
+// allocator, retained and exported the way a collective library would. Takes
+// the options DeviceAddressVmmAllocator::Create() leaves at their defaults.
 TEST_F(RocmVmmExportableHandlesTest, CollectiveAllocationIsExportable) {
   if (!ExportableHandlesSupported()) {
     GTEST_SKIP() << "Exportable VMM handles require ROCm 10.0 or newer.";
@@ -238,11 +305,9 @@ TEST_F(RocmVmmExportableHandlesTest, CollectiveAllocationIsExportable) {
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
                        executor_->CreateStream());
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<RocmDeviceAddressVmmAllocator> allocator,
-                       RocmDeviceAddressVmmAllocator::Create(
-                           executor_, stream.get(), /*pa_budget=*/UINT64_MAX,
-                           /*reclaim_exempt_memory_space=*/std::nullopt,
-                           /*free_visitors=*/{}, kExportable));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<RocmDeviceAddressVmmAllocator> allocator,
+      RocmDeviceAddressVmmAllocator::Create(executor_, stream.get()));
 
   ASSERT_OK_AND_ASSIGN(
       auto scoped_address,

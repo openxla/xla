@@ -41,6 +41,13 @@ limitations under the License.
 
 namespace stream_executor::gpu {
 
+// Distinguishes "these properties are not supported here", which is worth a
+// retry with a weaker handle type, from a failure the retry cannot fix.
+static bool IsUnsupportedPropertyError(hipError_t result) {
+  return result == hipErrorNotSupported || result == hipErrorInvalidValue ||
+         result == hipErrorOperatingSystem;
+}
+
 absl::StatusOr<RocmVmmAllocationParams> GetRocmVmmAllocationParams(
     StreamExecutor* executor, const RocmVmmAllocator::Options& options) {
   RocmVmmAllocationParams params;
@@ -64,11 +71,51 @@ absl::StatusOr<RocmVmmAllocationParams> GetRocmVmmAllocationParams(
     }
   }
 
-  ABSL_RETURN_IF_ERROR(ToStatus(
-      hipMemGetAllocationGranularity(&params.granularity, &params.prop,
-                                     hipMemAllocationGranularityRecommended),
-      "hipMemGetAllocationGranularity"));
+  auto query_granularity = [&params]() {
+    return ToStatus(
+        hipMemGetAllocationGranularity(&params.granularity, &params.prop,
+                                       hipMemAllocationGranularityRecommended),
+        "hipMemGetAllocationGranularity");
+  };
+
+  absl::Status status = query_granularity();
+  if (!status.ok() &&
+      params.prop.requestedHandleTypes == hipMemHandleTypePosixFileDescriptor) {
+    // runtime_version() describes the userspace runtime only: the driver, the
+    // container or the device may still refuse fd export.
+    LOG_FIRST_N(WARNING, 1)
+        << "Granularity query for exportable ROCm VMM handles failed: "
+        << status << ". Requesting non-exportable handles.";
+    params.prop.requestedHandleTypes = hipMemHandleTypeNone;
+    status = query_granularity();
+  }
+  ABSL_RETURN_IF_ERROR(status);
   return params;
+}
+
+absl::StatusOr<hipMemGenericAllocationHandle_t> CreateRocmVmmPhysicalAllocation(
+    hipMemAllocationProp prop, uint64_t padded_size) {
+  hipMemGenericAllocationHandle_t handle = nullptr;
+  hipError_t result = hipMemCreate(&handle, padded_size, &prop, 0ULL);
+  if (result == hipSuccess) {
+    return handle;
+  }
+  if (prop.requestedHandleTypes != hipMemHandleTypePosixFileDescriptor ||
+      !IsUnsupportedPropertyError(result)) {
+    return ToStatus(result, "hipMemCreate");
+  }
+
+  // `padded_size` is a multiple of the exportable granularity, hence of the
+  // non-exportable one too; were it not, the retry below reports the error.
+  LOG_FIRST_N(WARNING, 1)
+      << "hipMemCreate with exportable ROCm VMM handles failed: "
+      << ToStatus(result)
+      << ". Retrying with non-exportable handles; collectives sharing this "
+         "memory will not work.";
+  prop.requestedHandleTypes = hipMemHandleTypeNone;
+  ABSL_RETURN_IF_ERROR(ToStatus(hipMemCreate(&handle, padded_size, &prop, 0ULL),
+                                "hipMemCreate"));
+  return handle;
 }
 
 static hipMemAccessDesc GetVmmAccessDescriptor(int device) {
@@ -92,10 +139,10 @@ VmmAllocate(StreamExecutor* executor, uint64_t size,
   size_t granularity = params.granularity;
 
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, granularity);
-  hipMemGenericAllocationHandle_t handle;
 
-  ABSL_RETURN_IF_ERROR(
-      ToStatus(hipMemCreate(&handle, padded_size, &params.prop, 0ULL)));
+  ABSL_ASSIGN_OR_RETURN(
+      hipMemGenericAllocationHandle_t handle,
+      CreateRocmVmmPhysicalAllocation(params.prop, padded_size));
 
   hipDeviceptr_t ptr = nullptr;
   absl::Status status = ToStatus(

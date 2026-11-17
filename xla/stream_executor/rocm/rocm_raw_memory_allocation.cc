@@ -41,9 +41,9 @@ RocmRawMemoryAllocation::Create(StreamExecutor* executor, uint64_t size,
 
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, params.granularity);
 
-  hipMemGenericAllocationHandle_t handle;
-  ABSL_RETURN_IF_ERROR(
-      ToStatus(hipMemCreate(&handle, padded_size, &params.prop, 0ULL)));
+  ABSL_ASSIGN_OR_RETURN(
+      hipMemGenericAllocationHandle_t handle,
+      CreateRocmVmmPhysicalAllocation(params.prop, padded_size));
 
   return std::unique_ptr<RocmRawMemoryAllocation>(
       new RocmRawMemoryAllocation(executor, handle, padded_size));

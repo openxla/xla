@@ -37,8 +37,9 @@ class RocmVmmAllocator : public MemoryAllocator {
   struct Options {
     // Request hipMemHandleTypePosixFileDescriptor rather than
     // hipMemHandleTypeNone, which permits no export mechanism. Memory the
-    // collective layer may register has to be allocated this way. Honored on
-    // ROCm 10.0 and newer only.
+    // collective layer may register has to be allocated this way. Defaults on,
+    // as CudaDeviceAllocator::Options does; honored on ROCm 10.0 and newer, and
+    // only where fd export really works.
     bool enable_posix_fd_handle = true;
   };
 
@@ -68,9 +69,20 @@ struct RocmVmmAllocationParams {
 // does, so every VMM site goes through here rather than risk querying
 // granularity with properties it does not allocate with.
 //
+// Exportable handles are best-effort: if the granularity query rejects them,
+// prop.requestedHandleTypes falls back to hipMemHandleTypeNone.
+//
 // The caller must have activated `executor`'s context.
 absl::StatusOr<RocmVmmAllocationParams> GetRocmVmmAllocationParams(
     StreamExecutor* executor, const RocmVmmAllocator::Options& options);
+
+// Creates a physical VMM allocation of `padded_size` bytes with `prop`. Only
+// hipMemCreate() knows whether the driver, container and device can really
+// export handles, so a rejected request is retried with hipMemHandleTypeNone.
+//
+// The caller must have activated the context of the device `prop` names.
+absl::StatusOr<hipMemGenericAllocationHandle_t> CreateRocmVmmPhysicalAllocation(
+    hipMemAllocationProp prop, uint64_t padded_size);
 
 }  // namespace stream_executor::gpu
 
