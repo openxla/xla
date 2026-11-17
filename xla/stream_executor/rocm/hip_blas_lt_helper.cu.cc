@@ -18,10 +18,10 @@ limitations under the License.
 #include <cstdint>
 #include <utility>
 
+#include "absl/log/log.h"
 #include "rocm/include/hip/hip_runtime.h"
 #include "rocm/include/hipblaslt/hipblaslt-ext.hpp"
 #include "rocm/include/hipcub/hipcub.hpp"
-#include "xla/stream_executor/rocm/hip_blas_lt.h"
 
 namespace stream_executor {
 
@@ -84,13 +84,9 @@ __device__ __forceinline__ void* OffsetPtr(const void* base, uint64_t index,
 
 // Fills the fields of a UserArguments entry that are identical across all
 // ragged-dot modes (strides, alpha/beta, scales, bias, activation).
-
-
-// The SetUserArgsKernel* kernels below build hipblaslt_ext::UserArguments in
+// The SetUserArgsKernel kernels below build hipblaslt_ext::UserArguments in
 // uninitialized LDS and copy whole structs to global memory, so every field
-// must be written. Note that `reserved` is not padding: hipBLASLt kernels load
-// it as BiasStride and, when nonzero, use it as the bias buffer length, so
-// loads past it return 0. Setting it to 0 makes them use M or N instead.
+// must be written. 
 __device__ __forceinline__ void FillCommonUserArgs(
     hipblaslt_ext::UserArguments& arg, const GroupGemmKernelArgs& p) {
   arg.strideA1 = p.strideA1;
@@ -121,6 +117,7 @@ __device__ __forceinline__ void FillCommonUserArgs(
   arg.scaleAlphaVec = nullptr;
   arg.bias = const_cast<void*>(p.bias);
   arg.biasType = p.bias_type;
+  arg.reserved = 0;
   arg.e = nullptr;
   // Use activation parameters (always 0.0 from hipBLASLt defaults)
   arg.act0 = 0.0f;

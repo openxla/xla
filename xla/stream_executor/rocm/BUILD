@@ -927,7 +927,6 @@ rocm_library(
         "rocm-only",
     ],
     deps = [
-        ":hipblas_lt_header",
         "@local_config_rocm//rocm:rocm_headers",
     ],
 )
@@ -944,6 +943,7 @@ rocm_library(
     deps = [
         "//xla/stream_executor:device_address",
         "//xla/stream_executor/gpu:gpu_blas_lt",
+        "@com_google_absl//absl/log",
         "@local_config_rocm//rocm:rocm_headers",
     ],
 )
