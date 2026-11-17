@@ -550,6 +550,7 @@ cc_library(
         "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
+        "//xla/service:collective_ops_utils",
         "//xla/service:decision",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:instruction_fusion",
