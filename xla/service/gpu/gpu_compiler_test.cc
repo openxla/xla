@@ -1067,6 +1067,16 @@ constexpr absl::string_view kCustomCallUse = R"(
 constexpr absl::string_view kDotUse = R"(
   next_acc = f32[128,128] dot(acc, zeros), lhs_contracting_dims={1}, rhs_contracting_dims={0})";
 
+// `zeros` is only the input of a convolution, which becomes a library call
+// (MIOpen or cuDNN) that reads a materialized buffer, so the broadcast is kept.
+constexpr absl::string_view kConvolutionUse = R"(
+  input = f32[1,128,128,1] reshape(zeros)
+  k = f32[3,3] slice(acc), slice={[0:3], [0:3]}
+  kernel = f32[3,3,1,1] reshape(k)
+  conv = f32[1,128,128,1] convolution(input, kernel), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f
+  c = f32[128,128] reshape(conv)
+  next_acc = f32[128,128] add(acc, c))";
+
 // `zeros` is updated in place, but an add also reads it and can fuse it.
 constexpr absl::string_view kInPlaceAndFusibleUse = R"(
   zero = s32[] constant(0)
@@ -1083,8 +1093,8 @@ TEST_F(GpuCompilerWhileLoopSinkingTest, SinksFusibleBroadcastWithFlag) {
 }
 
 TEST_F(GpuCompilerWhileLoopSinkingTest, KeepsBroadcastNoUseCanFuse) {
-  for (absl::string_view use :
-       {kInPlaceUse, kTransposedInPlaceUse, kCustomCallUse, kDotUse}) {
+  for (absl::string_view use : {kInPlaceUse, kTransposedInPlaceUse,
+                                kCustomCallUse, kDotUse, kConvolutionUse}) {
     SCOPED_TRACE(use);
     EXPECT_THAT(CountCarriedBuffers(use, true), absl_testing::IsOkAndHolds(2));
   }
