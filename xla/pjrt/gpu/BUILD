@@ -493,6 +493,7 @@ xla_test(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "//xla/util/split_proto:split_executable_and_options_writer",
         "//xla/util/split_proto:split_proto_reader",
         "@com_google_absl//absl/algorithm:container",
@@ -522,6 +523,7 @@ xla_test(
         "@riegeli//riegeli/bytes:string_reader",
         "@riegeli//riegeli/bytes:string_writer",
         "@tsl//tsl/platform",
+        "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
     ] + if_cuda([
         "//xla/stream_executor/cuda:cuda_compute_capability",
