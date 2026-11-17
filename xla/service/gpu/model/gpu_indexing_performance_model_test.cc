@@ -1960,6 +1960,42 @@ ENTRY entry_computation {
 )");
 }
 
+TEST_F(FlopsPerElementTest, MatchesGpuHloCostAnalysis_Concatenate_Middle) {
+  // The first operand is aligned, but the second one ends at 64 + 33 = 97.
+  constexpr absl::string_view kHlo = R"(
+HloModule m
+
+ENTRY entry_computation {
+  p0 = f32[4, 64] parameter(0)
+  p1 = f32[4, 33] parameter(1)
+  p2 = f32[4, 32] parameter(2)
+  ROOT concat = f32[4, 129] concatenate(p0, p1, p2), dimensions={1}
+}
+)";
+  CompareFlopsModels(kHlo);
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  EXPECT_EQ(indexing_cost_model_.FlopsPerElement(
+                module->entry_computation()->root_instruction()),
+            400);
+}
+
+TEST_F(FlopsPerElementTest, Concatenate_OnlyLastOperandUnaligned) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+ENTRY entry_computation {
+  p0 = f32[4, 64] parameter(0)
+  p1 = f32[4, 128] parameter(1)
+  p2 = f32[4, 33] parameter(2)
+  ROOT concat = f32[4, 225] concatenate(p0, p1, p2), dimensions={1}
+}
+)"));
+  const HloInstruction* concat =
+      module->entry_computation()->root_instruction();
+  EXPECT_EQ(indexing_cost_model_.FlopsPerElement(concat), 6);
+}
+
 TEST_F(FlopsPerElementTest, Concatenate_UsesDeviceWarpSize) {
   // A boundary at 32 splits a wave64 wavefront but not a warp of 32.
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(

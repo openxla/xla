@@ -539,8 +539,14 @@ absl::Status GpuHloCostAnalysis::HandleConcatenate(const HloInstruction* hlo) {
   // TODO(b/315776282): Model this more accurately once we can reason about
   // tiling patterns.
   int64_t dim = Cast<HloConcatenateInstruction>(hlo)->concatenate_dimension();
-  if (dim > 0 && hlo->operand(0)->shape().dimensions()[dim] % warp_size_ != 0) {
-    flop_per_element = 400;
+  // A warp can straddle the end of any operand except the last one.
+  if (dim > 0) {
+    for (int64_t i = 0; i + 1 < hlo->operand_count(); ++i) {
+      if (hlo->operand(i)->shape().dimensions()[dim] % warp_size_ != 0) {
+        flop_per_element = 400;
+        break;
+      }
+    }
   }
   current_properties_[kFlopsKey] =
       flop_per_element * ShapeUtil::ElementsInRecursive(hlo->shape());
