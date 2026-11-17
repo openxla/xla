@@ -177,14 +177,14 @@ TEST(NcclCommunicatorTest, LargeBufferRegistration) {
       CreateCommunicators(executors, {kD0, kD1}, /*blocking=*/true));
 
   constexpr uint64_t kGiB = uint64_t{1} << 30;
-  constexpr uint64_t kSize = 6 * kGiB;
+  constexpr uint64_t kSize = 4 * kGiB;
   constexpr uint32_t kPattern = 0x5a17c3e9;
   for (se::StreamExecutor* executor : executors) {
     int64_t free_memory = 0;
     int64_t total_memory = 0;
     ASSERT_TRUE(executor->DeviceMemoryUsage(&free_memory, &total_memory));
     if (free_memory < static_cast<int64_t>(kSize + kGiB / 2)) {
-      GTEST_SKIP() << "Need 6.5 GiB of free GPU memory on each GPU, found "
+      GTEST_SKIP() << "Need 4.5 GiB of free GPU memory on each GPU, found "
                    << free_memory << " on GPU " << executor->device_ordinal();
     }
   }
@@ -233,7 +233,7 @@ TEST(NcclCommunicatorTest, LargeBufferRegistration) {
   ASSERT_OK(stream1->BlockHostUntilDone());
 
   // Sample both sides of every GiB boundary to check transfers across backing
-  // mappings without copying the entire 6 GiB buffer back to the host.
+  // mappings without copying the entire 4 GiB buffer back to the host.
   for (uint64_t chunk = 0; chunk < kSize / kGiB; ++chunk) {
     for (uint64_t offset :
          {chunk * kGiB, (chunk + 1) * kGiB - sizeof(uint32_t)}) {

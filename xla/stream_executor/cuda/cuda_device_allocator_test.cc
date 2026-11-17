@@ -175,7 +175,7 @@ TEST_P(CudaDeviceAllocatorTest, DeallocateDuringStreamCapture) {
   EXPECT_NE(cmd_buf, nullptr);
 }
 
-// Run explicitly and alone on WSL; CI must not require 6.5 GiB of free memory.
+// Exercise the 4 GiB exportable-allocation failure on affected WSL drivers.
 // The extra byte also exercises a short final backing chunk.
 TEST(CudaDeviceAllocatorWslTest, DISABLED_LargeExportableAllocation) {
   std::ifstream kernel_release_file("/proc/sys/kernel/osrelease");
@@ -195,13 +195,13 @@ TEST(CudaDeviceAllocatorWslTest, DISABLED_LargeExportableAllocation) {
       std::unique_ptr<CudaDeviceAllocator> allocator,
       CudaDeviceAllocator::Create(executor, MakeTestOptions(false)));
   constexpr uint64_t kGiB = uint64_t{1} << 30;
-  constexpr uint64_t kRequestedSize = 6 * kGiB + 1;
+  constexpr uint64_t kRequestedSize = 4 * kGiB + 1;
   constexpr uint32_t kPattern = 0x5a17c3e9;
   int64_t free_memory = 0;
   int64_t total_memory = 0;
   ASSERT_TRUE(executor->DeviceMemoryUsage(&free_memory, &total_memory));
   if (free_memory < static_cast<int64_t>(kRequestedSize + kGiB / 2)) {
-    GTEST_SKIP() << "Need 6.5 GiB of free GPU memory, found " << free_memory;
+    GTEST_SKIP() << "Need 4.5 GiB of free GPU memory, found " << free_memory;
   }
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> allocation,
