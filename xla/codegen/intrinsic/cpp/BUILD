@@ -273,9 +273,13 @@ xla_cc_test(
 xla_cc_test(
     name = "ynnpack_unary_test",
     srcs = ["ynnpack_unary_test.cc"],
+    copts = ["-Wno-psabi"],
     deps = [
         ":_cpp_gen_intrinsics",
+        ":vector_ops",
+        ":ynnpack_unary_lib",
         ":ynnpack_unary_ll",
+        "//xla/codegen/intrinsic:test_matchers",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",

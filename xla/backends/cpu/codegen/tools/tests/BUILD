@@ -26,7 +26,6 @@ lit_test_suite(
         "exp_inlines.ll",
         "ir_compiler_basic_test.ll",
         "ir_compiler_vectorization_test.ll",
-        "ldexp_inlines.ll",
     ],
     cfg = "//xla:lit.cfg.py",
     tools = [

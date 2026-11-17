@@ -38,9 +38,9 @@ module {
 }
 
 // CHECK: func @exp_f32
-// CHECK-NOT: @xla.exp.f64
-// CHECK: math.exp %arg0 : f32
-// CHECK: return
+// CHECK-NOT: math.exp
+// CHECK: %[[RESULT:.*]] = call @xla.exp.f32(%arg0) : (f32) -> f32
+// CHECK: return %[[RESULT]] : f32
 
 // -----
 
@@ -187,8 +187,11 @@ func.func @exp_f16(%arg0: f16) -> f16 {
   return %ret : f16
 }
 // CHECK-LABEL: @exp_f16
-// CHECK: math.exp %arg0 : f16
-// CHECK: return
+// CHECK-NOT: math.exp
+// CHECK: %[[EXT:.*]] = arith.extf %arg0 : f16 to f32
+// CHECK: %[[CALL:.*]] = call @xla.exp.f32(%[[EXT]])
+// CHECK: %[[TRUNC:.*]] = arith.truncf %[[CALL]] : f32 to f16
+// CHECK: return %[[TRUNC]]
 
 
 // -----
@@ -326,6 +329,17 @@ func.func @log1p_f32_vector_16(%arg0: vector<16xf32>) -> vector<16xf32> {
 // CHECK-LABEL: @log1p_f32_vector_16
 // CHECK-NOT: vector.extract_strided_slice
 // CHECK: %[[CALL:.*]] = call @xla.log1p.v16f32(%arg0) : (vector<16xf32>) -> vector<16xf32>
+// CHECK: return %[[CALL]]
+
+// -----
+
+func.func @exp_f32_vector_16(%arg0: vector<16xf32>) -> vector<16xf32> {
+  %ret = math.exp %arg0 : vector<16xf32>
+  return %ret : vector<16xf32>
+}
+// CHECK-LABEL: @exp_f32_vector_16
+// CHECK-NOT: vector.extract_strided_slice
+// CHECK: %[[CALL:.*]] = call @xla.exp.v16f32(%arg0) : (vector<16xf32>) -> vector<16xf32>
 // CHECK: return %[[CALL]]
 
 // -----

@@ -142,15 +142,20 @@ IntrinsicTestSpec CpuUnaryIntrinsicTestCases[] = {
     // The intrinsics are always inlined, so we match a line from it instead of
     // a function call.
 
-    IntrinsicTestSpec{
-        HloOpcode::kExp, F32, true, kTriple_x86_64, "",
-        R"(CHECK: fmul fast <4 x float> {{.*}}splat (float f0x3FB8AA3B)"},
+    // The scalar exp kernels also compute in a <4 x float> or <2 x double>, so
+    // these cases check for a vector load as well.
+    IntrinsicTestSpec{HloOpcode::kExp, F32, true, kTriple_x86_64, "",
+                      R"(
+                      CHECK: load <4 x float>
+                      CHECK: fmul contract <4 x float> {{.*}}splat (float f0x3FB8AA3B)
+    )"},
 
     // Check that we see inlined vectorized exp.f64 code
     IntrinsicTestSpec{HloOpcode::kExp, F64, true, kTriple_x86_64, "",
                       R"(
                       CHECK-NOT: define {{[a-z]* ?}}<4 x double> @xla.exp.v4f32
                       CHECK-NOT: define {{[a-z]* ?}}<4 x double> @xla.exp.v4f64
+                      CHECK: load <2 x double>
                       CHECK: fmul contract <2 x double> {{.*}}splat (double f0x3FF71547652B82FE)
                       CHECK-NOT: define {{[a-z]* ?}}<2 x double> @xla.exp.v2f32
                       CHECK-NOT: define {{[a-z]* ?}}<4 x double> @xla.exp.v4f64
@@ -170,11 +175,13 @@ IntrinsicTestSpec CpuUnaryIntrinsicTestCases[] = {
 
     IntrinsicTestSpec{
         HloOpcode::kExp, F32, true, kTriple_x86_64, "+avx",
-        R"(CHECK: fmul fast <8 x float> {{.*}}splat (float f0x3FB8AA3B)"},
+        R"(CHECK: fmul contract <8 x float> {{.*}}splat (float f0x3FB8AA3B)"},
 
-    IntrinsicTestSpec{
-        HloOpcode::kExp, F32, true, kTriple_android_arm, "+neon",
-        R"(CHECK: fmul fast <4 x float> {{.*}}splat (float f0x3FB8AA3B)"},
+    IntrinsicTestSpec{HloOpcode::kExp, F32, true, kTriple_android_arm, "+neon",
+                      R"(
+                      CHECK: load <4 x float>
+                      CHECK: fmul contract <4 x float> {{.*}}splat (float f0x3FB8AA3B)
+    )"},
 
     IntrinsicTestSpec{
         HloOpcode::kRsqrt, F32, true, kTriple_x86_64, "+avx",

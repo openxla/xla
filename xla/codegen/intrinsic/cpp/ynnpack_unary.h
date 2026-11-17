@@ -20,6 +20,17 @@ limitations under the License.
 
 namespace xla::codegen {
 
+float xla_exp_f32(float x) asm("xla.exp.f32");
+Vec2f xla_exp_v2f32(Vec2f x) asm("xla.exp.v2f32");
+Vec4f xla_exp_v4f32(Vec4f x) asm("xla.exp.v4f32");
+Vec8f xla_exp_v8f32(Vec8f x) asm("xla.exp.v8f32");
+Vec16f xla_exp_v16f32(Vec16f x) asm("xla.exp.v16f32");
+
+double xla_exp_f64(double x) asm("xla.exp.f64");
+Vec2d xla_exp_v2f64(Vec2d x) asm("xla.exp.v2f64");
+Vec4d xla_exp_v4f64(Vec4d x) asm("xla.exp.v4f64");
+Vec8d xla_exp_v8f64(Vec8d x) asm("xla.exp.v8f64");
+
 float xla_log_f32(float x) asm("xla.log.f32");
 Vec2f xla_log_v2f32(Vec2f x) asm("xla.log.v2f32");
 Vec4f xla_log_v4f32(Vec4f x) asm("xla.log.v4f32");

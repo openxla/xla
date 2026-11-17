@@ -109,37 +109,6 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "ldexp",
-    srcs = ["ldexp.cc"],
-    hdrs = ["ldexp.h"],
-    deps = [
-        ":intrinsic",
-        "//xla:xla_data_proto_cc",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@llvm-project//llvm:Core",  # buildcleaner: keep
-        "@llvm-project//llvm:Support",
-        "@llvm-project//llvm:ir_headers",
-    ],
-)
-
-xla_cc_test(
-    name = "ldexp_test",
-    srcs = ["ldexp_test.cc"],
-    deps = [
-        ":intrinsic",
-        ":ldexp",
-        ":simple_jit_runner",
-        ":test_matchers",
-        "//xla:xla_data_proto_cc",
-        "@com_google_googletest//:gtest_main",
-        "@llvm-project//llvm:OrcJIT",
-        "@llvm-project//llvm:ir_headers",
-    ],
-)
-
-cc_library(
     name = "simple_jit_runner",
     testonly = True,
     srcs = ["simple_jit_runner.cc"],
@@ -264,30 +233,6 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "exp",
-    srcs = ["exp.cc"],
-    hdrs = ["exp.h"],
-    deps = [
-        ":intrinsic",
-        ":ldexp",
-        "//xla:xla_data_proto_cc",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@llvm-project//llvm:Analysis",
-        "@llvm-project//llvm:Core",  # buildcleaner: keep
-        "@llvm-project//llvm:ExecutionEngine",
-        "@llvm-project//llvm:IPO",
-        "@llvm-project//llvm:OrcJIT",
-        "@llvm-project//llvm:Passes",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//llvm:Target",
-        "@llvm-project//llvm:TransformUtils",
-        "@llvm-project//llvm:ir_headers",
-    ],
-)
-
-cc_library(
     name = "log1p",
     srcs = ["log1p.cc"],
     hdrs = ["log1p.h"],
@@ -310,22 +255,6 @@ xla_cc_test(
     deps = [
         ":intrinsic",
         ":log1p",
-        ":simple_jit_runner",
-        ":test_matchers",
-        "//xla:xla_data_proto_cc",
-        "@com_google_googletest//:gtest_main",
-        "@llvm-project//llvm:OrcJIT",
-        "@llvm-project//llvm:ir_headers",
-    ],
-)
-
-xla_cc_test(
-    name = "exp_test",
-    srcs = ["exp_test.cc"],
-    deps = [
-        ":exp",
-        ":intrinsic",
-        ":ldexp",
         ":simple_jit_runner",
         ":test_matchers",
         "//xla:xla_data_proto_cc",
