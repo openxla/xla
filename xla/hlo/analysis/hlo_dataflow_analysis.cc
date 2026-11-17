@@ -1567,6 +1567,8 @@ bool HloDataflowAnalysis::UpdateCollectivePermuteDoneValueSet(
 //   kAllGatherDone, kAllReduceDone, kCollectivePermuteStart,
 //   kCollectivePermuteDone, kCopyStart, kCopyDone, kSend, kRecvDone, and the
 //   call-marker custom calls (kCallMarkerBeforeTarget/kCallMarkerAfterTarget).
+// TODO(asrao): Make UpdateInstructionValueSet call this to prevent drift
+// between the two functions.
 std::vector<std::pair<HloOperandIndex, ShapeIndex>>
 GetForwardedInputOutputPairs(const HloInstruction* instruction) {
   std::vector<std::pair<HloOperandIndex, ShapeIndex>> pairs;
