@@ -562,6 +562,15 @@ static std::string MakeInstructionTitle(absl::string_view prefix,
                          ",unique_hlo_op_id=", inst.unique_id());
   }
 
+  // The scheduler's cost estimate, if the compiler recorded one
+  // (xla_gpu_collect_cost_model_stats), at every annotation level.
+  const OpMetadata& metadata = inst.metadata();
+  if (metadata.scheduler_cost_us() != 0 ||
+      !metadata.scheduler_cost_source().empty()) {
+    absl::StrAppend(
+        &title, ",scheduler_cost_us=", metadata.scheduler_cost_us(),
+        ",scheduler_cost_source=", metadata.scheduler_cost_source());
+  }
   title.push_back('#');
   return title;
 }
@@ -623,6 +632,8 @@ InstructionAnnotation::InstructionAnnotation(
       }),
       RegisterLazyString(
           [&] { return "\n" + CalledInstructionsAsString(inst); }),
+      inst.metadata().scheduler_cost_us(),
+      RegisterOptionalString(inst.metadata().scheduler_cost_source()),
   };
   if (annotation_level < TraceAnnotationLevel::kDetailed) {
     xprof_name_str_ = nvtx_name_str_;
@@ -680,7 +691,7 @@ ModuleAnnotations::ModuleAnnotations(absl::string_view module_name,
 uint64_t InstructionAnnotation::Basic::NvtxSchemaId() {
   static std::uint64_t schema_id = []() -> std::uint64_t {
 #if GOOGLE_CUDA
-    const std::array<nvtxPayloadSchemaEntry_t, 3> schema = {
+    const std::array<nvtxPayloadSchemaEntry_t, 5> schema = {
         SchemaEntry<offsetof(Basic, hlo_dump), SchemaIndex::FIRST>(
             NVTX_PAYLOAD_ENTRY_TYPE_NVTX_REGISTERED_STRING_HANDLE, "HLO"),
         SchemaEntry<offsetof(Basic, src_locations)>(
@@ -688,7 +699,12 @@ uint64_t InstructionAnnotation::Basic::NvtxSchemaId() {
             "Source locations"),
         SchemaEntry<offsetof(Basic, called_hlo_dump)>(
             NVTX_PAYLOAD_ENTRY_TYPE_NVTX_REGISTERED_STRING_HANDLE,
-            "Called HLO")};
+            "Called HLO"),
+        SchemaEntry<offsetof(Basic, scheduler_cost_us)>(
+            NVTX_PAYLOAD_ENTRY_TYPE_FLOAT, "Scheduler cost (us)"),
+        SchemaEntry<offsetof(Basic, scheduler_cost_source)>(
+            NVTX_PAYLOAD_ENTRY_TYPE_NVTX_REGISTERED_STRING_HANDLE,
+            "Scheduler cost source")};
     return RegisterStaticSchema("XlaInstruction", schema, sizeof(Basic));
 #else
     return 0;
@@ -701,7 +717,7 @@ uint64_t InstructionAnnotation::Detailed::NvtxSchemaId() {
   static std::uint64_t schema_id = []() -> std::uint64_t {
 #if GOOGLE_CUDA
     constexpr uint64_t kBasicOffset = offsetof(Detailed, basic);
-    const std::array<nvtxPayloadSchemaEntry_t, 10> schema = {
+    const std::array<nvtxPayloadSchemaEntry_t, 12> schema = {
         SchemaEntry<kBasicOffset + offsetof(Basic, hlo_dump),
                     SchemaIndex::FIRST>(
             NVTX_PAYLOAD_ENTRY_TYPE_NVTX_REGISTERED_STRING_HANDLE, "HLO"),
@@ -728,7 +744,12 @@ uint64_t InstructionAnnotation::Detailed::NvtxSchemaId() {
             NVTX_PAYLOAD_ENTRY_TYPE_INT32, "Source line"),
         SchemaEntry<offsetof(Detailed, output_shape)>(
             NVTX_PAYLOAD_ENTRY_TYPE_NVTX_REGISTERED_STRING_HANDLE,
-            "Output shape")};
+            "Output shape"),
+        SchemaEntry<kBasicOffset + offsetof(Basic, scheduler_cost_us)>(
+            NVTX_PAYLOAD_ENTRY_TYPE_FLOAT, "Scheduler cost (us)"),
+        SchemaEntry<kBasicOffset + offsetof(Basic, scheduler_cost_source)>(
+            NVTX_PAYLOAD_ENTRY_TYPE_NVTX_REGISTERED_STRING_HANDLE,
+            "Scheduler cost source")};
     return RegisterStaticSchema("XlaInstructionDetailed", schema,
                                 sizeof(Detailed));
 #else
@@ -744,7 +765,7 @@ uint64_t InstructionAnnotation::Collective::NvtxSchemaId() {
     constexpr uint64_t kDetailedOffset = offsetof(Collective, detailed);
     constexpr uint64_t kBasicOffset =
         kDetailedOffset + offsetof(Detailed, basic);
-    const std::array<nvtxPayloadSchemaEntry_t, 17> schema = {
+    const std::array<nvtxPayloadSchemaEntry_t, 19> schema = {
         SchemaEntry<kBasicOffset + offsetof(Basic, hlo_dump),
                     SchemaIndex::FIRST>(
             NVTX_PAYLOAD_ENTRY_TYPE_NVTX_REGISTERED_STRING_HANDLE, "HLO"),
@@ -772,6 +793,11 @@ uint64_t InstructionAnnotation::Collective::NvtxSchemaId() {
         SchemaEntry<kDetailedOffset + offsetof(Detailed, output_shape)>(
             NVTX_PAYLOAD_ENTRY_TYPE_NVTX_REGISTERED_STRING_HANDLE,
             "Output shape"),
+        SchemaEntry<kBasicOffset + offsetof(Basic, scheduler_cost_us)>(
+            NVTX_PAYLOAD_ENTRY_TYPE_FLOAT, "Scheduler cost (us)"),
+        SchemaEntry<kBasicOffset + offsetof(Basic, scheduler_cost_source)>(
+            NVTX_PAYLOAD_ENTRY_TYPE_NVTX_REGISTERED_STRING_HANDLE,
+            "Scheduler cost source"),
         SchemaEntry<offsetof(Collective, replica_groups)>(
             NVTX_PAYLOAD_ENTRY_TYPE_NVTX_REGISTERED_STRING_HANDLE,
             "Replica groups"),

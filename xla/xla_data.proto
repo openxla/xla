@@ -568,6 +568,15 @@ message OpMetadata {
   // HloModuleProto.payloads during module serialization.
   Payload metadata_payload = 20;
 
+  // Cost in microseconds that the latency hiding scheduler used for this
+  // instruction, and a free-form name of the latency estimator that produced
+  // it, e.g. "PGLE". Estimators that delegate to another one report the one
+  // that produced the value, e.g. PGLE's fallback estimator for values that the
+  // profile did not provide. Recorded when xla_gpu_collect_cost_model_stats is
+  // set.
+  float scheduler_cost_us = 21;
+  string scheduler_cost_source = 22;
+
   reserved 14;
 }
 
