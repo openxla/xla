@@ -718,6 +718,7 @@ message DebugOptions {
   // SKIP_PROFILED update mode, keeps buffers of collectives that may be
   // recorded into command buffers out of output allocations, so the
   // collectives are not re-recorded on every execution. Costs temp memory.
+  // Has no effect otherwise. Defaults to true.
   optional bool xla_gpu_command_buffer_keep_collectives_out_of_outputs = 572;
 
   optional CommandBufferSchedulingMode xla_gpu_command_buffer_scheduling_mode =
