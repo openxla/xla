@@ -25,6 +25,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_matchers.h"
+#include "xla/service/hlo_module_config.h"
 namespace xla {
 namespace {
 
@@ -146,6 +147,50 @@ TEST_F(ConvertOperandFoldingTest, OneOperandFolded) {
       AllOf(op::Dot(op::Parameter(0), AllOf(op::Convert(op::Parameter(1)),
                                             op::Shape("s8[3,2]{0,1}"))),
             op::Shape("s16[2,2]{1,0}")));
+}
+
+constexpr absl::string_view kFp8AndMixedDots = R"(
+  HloModule module
+
+  ENTRY main {
+    p0 = f8e4m3fn[2,3]{1,0} parameter(0)
+    p1 = f8e4m3fn[3,2]{1,0} parameter(1)
+    p2 = bf16[3,2]{1,0} parameter(2)
+    c0 = f32[2,3]{1,0} convert(p0)
+    c1 = f32[3,2]{1,0} convert(p1)
+    c2 = f32[3,2]{1,0} convert(p2)
+    fp8_dot = f32[2,2]{1,0} dot(c0, c1), lhs_contracting_dims={1},
+                                         rhs_contracting_dims={0}
+    mixed_dot = f32[2,2]{1,0} dot(c0, c2), lhs_contracting_dims={1},
+                                           rhs_contracting_dims={0}
+    ROOT tuple = (f32[2,2]{1,0}, f32[2,2]{1,0}) tuple(fp8_dot, mixed_dot)
+  })";
+
+TEST_F(ConvertOperandFoldingTest, Fp8DotKeepsConvertsByDefault) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kFp8AndMixedDots));
+  TF_ASSERT_OK_AND_ASSIGN(bool folded,
+                          ConvertOperandFolding().Run(module.get()));
+  EXPECT_TRUE(folded);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Tuple(op::Dot(op::Convert(op::Parameter(0)),
+                                op::Convert(op::Parameter(1))),
+                        op::Dot(op::Parameter(0), op::Parameter(2))));
+}
+
+TEST_F(ConvertOperandFoldingTest, Fp8DotFoldedWithFlagOff) {
+  HloModuleConfig config = GetModuleConfigForTest();
+  config.mutable_debug_options().set_xla_keep_converts_of_narrow_float_dots(
+      false);
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kFp8AndMixedDots, config));
+  TF_ASSERT_OK_AND_ASSIGN(bool folded,
+                          ConvertOperandFolding().Run(module.get()));
+  EXPECT_TRUE(folded);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Tuple(op::Dot(op::Parameter(0), op::Parameter(1)),
+                        op::Dot(op::Parameter(0), op::Parameter(2))));
 }
 
 TEST_F(ConvertOperandFoldingTest, FoldedWithFormatting) {

@@ -326,6 +326,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_fast_min_max(false);
 
   opts.set_xla_allow_excess_precision(true);
+  opts.set_xla_keep_converts_of_narrow_float_dots(true);
   opts.set_xla_force_host_platform_device_count(1);
   opts.set_xla_gpu_all_reduce_combine_threshold_bytes(
       kDefaultAllReduceCombineThreshold);
@@ -2076,6 +2077,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_allow_excess_precision),
       debug_options->xla_allow_excess_precision(),
       "Allow xla to increase the output precision of an instruction."));
+  flag_list->push_back(tsl::Flag(
+      "xla_keep_converts_of_narrow_float_dots",
+      bool_setter_for(
+          &DebugOptions::set_xla_keep_converts_of_narrow_float_dots),
+      debug_options->xla_keep_converts_of_narrow_float_dots(),
+      "If true, ConvertOperandFolding keeps the converts of a dot or "
+      "convolution when folding would leave two operands of at most 8 bits, "
+      "at least one of them a float."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_force_conv_nchw",
                 bool_setter_for(&DebugOptions::set_xla_gpu_force_conv_nchw),

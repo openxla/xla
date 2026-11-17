@@ -2060,7 +2060,13 @@ message DebugOptions {
   // cache miss.
   optional bool xla_fail_on_autotune_cache_miss = 583;
 
-  // Next id: 584
+  // If true, ConvertOperandFolding keeps the converts of a dot or convolution
+  // when folding would leave two operands of at most 8 bits, at least one of
+  // them a float. Hardware can accumulate such contractions less precisely
+  // than the wider contraction the converts ask for. On by default.
+  optional bool xla_keep_converts_of_narrow_float_dots = 584;
+
+  // Next id: 585
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

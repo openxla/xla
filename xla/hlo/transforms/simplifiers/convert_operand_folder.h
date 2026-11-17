@@ -28,6 +28,10 @@ namespace xla {
 // result accumulation than the shape inference type.
 //
 // e.g. s32 hlo(s32 convert(s8), s32 convert(s8)) -> s32 hlo(s8, s8)
+//
+// With --xla_keep_converts_of_narrow_float_dots, a dot or convolution
+// keeps its converts if folding would leave two operands of at most 8 bits,
+// at least one of them a float (e.g. f8e4m3fn x f8e4m3fn).
 class ConvertOperandFolding : public OpExpanderPass {
  public:
   absl::string_view name() const override { return "convert_operand_folding"; }

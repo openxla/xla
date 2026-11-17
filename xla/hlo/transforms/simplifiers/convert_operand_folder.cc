@@ -21,7 +21,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/primitive_util.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/shape_util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -52,6 +54,29 @@ bool IsUpcastConvert(const HloInstruction* hlo) {
     default:
       return false;
   }
+}
+
+// Returns the element type of `operand` once its upcast, if any, is folded.
+PrimitiveType FoldedElementType(const HloInstruction* operand) {
+  if (!IsUpcastConvert(operand)) {
+    return operand->shape().element_type();
+  }
+  while (operand->opcode() != HloOpcode::kConvert) {
+    operand = operand->operand(0);
+  }
+  return operand->operand(0)->shape().element_type();
+}
+
+// Returns whether folding would leave `instruction` with two operands of at
+// most 8 bits, at least one of them a float. Hardware can accumulate such
+// contractions less precisely than the wider one the converts ask for.
+bool FoldingCreatesNarrowFloatContraction(const HloInstruction* instruction) {
+  const PrimitiveType lhs = FoldedElementType(instruction->operand(0));
+  const PrimitiveType rhs = FoldedElementType(instruction->operand(1));
+  return primitive_util::BitWidth(lhs) <= 8 &&
+         primitive_util::BitWidth(rhs) <= 8 &&
+         (primitive_util::IsFloatingPointType(lhs) ||
+          primitive_util::IsFloatingPointType(rhs));
 }
 
 HloInstruction* EffectiveOperand(HloInstruction* hlo) {
@@ -90,6 +115,13 @@ bool ConvertOperandFolding::InstructionMatchesPattern(
     HloInstruction* instruction) {
   if (instruction->opcode() != HloOpcode::kDot &&
       instruction->opcode() != HloOpcode::kConvolution) {
+    return false;
+  }
+  if (instruction->GetModule()
+          ->config()
+          .debug_options()
+          .xla_keep_converts_of_narrow_float_dots() &&
+      FoldingCreatesNarrowFloatContraction(instruction)) {
     return false;
   }
   for (auto* operand : instruction->operands()) {
