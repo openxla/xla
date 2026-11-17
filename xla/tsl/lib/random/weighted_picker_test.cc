@@ -105,6 +105,43 @@ TEST(WeightedPicker, Deterministic) {
   TestPickAt(TF_ARRAYSIZE(weights), weights);
 }
 
+TEST(WeightedPicker, BoundsZeroWeightsAndMultiLevelResize) {
+  WeightedPicker picker(0);
+  EXPECT_EQ(picker.PickAt(-1), -1);
+  EXPECT_EQ(picker.PickAt(0), -1);
+
+  const int32_t sparse[] = {0, 3, 0, 2, 0};
+  picker.SetWeightsFromArray(TF_ARRAYSIZE(sparse), sparse);
+  EXPECT_EQ(picker.total_weight(), 5);
+  EXPECT_EQ(picker.PickAt(-1), -1);
+  EXPECT_EQ(picker.PickAt(0), 1);
+  EXPECT_EQ(picker.PickAt(3), 3);
+  EXPECT_EQ(picker.PickAt(5), -1);
+
+  picker.set_weight(1, 3);
+  picker.set_weight(3, 0);
+  EXPECT_EQ(picker.total_weight(), 3);
+  EXPECT_EQ(picker.PickAt(2), 1);
+  EXPECT_EQ(picker.PickAt(3), -1);
+
+  picker.Resize(33);
+  EXPECT_EQ(picker.get_weight(1), 3);
+  EXPECT_EQ(picker.get_weight(32), 0);
+  picker.set_weight(32, 4);
+  EXPECT_EQ(picker.PickAt(6), 32);
+
+  picker.Resize(0);
+  picker.Resize(33);
+  EXPECT_EQ(picker.total_weight(), 0);
+  picker.SetAllWeights(3);
+  picker.Resize(64);
+  EXPECT_EQ(picker.total_weight(), 99);
+  EXPECT_EQ(picker.get_weight(32), 3);
+  EXPECT_EQ(picker.get_weight(33), 0);
+  EXPECT_EQ(picker.PickAt(98), 32);
+  EXPECT_EQ(picker.PickAt(99), -1);
+}
+
 TEST(WeightedPicker, Randomized) {
   PhiloxRandom philox(testing::RandomSeed() + 10, 17);
   SimplePhilox rnd(&philox);
