@@ -565,8 +565,18 @@ absl::StatusOr<ncclComm_t> NcclCommunicator::Split(int color, int key,
     return FailedPrecondition("Cannot split a null NCCL communicator");
   }
 
-  // NCCL can publish the child handle after ncclCommSplit returns. Keep the
-  // output on the heap so it can outlive an error with uncertain completion.
+  if (config.blocking) {
+    // A blocking split publishes the child handle before it returns, so no
+    // polling or deferred cleanup is needed.
+    ncclComm_t child = nullptr;
+    XLA_NCCL_RETURN_IF_ERROR(
+        ncclCommSplit(comm_->comm, color, key, &child, &config));
+    return child;
+  }
+
+  // A nonblocking split can publish the child handle after ncclCommSplit
+  // returns. Allocate the output on the heap so it can remain valid if this
+  // method returns an error before completion.
   auto child = std::make_unique<ncclComm_t>(nullptr);
   absl::Status status = XLA_NCCL_STATUS(
       ncclCommSplit(comm_->comm, color, key, child.get(), &config));
