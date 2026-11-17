@@ -308,9 +308,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_graph_min_graph_size(5);
   opts.set_xla_gpu_command_buffer_scheduling_mode(DebugOptions::LHS);
   opts.set_xla_gpu_command_buffer_unroll_loops(false);
-  // Only takes effect with COLLECTIVES in command buffers and the SKIP_TEMP or
-  // SKIP_PROFILED update mode.
-  opts.set_xla_gpu_command_buffer_keep_collectives_out_of_outputs(true);
+  // `xla_gpu_command_buffer_keep_collectives_out_of_outputs` is left unset on
+  // purpose: unset means enabled with COLLECTIVES in command buffers and the
+  // SKIP_TEMP or SKIP_PROFILED update mode, and disabled otherwise.
   opts.set_xla_cmd_buffer_trace_cache_size(16);
 
   // Despite the name, fast min/max on GPUs does not seem to be any faster, and
@@ -2997,8 +2997,8 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         "or SKIP_PROFILED update mode, keeps buffers of collectives that may "
         "be recorded into command buffers out of output allocations, so the "
         "collectives are not re-recorded on every execution. Costs temp "
-        "memory. Has no effect otherwise. Set to false to let these "
-        "buffers share output allocations again."));
+        "memory. When not set, it is enabled in that configuration and "
+        "disabled otherwise. Set to false to disable it there."));
     flag_list->push_back(tsl::Flag("xla_gpu_copy_insertion_use_region_analysis",
                                    noop_flag_setter<bool>, false,
                                    "[Deprecated, do not use]."));

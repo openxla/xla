@@ -1088,6 +1088,46 @@ TEST_F(GpuMemorySpaceAssignmentTest,
 }
 
 TEST_F(GpuMemorySpaceAssignmentTest,
+       MustNotLiveOutIsAutoEnabledUnlessFlagIsExplicitlySet) {
+  // Collective command buffers with `update_mode`, flag left unset.
+  auto flag_unset = [&](DebugOptions::CommandBufferUpdateMode update_mode) {
+    DebugOptions debug_options = WithCollectiveCommandBuffers(
+        GetModuleConfigForTest().debug_options(), update_mode);
+    debug_options
+        .clear_xla_gpu_command_buffer_keep_collectives_out_of_outputs();
+    return debug_options;
+  };
+
+  // Not set: enabled with SKIP_TEMP or SKIP_PROFILED only.
+  EXPECT_TRUE(
+      CreateMustNotLiveOut(flag_unset(DebugOptions::SKIP_TEMP)).has_value());
+  EXPECT_TRUE(CreateMustNotLiveOut(flag_unset(DebugOptions::SKIP_PROFILED))
+                  .has_value());
+  EXPECT_FALSE(CreateMustNotLiveOut(flag_unset(DebugOptions::ALWAYS_UPDATE))
+                   .has_value());
+
+  // Not set, and COLLECTIVES is not in command buffers.
+  DebugOptions no_collectives = flag_unset(DebugOptions::SKIP_TEMP);
+  no_collectives.clear_xla_gpu_enable_command_buffer();
+  no_collectives.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+  EXPECT_FALSE(CreateMustNotLiveOut(no_collectives).has_value());
+
+  // An explicit value takes priority.
+  DebugOptions flag_off = flag_unset(DebugOptions::SKIP_TEMP);
+  flag_off.set_xla_gpu_command_buffer_keep_collectives_out_of_outputs(false);
+  EXPECT_FALSE(CreateMustNotLiveOut(flag_off).has_value());
+  DebugOptions flag_on = flag_unset(DebugOptions::SKIP_PROFILED);
+  flag_on.set_xla_gpu_command_buffer_keep_collectives_out_of_outputs(true);
+  EXPECT_TRUE(CreateMustNotLiveOut(flag_on).has_value());
+
+  // The flag has no effect outside this configuration.
+  DebugOptions always_update = flag_unset(DebugOptions::ALWAYS_UPDATE);
+  always_update.set_xla_gpu_command_buffer_keep_collectives_out_of_outputs(
+      true);
+  EXPECT_FALSE(CreateMustNotLiveOut(always_update).has_value());
+}
+
+TEST_F(GpuMemorySpaceAssignmentTest,
        CollectiveResultAvoidsOutputAllocationWithVaRemapping) {
   constexpr absl::string_view kHlo = R"(
     HloModule m, replica_count=2, is_scheduled=true

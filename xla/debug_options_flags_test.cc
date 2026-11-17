@@ -89,9 +89,14 @@ TEST(DebugOptions, CommandBufferUpdateModeDefaultsToAlwaysUpdate) {
       DebugOptions::ALWAYS_UPDATE);
 }
 
-TEST(DebugOptions, CommandBufferKeepCollectivesOutOfOutputsDefaultsToTrue) {
-  EXPECT_TRUE(DefaultDebugOptionsIgnoringFlags()
-                  .xla_gpu_command_buffer_keep_collectives_out_of_outputs());
+TEST(DebugOptions, CommandBufferKeepCollectivesOutOfOutputsIsUnsetByDefault) {
+  // Unset lets the GPU compiler enable it only with collective command buffers
+  // and the SKIP_TEMP or SKIP_PROFILED update mode.
+  DebugOptions options = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_FALSE(
+      options.has_xla_gpu_command_buffer_keep_collectives_out_of_outputs());
+  EXPECT_FALSE(
+      options.xla_gpu_command_buffer_keep_collectives_out_of_outputs());
 }
 
 TEST(DebugOptions,

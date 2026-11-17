@@ -441,11 +441,16 @@ std::optional<BufferAssigner::MustNotLiveOut> CreateMustNotLiveOut(
   // TODO(magaonka-amd): Account for ragged all-to-all, which the command
   // buffer conversion pass records as COLLECTIVES_KERNEL when it uses the
   // symmetric memory kernel.
-  if (!option.xla_gpu_command_buffer_keep_collectives_out_of_outputs() ||
-      (update_mode != DebugOptions::SKIP_TEMP &&
+  if ((update_mode != DebugOptions::SKIP_TEMP &&
        update_mode != DebugOptions::SKIP_PROFILED) ||
       !absl::c_linear_search(option.xla_gpu_enable_command_buffer(),
                              DebugOptions::COLLECTIVES)) {
+    return std::nullopt;
+  }
+  // Enabled automatically in this configuration. An explicit value of the flag
+  // takes priority.
+  if (option.has_xla_gpu_command_buffer_keep_collectives_out_of_outputs() &&
+      !option.xla_gpu_command_buffer_keep_collectives_out_of_outputs()) {
     return std::nullopt;
   }
   return [enabled = GetEnabledCollectiveOpTypes(option)](
