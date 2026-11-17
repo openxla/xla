@@ -399,9 +399,37 @@ TEST_F(MoveCopyToUsersTest, SliceInWhileBody) {
 )");
 }
 
+TEST_F(MoveCopyToUsersTest, SlicesInWhileBodyAndAfterWhileLoop) {
+  // The body reads two layers per iteration, and one more layer is read after
+  // the loop. Each of the slices is copied.
+  CheckMoveCopyToUsers(
+      WhileLoopOverCopiedStack(
+          absl::StrCat(kDynamicSliceOfStack, "\n",
+                       "other = f32[1,16,32]{1,0,2} slice(stack), "
+                       "slice={[0:1], [0:16], [0:32]}"),
+          "stack", /*trip_count=*/8,
+          "stack_after = f32[8,16,32]{1,0,2} get-tuple-element(loop), index=1\n"
+          "last = f32[1,16,32]{1,0,2} slice(stack_after), "
+          "slice={[7:8], [0:16], [0:32]}"),
+      R"(
+// CHECK:       body
+// CHECK:         [[stack:%[^ ]+]] = f32[8,16,32]{2,1,0} get-tuple-element({{.*}}), index=1
+// CHECK-DAG:     [[slice:%[^ ]+]] = f32[1,16,32]{2,1,0} dynamic-slice([[stack]], {{.*}}), dynamic_slice_sizes={1,16,32}
+// CHECK-DAG:     f32[1,16,32]{1,0,2} copy([[slice]])
+// CHECK-DAG:     [[other:%[^ ]+]] = f32[1,16,32]{2,1,0} slice([[stack]]), slice={[0:1], [0:16], [0:32]}
+// CHECK-DAG:     f32[1,16,32]{1,0,2} copy([[other]])
+// CHECK:       ENTRY
+// CHECK-NOT:     f32[8,16,32]{1,0,2}
+// CHECK:         [[loop:%[^ ]+]] = (s32[], f32[8,16,32]{2,1,0}, f32[1,16,32]{1,0,2}) while(
+// CHECK:         [[after:%[^ ]+]] = f32[8,16,32]{2,1,0} get-tuple-element([[loop]]), index=1
+// CHECK:         [[last:%[^ ]+]] = f32[1,16,32]{2,1,0} slice([[after]]), slice={[7:8], [0:16], [0:32]}
+// CHECK:         f32[1,16,32]{1,0,2} copy([[last]])
+)");
+}
+
 TEST_F(MoveCopyToUsersTest, WhileBodyCopiesMoreThanTheArrayNoChange) {
-  // 16 iterations slice one layer each, which is more than the 8 layers of
-  // the stack.
+  // The slice copies one layer in each of 16 iterations, which is more than
+  // the 8 layers of the stack.
   CheckMoveCopyToUsers(
       WhileLoopOverCopiedStack("layer = f32[1,16,32]{1,0,2} slice(stack), "
                                "slice={[3:4], [0:16], [0:32]}",

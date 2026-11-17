@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/move_copy_to_users.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -296,10 +297,41 @@ std::optional<int64_t> TripCount(const HloInstruction* while_op) {
 struct CopyIntoWhileBody {
   HloInstruction* copy;
   int64_t index;
-  // The uses of the element in the body that need the layout the copy
-  // produces. They are slices and dynamic-slices of the element.
-  std::vector<Use> body_uses;
+  // The uses of the element, in the body and after the loop, that need the
+  // layout the copy produces. They are slices and dynamic-slices of the
+  // element.
+  std::vector<Use> slice_uses;
 };
+
+// Adds the uses of `reader` to `uses` and returns the size of the largest
+// result of a use, or nullopt if `reader` is used by anything but a slice or
+// dynamic-slice of it. The use as operand `passed_on_as` of `passed_on_to` is
+// skipped.
+std::optional<int64_t> CollectSliceUses(HloInstruction* reader,
+                                        const HloInstruction* passed_on_to,
+                                        int64_t passed_on_as,
+                                        std::vector<Use>& uses) {
+  if (reader->IsRoot()) {
+    return std::nullopt;
+  }
+  int64_t largest_slice_bytes = 0;
+  for (HloInstruction* user : reader->users()) {
+    for (int64_t operand_no : user->OperandIndices(reader)) {
+      if (user == passed_on_to && operand_no == passed_on_as) {
+        continue;
+      }
+      if (operand_no != 0 ||
+          HloPredicateIsNotOp<HloOpcode::kSlice, HloOpcode::kDynamicSlice>(
+              user)) {
+        return std::nullopt;
+      }
+      uses.push_back({user, operand_no});
+      largest_slice_bytes =
+          std::max(largest_slice_bytes, ShapeUtil::ByteSizeOf(user->shape()));
+    }
+  }
+  return largest_slice_bytes;
+}
 
 // Returns how to move the copy that produces element `index` of the initial
 // state of `while_op` into the body of the loop, or nullopt if the copy can not
@@ -307,10 +339,11 @@ struct CopyIntoWhileBody {
 //
 // The copy can be moved if the loop only reads the element: the body passes
 // it on unchanged, so the loop can carry the element in the layout it has
-// before the copy. Moving pays off if the body only reads slices of the
-// element and the slices of all iterations together are not larger than the
-// element. The copies of the slices then replace the copy of the element, and
-// the element is not kept in two layouts while the loop runs.
+// before the copy. Moving pays off if the element is only read by slices, in
+// the body and after the loop, and no slice in the body copies more than the
+// element over all iterations. The copies of the slices then replace the copy
+// of the element, and the element is not kept in two layouts while the loop
+// runs.
 std::optional<CopyIntoWhileBody> MatchCopyIntoWhileBody(
     HloInstruction* while_op, int64_t index) {
   HloInstruction* init = while_op->mutable_operand(0);
@@ -321,8 +354,7 @@ std::optional<CopyIntoWhileBody> MatchCopyIntoWhileBody(
   }
 
   // The state must only be read element by element, so that the layout of one
-  // element can be changed. The element must not be read after the loop, where
-  // all of it would have to be copied again.
+  // element can be changed.
   HloComputation* body = while_op->while_body();
   const HloInstruction* body_parameter = body->parameter_instruction(0);
   const HloInstruction* condition_parameter =
@@ -330,7 +362,6 @@ std::optional<CopyIntoWhileBody> MatchCopyIntoWhileBody(
   if (while_op->IsRoot() || !AllUsersAreGetTupleElements(while_op) ||
       !AllUsersAreGetTupleElements(body_parameter) ||
       !AllUsersAreGetTupleElements(condition_parameter) ||
-      !absl::c_all_of(ElementReaders(while_op, index), IsUnused) ||
       !absl::c_all_of(ElementReaders(condition_parameter, index), IsUnused)) {
     return std::nullopt;
   }
@@ -347,29 +378,27 @@ std::optional<CopyIntoWhileBody> MatchCopyIntoWhileBody(
     return std::nullopt;
   }
 
-  // Apart from that, the body must only read slices of the element.
+  // Apart from that, the element must only be read by slices.
   CopyIntoWhileBody result{copy, index, {}};
-  int64_t bytes_sliced_per_iteration = 0;
+  int64_t largest_slice_bytes_in_body = 0;
   for (HloInstruction* reader : ElementReaders(body_parameter, index)) {
-    for (HloInstruction* user : reader->users()) {
-      for (int64_t operand_no : user->OperandIndices(reader)) {
-        if (user == body_root && operand_no == index) {
-          continue;
-        }
-        if (operand_no != 0 ||
-            HloPredicateIsNotOp<HloOpcode::kSlice, HloOpcode::kDynamicSlice>(
-                user)) {
-          return std::nullopt;
-        }
-        result.body_uses.push_back({user, operand_no});
-        bytes_sliced_per_iteration += ShapeUtil::ByteSizeOf(user->shape());
-      }
+    std::optional<int64_t> largest_slice_bytes =
+        CollectSliceUses(reader, body_root, index, result.slice_uses);
+    if (!largest_slice_bytes.has_value()) {
+      return std::nullopt;
+    }
+    largest_slice_bytes_in_body =
+        std::max(largest_slice_bytes_in_body, *largest_slice_bytes);
+  }
+  if (largest_slice_bytes_in_body > 0) {
+    std::optional<int64_t> trip_count = TripCount(while_op);
+    if (!trip_count.has_value() || *trip_count * largest_slice_bytes_in_body >
+                                       ShapeUtil::ByteSizeOf(copy->shape())) {
+      return std::nullopt;
     }
   }
-  if (!result.body_uses.empty()) {
-    std::optional<int64_t> trip_count = TripCount(while_op);
-    if (!trip_count.has_value() || *trip_count * bytes_sliced_per_iteration >
-                                       ShapeUtil::ByteSizeOf(copy->shape())) {
+  for (HloInstruction* reader : ElementReaders(while_op, index)) {
+    if (!CollectSliceUses(reader, nullptr, -1, result.slice_uses).has_value()) {
       return std::nullopt;
     }
   }
@@ -378,8 +407,8 @@ std::optional<CopyIntoWhileBody> MatchCopyIntoWhileBody(
 
 // Moves the copy described by `match` into the body of `while_op`: the loop
 // carries the element in the layout it has before the copy, and each slice of
-// the element in the body reads a copy of the element. MoveCopyToUsersVisitor
-// then moves that copy below the slice.
+// the element, in the body or after the loop, reads a copy of the element.
+// MoveCopyToUsersVisitor then moves that copy below the slice.
 absl::Status MoveCopyIntoWhileBody(HloInstruction* while_op,
                                    const CopyIntoWhileBody& match) {
   const int64_t index = match.index;
@@ -389,8 +418,8 @@ absl::Status MoveCopyIntoWhileBody(HloInstruction* while_op,
   const Shape copy_shape = match.copy->shape();
   const Shape copied_shape = copied->shape();
 
-  // The slices in the body read the element in the layout of the copy.
-  for (const Use& use : match.body_uses) {
+  // The slices read the element in the layout of the copy.
+  for (const Use& use : match.slice_uses) {
     HloInstruction* reader = use.user->mutable_operand(use.operand_no);
     ABSL_RETURN_IF_ERROR(use.user->ReplaceOperandWith(
         use.operand_no, MakeCopyHlo(reader, copy_shape)));
