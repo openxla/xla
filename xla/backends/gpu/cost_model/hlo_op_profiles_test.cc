@@ -193,6 +193,48 @@ TEST_F(HloOpProfilesTest, GetProfileSm100) {
       373);
 }
 
+TEST_F(HloOpProfilesTest, GetDeviceSpecificBlackwellProfiles) {
+  struct TestCase {
+    const char* device_name;
+    int minor;
+    const char* expected_profile;
+  };
+  const TestCase test_cases[] = {
+      {"NVIDIA B200", 0, "sm_100_B200"},
+      {"NVIDIA GB200", 0, "sm_100_GB200"},
+      {"NVIDIA B300 SXM6 AC", 3, "sm_103_B300"},
+      {"NVIDIA GB300", 3, "sm_103_GB300"},
+      {"NVIDIA B200 MIG 1g.23gb", 0, "sm_100_B200_1g.23gb"},
+  };
+  for (const TestCase& test_case : test_cases) {
+    SCOPED_TRACE(test_case.device_name);
+    stream_executor::DeviceDescription device_info;
+    device_info.set_name(test_case.device_name);
+    device_info.set_gpu_compute_capability(
+        stream_executor::GpuComputeCapability(
+            stream_executor::CudaComputeCapability(10, test_case.minor)));
+    EXPECT_EQ(HloOpProfiles::GetDeviceSpecificProfileName(device_info),
+              test_case.expected_profile);
+  }
+}
+
+TEST_F(HloOpProfilesTest, FallsBackForUnrecognizedBlackwellDeviceName) {
+  stream_executor::DeviceDescription device_info;
+  device_info.set_gpu_compute_capability(stream_executor::GpuComputeCapability(
+      stream_executor::CudaComputeCapability(10, 0)));
+  device_info.set_name("NVIDIA Graphics Device");
+  EXPECT_EQ(HloOpProfiles::GetDeviceSpecificProfileName(device_info), "sm_100");
+  device_info.set_name("NVIDIA GB300");  // wrong device for compute capability
+  EXPECT_EQ(HloOpProfiles::GetDeviceSpecificProfileName(device_info), "sm_100");
+
+  device_info.set_gpu_compute_capability(stream_executor::GpuComputeCapability(
+      stream_executor::CudaComputeCapability(10, 3)));
+  device_info.set_name("NVIDIA Graphics Device");
+  EXPECT_EQ(HloOpProfiles::GetDeviceSpecificProfileName(device_info), "sm_103");
+  device_info.set_name("NVIDIA GB200");  // wrong device for compute capability
+  EXPECT_EQ(HloOpProfiles::GetDeviceSpecificProfileName(device_info), "sm_103");
+}
+
 TEST_F(HloOpProfilesTest, GetProfileMI210) {
   auto hlo_op_profiles = HloOpProfiles::Load(kDeviceHloOpProfilesTest,
                                              /*default_profile_name=*/"sm_80");

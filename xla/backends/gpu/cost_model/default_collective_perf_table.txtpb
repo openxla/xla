@@ -47055,7 +47055,7 @@ entries {
   }
 }
 entries {
-  key: "sm_103"
+  key: "sm_103_GB300"
   value {
     partition_size: 72
     entries {

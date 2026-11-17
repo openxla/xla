@@ -1033,9 +1033,9 @@ class CollectiveInterpolationWithDefaultProfileTest
 
 TEST_P(CollectiveInterpolationWithDefaultProfileTest, LoadsDefaultProfile) {
   const auto& [test_name, cc, expected_duration] = GetParam();
-  auto device_info = test_name == "B200"
-                         ? TestGpuDeviceInfo::B200SXMDeviceInfo(cc)
-                         : TestGpuDeviceInfo::RTXA6000DeviceInfo(cc);
+  se::DeviceDescription device_info;
+  device_info.set_name("NVIDIA " + test_name);
+  device_info.set_gpu_compute_capability(cc);
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<CollectiveInterpolator> interpolator,
       CollectiveInterpolator::Create(kNumGpusPerHost, device_info));
@@ -1077,6 +1077,21 @@ INSTANTIATE_TEST_SUITE_P(
              "B200",
              se::CudaComputeCapability(10, 0),
              absl::Microseconds(45.024),
+         },
+         {
+             "B300",
+             se::CudaComputeCapability(10, 3),
+             absl::Microseconds(45.024),
+         },
+         {
+             "GB200",
+             se::CudaComputeCapability(10, 0),
+             absl::Microseconds(25.6),
+         },
+         {
+             "GB300",
+             se::CudaComputeCapability(10, 3),
+             absl::Microseconds(25.6),
          }}),
     [](const TestParamInfo<
         CollectiveInterpolationWithDefaultProfileTest::ParamType>& info) {

@@ -334,6 +334,30 @@ class MatmulInterpolatorDefaultTableTest
     return GetMatmulInterpolator(TestGpuDeviceInfo::B200SXMDeviceInfo());
   }
 
+  std::unique_ptr<MatmulInterpolator> GetMatmulInterpolatorGB200() {
+    se::DeviceDescription device_info;
+    device_info.set_name("NVIDIA GB200");
+    device_info.set_gpu_compute_capability(
+        se::GpuComputeCapability(se::CudaComputeCapability(10, 0)));
+    return GetMatmulInterpolator(device_info);
+  }
+
+  std::unique_ptr<MatmulInterpolator> GetMatmulInterpolatorB300() {
+    se::DeviceDescription device_info;
+    device_info.set_name("NVIDIA B300 SXM6 AC");
+    device_info.set_gpu_compute_capability(
+        se::GpuComputeCapability(se::CudaComputeCapability(10, 3)));
+    return GetMatmulInterpolator(device_info);
+  }
+
+  std::unique_ptr<MatmulInterpolator> GetMatmulInterpolatorGB300() {
+    se::DeviceDescription device_info;
+    device_info.set_name("NVIDIA GB300");
+    device_info.set_gpu_compute_capability(
+        se::GpuComputeCapability(se::CudaComputeCapability(10, 3)));
+    return GetMatmulInterpolator(device_info);
+  }
+
   std::unique_ptr<MatmulInterpolator> GetMatmulInterpolatorGfx942() {
     return GetMatmulInterpolator(TestGpuDeviceInfo::AMDMI300DeviceInfo());
   }
@@ -346,6 +370,219 @@ class MatmulInterpolatorDefaultTableTest
     return GetMatmulInterpolator(TestGpuDeviceInfo::AMDMI350DeviceInfo());
   }
 };
+
+using GB200DefaultTableTest = MatmulInterpolatorDefaultTableTest;
+
+TEST_P(GB200DefaultTableTest, EstimatesExactRuntime) {
+  const auto& [_, spec, expected_duration] = GetParam();
+  ASSERT_OK_AND_ASSIGN(DotContext context,
+                       Dot(spec.b, spec.m, spec.n, spec.k, spec.lhs_type,
+                           spec.rhs_type, spec.result_type));
+  std::optional<absl::Duration> runtime =
+      GetMatmulInterpolatorGB200()->EstimatedRuntime(*context.dot);
+  ASSERT_TRUE(runtime.has_value());
+  EXPECT_NEAR(absl::ToDoubleNanoseconds(*runtime),
+              absl::ToDoubleNanoseconds(expected_duration), 1.0);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MatmulInterpolatorDefaultTableTestInstantiationGB200, GB200DefaultTableTest,
+    ValuesIn<ParametrizedTestCase>({
+        {
+            /*test_name=*/"bf16_bf16_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"bf16",
+             /*rhs_type=*/"bf16",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(310163),
+        },
+        {
+            /*test_name=*/"f32_f32_f32",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f32",
+             /*rhs_type=*/"f32",
+             /*result_type=*/"f32",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(570468),
+        },
+        {
+            /*test_name=*/"f8e4m3fn_f8e4m3fn_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f8e4m3fn",
+             /*rhs_type=*/"f8e4m3fn",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(177921),
+        },
+        {
+            /*test_name=*/"f8e4m3fn_f8e5m2_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f8e4m3fn",
+             /*rhs_type=*/"f8e5m2",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(175473),
+        },
+        {
+            /*test_name=*/"f8e5m2_f8e4m3fn_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f8e5m2",
+             /*rhs_type=*/"f8e4m3fn",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(176113),
+        },
+    }),
+    [](const TestParamInfo<MatmulInterpolatorDefaultTableTest::ParamType>&
+           info) { return info.param.test_name; });
+
+using B300DefaultTableTest = MatmulInterpolatorDefaultTableTest;
+
+TEST_P(B300DefaultTableTest, EstimatesExactRuntime) {
+  const auto& [_, spec, expected_duration] = GetParam();
+  ASSERT_OK_AND_ASSIGN(DotContext context,
+                       Dot(spec.b, spec.m, spec.n, spec.k, spec.lhs_type,
+                           spec.rhs_type, spec.result_type));
+  std::optional<absl::Duration> runtime =
+      GetMatmulInterpolatorB300()->EstimatedRuntime(*context.dot);
+  ASSERT_TRUE(runtime.has_value());
+  EXPECT_NEAR(absl::ToDoubleNanoseconds(*runtime),
+              absl::ToDoubleNanoseconds(expected_duration), 1.0);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MatmulInterpolatorDefaultTableTestInstantiationB300, B300DefaultTableTest,
+    ValuesIn<ParametrizedTestCase>({
+        {
+            /*test_name=*/"bf16_bf16_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"bf16",
+             /*rhs_type=*/"bf16",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(273489),
+        },
+        {
+            /*test_name=*/"f32_f32_f32",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f32",
+             /*rhs_type=*/"f32",
+             /*result_type=*/"f32",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(532008),
+        },
+        {
+            /*test_name=*/"f8e4m3fn_f8e4m3fn_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f8e4m3fn",
+             /*rhs_type=*/"f8e4m3fn",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(145601),
+        },
+        {
+            /*test_name=*/"f8e4m3fn_f8e5m2_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f8e4m3fn",
+             /*rhs_type=*/"f8e5m2",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(145489),
+        },
+        {
+            /*test_name=*/"f8e5m2_f8e4m3fn_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f8e5m2",
+             /*rhs_type=*/"f8e4m3fn",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(145393),
+        },
+    }),
+    [](const TestParamInfo<MatmulInterpolatorDefaultTableTest::ParamType>&
+           info) { return info.param.test_name; });
+
+using GB300DefaultTableTest = MatmulInterpolatorDefaultTableTest;
+
+TEST_P(GB300DefaultTableTest, EstimatesExactRuntime) {
+  const auto& [_, spec, expected_duration] = GetParam();
+  ASSERT_OK_AND_ASSIGN(DotContext context,
+                       Dot(spec.b, spec.m, spec.n, spec.k, spec.lhs_type,
+                           spec.rhs_type, spec.result_type));
+  std::optional<absl::Duration> runtime =
+      GetMatmulInterpolatorGB300()->EstimatedRuntime(*context.dot);
+  ASSERT_TRUE(runtime.has_value());
+  EXPECT_NEAR(absl::ToDoubleNanoseconds(*runtime),
+              absl::ToDoubleNanoseconds(expected_duration), 1.0);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MatmulInterpolatorDefaultTableTestInstantiationGB300, GB300DefaultTableTest,
+    ValuesIn<ParametrizedTestCase>({
+        {
+            /*test_name=*/"bf16_bf16_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"bf16",
+             /*rhs_type=*/"bf16",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(264977),
+        },
+        {
+            /*test_name=*/"f32_f32_f32",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f32",
+             /*rhs_type=*/"f32",
+             /*result_type=*/"f32",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(512242),
+        },
+        {
+            /*test_name=*/"f8e4m3fn_f8e4m3fn_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f8e4m3fn",
+             /*rhs_type=*/"f8e4m3fn",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(143217),
+        },
+        {
+            /*test_name=*/"f8e4m3fn_f8e5m2_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f8e4m3fn",
+             /*rhs_type=*/"f8e5m2",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(144593),
+        },
+        {
+            /*test_name=*/"f8e5m2_f8e4m3fn_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f8e5m2",
+             /*rhs_type=*/"f8e4m3fn",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(142305),
+        },
+    }),
+    [](const TestParamInfo<MatmulInterpolatorDefaultTableTest::ParamType>&
+           info) { return info.param.test_name; });
 
 using H100BF16Test = MatmulInterpolatorDefaultTableTest;
 
@@ -509,6 +746,36 @@ INSTANTIATE_TEST_SUITE_P(
              /*result_type=*/"f32",
              /*clock_cycles=*/0},
             /*expected_duration=*/absl::Nanoseconds(292353),
+        },
+        {
+            /*test_name=*/"f8e4m3fn_f8e4m3fn_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f8e4m3fn",
+             /*rhs_type=*/"f8e4m3fn",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(68721),
+        },
+        {
+            /*test_name=*/"f8e4m3fn_f8e5m2_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f8e4m3fn",
+             /*rhs_type=*/"f8e5m2",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(69041),
+        },
+        {
+            /*test_name=*/"f8e5m2_f8e4m3fn_bf16",
+            /*spec=*/
+            {/*b=*/4, /*m=*/4096, /*n=*/4096, /*k=*/4096,
+             /*lhs_type=*/"f8e5m2",
+             /*rhs_type=*/"f8e4m3fn",
+             /*result_type=*/"bf16",
+             /*clock_cycles=*/0},
+            /*expected_duration=*/absl::Nanoseconds(68689),
         },
     }),
     [](const TestParamInfo<MatmulInterpolatorDefaultTableTest::ParamType>&

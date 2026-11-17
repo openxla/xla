@@ -407,6 +407,11 @@ HloOpcode AsyncToSyncOpcode(const HloCollectiveInstruction& instr) {
 absl::StatusOr<HloInstructionProfileList> ReadDefaultProfiles(
     const se::DeviceDescription& device_info) {
   std::string key = HloOpProfiles::GetDeviceSpecificProfileName(device_info);
+  // B300 has the same NVLink domain connectivity as B200. They can share the
+  // same table since the performance table only covers the NVLink domain.
+  if (key == "sm_103_B300") {
+    key = "sm_100_B200";
+  }
 
   if (!Profile().entries().contains(key)) {
     return absl::NotFoundError(absl::StrCat("Cannot find key: ", key));
