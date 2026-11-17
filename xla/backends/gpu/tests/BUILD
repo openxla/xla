@@ -7,7 +7,16 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:lit.bzl", "enforce_glob", "lit_test_suite_for_gpus")
 load("//xla:xla.default.bzl", "xla_cc_test")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "AMD_GPU_DEFAULT_BACKENDS",
+    "GPU_BACKENDS",
+    "GPU_DEFAULT_BACKENDS",
+    "INTEL_GPU_DEFAULT_BACKENDS",
+    "NVIDIA_GPU_BACKENDS",
+    "NVIDIA_GPU_DEFAULT_BACKENDS",
+    "xla_test",
+)
 load("//xla/tsl:tsl.bzl", "if_google", "if_oss")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 load(
@@ -129,7 +138,7 @@ cc_library(
 xla_test(
     name = "element_wise_row_vectorization_test",
     srcs = ["element_wise_row_vectorization_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:error_spec",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
@@ -142,7 +151,7 @@ xla_test(
 xla_test(
     name = "pred_arithmetic_test",
     srcs = ["pred_arithmetic_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:literal_util",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
@@ -154,7 +163,7 @@ xla_test(
 xla_test(
     name = "async_kernel_launch_test",
     srcs = ["async_kernel_launch_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:debug_options_flags",
         "//xla:error_spec",
@@ -172,7 +181,7 @@ xla_test(
 xla_test(
     name = "command_buffer_test",
     srcs = ["command_buffer_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     # TSAN reports a false positive for the test due to noninstrumented CUDA library code.
     env = {"TSAN_OPTIONS": "ignore_noninstrumented_modules=1"},
     deps = [
@@ -213,7 +222,7 @@ xla_test(
 xla_test(
     name = "async_command_buffer_test",
     srcs = ["async_command_buffer_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":hlo_pjrt_gpu_test_base",
         "//xla:debug_options_flags",
@@ -229,7 +238,7 @@ xla_test(
 xla_test(
     name = "float_conversions_test",
     srcs = ["float_conversions_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla:error_spec",
@@ -249,7 +258,7 @@ xla_test(
     backend_tags = {
         "gb200": ["broken"],
     },
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:debug_options_flags",
         "//xla:xla_proto_cc",
@@ -268,7 +277,7 @@ xla_test(
 xla_test(
     name = "gpu_too_many_blocks_test",
     srcs = ["gpu_too_many_blocks_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":gpu_pjrt_codegen_test",
@@ -280,7 +289,7 @@ xla_test(
 xla_test(
     name = "horizontal_fusion_test",
     srcs = ["horizontal_fusion_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":gpu_pjrt_codegen_test",
@@ -307,7 +316,7 @@ xla_test(
     backend_tags = {
         "gb200": ["broken"],
     },
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = [
         "cuda-only",
         "nozapfhahn",
@@ -330,7 +339,7 @@ xla_test(
     srcs = [
         "reduction_vectorization_test.cc",
     ],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla:error_spec",
@@ -348,7 +357,7 @@ xla_test(
     srcs = [
         "parallel_reduction_test.cc",
     ],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         ":hlo_pjrt_gpu_test_base",
@@ -373,7 +382,7 @@ xla_test(
         "gb200": ["broken"],  # TODO(b/505574653): re-enable when fixed.
         "gb300": ["broken"],  # TODO(b/505574653): re-enable when fixed.
     },
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla:xla_proto_cc",
@@ -385,7 +394,7 @@ xla_test(
 xla_test(
     name = "gpu_copy_test",
     srcs = ["gpu_copy_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla:error_spec",
@@ -407,7 +416,7 @@ xla_test(
     srcs = [
         "gpu_copy_alone_test.cc",
     ],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla:error_spec",
@@ -420,7 +429,7 @@ xla_test(
 xla_test(
     name = "gpu_dyn_shape_test",
     srcs = ["gpu_dyn_shape_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla:literal",
@@ -472,7 +481,7 @@ xla_test(
 xla_test(
     name = "dynamic_slice_fusion_v2_test",
     srcs = ["dynamic_slice_fusion_v2_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":hlo_pjrt_gpu_test_base",
         "//xla:literal",
@@ -499,7 +508,7 @@ xla_test(
 xla_test(
     name = "gpu_ftz_test",
     srcs = ["gpu_ftz_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla:shape_util",
@@ -513,7 +522,7 @@ xla_test(
 xla_test(
     name = "gpu_index_test",
     srcs = ["gpu_index_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla:comparison_util",
@@ -529,7 +538,7 @@ xla_test(
 xla_test(
     name = "gpu_infeed_test",
     srcs = ["infeed_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     tags = ["pjrt_migration_candidate"],
     use_legacy_runtime = True,
     deps = [
@@ -550,9 +559,7 @@ xla_test(
 xla_test(
     name = "gpu_kernel_tiling_test",
     srcs = ["gpu_kernel_tiling_test.cc"],
-    backends = [
-        "gpu",
-    ],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla:error_spec",
@@ -569,7 +576,7 @@ xla_test(
 xla_test(
     name = "gpu_ldg_test",
     srcs = ["gpu_ldg_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla:literal_util",
@@ -588,7 +595,7 @@ xla_test(
 xla_test(
     name = "gpu_noalias_test",
     srcs = ["gpu_noalias_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla:shape_util",
@@ -604,7 +611,7 @@ xla_test(
 xla_test(
     name = "gpu_unrolling_test",
     srcs = ["gpu_unrolling_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla:debug_options_flags",
@@ -620,7 +627,7 @@ xla_test(
 xla_test(
     name = "gpu_alignment_test",
     srcs = ["gpu_alignment_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla/tsl/platform:test",
@@ -632,7 +639,7 @@ xla_test(
 xla_test(
     name = "gpu_atomic_test",
     srcs = ["gpu_atomic_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla/stream_executor/cuda:cuda_compute_capability",
@@ -643,11 +650,11 @@ xla_test(
 xla_test(
     name = "gpu_convolution_regression_test",
     srcs = ["gpu_convolution_regression_test.cc"],
-    backend_args = {"gpu": [
+    backend_args = {gpu: [
         "--xla_enable_hlo_passes_only=layout-assignment,gpu-conv-algorithm-picker",
         "--xla_gpu_crash_on_verification_failures",
-    ]},
-    backends = ["gpu"],
+    ] for gpu in NVIDIA_GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     tags = [
         "manual",
         "no_oss",
@@ -666,7 +673,7 @@ xla_test(
 xla_test(
     name = "select_and_scatter_test",
     srcs = ["select_and_scatter_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:error_spec",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
@@ -678,7 +685,7 @@ xla_test(
 xla_test(
     name = "ragged_dot_test",
     srcs = ["ragged_dot_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:error_spec",
         "//xla:literal_util",
@@ -692,7 +699,7 @@ xla_test(
 xla_test(
     name = "regression_dot_test",
     srcs = ["regression_dot_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:error_spec",
         "//xla:literal_util",
@@ -728,7 +735,7 @@ xla_test(
 xla_test(
     name = "sorting_test",
     srcs = ["sorting_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     shard_count = 15,
     deps = [
         "//xla:error_spec",
@@ -881,7 +888,7 @@ cc_binary(
 xla_test(
     name = "kernel_launch_test",
     srcs = ["kernel_launch_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:error_spec",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
@@ -893,7 +900,7 @@ xla_test(
 xla_test(
     name = "mock_custom_call_test",
     srcs = ["mock_custom_call_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:xla_proto_cc",
         "//xla/tests:hlo_pjrt_test_base",
@@ -904,7 +911,7 @@ xla_test(
 xla_test(
     name = "in_place_op_test",
     srcs = ["in_place_op_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:debug_options_flags",
         "//xla:xla_proto_cc",
@@ -917,7 +924,7 @@ xla_test(
 xla_test(
     name = "dynamic_shared_memory_test",
     srcs = ["dynamic_shared_memory_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     tags = ["no-oneapi"],
     deps = [
         "//xla/stream_executor:device_address",
@@ -959,7 +966,7 @@ xla_test(
     name = "gpu_cub_sort_test",
     size = "medium",
     srcs = ["gpu_cub_sort_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     local_defines = ["XLA_CUB_TEST_NO_DEVICELESS"],
     shard_count = 15,
     tags = ["nodebug"],
@@ -990,7 +997,7 @@ xla_test(
     # xla_gpu_deviceless_cub TAP project still runs it.
     size = "enormous",
     srcs = ["gpu_cub_sort_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     local_defines = ["XLA_CUB_TEST_DEVICELESS_ONLY"],
     shard_count = 15,
     tags = [
@@ -1077,7 +1084,7 @@ cc_library(
 xla_test(
     name = "load_autotune_results_using_execpath_test",
     srcs = [],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     # Data dependency must be declared for the cache.
     data = ["test_autotune_cache.textproto"],
     env = {"XLA_FLAGS": "--xla_gpu_load_autotune_results_from=" +
@@ -1098,7 +1105,7 @@ xla_test(
 xla_test(
     name = "load_autotune_results_from_test_workspace_test",
     srcs = [],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     # Data dependency must be declared for the cache.
     data = ["test_autotune_cache.textproto"],
     env = {"XLA_FLAGS": "--xla_gpu_load_autotune_results_from=TEST_WORKSPACE/" +
@@ -1118,7 +1125,7 @@ xla_test(
 xla_test(
     name = "dump_autotune_results_to_test_outputs_test",
     srcs = [],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     env = {"XLA_FLAGS": "--xla_gpu_dump_autotune_results_to=" +
                         "TEST_UNDECLARED_OUTPUTS_DIR/autotune_cache.textproto"},
     # Sharding must be disabled to correctly dump the autotune cache for all test.
@@ -1132,7 +1139,7 @@ xla_test(
 xla_test(
     name = "gpu_int4_test",
     srcs = ["gpu_int4_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
@@ -1146,7 +1153,7 @@ xla_test(
 xla_test(
     name = "simplify_fp_conversions_test",
     srcs = ["simplify_fp_conversions_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":hlo_pjrt_gpu_test_base",
         "//xla:xla_proto_cc",
@@ -1160,7 +1167,7 @@ xla_test(
 xla_test(
     name = "nop_custom_call_test",
     srcs = ["nop_custom_call_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:literal",
         "//xla:literal_util",
@@ -1174,7 +1181,7 @@ xla_test(
 xla_test(
     name = "ptx_kernel_test",
     srcs = ["ptx_kernel_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         "//xla:literal",
@@ -1229,12 +1236,10 @@ cc_library(
 xla_test(
     name = "collective_ops_command_buffer_test",
     srcs = ["collective_ops_command_buffer_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":collective_ops_e2e_test_base",
         "//xla:literal",
@@ -1263,14 +1268,10 @@ xla_test(
     name = "collective_pipeline_parallelism_test",
     srcs = ["collective_pipeline_parallelism_test.cc"],
     args = ["--xla_force_host_platform_device_count=4"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = [
-        "gpu",
-    ],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     use_legacy_runtime = True,
     deps = [
         "//xla:error_spec",
@@ -1294,15 +1295,11 @@ xla_test(
 xla_test(
     name = "nccl_group_execution_test",
     srcs = ["nccl_group_execution_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-            "no_oss",
-        ],
-    },
-    backends = [
-        "gpu",
-    ],
+    backend_tags = {gpu: [
+        "multi_gpu",
+        "no_oss",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:literal",
         "//xla/hlo/testlib:verified_hlo_module",
@@ -1320,14 +1317,10 @@ xla_test(
 xla_test(
     name = "collective_ops_e2e_test",
     srcs = ["collective_ops_e2e_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = [
-        "gpu",
-    ],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     # TODO: Remove this workaround after the RCCL team fixes the WarpSpeed issue.
     env = {"RCCL_WARP_SPEED_AUTO": "0"},
     deps = [
@@ -1407,12 +1400,10 @@ cuda_library(
 xla_test(
     name = "collective_ops_ffi_kernels_test",
     srcs = ["collective_ops_ffi_kernels_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in NVIDIA_GPU_BACKENDS},
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = [
         "cuda-only",
     ],
@@ -1457,14 +1448,13 @@ xla_test(
         ["collective_ops_ffi_communicator_cuda.cc"],
         ["collective_ops_ffi_communicator_default.cc"],
     ),
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-        "gb200": ["broken"],  # TODO(b/505963049): re-enable when fixed.
-        "gb300": ["broken"],  # TODO(b/505963049): re-enable when fixed.
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS} | {
+        "gb200": ["broken"],
+        "gb300": ["broken"],
     },
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":collective_ops_e2e_test_base",
         ":collective_ops_ffi_kernels",
@@ -1525,14 +1515,10 @@ xla_test(
 xla_test(
     name = "collective_ops_sharded_unsharded_e2e_test",
     srcs = ["collective_ops_sharded_unsharded_e2e_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = [
-        "gpu",
-    ],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":collective_ops_e2e_test_base",
         "//xla:error_spec",
@@ -1573,16 +1559,15 @@ cc_library(
 xla_test(
     name = "ragged_all_to_all_e2e_test",
     srcs = ["ragged_all_to_all_e2e_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-            # Run the test on Ampere or newer.
-            "requires-gpu-sm80",
-        ],
+    backend_tags = {gpu: [
+        "multi_gpu",
+        # Run the test on Ampere or newer.
+        "requires-gpu-sm80",
+    ] for gpu in NVIDIA_GPU_BACKENDS} | {
+        gpu: ["multi_gpu"]
+        for gpu in AMD_GPU_DEFAULT_BACKENDS + INTEL_GPU_DEFAULT_BACKENDS
     },
-    backends = [
-        "gpu",
-    ],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":collective_ops_e2e_test_base",
         ":ragged_all_to_all_test_utils",
@@ -1615,12 +1600,10 @@ xla_test(
 xla_test(
     name = "replicated_io_feed_test",
     srcs = ["replicated_io_feed_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:literal",
         "//xla:literal_util",
@@ -1644,9 +1627,7 @@ xla_test(
 xla_test(
     name = "matmul_test",
     srcs = ["matmul_test.cc"],
-    backends = [
-        "gpu",
-    ],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":hlo_pjrt_gpu_test_base",
         "//xla:error_spec",
@@ -1660,7 +1641,7 @@ xla_test(
 xla_test(
     name = "multioutput_fusion_test",
     srcs = ["multioutput_fusion_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:error_spec",
         "//xla:literal",
@@ -1688,14 +1669,10 @@ xla_test(
 xla_test(
     name = "all_reduce_e2e_test",
     srcs = ["all_reduce_e2e_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = [
-        "gpu",
-    ],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     shard_count = 3,
     deps = [
         ":collective_ops_e2e_test_base",
@@ -1733,14 +1710,10 @@ xla_test(
 xla_test(
     name = "all_gather_e2e_test",
     srcs = ["all_gather_e2e_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = [
-        "gpu",
-    ],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":collective_ops_e2e_test_base",
         "//xla:literal",
@@ -1769,14 +1742,10 @@ xla_test(
     name = "reduce_scatter_e2e_test",
     srcs = ["reduce_scatter_e2e_test.cc"],
     args = ["--heap_check="],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = [
-        "gpu",
-    ],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":collective_ops_e2e_test_base",
         "//xla:array2d",
@@ -1862,14 +1831,10 @@ cc_library(
 xla_test(
     name = "all_gather_e2e_multiprocess_test",
     srcs = ["all_gather_e2e_multiprocess_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = [
-        "gpu",
-    ],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":multi_process_gpu_test_base",
         ":multi_process_gpu_test_main",
@@ -1903,14 +1868,10 @@ xla_test(
 xla_test(
     name = "all_to_all_e2e_test",
     srcs = ["all_to_all_e2e_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = [
-        "gpu",
-    ],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":collective_ops_e2e_test_base",
         "//xla:literal",
@@ -1935,14 +1896,10 @@ xla_test(
 xla_test(
     name = "all_to_all_e2e_multiprocess_test",
     srcs = ["all_to_all_e2e_multiprocess_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = [
-        "gpu",
-    ],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":multi_process_gpu_test_base",
         ":multi_process_gpu_test_main",
@@ -1976,14 +1933,10 @@ xla_test(
 xla_test(
     name = "all_reduce_multi_process_e2e_test",
     srcs = ["all_reduce_multi_process_e2e_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = [
-        "gpu",
-    ],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":multi_process_gpu_test_base",
         ":multi_process_gpu_test_main",
@@ -2055,7 +2008,7 @@ xla_cc_test(
 xla_test(
     name = "command_buffer_profiling_test",
     srcs = ["command_buffer_profiling_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/runtime:command_buffer_thunk",
@@ -2079,14 +2032,10 @@ xla_test(
 xla_test(
     name = "p2p_ops_e2e_test",
     srcs = ["p2p_ops_e2e_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = [
-        "gpu",
-    ],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":collective_ops_e2e_test_base",
         "//xla:literal",
@@ -2102,14 +2051,10 @@ xla_test(
 xla_test(
     name = "command_buffer_temp_buffer_shift_test",
     srcs = ["command_buffer_temp_buffer_shift_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = [
-        "gpu",
-    ],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":collective_ops_e2e_test_base",
         "//xla:literal",

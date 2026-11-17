@@ -27,6 +27,8 @@ load(
 )
 load(
     "//xla/tests:build_defs.bzl",
+    "AMD_GPU_DEFAULT_BACKENDS",
+    "GPU_DEFAULT_BACKENDS",
     "xla_test",
 )
 load(
@@ -358,7 +360,7 @@ cc_library(
 xla_test(
     name = "gpu_hsaco_bundle_test",
     srcs = ["gpu_hsaco_bundle_test.cc"],
-    backends = ["gpu"],
+    backends = AMD_GPU_DEFAULT_BACKENDS,
     tags = ["rocm-only"],
     deps = [
         ":asm_compiler",
@@ -428,7 +430,7 @@ cc_library(
 xla_test(
     name = "redzone_allocator_test",
     srcs = ["redzone_allocator_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     # TODO(intel-tf): Implement redzone allocator for oneAPI and enable this test.
     tags = ["no-oneapi"],
     deps = [
@@ -682,7 +684,7 @@ xla_cc_test(
 xla_test(
     name = "gpu_kernel_test",
     srcs = ["gpu_kernel_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     # TODO(intel-tf): Enable this test once oneAPI fatbin is supported for :gpu_test_kernels.
     tags = ["no-oneapi"],
     deps = [
@@ -720,7 +722,7 @@ xla_test(
 xla_test(
     name = "gpu_command_buffer_test",
     srcs = ["gpu_command_buffer_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     # TODO(intel-tf): Implement gpu command buffer for oneAPI and enable this test.
     tags = ["no-oneapi"],
     deps = [
@@ -758,7 +760,7 @@ xla_test(
 xla_test(
     name = "memcpy_test",
     srcs = ["memcpy_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla/service:platform_util",
         "//xla/stream_executor:device_address",
@@ -778,7 +780,7 @@ xla_test(
     name = "stream_search_test",
     size = "small",
     srcs = ["stream_search_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla/service:platform_util",
         "//xla/stream_executor:platform",
@@ -798,7 +800,7 @@ xla_test(
     name = "gpu_executor_test",
     size = "small",
     srcs = ["gpu_executor_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla/service:platform_util",
         "//xla/stream_executor:device_address",
@@ -1008,7 +1010,7 @@ cc_library(
 xla_test(
     name = "repeat_buffer_kernel_test",
     srcs = ["repeat_buffer_kernel_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     disabled_backends = [],
     # TODO(intel-tf): Implement repeat buffer kernel for oneAPI and enable this test.
     tags = ["no-oneapi"],
@@ -1079,7 +1081,7 @@ cc_library(
 xla_test(
     name = "buffer_debug_log_test",
     srcs = ["buffer_debug_log_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     # TODO(intel-tf): Implement buffer debug log for oneAPI and enable this test.
     tags = ["no-oneapi"],
     deps = [
@@ -1115,7 +1117,7 @@ cc_library(
 xla_test(
     name = "buffer_debug_xor_checksum_kernel_test",
     srcs = ["buffer_debug_xor_checksum_kernel_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     tags = ["no-oneapi"],
     deps = [
         ":buffer_debug_log",
@@ -1161,7 +1163,7 @@ cc_library(
 xla_test(
     name = "buffer_debug_float_check_kernel_test",
     srcs = ["buffer_debug_float_check_kernel_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     tags = ["no-oneapi"],
     deps = [
         ":buffer_debug_float_check_kernel",

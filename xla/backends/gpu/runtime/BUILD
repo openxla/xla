@@ -3,7 +3,16 @@ load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal", "xla_py_proto_library")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm_is_configured")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "AMD_GPU_DEFAULT_BACKENDS",
+    "GPU_BACKENDS",
+    "GPU_DEFAULT_BACKENDS",
+    "INTEL_GPU_DEFAULT_BACKENDS",
+    "NVIDIA_GPU_BACKENDS",
+    "NVIDIA_GPU_DEFAULT_BACKENDS",
+    "xla_test",
+)
 load("//xla/tsl:tsl.bzl", "internal_visibility", "nvtx_headers")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
@@ -296,7 +305,7 @@ xla_cc_test(
 xla_test(
     name = "command_buffer_cmd_test",
     srcs = ["command_buffer_cmd_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":command",
         ":command_executor",
@@ -452,7 +461,7 @@ cc_library(
 xla_test(
     name = "async_execution_test",
     srcs = ["async_execution_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":async_execution",
         ":thunk",
@@ -499,7 +508,7 @@ cc_library(
 xla_test(
     name = "async_thunk_test",
     srcs = ["async_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":async_thunk",
         ":command_state",
@@ -578,7 +587,7 @@ cc_library(
 xla_test(
     name = "dynamic_slice_fusion_v2_thunk_test",
     srcs = ["dynamic_slice_fusion_v2_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":command",
         ":command_buffer_thunk",
@@ -664,7 +673,7 @@ cc_library(
 xla_test(
     name = "command_buffer_thunk_test",
     srcs = ["command_buffer_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":annotation",
         ":command",
@@ -1052,7 +1061,7 @@ xla_cc_test(
 xla_test(
     name = "device_to_device_copy_thunk_test",
     srcs = ["device_to_device_copy_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":command",
         ":command_state",
@@ -1177,7 +1186,7 @@ cc_library(
 xla_test(
     name = "custom_call_thunk_test",
     srcs = ["custom_call_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":collective_params",
         ":command",
@@ -1237,7 +1246,7 @@ xla_test(
 xla_test(
     name = "legacy_custom_call_thunk_test",
     srcs = ["legacy_custom_call_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":command",
         ":command_state",
@@ -1351,7 +1360,7 @@ cc_library(
 xla_test(
     name = "gemm_thunk_test",
     srcs = ["gemm_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":command",
         ":command_state",
@@ -1413,7 +1422,7 @@ cc_library(
 xla_test(
     name = "gpublas_lt_matmul_thunk_test",
     srcs = ["gpublas_lt_matmul_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     use_legacy_runtime = True,
     deps = [
         ":command",
@@ -1578,7 +1587,7 @@ cc_library(
 xla_test(
     name = "kernel_thunk_test",
     srcs = ["kernel_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":command",
         ":command_buffer_cmd_emitter",
@@ -1771,9 +1780,7 @@ cc_library(
 xla_test(
     name = "select_k_exec_raft_test",
     srcs = ["select_k_exec_raft_test.cc"],
-    backends = [
-        "gpu",
-    ],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = [
         "cuda-only",
     ],
@@ -1867,7 +1874,7 @@ cc_library(
 xla_test(
     name = "memset_thunk_test",
     srcs = ["memset_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":command",
         ":command_state",
@@ -1937,7 +1944,7 @@ cc_library(
 xla_test(
     name = "all_gather_thunk_test",
     srcs = ["all_gather_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":all_gather_thunk",
         ":collective_thunk",
@@ -1973,10 +1980,8 @@ xla_test(
 xla_test(
     name = "all_gather_thunk_multigpu_test",
     srcs = ["all_gather_thunk_multigpu_test.cc"],
-    backend_tags = {
-        "gpu": ["multi_gpu"],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: ["multi_gpu"] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":all_gather_thunk",
         ":collective_thunk",
@@ -2228,7 +2233,7 @@ cc_library(
 xla_test(
     name = "all_reduce_thunk_test",
     srcs = ["all_reduce_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":all_reduce_thunk",
         ":collective_params",
@@ -2315,10 +2320,8 @@ cc_library(
 xla_test(
     name = "all_reduce_thunk_multigpu_test",
     srcs = ["all_reduce_thunk_multigpu_test.cc"],
-    backend_tags = {
-        "gpu": ["multi_gpu"],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: ["multi_gpu"] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":all_reduce_thunk",
         ":collective_thunk",
@@ -2343,10 +2346,8 @@ xla_test(
 xla_test(
     name = "all_to_all_thunk_multigpu_test",
     srcs = ["all_to_all_thunk_multigpu_test.cc"],
-    backend_tags = {
-        "gpu": ["multi_gpu"],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: ["multi_gpu"] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":all_to_all_thunk",
         ":collective_thunk",
@@ -2414,7 +2415,7 @@ cc_library(
 xla_test(
     name = "all_to_all_thunk_test",
     srcs = ["all_to_all_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":all_to_all_thunk",
         ":collective_cliques",
@@ -2534,7 +2535,7 @@ cc_library(
 xla_test(
     name = "ragged_all_to_all_thunk_test",
     srcs = ["ragged_all_to_all_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     use_legacy_runtime = True,
     deps = [
         ":async_thunk",
@@ -2599,14 +2600,15 @@ xla_test(
 xla_test(
     name = "ragged_all_to_all_thunk_multigpu_test",
     srcs = ["ragged_all_to_all_thunk_multigpu_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-            # peer-to-peer access is unreliable/flaky before ampere.
-            "requires-gpu-sm80",
-        ],
+    backend_tags = {gpu: [
+        "multi_gpu",
+        # peer-to-peer access is unreliable/flaky before ampere.
+        "requires-gpu-sm80",
+    ] for gpu in NVIDIA_GPU_BACKENDS} | {
+        gpu: ["multi_gpu"]
+        for gpu in AMD_GPU_DEFAULT_BACKENDS + INTEL_GPU_DEFAULT_BACKENDS
     },
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":collective_clique_requests",
         ":collective_cliques",
@@ -2684,7 +2686,7 @@ cc_library(
 xla_test(
     name = "collective_broadcast_thunk_test",
     srcs = ["collective_broadcast_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     use_legacy_runtime = True,
     deps = [
         ":async_thunk",
@@ -2741,10 +2743,8 @@ xla_test(
 xla_test(
     name = "collective_reduce_thunk_multigpu_test",
     srcs = ["collective_reduce_thunk_multigpu_test.cc"],
-    backend_tags = {
-        "gpu": ["multi_gpu"],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: ["multi_gpu"] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":all_reduce_thunk",
         ":collective_reduce_thunk",
@@ -2771,10 +2771,8 @@ xla_test(
 xla_test(
     name = "collective_broadcast_thunk_multigpu_test",
     srcs = ["collective_broadcast_thunk_multigpu_test.cc"],
-    backend_tags = {
-        "gpu": ["multi_gpu"],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: ["multi_gpu"] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":collective_broadcast_thunk",
         ":collective_thunk",
@@ -2843,7 +2841,7 @@ cc_library(
 xla_test(
     name = "collective_permute_thunk_test",
     srcs = ["collective_permute_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     use_legacy_runtime = True,
     deps = [
         ":async_thunk",
@@ -2906,10 +2904,8 @@ xla_test(
 xla_test(
     name = "collective_permute_thunk_multigpu_test",
     srcs = ["collective_permute_thunk_multigpu_test.cc"],
-    backend_tags = {
-        "gpu": ["multi_gpu"],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: ["multi_gpu"] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":collective_permute_thunk",
         ":collective_thunk",
@@ -3394,7 +3390,7 @@ xla_cc_test(
 xla_test(
     name = "send_recv_thunk_test",
     srcs = ["send_recv_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     use_legacy_runtime = True,
     deps = [
         ":async_thunk",
@@ -3436,10 +3432,8 @@ xla_test(
 xla_test(
     name = "send_recv_thunk_multigpu_test",
     srcs = ["send_recv_thunk_multigpu_test.cc"],
-    backend_tags = {
-        "gpu": ["multi_gpu"],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: ["multi_gpu"] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":collective_thunk",
         ":collective_thunk_multigpu_test_utils",
@@ -3946,7 +3940,7 @@ cc_library(
 xla_test(
     name = "thunk_executor_test",
     srcs = ["thunk_executor_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":memset_thunk",
         ":sequential_thunk",
@@ -4054,7 +4048,7 @@ xla_cc_test(
 xla_test(
     name = "replica_id_thunk_test",
     srcs = ["replica_id_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":collective_params",
         ":command",
@@ -4121,7 +4115,7 @@ cc_library(
 xla_test(
     name = "while_thunk_test",
     srcs = ["while_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":command",
         ":command_executor",
@@ -4194,7 +4188,7 @@ cc_library(
 xla_test(
     name = "cudnn_thunk_test",
     srcs = ["cudnn_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":collective_params",
@@ -4305,7 +4299,7 @@ xla_test(
         "buffer_comparator_test.cc",
         "buffer_comparator_test.h",
     ],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     disabled_backends = [],
     deps = [
         ":buffer_comparator",
@@ -4336,7 +4330,7 @@ xla_test(
         ["buffer_comparator_cuda_test.cc"],
         [],
     ) + ["buffer_comparator_test.h"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     disabled_backends = ["rocm"],
     tags = [
         "cuda-only",
@@ -4390,7 +4384,7 @@ cc_library(
 xla_test(
     name = "make_batch_pointers_test",
     srcs = ["make_batch_pointers_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     use_legacy_runtime = True,
     deps = [
         ":make_batch_pointers",
@@ -4685,12 +4679,10 @@ xla_cc_test(
 xla_test(
     name = "all_reduce_test",
     srcs = ["all_reduce_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "no_oss",
-        ],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: [
+        "no_oss",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     disabled_backends = [],
     deps = [
         "//xla:literal",
@@ -4737,12 +4729,10 @@ cc_library(
 xla_test(
     name = "ragged_all_to_all_test",
     srcs = ["ragged_all_to_all_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in NVIDIA_GPU_BACKENDS},
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     disabled_backends = [],
     tags = [
         "cuda-only",
@@ -4814,7 +4804,7 @@ cc_library(
 xla_test(
     name = "topk_test",
     srcs = ["topk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     shard_count = 12,
     deps = [
         ":topk",
@@ -5160,7 +5150,7 @@ cc_library(
 xla_test(
     name = "host_execute_thunk_test",
     srcs = ["host_execute_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":command_state",
         ":host_execute_thunk",
@@ -5328,7 +5318,7 @@ xla_cc_test(
 xla_test(
     name = "command_buffer_conversion_pass_test",
     srcs = ["command_buffer_conversion_pass_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":all_gather_thunk",
         ":async_thunk",
@@ -5532,7 +5522,7 @@ cc_library(
 xla_test(
     name = "runtime_intrinsics_test",
     srcs = ["runtime_intrinsics_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":runtime_intrinsics",
         "//xla:literal",
@@ -5593,12 +5583,10 @@ cc_library(
 xla_test(
     name = "buffers_checksum_thunk_test",
     srcs = ["buffers_checksum_thunk_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
     ],
@@ -5672,12 +5660,10 @@ cc_library(
 xla_test(
     name = "buffers_float_check_thunk_test",
     srcs = ["buffers_float_check_thunk_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
     ],
@@ -5768,7 +5754,7 @@ cc_library(
 xla_test(
     name = "print_buffer_contents_test",
     srcs = ["print_buffer_contents_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":print_buffer_contents",
         "//xla/service:platform_util",
@@ -5938,7 +5924,7 @@ cc_library(
 xla_test(
     name = "custom_kernel_thunk_test",
     srcs = ["custom_kernel_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":command",
         ":command_state",
@@ -6016,7 +6002,7 @@ xla_cc_test(
 xla_test(
     name = "rng_seed_thunk_test",
     srcs = ["rng_seed_thunk_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":rng_seed_thunk",
         ":thunk",
@@ -6097,7 +6083,7 @@ cc_library(
 xla_test(
     name = "ffi_kernel_registry_test",
     srcs = ["ffi_kernel_registry_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":ffi_kernel_registry",
         "//xla/ffi:kernel_registry_ffi",
@@ -6169,7 +6155,7 @@ xla_test(
         [],
         ["record_ffi_test_default.cc"],
     ),
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":multi_gpu_barrier",
         ":record_ffi",

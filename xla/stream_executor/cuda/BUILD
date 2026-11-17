@@ -30,7 +30,12 @@ load(
     "tf_additional_cuda_platform_deps",
     "tf_additional_cudnn_plugin_copts",
 )
-load("//xla/tests:build_defs.bzl", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "NVIDIA_GPU_BACKENDS",
+    "NVIDIA_GPU_DEFAULT_BACKENDS",
+    "xla_test",
+)
 load(
     "//xla/tsl:tsl.bzl",
     "if_google",
@@ -165,7 +170,7 @@ cc_library(
 xla_test(
     name = "cuda_diagnostics_test",
     srcs = ["cuda_diagnostics_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_diagnostics",
@@ -262,7 +267,7 @@ cc_library(
 xla_test(
     name = "green_context_test",
     srcs = ["green_context_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_executor",
@@ -285,7 +290,7 @@ xla_test(
 xla_test(
     name = "locality_domain_test",
     srcs = ["locality_domain_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_executor",
@@ -312,7 +317,7 @@ xla_test(
 xla_test(
     name = "cuda_driver_test",
     srcs = ["cuda_driver_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = [
         "cuda-only",
     ],
@@ -740,7 +745,7 @@ cc_library(
 xla_test(
     name = "cuda_kernel_test",
     srcs = ["cuda_kernel_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         "//xla/stream_executor:device_address",
@@ -792,7 +797,7 @@ xla_cc_test(
 xla_test(
     name = "cuda_blas_lt_test",
     srcs = ["cuda_blas_lt_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cublas_lt_matmul_algorithm",
@@ -928,7 +933,7 @@ cc_library(
 xla_test(
     name = "cuda_event_test",
     srcs = ["cuda_event_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_event",
@@ -952,7 +957,7 @@ xla_test(
 xla_test(
     name = "cuda_raw_memory_allocation_test",
     srcs = ["cuda_raw_memory_allocation_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_device_allocator",
@@ -973,7 +978,7 @@ xla_test(
 xla_test(
     name = "cuda_memory_reservation_test",
     srcs = ["cuda_memory_reservation_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_device_allocator",
@@ -997,10 +1002,8 @@ xla_test(
 xla_test(
     name = "cuda_memory_reservation_multigpu_test",
     srcs = ["cuda_memory_reservation_multigpu_test.cc"],
-    backend_tags = {
-        "gpu": ["multi_gpu"],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: ["multi_gpu"] for gpu in NVIDIA_GPU_BACKENDS},
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_memory_reservation",
@@ -1199,7 +1202,7 @@ cc_library(
 xla_test(
     name = "cuda_platform_test",
     srcs = ["cuda_platform_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_platform",
@@ -1277,7 +1280,7 @@ cc_library(
 xla_test(
     name = "cuda_device_allocator_test",
     srcs = ["cuda_device_allocator_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_device_allocator",
@@ -1330,7 +1333,7 @@ cc_library(
 xla_test(
     name = "cuda_host_allocator_test",
     srcs = ["cuda_host_allocator_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_device_allocator",
@@ -1375,7 +1378,7 @@ cc_library(
 xla_test(
     name = "cuda_unified_allocator_test",
     srcs = ["cuda_unified_allocator_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_device_allocator",
@@ -1395,18 +1398,17 @@ xla_test(
 xla_test(
     name = "cuda_device_allocator_multigpu_test",
     srcs = ["cuda_device_allocator_multigpu_test.cc"],
-    backend_tags = {
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in NVIDIA_GPU_BACKENDS} | {
         "h100": [
             "full",
             "multi_gpu",
         ],
-        "gpu": [
-            "multi_gpu",
-        ],
-        "gb200": ["broken"],  # TODO(b/505963049): re-enable when fixed.
-        "gb300": ["broken"],  # TODO(b/505963049): re-enable when fixed.
+        "gb200": ["broken"],
+        "gb300": ["broken"],
     },
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_compute_capability",
@@ -1757,7 +1759,7 @@ cc_library(
 xla_test(
     name = "cuda_executor_test",
     srcs = ["cuda_executor_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_compute_capability",
@@ -1794,11 +1796,8 @@ xla_test(
 xla_test(
     name = "cuda_executor_shared_context_test",
     srcs = ["cuda_executor_shared_context_test.cc"],
-    backend_tags = {
-        # For CopiesOnAnotherDevice.
-        "gpu": ["multi_gpu"],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: ["multi_gpu"] for gpu in NVIDIA_GPU_BACKENDS},
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     env = {"XLA_CUDA_REGISTER_HOST_MEMORY_IN_SHARED_CONTEXT": "1"},
     tags = ["cuda-only"],
     deps = [
@@ -1840,18 +1839,17 @@ cuda_library(
 xla_test(
     name = "cuda_executor_multigpu_test",
     srcs = ["cuda_executor_multigpu_test.cc"],
-    backend_tags = {
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in NVIDIA_GPU_BACKENDS} | {
         "h100": [
             "full",
             "multi_gpu",
         ],
-        "gpu": [
-            "multi_gpu",
-        ],
-        "gb200": ["broken"],  # TODO(b/505963049): re-enable when fixed.
-        "gb300": ["broken"],  # TODO(b/505963049): re-enable when fixed.
+        "gb200": ["broken"],
+        "gb300": ["broken"],
     },
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_executor",
@@ -2036,7 +2034,7 @@ cc_library(
 xla_test(
     name = "cuda_stream_test",
     srcs = ["cuda_stream_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_event",
@@ -2068,7 +2066,7 @@ xla_test(
 xla_test(
     name = "cuda_stream_error_test",
     srcs = ["cuda_stream_error_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     # TODO(b/512853069): Remove when fixed.
     env = {"XLA_CUDA_HOST_CALLBACK_SPINWAIT": "1"},
     # Stream error tests poison the entire process, so we need to run them in a separate
@@ -2128,7 +2126,7 @@ cc_library(
 xla_test(
     name = "cuda_timer_test",
     srcs = ["cuda_timer_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_platform_id",
@@ -2274,7 +2272,7 @@ cc_library(
 xla_test(
     name = "cuda_command_buffer_test",
     srcs = ["cuda_command_buffer_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":command_buffer_kernels",
@@ -2358,7 +2356,7 @@ cc_library(
 xla_test(
     name = "cuda_command_buffer_telemetry_test",
     srcs = ["cuda_command_buffer_telemetry_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_command_buffer_telemetry_test_util",
@@ -2384,7 +2382,7 @@ xla_test(
 xla_test(
     name = "cuda_command_buffer_telemetry_pre_13_4_test",
     srcs = ["cuda_command_buffer_telemetry_pre_13_4_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_command_buffer",
@@ -2411,7 +2409,7 @@ xla_test(
 xla_test(
     name = "cudnn_flash_attention_test",
     srcs = ["cudnn_flash_attention_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_compute_capability",
@@ -3252,12 +3250,10 @@ cuda_library(
 xla_test(
     name = "multi_gpu_barrier_test",
     srcs = ["multi_gpu_barrier_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in NVIDIA_GPU_BACKENDS},
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_platform_id",
@@ -3417,7 +3413,7 @@ cc_library(
 xla_test(
     name = "cub_scan_kernel_cuda_test",
     srcs = ["cub_scan_kernel_cuda_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = [
         "cuda-only",
         "gpu",
@@ -3816,8 +3812,8 @@ xla_test(
     name = "bfc_allocator_multigpu_test",
     timeout = "moderate",
     srcs = ["bfc_allocator_multigpu_test.cc"],
-    backend_tags = {"gpu": ["multi_gpu"]},
-    backends = ["gpu"],
+    backend_tags = {gpu: ["multi_gpu"] for gpu in NVIDIA_GPU_BACKENDS},
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_platform_id",
@@ -3839,7 +3835,7 @@ xla_test(
 xla_test(
     name = "bfc_allocator_test",
     srcs = ["bfc_allocator_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cuda_platform_id",

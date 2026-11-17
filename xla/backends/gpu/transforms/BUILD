@@ -1,7 +1,12 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
 load("//xla:xla.default.bzl", "xla_cc_test")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "GPU_DEFAULT_BACKENDS",
+    "NVIDIA_GPU_DEFAULT_BACKENDS",
+    "xla_test",
+)
 load("//xla/tsl:tsl.bzl", "if_oss")
 load("//xla/tsl/platform:build_config_root.bzl", "if_static")
 
@@ -286,7 +291,7 @@ cc_library(
 xla_test(
     name = "async_wrapper_test",
     srcs = ["async_wrapper_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":async_wrapper",
         "//xla:literal",
@@ -438,7 +443,7 @@ xla_cc_test(
 xla_test(
     name = "dus_accumulator_zero_init_elimination_execution_test",
     srcs = ["dus_accumulator_zero_init_elimination_execution_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:error_spec",
         "//xla:xla_proto_cc",
@@ -650,7 +655,7 @@ xla_test(
     # generation. Every case is deviceless and opens no GPU, but needs a
     # loadable cuDNN >= 9.23 runtime and a CUDA driver (cuDNN's deviceless
     # heuristics abort without one), so GPU machines only.
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = [
         "cuda-only",
         "no_mac",
@@ -912,9 +917,7 @@ cc_library(
 xla_test(
     name = "conv_fusion_rewriter_test",
     srcs = ["conv_fusion_rewriter_test.cc"],
-    backends = [
-        "gpu",
-    ],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":conv_fusion_rewriter",
         ":conv_kind_assignment",
@@ -1275,7 +1278,7 @@ xla_test(
     # live plan enumeration on each generation. The deviceless cases open no
     # GPU, but they need a loadable cuDNN >= 9.23 runtime and a CUDA driver
     # (cuDNN's deviceless heuristics abort without one), so GPU machines only.
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = [
         "cuda-only",
         "no_mac",
@@ -1346,7 +1349,7 @@ cc_library(
 xla_test(
     name = "cudnn_norm_rewriter_test",
     srcs = ["cudnn_norm_rewriter_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":cudnn_norm_rewriter",
@@ -1529,7 +1532,7 @@ cc_library(
 xla_test(
     name = "dot_dimension_sorter_test",
     srcs = ["dot_dimension_sorter_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":dot_dimension_sorter",
         "//xla:error_spec",
@@ -2163,7 +2166,7 @@ cc_library(
 xla_test(
     name = "gemm_broadcast_folding_rewriter_test",
     srcs = ["gemm_broadcast_folding_rewriter_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gemm_broadcast_folding_rewriter",
         ":gemm_rewriter",
@@ -2391,7 +2394,7 @@ cc_library(
 xla_test(
     name = "gemm_rewriter_test",
     srcs = ["gemm_rewriter_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gemm_rewriter",
         ":gemm_rewriter_test_lib",
@@ -2420,7 +2423,7 @@ xla_test(
 xla_test(
     name = "gemm_rewriter_allocation_test",
     srcs = ["gemm_rewriter_allocation_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     use_legacy_runtime = True,
     deps = [
         "//xla:xla_proto_cc",
@@ -2437,7 +2440,7 @@ xla_test(
 xla_test(
     name = "gemm_rewriter_group_gemm_test",
     srcs = ["gemm_rewriter_group_gemm_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gemm_rewriter_test_lib",
         "//xla:error_spec",
@@ -2451,7 +2454,7 @@ xla_test(
 xla_test(
     name = "gemm_rewriter_fp8_test",
     srcs = ["gemm_rewriter_fp8_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     shard_count = 5,
     # TODO(intel-tf): Enable for SYCL when support for FP8 is added.
     tags = [
@@ -2923,9 +2926,7 @@ cc_library(
 xla_test(
     name = "ragged_dot_fusion_rewriter_test",
     srcs = ["ragged_dot_fusion_rewriter_test.cc"],
-    backends = [
-        "gpu",
-    ],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":ragged_dot_fusion_rewriter",
         "//xla:error_spec",
@@ -3100,7 +3101,7 @@ xla_test(
     srcs = [
         "reduction_layout_normalizer_test.cc",
     ],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":reduction_layout_normalizer",
         "//xla:error_spec",
@@ -3330,7 +3331,7 @@ cc_library(
 xla_test(
     name = "scatter_determinism_expander_test",
     srcs = ["scatter_determinism_expander_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     shard_count = 3,
     deps = [
         ":scatter_determinism_expander",
@@ -3627,9 +3628,7 @@ cc_library(
 xla_test(
     name = "sort_rewriter_test",
     srcs = ["sort_rewriter_test.cc"],
-    backends = [
-        "gpu",
-    ],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":sort_rewriter",
         "//xla:error_spec",
@@ -3910,7 +3909,7 @@ xla_test(
     backend_tags = {
         "gb300": ["broken"],  # TODO(b/505574653): re-enable when fixed.
     },
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     shard_count = 15,
     deps = [
         ":topk_specializer",
@@ -3955,7 +3954,7 @@ cc_library(
 xla_test(
     name = "topk_splitter_test",
     srcs = ["topk_splitter_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":topk_splitter",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
