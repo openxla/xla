@@ -1478,11 +1478,6 @@ absl::Status RunLayoutAssignmentPasses(
   // the creation of invalid transpose/bitcast operations within
   // host memory offloading segments.
   pipeline.AddPass<HostOffloadLegalize>();
-  // Run MoveCopyToUsers before AllGatherMajorDimensionRewriter, which only
-  // rewrites an all-gather whose operand is a copy. MoveCopyToUsers moves the
-  // copy of an array that is sliced, possibly inside a while loop, below the
-  // slice, where it can be the operand of an all-gather of the slice.
-  pipeline.AddPass<HloPassFix<MoveCopyToUsers>>();
   pipeline.AddPass<AllGatherMajorDimensionRewriter>();
   return pipeline.Run(hlo_module, {HloInstruction::kMainExecutionThread})
       .status();
