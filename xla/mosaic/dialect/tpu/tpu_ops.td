@@ -557,6 +557,43 @@ def TPU_VectorStoreIdxOp :TPU_Op<"vector_store_idx", [DefaultMemWrite, AttrSized
   let hasVerifier = 1;
 }
 
+def TPU_VectorLoadStoreIdxAddOp : TPU_Op<"vector_load_store_idx_add", [
+    DefaultMemRead, DefaultMemWrite, AttrSizedOperandSegments,
+    AllTypesMatch<["valueToAdd", "result"]>
+]> {
+  let summary = [{
+    Performs an indexed read-modify-write addition on a VMEM memref and returns
+    the unmodified loaded values.
+  }];
+  let description = [{
+    Loads 32-bit elements from `base` at the locations specified by `indices`,
+    adds `valueToAdd` elementwise, stores the updated values back to the same
+    locations, and returns the unmodified pre-add values.
+
+    `valueToAdd` and `result` must have identical vector types. The number of
+    index vectors must equal the rank of `base`, and each index vector and the
+    optional `mask` vector must have the exact same shape as `valueToAdd`.
+
+    If multiple active lanes target the same index, memory is updated by the
+    sum of all active lanes targeting that index. Returned values for colliding
+    active lanes are target- and chunking-dependent: they may reflect either the
+    pre-add value or intermediate updates from earlier lanes or hardware vector
+    chunks. Masked-off lanes do not modify memory and their returned values are
+    unspecified.
+  }];
+  let arguments = (ins
+    VectorOfNonZeroRankOf<[I32, F32]>:$valueToAdd,
+    MemRefOf<[I32, F32]>:$base,
+    Variadic<VectorOfNonZeroRankOf<[I32]>>:$indices,
+    Optional<VectorOfNonZeroRankOf<[I1]>>:$mask
+  );
+  let results = (outs VectorOfNonZeroRankOf<[I32, F32]>:$result);
+  let assemblyFormat = [{
+    $base `[` $indices `]` `,` $valueToAdd (`masked` $mask^)? attr-dict `:` type($base) `[` type($indices) `]` `,` type($valueToAdd) `,` type($mask)
+  }];
+  let hasVerifier = 1;
+}
+
 def TPU_DynamicRotateOp : TPU_Op<"dynamic_rotate", [Pure, AllTypesMatch<["value", "result"]>]> {
   let arguments = (ins
     AnyVectorOfNonZeroRank:$value,
