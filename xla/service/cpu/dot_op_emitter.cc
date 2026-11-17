@@ -46,7 +46,6 @@ limitations under the License.
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/Casting.h"
-#include "tsl/platform/platform.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -72,6 +71,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/platform.h"
 
 namespace xla {
 
@@ -99,6 +99,30 @@ bool IsYnnDotEnabled(const HloModuleConfig& config) {
                                DebugOptions::LIBRARY_FUSION_TYPE_DOT) ||
          absl::c_linear_search(
              fusion_types, DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_DOT);
+}
+
+// Returns true if oneDNN dot fusion is enabled for `config`.
+bool IsOneDnnDotEnabled(const HloModuleConfig& config) {
+  const auto& extra_options =
+      config.debug_options().xla_backend_extra_options();
+  auto it = extra_options.find("xla_is_host_offload");
+  if (it != extra_options.end() && it->second == "true") {
+    return false;
+  }
+  const auto& fusion_types =
+      config.debug_options().xla_cpu_experimental_onednn_fusion_type();
+  return absl::c_linear_search(fusion_types,
+                               DebugOptions::LIBRARY_FUSION_TYPE_DOT);
+}
+
+bool IsLibDotEnabledAndTypeSupported(const HloModuleConfig& config,
+                                     PrimitiveType element_type) {
+  bool ynn_supported_type =
+      element_type == F32 || element_type == F64 || element_type == BF16;
+  bool onednn_supported_type =
+      element_type == F32 || element_type == F16 || element_type == BF16;
+  return (IsYnnDotEnabled(config) && ynn_supported_type) ||
+         (IsOneDnnDotEnabled(config) && onednn_supported_type);
 }
 
 // Return whether the given shape is rank 2.
@@ -224,10 +248,8 @@ DotImplementationStrategy GetNonBatchDotImplementationStrategy(
     // Mixed-precision integer dots supported by YNNPACK (e.g. s8/u8 -> s32)
     // have operands_match_result_type == false and already bypass this block.
     // Among uniform-precision types reaching here, YNNPACK only supports F32,
-    // F64, and BF16.
-    bool ynn_supported_type =
-        element_type == F32 || element_type == F64 || element_type == BF16;
-    if (!IsYnnDotEnabled(config) || !ynn_supported_type ||
+    // F64, and BF16, and oneDNN only supports F32, F16, and BF16.
+    if (!IsLibDotEnabledAndTypeSupported(config, element_type) ||
         !allow_runtime_calls ||
         dot_info.result_shape.dimensions().size() <= 1 ||
         !IsAlignedGemm(dot_info, target_machine_features) ||

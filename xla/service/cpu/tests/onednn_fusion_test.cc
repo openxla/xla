@@ -393,9 +393,9 @@ TEST_P(OneDnnGraphPipelineTest, SimpleTestGemv) {
   const absl::string_view outline = R"(
   HloModule gemv
   ENTRY entry {
-    arg.0 = $dtype[4096,4096] parameter(0)
-    arg.1 = $dtype[4096] parameter(1)
-    ROOT dot.0 = $dtype[4096] dot(arg.0, arg.1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    arg.0 = $dtype[4096] parameter(0)
+    arg.1 = $dtype[4096,4096] parameter(1)
+    ROOT dot.0 = $dtype[4096] dot(arg.0, arg.1), lhs_contracting_dims={0}, rhs_contracting_dims={0}
   })";
 
   RunCompareAndMatchOptimizedHlo(outline);
@@ -406,8 +406,8 @@ TEST_P(OneDnnGraphPipelineTest, MismatchedOpRankDot) {
   HloModule mismatched_rank
   ENTRY entry {
     arg.0 = $dtype[100,300,300] parameter(0)
-    arg.1 = $dtype[300] parameter(1)
-    ROOT dot.0 = $dtype[100,300] dot(arg.0, arg.1), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+    arg.1 = $dtype[300,5] parameter(1)
+    ROOT dot.0 = $dtype[100,300,5] dot(arg.0, arg.1), lhs_contracting_dims={2}, rhs_contracting_dims={0}
   })";
 
   RunCompareAndMatchOptimizedHlo(outline);
