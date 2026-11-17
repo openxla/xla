@@ -195,18 +195,9 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
     color = static_cast<BufferValue::Color>(MemorySpaceColor::kTempBuffer);
   }
 
-  BufferAssigner::Options opts;
+  BufferAssigner::Options opts = CreateBufferAssignerOptions(options);
   opts.allocate_buffers_for_constants = true;
-  opts.colorer = CreateColorer(options);
   opts.temp_buffer_color = color;
-
-  // Allow S(0) buffers to reuse S(1) temp allocations. S(1) allocations
-  // satisfy stricter alignment and symmetric-offset requirements, so they are
-  // valid storage for S(0) buffers. Keep this directional: S(1) buffers must
-  // not be assigned to S(0) allocations.
-  opts.can_use_allocation = BufferAssigner::AllowCrossColorReuse(
-      static_cast<int>(MemorySpaceColor::kDefault),
-      static_cast<int>(MemorySpaceColor::kCollective));
 
   std::unique_ptr<HloOrdering> hlo_ordering;
   switch (options.xla_gpu_command_buffer_scheduling_mode()) {
@@ -297,8 +288,9 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
   const bool has_constants_module =
       !constants_module->empty() || !constants_module->global_empty();
   if (has_constants_module) {
-    future_constants_binary = compiler->CompileToTargetBinary(
-        thunk_emitter.ConsumeConstantsModule(), /*kernel_spec=*/std::nullopt);
+    future_constants_binary =
+        compiler->CompileToTargetBinary(thunk_emitter.ConsumeConstantsModule(),
+                                        "", /*kernel_spec=*/std::nullopt);
   } else {
     VLOG(2) << "Constants LLVM module is empty; skipping target compilation.";
   }

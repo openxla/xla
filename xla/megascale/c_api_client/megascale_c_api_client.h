@@ -60,14 +60,13 @@ struct ProcessesInfo {
 
 // Returns AoT config for megascale multi slice compilation.
 // REQUIRES: num_slices > 1.
-absl::StatusOr<std::unique_ptr<xla::MultiSliceConfig>> CreateAoTMegascaleConfig(
+absl::StatusOr<xla::MultiSliceConfigRef> CreateAoTMegascaleConfig(
     const xla::PjRtTopologyDescription& topology_description, int num_slices);
 
 absl::StatusOr<std::shared_ptr<CApiMegascaleErrorAggregator>>
 CreateMegascaleErrorAggregator(absl::string_view app_type);
 
-absl::StatusOr<std::unique_ptr<const xla::MultiSliceConfig>>
-CreateMultiSliceMegascaleConfig(
+absl::StatusOr<xla::MultiSliceConfigRef> CreateMultiSliceMegascaleConfig(
     const xla::PjRtTopologyDescription& topology_description, int num_slices,
     int32_t local_slice_id, int32_t local_host_id,
     const xla::megascale::runtime::EndpointAddresses& endpoint_addresses,
@@ -111,12 +110,12 @@ GetOrCreateRuntimeError(
 
 // Discovers slices using the Megascale client context and returns a
 // multi-slice configuration wrapped in PjRtCApiMultiSliceConfig.
-absl::StatusOr<std::unique_ptr<const xla::MultiSliceConfig>> DiscoverSlices(
+absl::StatusOr<xla::MultiSliceConfigRef> DiscoverSlices(
     std::shared_ptr<CApiPjRtClientContext> megascale_client_ctx);
 
 // Convenience wrapper discovering slices directly from a PjRtClient.
-absl::StatusOr<std::unique_ptr<const xla::MultiSliceConfig>>
-DiscoverSlicesFromClient(xla::PjRtClient* client);
+absl::StatusOr<xla::MultiSliceConfigRef> DiscoverSlicesFromClient(
+    xla::PjRtClient* client);
 
 // Returns the incarnation ID for the given MultiSliceConfig.
 absl::StatusOr<int64_t> GetIncarnationId(

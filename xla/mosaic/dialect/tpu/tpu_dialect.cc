@@ -29,7 +29,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep.
@@ -301,7 +300,6 @@ int64_t getUntiledRank(ArrayRef<xla::Tile> tiles, const int64_t rank) {
   }
   return untiled_rank;
 }
-}  // namespace
 
 FailureOr<SmallVector<int64_t>> getExpandedShape(
     const ArrayRef<int64_t> untiled_shape, const ArrayRef<xla::Tile> tiles,
@@ -331,8 +329,8 @@ FailureOr<SmallVector<int64_t>> getExpandedShape(
   return shape;
 }
 
-SmallVector<int64_t> TiledLayoutAttr::getContiguousTileStrides(
-    const ArrayRef<xla::Tile> tiles, const ArrayRef<int64_t> shape) {
+SmallVector<int64_t> getContiguousTileStrides(const ArrayRef<xla::Tile> tiles,
+                                              const ArrayRef<int64_t> shape) {
   SmallVector<int64_t> strides(shape.size());
   int64_t stride = 1;
   const xla::Tile* const first_tile = tiles.empty() ? nullptr : &tiles.front();
@@ -355,11 +353,13 @@ SmallVector<int64_t> TiledLayoutAttr::getContiguousTileStrides(
   return strides;
 }
 
+}  // namespace
+
 TiledLayoutAttr TiledLayoutAttr::getContiguous(MLIRContext* context,
                                                ArrayRef<xla::Tile> tiles,
                                                ArrayRef<int64_t> shape) {
-  return TiledLayoutAttr::get(
-      context, tiles, TiledLayoutAttr::getContiguousTileStrides(tiles, shape));
+  return TiledLayoutAttr::get(context, tiles,
+                              getContiguousTileStrides(tiles, shape));
 }
 
 int64_t TiledLayoutAttr::getNumTrailingDimsWithContiguousTiles(
@@ -399,6 +399,8 @@ int64_t TiledLayoutAttr::getNumTrailingDimsWithContiguousTiles(
   return shape.size() - 1 - d;
 }
 
+namespace {
+
 FailureOr<SmallVector<int64_t>> getExpandedStrides(
     ArrayRef<xla::Tile> tiles, ArrayRef<int64_t> tile_strides) {
   if (tiles.empty()) {
@@ -428,6 +430,8 @@ FailureOr<SmallVector<int64_t>> getExpandedStrides(
   }
   return strides;
 }
+
+}  // namespace
 
 SmallVector<int64_t> TiledLayoutAttr::getExpandedStrides() const {
   auto strides = mlir::tpu::getExpandedStrides(getTiles(), getTileStrides());
@@ -537,12 +541,7 @@ DotDimensionNumbersAttr defaultDimensionNumbers(Builder& builder,
 }
 
 const ::llvm::fltSemantics& Float8EXMYType::getFloatSemantics() const {
-  if (mlir::isa<Float6E3M2FNType>(getUnderlyingType())) {
-    return llvm::APFloat::Float6E3M2FN();
-  } else if (mlir::isa<Float6E2M3FNType>(getUnderlyingType())) {
-    return llvm::APFloat::Float6E2M3FN();
-  }
-  return cast<FloatType>(getUnderlyingType()).getFloatSemantics();
+  return getUnderlyingType().getFloatSemantics();
 }
 
 namespace {

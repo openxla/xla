@@ -575,15 +575,6 @@ PartitionConvolutionWithSpatialDimensionHaloExchangeOnLHS(
       reversed_rhs_dims.push_back(dnums.kernel_spatial_dimensions(i));
     }
   }
-  if (!reversed_rhs_dims.empty()) {
-    // Make the reversed dims left-padded to prepare for window reversal.
-    auto left_padded_rhs = HaloExchangeToPadOnLeft(rhs, reversed_rhs_dims);
-    if (left_padded_rhs == nullptr) {
-      return nullptr;
-    }
-    left_padded_rhs->set_sharding(rhs.sharding());
-    rhs = PartitionedHlo(left_padded_rhs, rhs.base_shape(), rhs.state());
-  }
   // Consider window reversal when resharding RHS or LHS. Note: this will not
   // reverse the data in the shard. We use window reversal to do that.
   auto aligned_rhs_sharding = hlo_sharding_util::ReverseSharding(
@@ -614,14 +605,24 @@ PartitionConvolutionWithSpatialDimensionHaloExchangeOnLHS(
       return nullptr;
     }
     lhs = lhs.Reshard(aligned_lhs_sharding).PadWithZero();
-    rhs = rhs.PadWithZero(reversed_rhs_dims);
   } else {
     if (unsupported_sharding(lhs.sharding(), aligned_rhs_sharding)) {
       return nullptr;
     }
     lhs = lhs.PadWithZero();
-    rhs = rhs.Reshard(aligned_rhs_sharding).PadWithZero(reversed_rhs_dims);
+    rhs = rhs.Reshard(aligned_rhs_sharding);
   }
+  if (!reversed_rhs_dims.empty()) {
+    // Pad the reversed dims on the left to prepare for window reversal.
+    HloInstruction* left_padded_rhs =
+        HaloExchangeToPadOnLeft(rhs, reversed_rhs_dims);
+    if (left_padded_rhs == nullptr) {
+      return nullptr;
+    }
+    left_padded_rhs->set_sharding(rhs.sharding());
+    rhs = PartitionedHlo(left_padded_rhs, rhs.base_shape(), rhs.state());
+  }
+  rhs = rhs.PadWithZero(reversed_rhs_dims);
   // Reshard LHS by exchanging halo such that each shard computes the partial
   // sum of the full shape result, and add AllReduce.
   //
@@ -977,6 +978,17 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> CreateShardedConvolution(
       continue;
     }
     auto wd = window.mutable_dimensions(dim.spatial_dim);
+    // Keep dot padding only while the LHS spatial dimension has size 1;
+    // spatial LHS resharding already materialized padding into sharded_lhs_hlo
+    // and conv_window.
+    if (sharded_lhs_hlo->shape().dimensions(
+            conv_dnums.input_spatial_dimensions(dim.spatial_dim)) != 1) {
+      const WindowDimension& new_wd = conv_window.dimensions(dim.spatial_dim);
+      wd->set_size(new_wd.size());
+      wd->set_padding_high(new_wd.padding_high());
+      wd->set_padding_low(new_wd.padding_low());
+      continue;
+    }
     wd->set_size(sharded_rhs_hlo->shape().dimensions(
         conv_dnums.kernel_spatial_dimensions(dim.spatial_dim)));
     wd->set_padding_high(wd->size() - 1);

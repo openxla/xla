@@ -49,7 +49,6 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
-#include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/type_util.h"
 #include "xla/codegen/emitters/utils.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
@@ -67,6 +66,7 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/scatter_simplifier.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -341,13 +341,12 @@ SmallVector<Value> EmitterHelper::EmitScatterComputation(
     return WriteUpdatesToOperands(b, indices, reduced_values, output_tensors);
   }
 
-  auto atomic_rmw = AtomicRMWOp::create(b, output_tensors.front(), indices);
-  OpBuilder body_b = atomic_rmw.getBodyBuilder();
-  auto reduced_val = emitters::InlineBlock(
-      body_b, reducer.getBody().front(),
-      {atomic_rmw.getCurrentValue(), update_elements.front()})[0];
-  xla::YieldOp::create(body_b, reducer->getLoc(), reduced_val);
-  return {atomic_rmw->getResult(0)};
+  CHECK_EQ(output_tensors.size(), 1)
+      << "Variadic scatter is only supported with unique_indices.";
+  CHECK_EQ(update_elements.size(), 1);
+  return {emitters::EmitScatterAtomicUpdate(
+      b, description_->scatter->called_computations()[0], reducer,
+      update_elements.front(), output_tensors.front(), indices)};
 }
 
 SmallVector<Value> EmitterHelper::WriteAccumulatedElementsToOutput(
@@ -908,7 +907,14 @@ ScatterDescription GetScatterDescription(const HloFusionAnalysis& analysis) {
   CHECK_NE(hero, nullptr);
   auto* scatter = Cast<HloScatterInstruction>(hero);
   auto indices_shape = scatter->scatter_indices()->shape();
-  auto update_shape = scatter->scatter_updates().front()->shape();
+  // The emitter distributes work over the logical update space, with the slice
+  // dimension (dimension 0) being the most major one, so that no thread
+  // processes elements of two different slices. This must not depend on the
+  // physical layout of the updates operand, so drop the layout here; reading
+  // the operand goes through its own indexing.
+  Shape update_shape = ShapeUtil::MakeShapeWithDescendingLayout(
+      scatter->scatter_updates().front()->shape().element_type(),
+      scatter->scatter_updates().front()->shape().dimensions());
   auto output_shape = scatter->scatter_operands().front()->shape();
 
   return ScatterDescription{

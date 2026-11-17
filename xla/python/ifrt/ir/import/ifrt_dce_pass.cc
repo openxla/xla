@@ -17,10 +17,8 @@ limitations under the License.
 #include <optional>
 
 #include "absl/log/check.h"
-#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -34,9 +32,7 @@ limitations under the License.
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
-#include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
-#include "mlir/IR/ValueRange.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
@@ -47,6 +43,7 @@ limitations under the License.
 #include "xla/python/ifrt/ir/ifrt_interfaces.h"
 #include "xla/python/ifrt/ir/ifrt_ops.h"
 #include "xla/python/ifrt/ir/import/passes.h"  // IWYU pragma: keep
+#include "xla/python/ifrt/ir/utils.h"
 
 namespace xla {
 namespace ifrt {
@@ -63,101 +60,6 @@ bool IsEmptyCallee(mlir::func::FuncOp callee) {
                       [](const mlir::Operation& op) {
                         return llvm::isa<mlir::func::ReturnOp>(&op);
                       });
-}
-
-// Filters an array of per-argument or per-result dictionary attributes (e.g.,
-// `arg_attrs` or `res_attrs`) by dropping entries whose index is set in
-// `erase`. Returns nullptr if `dict_array` is null, all entries are erased, or
-// no kept entry is a non-empty `DictionaryAttr`.
-mlir::ArrayAttr FilterDictArrayAttr(mlir::ArrayAttr dict_array,
-                                    const llvm::BitVector& erase) {
-  if (dict_array == nullptr) {
-    return nullptr;
-  }
-  llvm::SmallVector<mlir::Attribute> kept;
-  kept.reserve(dict_array.size());
-  bool has_non_empty = false;
-  for (auto [idx, attr] : llvm::enumerate(dict_array)) {
-    if (idx < erase.size() && erase.test(idx)) {
-      continue;
-    }
-    kept.push_back(attr);
-    if (auto dict = llvm::dyn_cast<mlir::DictionaryAttr>(attr);
-        dict != nullptr && !dict.empty()) {
-      has_non_empty = true;
-    }
-  }
-  if (kept.empty() || !has_non_empty) {
-    return nullptr;
-  }
-  return mlir::ArrayAttr::get(dict_array.getContext(), kept);
-}
-
-// Partition of an `IfrtArrayOpInterface` op's array outputs into used (kept)
-// and unused (erased) results, along with index remapping and kept types.
-struct UsedOutputsSlice {
-  llvm::BitVector keep;
-  llvm::BitVector erase;
-  llvm::SmallVector<int32_t> old_to_new;
-  llvm::SmallVector<mlir::Type> kept_types;
-};
-
-// Inspects the array outputs of `op` and returns a `UsedOutputsSlice` recording
-// which outputs are used vs. unused, their compacted output indices, and the
-// types of the kept outputs.
-UsedOutputsSlice CollectUsedOutputs(IfrtArrayOpInterface op) {
-  mlir::ResultRange outputs = op.getOutputs();
-  const unsigned num_outputs = outputs.size();
-  UsedOutputsSlice slice{llvm::BitVector(num_outputs),
-                         llvm::BitVector(num_outputs),
-                         llvm::SmallVector<int32_t>(num_outputs, -1),
-                         {}};
-  slice.kept_types.reserve(num_outputs);
-  for (unsigned i = 0; i < num_outputs; ++i) {
-    if (outputs[i].use_empty()) {
-      slice.erase.set(i);
-    } else {
-      slice.keep.set(i);
-      slice.old_to_new[i] = slice.kept_types.size();
-      slice.kept_types.push_back(outputs[i].getType());
-    }
-  }
-  return slice;
-}
-
-// Replaces uses of kept array outputs of `old_op` with the corresponding
-// compacted outputs of `new_op` according to `old_to_new` (-1 for erased
-// outputs), forwards `old_op`'s control output to `new_op`'s control output,
-// and erases `old_op`.
-void ReplaceKeptOutputs(mlir::RewriterBase& rewriter,
-                        IfrtArrayOpInterface old_op,
-                        IfrtArrayOpInterface new_op,
-                        llvm::ArrayRef<int32_t> old_to_new) {
-  for (auto [i, new_idx] : llvm::enumerate(old_to_new)) {
-    if (new_idx != -1) {
-      rewriter.replaceAllUsesWith(old_op.getOutputs()[i],
-                                  new_op.getOutputs()[new_idx]);
-    }
-  }
-  rewriter.replaceAllUsesWith(old_op.getControlOutput(),
-                              new_op.getControlOutput());
-  rewriter.eraseOp(old_op);
-}
-
-// Returns true if `control_inputs` can be forwarded to all users of
-// `control_output` via `detail::ForwardControlInputsToUsers` (either all users
-// accept variadic IFRT control dependencies, or there is a single unique
-// control input).
-bool CanForwardControlInputs(mlir::Value control_output,
-                             mlir::ValueRange control_inputs) {
-  if (llvm::all_of(control_output.getUsers(), [](mlir::Operation* user) {
-        return llvm::isa<IfrtArrayOpInterface, AssembleOp, DisassembleOp>(user);
-      })) {
-    return true;
-  }
-  llvm::SmallDenseSet<mlir::Value, 4> unique(control_inputs.begin(),
-                                             control_inputs.end());
-  return unique.size() == 1;
 }
 
 // Eliminates unused `(input, output)` pairs from `op`, or erases `op` entirely
@@ -186,8 +88,8 @@ void EliminateUnusedRemapArraysOutputs(RemapArraysOp remap_op,
   if (slice.keep.none()) {
     if (CanForwardControlInputs(remap_op.getControlOutput(),
                                 remap_op.getControlInputs())) {
-      detail::ForwardControlInputsToUsers(
-          remap_op.getControlOutput(), remap_op.getControlInputs(), rewriter);
+      ForwardControlInputsToUsers(remap_op.getControlOutput(),
+                                  remap_op.getControlInputs(), rewriter);
       rewriter.eraseOp(remap_op);
     }
     return;
@@ -390,14 +292,12 @@ void EliminateCallDce(CallOp call_op, mlir::ModuleOp module_op,
     }
   }
   llvm::SmallVector<mlir::Attribute> new_io_aliases;
-  for (mlir::DenseI32ArrayAttr raw_alias :
-       call_op.getIoAliases().getAsRange<mlir::DenseI32ArrayAttr>()) {
-    llvm::ArrayRef<int32_t> pair = raw_alias.asArrayRef();
-    const int32_t old_in = pair[0];
-    const int32_t old_out = pair[1];
-    if (old_in_to_new_in[old_in] != -1 && out_slice.old_to_new[old_out] != -1) {
+  for (const IoAlias& alias : call_op.getIoAliasPairs()) {
+    if (old_in_to_new_in[alias.input_index] != -1 &&
+        out_slice.old_to_new[alias.output_index] != -1) {
       new_io_aliases.push_back(rewriter.getDenseI32ArrayAttr(
-          {old_in_to_new_in[old_in], out_slice.old_to_new[old_out]}));
+          {old_in_to_new_in[alias.input_index],
+           out_slice.old_to_new[alias.output_index]}));
     }
   }
 
@@ -406,8 +306,8 @@ void EliminateCallDce(CallOp call_op, mlir::ModuleOp module_op,
       IsEmptyCallee(callee) &&
       CanForwardControlInputs(call_op.getControlOutput(),
                               call_op.getControlInputs())) {
-    detail::ForwardControlInputsToUsers(call_op.getControlOutput(),
-                                        call_op.getControlInputs(), rewriter);
+    ForwardControlInputsToUsers(call_op.getControlOutput(),
+                                call_op.getControlInputs(), rewriter);
     rewriter.eraseOp(call_op);
     int& remaining_uses = symbol_use_counts[resolved->root_symbol_name];
     --remaining_uses;
@@ -488,14 +388,7 @@ class IfrtDcePass : public impl::IfrtDcePassBase<IfrtDcePass> {
     // Snapshot IFRT entry functions upfront because `EliminateCallDce` inserts
     // and erases private callee `func.func` ops in `module_op`, which would
     // invalidate a live `module_op.getOps<mlir::func::FuncOp>()` iterator.
-    llvm::SmallVector<mlir::func::FuncOp> ifrt_funcs;
-    for (mlir::func::FuncOp func_op : module_op.getOps<mlir::func::FuncOp>()) {
-      if (IsIfrtFunction(func_op)) {
-        ifrt_funcs.push_back(func_op);
-      }
-    }
-
-    for (mlir::func::FuncOp func_op : ifrt_funcs) {
+    for (mlir::func::FuncOp func_op : GetIfrtFunctions(module_op)) {
       func_op.walk<mlir::WalkOrder::PreOrder, mlir::ReverseIterator>(
           [&](mlir::Operation* op) {
             return llvm::TypeSwitch<mlir::Operation*, mlir::WalkResult>(op)

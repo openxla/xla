@@ -222,7 +222,7 @@ absl::StatusOr<bool> ReplaceSetSize(HloInstruction* instr) {
     return false;
   }
 
-  TF_RET_CHECK(Shape::Equal().IgnoreDynamicDimension()(
+  TF_RET_CHECK(Shape::Equal().IgnoreDynamicDimension().IgnoreLayout()(
       instr->shape(), instr->operand(0)->shape()))
       << "instr->shape() " << instr->shape().ToString() << " , "
       << "instruction operand shape " << instr->operand(0)->shape();
@@ -238,7 +238,7 @@ absl::StatusOr<bool> ReplaceSetBound(HloInstruction* instr) {
     return false;
   }
 
-  TF_RET_CHECK(Shape::Equal().IgnoreDynamicDimension()(
+  TF_RET_CHECK(Shape::Equal().IgnoreDynamicDimension().IgnoreLayout()(
       instr->shape(), instr->operand(0)->shape()))
       << "instr->shape() " << instr->shape().ToString() << " , "
       << "instruction operand shape " << instr->operand(0)->shape();
@@ -1502,6 +1502,14 @@ absl::StatusOr<bool> RewriteDynamicBinaryOp(
 
     if (dims_0[i] != dims_1[i] && dims_0[i] != nullptr &&
         dims_1[i] != nullptr) {
+      // A dynamic dimension whose static bound is zero can only have a dynamic
+      // size of zero, so both operands are always empty along this dimension
+      // and there is no implicit broadcast to insert. The rewrite below slices
+      // a size-1 window along the dimension, which would be out of bounds for
+      // an empty dimension (https://github.com/openxla/xla/issues/49925).
+      if (operand_0->shape().dimensions(i) == 0) {
+        continue;
+      }
       changed = true;
       // It is possible that a dynamic dimension of one operand is size 1 while
       // the other is greater than one. According to implicit broadcast

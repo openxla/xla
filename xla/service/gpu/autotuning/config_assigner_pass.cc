@@ -310,12 +310,21 @@ std::unique_ptr<AutotunerCacheInterface> CreateAutotunerCache(
     return nullptr;
   }
 
-  std::string cache_dir = debug_options.xla_gpu_per_fusion_autotune_cache_dir();
+  // Prefer the new autotune cache fields, but fall back to their deprecated
+  // xla_gpu_* counterparts so that values set by existing users still apply.
+  std::string cache_dir =
+      !debug_options.xla_autotune_cache_dir().empty()
+          ? debug_options.xla_autotune_cache_dir()
+          : debug_options.xla_gpu_per_fusion_autotune_cache_dir();
+  DebugOptions::AutotuneCacheMode cache_mode =
+      debug_options.xla_autotune_cache_mode() !=
+              DebugOptions::AUTOTUNE_CACHE_MODE_UNSPECIFIED
+          ? debug_options.xla_autotune_cache_mode()
+          : debug_options.xla_gpu_experimental_autotune_cache_mode();
 
   if (!debug_options.xla_gpu_use_new_autotune_cache_format()) {
-    return std::make_unique<LegacyCache>(
-        cache_dir, debug_options.xla_gpu_experimental_autotune_cache_mode(),
-        target_config.device_description);
+    return std::make_unique<LegacyCache>(std::move(cache_dir), cache_mode,
+                                         target_config.device_description);
   }
 
   AutotuneCacheContext cache_ctx =
@@ -323,9 +332,8 @@ std::unique_ptr<AutotunerCacheInterface> CreateAutotunerCache(
   auto primary = std::make_unique<InMemoryStore>();
   std::unique_ptr<AutotuneCacheStore> secondary = nullptr;
   if (!cache_dir.empty()) {
-    secondary = std::make_unique<DirectoryStore>(
-        cache_dir,
-        GetCacheMode(debug_options.xla_gpu_experimental_autotune_cache_mode()));
+    secondary = std::make_unique<DirectoryStore>(std::move(cache_dir),
+                                                 GetCacheMode(cache_mode));
   }
   KeyMatchingMode matching_mode =
       debug_options.xla_autotune_cache_require_strict_codegen_match()
@@ -349,10 +357,15 @@ ConfigAssigner::Options GetConfigAssignerOptions(
       debug_options.xla_gpu_experimental_cost_model_gemm_tiling_default() &&
       !debug_options.xla_gpu_exhaustive_tiling_search();
 
+  // Like the other autotune cache fields, the new field takes precedence when
+  // it is set, so that it can also override the deprecated one to false.
   options.expect_all_instructions_in_cache =
-      debug_options.xla_gpu_require_complete_aot_autotune_results();
-  options.dump_hlos = debug_options.xla_gpu_dump_autotuned_gemm_fusions() ||
-                      debug_options.xla_gpu_dump_autotuned_instructions();
+      debug_options.has_xla_fail_on_autotune_cache_miss()
+          ? debug_options.xla_fail_on_autotune_cache_miss()
+          : debug_options.xla_gpu_require_complete_aot_autotune_results();
+  options.dump_hlos =
+      debug_options.xla_gpu_dump_autotuned_gemm_fusions() ||
+      debug_options.xla_dump_isolated_hlos_pre_and_post_config_assignment();
   options.use_new_cache_format =
       debug_options.xla_gpu_use_new_autotune_cache_format();
   options.compile_all_supported_configs =
@@ -420,11 +433,10 @@ Autotuner::Options GetAutotunerOptions(const DebugOptions& debug_options,
   autotuner_options.correctness_check_options.enable_correctness_check =
       is_buffer_check_supported && debug_options.xla_gpu_autotune_level() >= 4;
   autotuner_options.correctness_check_options.relative_tolerance =
-      debug_options.xla_gpu_autotune_gemm_rtol();
+      debug_options.xla_autotune_rtol();
   autotuner_options.correctness_check_options.crash_on_failure =
       debug_options.xla_gpu_crash_on_verification_failures();
-  autotuner_options.dump_logs_to =
-      debug_options.xla_gpu_dump_autotune_logs_to();
+  autotuner_options.dump_logs_to = debug_options.xla_dump_autotune_logs_to();
   autotuner_options.use_new_logging_format =
       debug_options.xla_gpu_use_new_autotune_cache_format();
   return autotuner_options;
@@ -465,8 +477,7 @@ std::vector<autotuner::Backend> GetEnabledBackendTypes(
     const DebugOptions& debug_options,
     const se::GpuComputeCapability& gpu_version) {
   std::vector<autotuner::Backend> autotune_backends;
-  for (const auto& backend :
-       debug_options.xla_gpu_experimental_autotune_backends()) {
+  for (const auto& backend : debug_options.xla_config_assigner_backends()) {
     autotune_backends.push_back(static_cast<autotuner::Backend>(backend));
   }
   // An empty list means all backends. It happens for DebugOptions that don't

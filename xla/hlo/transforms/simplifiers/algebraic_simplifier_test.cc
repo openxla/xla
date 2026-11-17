@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
+#include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -12459,21 +12460,89 @@ TEST_F(AlgebraicSimplifierTest, ClampOfClamp) {
 }
 
 TEST_F(AlgebraicSimplifierTest, MaxOfClamp) {
-  constexpr absl::string_view kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"hlo(
+    HloModule m
+    test {
+      p0 = f32[] parameter(0)
+      lo = f32[] constant(3.0)
+      hi = f32[] constant(4.0)
+      c0 = f32[] clamp(lo, p0, hi)
+      ROOT m0 = f32[] maximum(lo, c0)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Clamp(m::ConstantScalar(3.0), m::Parameter(0),
+                                  m::ConstantScalar(4.0))));
+}
+
+TEST_F(AlgebraicSimplifierTest, MaxOfClampWithSameBounds) {
+  constexpr absl::string_view kModuleStr = R"hlo(
     HloModule m
     test {
       p0 = f32[] parameter(0)
       p1 = f32[] parameter(1)
-      p2 = f32[] parameter(2)
-      c0 = f32[] clamp(p0, p1, p2)
-      ROOT m0 = f32[] maximum(p0, c0)
+      c0 = f32[] clamp(p0, p1, p0)
+      ROOT m0 = f32[] maximum(c0, p0)
     }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
   EXPECT_THAT(
       m->entry_computation()->root_instruction(),
-      GmockMatch(m::Clamp(m::Parameter(0), m::Parameter(1), m::Parameter(2))));
+      GmockMatch(m::Clamp(m::Parameter(0), m::Parameter(1), m::Parameter(0))));
+}
+
+// max(a, clamp(a, b, c)) is not clamp(a, b, c) when a > c: for (a, b, c) =
+// (10, 5, 0), the clamp is 0 and the maximum is 10.
+TEST_F(AlgebraicSimplifierTest, MaxOfClampWithUnknownBoundsIsNotSimplified) {
+  for (absl::string_view root : {"maximum(p0, c0)", "maximum(c0, p0)"}) {
+    const std::string module_str = absl::StrFormat(R"hlo(
+      HloModule m
+      test {
+        p0 = s32[] parameter(0)
+        p1 = s32[] parameter(1)
+        p2 = s32[] parameter(2)
+        c0 = s32[] clamp(p0, p1, p2)
+        ROOT m0 = s32[] %s
+      }
+    )hlo",
+                                                   root);
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+    ASSERT_OK(AlgebraicSimplifier(default_options_).Run(m.get()).status());
+    EXPECT_THAT(m->entry_computation()->root_instruction(),
+                GmockMatch(m::MaximumAnyOrder(
+                    m::Parameter(0), m::Clamp(m::Parameter(0), m::Parameter(1),
+                                              m::Parameter(2)))));
+
+    const Literal a = LiteralUtil::CreateR0<int32_t>(10);
+    const Literal b = LiteralUtil::CreateR0<int32_t>(5);
+    const Literal c = LiteralUtil::CreateR0<int32_t>(0);
+    HloEvaluator evaluator;
+    ASSERT_OK_AND_ASSIGN(Literal result, evaluator.Evaluate(*m, {&a, &b, &c}));
+    EXPECT_EQ(result.Get<int32_t>({}), 10);
+  }
+}
+
+TEST_F(AlgebraicSimplifierTest, MaxOfClampWithReversedBoundsIsNotSimplified) {
+  constexpr absl::string_view kModuleStr = R"hlo(
+    HloModule m
+    test {
+      p0 = f32[4] parameter(0)
+      lo = f32[] constant(10.0)
+      hi = f32[] constant(0.0)
+      b_lo = f32[4] broadcast(lo), dimensions={}
+      b_hi = f32[4] broadcast(hi), dimensions={}
+      c0 = f32[4] clamp(b_lo, p0, b_hi)
+      ROOT m0 = f32[4] maximum(b_lo, c0)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_OK(AlgebraicSimplifier(default_options_).Run(m.get()).status());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Maximum(m::Broadcast(m::ConstantScalar(10.0)),
+                                    m::Clamp())));
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfConcat) {
@@ -13199,6 +13268,80 @@ TEST_F(AlgebraicSimplifierTest, ScalarScatter) {
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
   // Combine Scatters
   ASSERT_FALSE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       ScatterAddNotCombinedWhenToApplyRepeatsParameter) {
+  constexpr absl::string_view kRepeatedParamHlo = R"hlo(
+HloModule RepeatedParamScatters
+dp0 { p0 = f32[] parameter(0) p1 = f32[] parameter(1)
+      ROOT r = f32[] add(p0, p0) }
+dp1 { p0 = f32[] parameter(0) p1 = f32[] parameter(1)
+      ROOT r = f32[] add(p1, p1) }
+ENTRY main {
+  op0 = f32[8] parameter(0) ix0 = s32[2,1] parameter(1)
+  up0 = f32[2] parameter(2) op1 = f32[8] parameter(3)
+  ix1 = s32[2,1] parameter(4) up1 = f32[2] parameter(5)
+  s_lhs0 = f32[8] scatter(op0, ix0, up0), update_window_dims={}, index_vector_dim=1,
+      inserted_window_dims={0}, scatter_dims_to_operand_dims={0}, to_apply=dp0
+  a_lhs0 = f32[8] add(s_lhs0, op1)
+  s_lhs1 = f32[8] scatter(op0, ix0, up0), update_window_dims={}, index_vector_dim=1,
+      inserted_window_dims={0}, scatter_dims_to_operand_dims={0}, to_apply=dp1
+  a_lhs1 = f32[8] add(s_lhs1, op1)
+  s_rhs0 = f32[8] scatter(op0, ix0, up0), update_window_dims={}, index_vector_dim=1,
+      inserted_window_dims={0}, scatter_dims_to_operand_dims={0}, to_apply=dp0
+  a_rhs0 = f32[8] add(op1, s_rhs0)
+  s_rhs1 = f32[8] scatter(op0, ix0, up0), update_window_dims={}, index_vector_dim=1,
+      inserted_window_dims={0}, scatter_dims_to_operand_dims={0}, to_apply=dp1
+  a_rhs1 = f32[8] add(op1, s_rhs1)
+  s_cat0 = f32[8] scatter(op0, ix0, up0), update_window_dims={}, index_vector_dim=1,
+      inserted_window_dims={0}, scatter_dims_to_operand_dims={0}, to_apply=dp0
+  s_cat1 = f32[8] scatter(op1, ix1, up1), update_window_dims={}, index_vector_dim=1,
+      inserted_window_dims={0}, scatter_dims_to_operand_dims={0}, to_apply=dp1
+  a_cat = f32[8] add(s_cat0, s_cat1)
+  ROOT out = (f32[8], f32[8], f32[8], f32[8], f32[8]) tuple(
+      a_lhs0, a_lhs1, a_rhs0, a_rhs1, a_cat)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> repeated,
+                       ParseAndReturnVerifiedModule(kRepeatedParamHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool repeated_changed,
+      AlgebraicSimplifier(default_options_).Run(repeated.get()));
+  EXPECT_FALSE(repeated_changed);
+  for (const HloInstruction* item :
+       repeated->entry_computation()->root_instruction()->operands()) {
+    EXPECT_EQ(item->opcode(), HloOpcode::kAdd);
+  }
+
+  constexpr absl::string_view kMixedAndCommutedHlo = R"hlo(
+HloModule MixedAndCommutedScatters
+dp0 { p0 = f32[] parameter(0) p1 = f32[] parameter(1)
+      ROOT r = f32[] add(p0, p0) }
+cadd { p0 = f32[] parameter(0) p1 = f32[] parameter(1)
+       ROOT r = f32[] add(p1, p0) }
+ENTRY main {
+  op0 = f32[8] parameter(0) ix0 = s32[2,1] parameter(1)
+  up0 = f32[2] parameter(2) op1 = f32[8] parameter(3)
+  ix1 = s32[2,1] parameter(4) up1 = f32[2] parameter(5)
+  sc0 = f32[8] scatter(op0, ix0, up0), update_window_dims={}, index_vector_dim=1,
+      inserted_window_dims={0}, scatter_dims_to_operand_dims={0}, to_apply=dp0
+  sc1 = f32[8] scatter(op1, ix1, up1), update_window_dims={}, index_vector_dim=1,
+      inserted_window_dims={0}, scatter_dims_to_operand_dims={0}, to_apply=cadd
+  ROOT out = f32[8] add(sc0, sc1)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(kMixedAndCommutedHlo));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       AlgebraicSimplifier(default_options_).Run(m.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Scatter(
+                  m::AddAnyOrder(m::Scatter(m::Parameter(0), m::Parameter(1),
+                                            m::Parameter(2)),
+                                 m::Parameter(3)),
+                  m::Parameter(4), m::Parameter(5))));
 }
 
 TEST_F(AlgebraicSimplifierTest, SwapConvOperands) {

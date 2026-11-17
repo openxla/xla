@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
@@ -40,6 +41,7 @@ limitations under the License.
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/test_helpers.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/dynamic_dimension_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
@@ -65,6 +67,7 @@ namespace {
 
 namespace m = ::xla::match;
 namespace op = xla::testing::opcode_matchers;
+using ::absl_testing::IsOkAndHolds;
 
 OpDynamismSupport OpHasDynamismSupport(HloInstruction* hlo) {
   if (hlo->opcode() != HloOpcode::kCustomCall) {
@@ -872,6 +875,46 @@ ENTRY main {
   auto offset = root->operand(2);
   EXPECT_EQ(offset->opcode(), HloOpcode::kParameter);
   EXPECT_EQ(offset->parameter_number(), 2);
+}
+
+TEST_F(DynamicPadderTest, ZeroSizedDynamicBinaryOpNotRewritten) {
+  // Regression test for https://github.com/openxla/xla/issues/49925.
+  //
+  // Both operands of an elementwise binary op have a dynamic dimension whose
+  // static bound is zero, so RewriteDynamicBinaryOp must skip the implicit
+  // broadcast rewrite and leave the compare untouched.
+  const std::string hlo_text = R"(
+HloModule module
+
+ENTRY entry {
+  a = f32[0, 2] parameter(0)
+  b = f32[0, 2] parameter(1)
+  size_0 = s32[] parameter(2)
+  size_1 = s32[] parameter(3)
+  a_dynamic = f32[<=0, 2] set-dimension-size(a, size_0), dimensions={0}
+  b_dynamic = f32[<=0, 2] set-dimension-size(b, size_1), dimensions={0}
+  ROOT cmp = pred[<=0, 2] compare(a_dynamic, b_dynamic), direction=EQ
+}
+)";
+  module_ = GetHloModule(hlo_text);
+
+  DynamicPadderOptions options;
+  options.slice_dynamic_output = false;
+  DynamicPadder padder(options);
+  ASSERT_OK_AND_ASSIGN(bool changed, padder.Run(module_.get()));
+  // DynamicDimensionInference and ReplaceSetSize strip the set-dimension-size
+  // ops and clear the dynamic dimensions, so the pass still reports changed.
+  EXPECT_TRUE(changed);
+  ASSERT_OK(verifier().Run(module_.get()).status());
+
+  EXPECT_THAT(module_->entry_computation()->root_instruction(),
+              op::Compare(op::Parameter(0), op::Parameter(1)));
+  for (const HloInstruction* inst :
+       module_->entry_computation()->instructions()) {
+    EXPECT_NE(inst->opcode(), HloOpcode::kSlice);
+    EXPECT_NE(inst->opcode(), HloOpcode::kSelect);
+    EXPECT_NE(inst->opcode(), HloOpcode::kReshape);
+  }
 }
 
 // Test that dynamic padder has the same result as if not padded.
@@ -2071,6 +2114,48 @@ ENTRY entry {
   EXPECT_EQ(result, expected);
 }
 
+TEST_F(ExecutionTest, DynamicBinaryOpOverZeroSizedDimension) {
+  // Regression test for https://github.com/openxla/xla/issues/49925.
+  //
+  // Both operands of an elementwise binary op have a dynamic dimension whose
+  // static bound is zero, so the dimension is always empty and the two dynamic
+  // sizes can never differ. The implicit broadcast rewrite used to slice a
+  // size-1 window out of the empty dimension anyway, which produced an
+  // out-of-bounds slice that failed HLO verification.
+  const std::string hlo_text = R"(
+HloModule module
+
+and_pred (lhs: pred[], rhs: pred[]) -> pred[] {
+  lhs = pred[] parameter(0)
+  rhs = pred[] parameter(1)
+  ROOT and = pred[] and(lhs, rhs)
+}
+
+ENTRY entry {
+  zero_f32 = f32[] constant(0)
+  init = pred[] constant(true)
+  size_0 = s32[] parameter(0)
+  size_1 = s32[] parameter(1)
+  a = f32[0, 2] broadcast(zero_f32), dimensions={}
+  b = f32[0, 2] broadcast(zero_f32), dimensions={}
+  a_dynamic = f32[<=0, 2] set-dimension-size(a, size_0), dimensions={0}
+  b_dynamic = f32[<=0, 2] set-dimension-size(b, size_1), dimensions={0}
+  cmp = pred[<=0, 2] compare(a_dynamic, b_dynamic), direction=EQ
+  ROOT result = pred[2] reduce(cmp, init), dimensions={0}, to_apply=and_pred
+}
+)";
+
+  auto module = GetHloModule(hlo_text);
+
+  Literal size_0 = LiteralUtil::CreateR0<int32_t>(0);
+  Literal size_1 = LiteralUtil::CreateR0<int32_t>(0);
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       PadAndExecute(std::move(module), {&size_0, &size_1}));
+
+  Literal expected = LiteralUtil::CreateR1<bool>({true, true});
+  EXPECT_EQ(result, expected);
+}
+
 TEST_F(ExecutionTest, DynamicStackPop) {
   // This tests the case where a static sized stack is popped by a dynamic
   // number of times.
@@ -2674,6 +2759,44 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo));
   ASSERT_OK_AND_ASSIGN(bool changed, RunPadder(/*slice_dynamic_output=*/true));
   EXPECT_FALSE(changed);
+}
+
+TEST_F(DynamicPadderTest, ReplaceSetBoundIgnoresLayout) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule main
+
+    ENTRY main {
+      p0 = s32[2,4]{0,1} parameter(0)
+      r = s32[2,4]{1,0} reshape(p0)
+      ROOT sb = s32[2,4]{1,0} custom-call(r), custom_call_target="SetBound", literal=s32[] 2
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(kHlo));
+  DynamicDimensionSimplifier simplifier;
+  EXPECT_THAT(simplifier.Run(module_.get()), IsOkAndHolds(true));
+  EXPECT_THAT(RunPadder(), IsOkAndHolds(true));
+  EXPECT_THAT(module_->entry_computation()->root_instruction(),
+              op::Parameter(0));
+}
+
+TEST_F(DynamicPadderTest, ReplaceSetSizeIgnoresLayout) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule main
+
+    ENTRY main {
+      p0 = s32[2,4]{0,1} parameter(0)
+      r = s32[2,4]{1,0} reshape(p0)
+      sb = s32[2,4]{1,0} custom-call(r), custom_call_target="SetBound", literal=s32[] 2
+      size = s32[] constant(2)
+      ROOT sds = s32[<=2,4]{1,0} set-dimension-size(sb, size), dimensions={0}
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(kHlo));
+  DynamicDimensionSimplifier simplifier;
+  EXPECT_THAT(simplifier.Run(module_.get()), IsOkAndHolds(true));
+  EXPECT_THAT(RunPadder(), IsOkAndHolds(true));
+  EXPECT_THAT(module_->entry_computation()->root_instruction(),
+              op::Parameter(0));
 }
 
 }  // namespace

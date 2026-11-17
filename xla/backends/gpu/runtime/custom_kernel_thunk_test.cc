@@ -29,20 +29,23 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/string_view.h"
+#include "xla/backends/gpu/codegen/gpu_kernel_spec.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/codegen/kernels/ptx_custom_kernel.h"
 #include "xla/backends/gpu/runtime/command.h"
-#include "xla/backends/gpu/runtime/command_buffer_requests.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/backends/gpu/runtime/thunk_test_utils.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_slice.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
@@ -69,12 +72,17 @@ using tsl::proto_testing::ParseTextProtoOrDie;
 TEST(CustomKernelThunkTest, ToStringIncludesPdlOnlyWhenEnabled) {
   Thunk::ThunkInfo thunk_info;
   thunk_info.profile_annotation = "test_kernel_profiler";
-  CustomKernel kernel("name",
-                      se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
-                          /*ptx=*/"", /*kernel_name=*/"name", /*arity=*/0),
-                      se::BlockDim(3, 2, 1), se::ThreadDim(4, 5, 6),
-                      /*shared_memory_bytes=*/42);
+
   emitters::KernelArguments kernel_arguments({});
+  GpuKernelSpec kernel_spec{
+      "name",
+      LaunchDimensions{se::BlockDim(3, 2, 1), se::ThreadDim(4, 5, 6)},
+      kernel_arguments,
+      /*scratch_bytes=*/42,
+  };
+  CustomKernel kernel(kernel_spec,
+                      se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
+                          /*ptx=*/"", /*kernel_name=*/"name", /*arity=*/0));
   CustomKernelThunk thunk(thunk_info, kernel, kernel_arguments,
                           /*devices_in_process=*/1);
   EXPECT_EQ(thunk.ToString(0),
@@ -82,12 +90,18 @@ TEST(CustomKernelThunkTest, ToStringIncludesPdlOnlyWhenEnabled) {
             "launch dimensions=blocks: {3, 2, 1}, threads/block: {4, 5, 6}, "
             "cluster_dim=nullopt, shmem_bytes=42");
 
-  CustomKernel clustered_kernel(
+  GpuKernelSpec clustered_kernel_spec{
       "clustered_name",
+      LaunchDimensions{se::BlockDim(6, 4, 2), se::ThreadDim(8, 10, 12)},
+      emitters::KernelArguments{std::vector<emitters::KernelArgument>{}},
+      /*scratch_bytes=*/84,
+      false,
+      {},
+      se::ClusterDim(2, 2, 2)};
+  CustomKernel clustered_kernel(
+      clustered_kernel_spec,
       se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
-          /*ptx=*/"", /*kernel_name=*/"clustered_name", /*arity=*/0),
-      se::BlockDim(6, 4, 2), se::ThreadDim(8, 10, 12), se::ClusterDim(2, 2, 2),
-      /*shared_memory_bytes=*/84);
+          /*ptx=*/"", /*kernel_name=*/"clustered_name", /*arity=*/0));
   CustomKernelThunk pdl_thunk(thunk_info, clustered_kernel, kernel_arguments,
                               /*devices_in_process=*/1, /*use_pdl=*/true);
   EXPECT_EQ(pdl_thunk.ToString(0),
@@ -98,11 +112,6 @@ TEST(CustomKernelThunkTest, ToStringIncludesPdlOnlyWhenEnabled) {
 
 TEST(CustomKernelThunkTest, BufferUsesReturnsCorrectBuffers) {
   Shape arg_shape = ShapeUtil::MakeShape(F32, {512});
-  CustomKernel kernel(
-      /*name=*/"",
-      se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
-          /*ptx=*/"", /*kernel_name=*/"", /*arity=*/0),
-      se::BlockDim(), se::ThreadDim(), /*shared_memory_bytes=*/0);
   BufferAllocation alloc(/*index=*/0, /*size=*/1024, /*color=*/0);
   BufferAllocation::Slice slice0(&alloc, /*offset=*/0, /*size=*/512);
   BufferAllocation::Slice slice1(&alloc, /*offset=*/512, /*size=*/512);
@@ -111,6 +120,14 @@ TEST(CustomKernelThunkTest, BufferUsesReturnsCorrectBuffers) {
   arg0.set_written(false);
   arg1.set_written(true);
   emitters::KernelArguments kernel_arguments({arg0, arg1});
+
+  GpuKernelSpec spec{
+      "",
+      LaunchDimensions{},
+      kernel_arguments,
+  };
+  CustomKernel kernel(spec, se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
+                                /*ptx=*/"", /*kernel_name=*/"", /*arity=*/0));
   CustomKernelThunk thunk(Thunk::ThunkInfo{}, kernel, kernel_arguments,
                           /*devices_in_process=*/1);
 
@@ -122,11 +139,6 @@ TEST(CustomKernelThunkTest, BufferUsesReturnsCorrectBuffers) {
 }
 
 TEST(CustomKernelThunkTest, BufferUsesReturnsBuffersInConsistentOrder) {
-  CustomKernel kernel(
-      /*name=*/"",
-      se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
-          /*ptx=*/"", /*kernel_name=*/"", /*arity=*/0),
-      se::BlockDim(), se::ThreadDim(), /*shared_memory_bytes=*/0);
   BufferAllocation alloc(/*index=*/0, /*size=*/1024, /*color=*/0);
   BufferAllocation::Slice slice0(&alloc, /*offset=*/0, /*size=*/512);
   BufferAllocation::Slice slice1(&alloc, /*offset=*/512, /*size=*/512);
@@ -135,6 +147,14 @@ TEST(CustomKernelThunkTest, BufferUsesReturnsBuffersInConsistentOrder) {
   arg0.set_written(false);
   arg1.set_written(true);
   emitters::KernelArguments kernel_arguments({arg0, arg1});
+
+  GpuKernelSpec spec{
+      /*name=*/"",
+      LaunchDimensions{},
+      kernel_arguments,
+  };
+  CustomKernel kernel(spec, se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
+                                /*ptx=*/"", /*kernel_name=*/"", /*arity=*/0));
   CustomKernelThunk thunk(Thunk::ThunkInfo{}, kernel, kernel_arguments,
                           /*devices_in_process=*/1);
 
@@ -145,12 +165,6 @@ TEST(CustomKernelThunkTest, BufferUsesReturnsBuffersInConsistentOrder) {
 }
 
 TEST(CustomKernelThunkTest, ToProto) {
-  CustomKernel kernel("name",
-                      se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
-                          "PTX", "kernel_name", /*arity=*/1),
-                      se::BlockDim(3, 2, 1), se::ThreadDim(4, 5, 6),
-                      /*shared_memory_bytes=*/42);
-
   Thunk::ThunkInfo thunk_info;
   thunk_info.profile_annotation = "profile_annotation";
   thunk_info.thunk_id = 42;
@@ -160,6 +174,15 @@ TEST(CustomKernelThunkTest, ToProto) {
   emitters::KernelArgument arg0(ShapeUtil::MakeShape(F32, {512}), slice0);
   arg0.set_written(true);
   emitters::KernelArguments kernel_arguments({arg0});
+
+  GpuKernelSpec spec{
+      "name",
+      LaunchDimensions{se::BlockDim(3, 2, 1), se::ThreadDim(4, 5, 6)},
+      kernel_arguments,
+      42,
+  };
+  CustomKernel kernel(spec, se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
+                                "PTX", "kernel_name", /*arity=*/1));
   CustomKernelThunk thunk(thunk_info, kernel, kernel_arguments,
                           /*devices_in_process=*/1);
 
@@ -260,11 +283,6 @@ MakeAddI32CustomKernelThunk(
     std::vector<int64_t> zeroed_output_buffer_indices = {}) {
   absl::string_view ptx =
       se::gpu::GetAddI32PtxKernelSpec().cuda_ptx_in_memory().value().ptx;
-  ABSL_ASSIGN_OR_RETURN(
-      CustomKernel kernel,
-      kernel::GetPtxCustomKernel(/*kernel_name=*/"AddI32", ptx, /*num_args=*/3,
-                                 /*block_dim=*/se::BlockDim(1, 1, 1),
-                                 /*thread_dim=*/se::ThreadDim(1, 1, 1)));
 
   emitters::KernelArgument arg_a(ShapeUtil::MakeShape(S32, {1}),
                                  BufferAllocation::Slice(&allocs[0], 0, 4));
@@ -275,6 +293,13 @@ MakeAddI32CustomKernelThunk(
   arg_a.set_written(false);
   arg_b.set_written(false);
   arg_c.set_written(true);
+
+  GpuKernelSpec spec{
+      /*kernel_name=*/"AddI32",
+      LaunchDimensions{se::BlockDim(1, 1, 1), se::ThreadDim(1, 1, 1)},
+      emitters::KernelArguments({arg_a, arg_b, arg_c})};
+  ABSL_ASSIGN_OR_RETURN(CustomKernel kernel,
+                        kernel::GetPtxCustomKernel(spec, ptx));
 
   return std::make_unique<CustomKernelThunk>(
       Thunk::ThunkInfo(), std::move(kernel),
@@ -312,18 +337,13 @@ TEST(CustomKernelThunkTest, RecordCommandBuffer) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
 
-  CommandBufferRequests command_buffer_requests;
-  Thunk::InitializeParams init_params(&command_buffer_requests);
-  init_params.executor = executor;
-  init_params.buffer_allocations = &buffer_allocations;
-  init_params.stream = stream.get();
-  ASSERT_OK(thunk->Initialize(init_params));
-
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
-  auto execute_params = Thunk::ExecuteParams::Create(
-      run_options, buffer_allocations, stream.get(), nullptr, nullptr, nullptr,
-      nullptr, {});
+  TestThunkParams thunk_params(executor, &buffer_allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options);
+  ASSERT_OK(thunk->Initialize(thunk_params.InitializeParams()));
+
+  auto execute_params = thunk_params.ExecuteParams();
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -373,18 +393,13 @@ TEST(CustomKernelThunkTest, RecordCommandBufferUpdate) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
 
-  CommandBufferRequests command_buffer_requests;
-  Thunk::InitializeParams init_params(&command_buffer_requests);
-  init_params.executor = executor;
-  init_params.buffer_allocations = &buffer_allocations;
-  init_params.stream = stream.get();
-  ASSERT_OK(thunk->Initialize(init_params));
-
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
-  auto execute_params = Thunk::ExecuteParams::Create(
-      run_options, buffer_allocations, stream.get(), nullptr, nullptr, nullptr,
-      nullptr, {});
+  TestThunkParams thunk_params(executor, &buffer_allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options);
+  ASSERT_OK(thunk->Initialize(thunk_params.InitializeParams()));
+
+  auto execute_params = thunk_params.ExecuteParams();
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -451,18 +466,13 @@ TEST(CustomKernelThunkTest, RecordCommandBufferUpdateWithNewOutputBuffer) {
   se::StreamExecutorAddressAllocator allocator(executor);
 
   BufferAllocations alloc1({a_dev, b_dev, c_dev}, 0, &allocator);
-  CommandBufferRequests command_buffer_requests;
-  Thunk::InitializeParams init_params(&command_buffer_requests);
-  init_params.executor = executor;
-  init_params.buffer_allocations = &alloc1;
-  init_params.stream = stream.get();
-  ASSERT_OK(thunk->Initialize(init_params));
-
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
-  auto execute_params1 =
-      Thunk::ExecuteParams::Create(run_options, alloc1, stream.get(), nullptr,
-                                   nullptr, nullptr, nullptr, {});
+  TestThunkParams thunk_params(executor, &alloc1, stream.get());
+  thunk_params.WithRunOptions(&run_options);
+  ASSERT_OK(thunk->Initialize(thunk_params.InitializeParams()));
+
+  auto execute_params1 = thunk_params.ExecuteParams();
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -485,8 +495,7 @@ TEST(CustomKernelThunkTest, RecordCommandBufferUpdateWithNewOutputBuffer) {
   // Update to use c2_dev as the output buffer.
   BufferAllocations alloc2({a_dev, b_dev, c2_dev}, 0, &allocator);
   auto execute_params2 =
-      Thunk::ExecuteParams::Create(run_options, alloc2, stream.get(), nullptr,
-                                   nullptr, nullptr, nullptr, {});
+      thunk_params.WithBufferAllocations(&alloc2).ExecuteParams();
 
   ASSERT_OK(command_buffer->Update());
   ASSERT_OK_AND_ASSIGN(
@@ -542,18 +551,13 @@ TEST(CustomKernelThunkTest, ExecuteOnStreamZeroed) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
 
-  CommandBufferRequests command_buffer_requests;
-  Thunk::InitializeParams init_params(&command_buffer_requests);
-  init_params.executor = executor;
-  init_params.buffer_allocations = &buffer_allocations;
-  init_params.stream = stream.get();
-  ASSERT_OK(thunk->Initialize(init_params));
-
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
-  auto execute_params = Thunk::ExecuteParams::Create(
-      run_options, buffer_allocations, stream.get(), nullptr, nullptr, nullptr,
-      nullptr, {});
+  TestThunkParams thunk_params(executor, &buffer_allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options);
+  ASSERT_OK(thunk->Initialize(thunk_params.InitializeParams()));
+
+  auto execute_params = thunk_params.ExecuteParams();
 
   ASSERT_OK(thunk->ExecuteOnStream(execute_params));
 
@@ -592,18 +596,13 @@ TEST(CustomKernelThunkTest, RecordCommandBufferZeroed) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
 
-  CommandBufferRequests command_buffer_requests;
-  Thunk::InitializeParams init_params(&command_buffer_requests);
-  init_params.executor = executor;
-  init_params.buffer_allocations = &buffer_allocations;
-  init_params.stream = stream.get();
-  ASSERT_OK(thunk->Initialize(init_params));
-
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
-  auto execute_params = Thunk::ExecuteParams::Create(
-      run_options, buffer_allocations, stream.get(), nullptr, nullptr, nullptr,
-      nullptr, {});
+  TestThunkParams thunk_params(executor, &buffer_allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options);
+  ASSERT_OK(thunk->Initialize(thunk_params.InitializeParams()));
+
+  auto execute_params = thunk_params.ExecuteParams();
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -654,18 +653,13 @@ TEST(CustomKernelThunkTest, RecordCommandBufferUpdateZeroed) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
 
-  CommandBufferRequests command_buffer_requests;
-  Thunk::InitializeParams init_params(&command_buffer_requests);
-  init_params.executor = executor;
-  init_params.buffer_allocations = &buffer_allocations;
-  init_params.stream = stream.get();
-  ASSERT_OK(thunk->Initialize(init_params));
-
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
-  auto execute_params = Thunk::ExecuteParams::Create(
-      run_options, buffer_allocations, stream.get(), nullptr, nullptr, nullptr,
-      nullptr, {});
+  TestThunkParams thunk_params(executor, &buffer_allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options);
+  ASSERT_OK(thunk->Initialize(thunk_params.InitializeParams()));
+
+  auto execute_params = thunk_params.ExecuteParams();
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -753,18 +747,16 @@ TEST(CustomKernelThunkTest, RecordCommandBufferTwoRecordingsZeroed) {
   BufferAllocations allocations_0_new({a0, b0_new, c0}, 0, &allocator);
   BufferAllocations allocations_1_new({a1, b1_new, c1}, 0, &allocator);
 
-  CommandBufferRequests command_buffer_requests;
-  Thunk::InitializeParams init_params(&command_buffer_requests);
-  init_params.executor = executor;
-  init_params.buffer_allocations = &allocations_0;
-  init_params.stream = stream.get();
-  ASSERT_OK(thunk->Initialize(init_params));
-
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
+  TestThunkParams thunk_params(executor, &allocations_0, stream.get());
+  thunk_params.WithRunOptions(&run_options);
+  ASSERT_OK(thunk->Initialize(thunk_params.InitializeParams()));
+
+  Thunk::ExecuteParams base_params = thunk_params.ExecuteParams();
   auto params_for = [&](const BufferAllocations& allocations) {
-    return Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
-                                        nullptr, nullptr, nullptr, nullptr, {});
+    return Thunk::ExecuteParams::CloneWithNewAllocations(base_params,
+                                                         allocations);
   };
 
   CommandStateManager state;
@@ -851,9 +843,9 @@ TEST(CustomKernelThunkTest, RecordFailsWithoutInitialize) {
   BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
-  auto execute_params = Thunk::ExecuteParams::Create(
-      run_options, buffer_allocations, stream.get(), nullptr, nullptr, nullptr,
-      nullptr, {});
+  TestThunkParams thunk_params(executor, &buffer_allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options);
+  auto execute_params = thunk_params.ExecuteParams();
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -891,13 +883,6 @@ TEST(CustomKernelThunkTest, ExecuteFailsWithoutInitialize) {
       BufferAllocation(/*index=*/1, /*size=*/4, /*color=*/0),
       BufferAllocation(/*index=*/2, /*size=*/4, /*color=*/0),
   };
-  absl::string_view ptx =
-      se::gpu::GetAddI32PtxKernelSpec().cuda_ptx_in_memory().value().ptx;
-  ASSERT_OK_AND_ASSIGN(
-      CustomKernel kernel,
-      kernel::GetPtxCustomKernel(/*kernel_name=*/"AddI32", ptx, /*num_args=*/3,
-                                 /*block_dim=*/se::BlockDim(1, 1, 1),
-                                 /*thread_dim=*/se::ThreadDim(1, 1, 1)));
   emitters::KernelArgument arg_a(ShapeUtil::MakeShape(S32, {1}),
                                  BufferAllocation::Slice(&allocs[0], 0, 4));
   emitters::KernelArgument arg_b(ShapeUtil::MakeShape(S32, {1}),
@@ -907,6 +892,15 @@ TEST(CustomKernelThunkTest, ExecuteFailsWithoutInitialize) {
   arg_a.set_written(false);
   arg_b.set_written(false);
   arg_c.set_written(true);
+  GpuKernelSpec spec{
+      /*kernel_name=*/"AddI32",
+      LaunchDimensions{se::BlockDim(1, 1, 1), se::ThreadDim(1, 1, 1)},
+      emitters::KernelArguments({arg_a, arg_b, arg_c})};
+
+  absl::string_view ptx =
+      se::gpu::GetAddI32PtxKernelSpec().cuda_ptx_in_memory().value().ptx;
+  ASSERT_OK_AND_ASSIGN(CustomKernel kernel,
+                       kernel::GetPtxCustomKernel(spec, ptx));
 
   CustomKernelThunk thunk(Thunk::ThunkInfo(), std::move(kernel),
                           emitters::KernelArguments({arg_a, arg_b, arg_c}),
@@ -919,9 +913,9 @@ TEST(CustomKernelThunkTest, ExecuteFailsWithoutInitialize) {
   BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
-  auto execute_params = Thunk::ExecuteParams::Create(
-      run_options, buffer_allocations, stream.get(), nullptr, nullptr, nullptr,
-      nullptr, {});
+  TestThunkParams thunk_params(executor, &buffer_allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options);
+  auto execute_params = thunk_params.ExecuteParams();
 
   auto status = thunk.ExecuteOnStream(execute_params);
   EXPECT_FALSE(status.ok());

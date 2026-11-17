@@ -366,7 +366,7 @@ TEST_P(InterProcessCollectiveInitTest, EagerInit) {
   auto* se_client = absl::down_cast<CommonPjRtClient*>(custom_client.get());
   ASSERT_NE(se_client, nullptr);
   auto* raw_client =
-      absl::down_cast<PjRtStreamExecutorRawClient*>(se_client->raw_client());
+      se_client->raw_client()->down_cast<PjRtStreamExecutorRawClient>();
   ASSERT_OK_AND_ASSIGN(
       LocalDeviceState * local_device_state,
       raw_client->GetLocalDeviceState(
@@ -489,9 +489,9 @@ TEST_P(ShardedAutotuningTest, ShardedAutotuningWorks) {
     debug_options.set_xla_gpu_cublas_fallback(false);
 
     if (rank() < param.num_nodes_using_cache) {
-      debug_options.set_xla_gpu_experimental_autotune_cache_mode(
+      debug_options.set_xla_autotune_cache_mode(
           DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE);
-      debug_options.set_xla_gpu_per_fusion_autotune_cache_dir(cache_dir);
+      debug_options.set_xla_autotune_cache_dir(cache_dir);
     }
 
     ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,

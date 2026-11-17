@@ -56,7 +56,7 @@ namespace m = xla::match;
 
 class HloCseTest : public HloTestBase {
  protected:
-  HloCseTest() {}
+  HloCseTest() = default;
 };
 
 TEST_F(HloCseTest, CombineTwoConstants) {

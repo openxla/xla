@@ -134,13 +134,6 @@ common --incompatible_enforce_config_setting_visibility
 # TODO: also enable this flag after fixing the visibility violations
 # common --incompatible_config_setting_private_default_visibility
 
-# external_include_paths feature forces passing external repositories headers
-# via -isystem alters how Clang resolves their file paths. This feature with
-# old versions of rules_cc triggering errors.
-# Following lines can be removed after rules_cc will be updated to >= 0.2.22
-common --features=-external_include_paths
-common --host_features=-external_include_paths
-
 # Print a stacktrace when a test is killed
 build --test_env="GTEST_INSTALL_FAILURE_SIGNAL_HANDLER=1"
 
@@ -331,8 +324,10 @@ common:sycl --@llvm-project//llvm:use_libunwind_for_eh_frame_registration=false
 common:sycl --repo_env=TF_NEED_SYCL=1
 common:sycl --repo_env=ENABLE_INTEL_XPU_TRITON=1
 common:sycl --define=tensorflow_mkldnn_contraction_kernel=0
-common:sycl --cxxopt=-std=c++17
-common:sycl --host_cxxopt=-std=c++17
+common:sycl --cxxopt=-std=c++20
+common:sycl --host_cxxopt=-std=c++20
+# C++20 with GCC 10 libstdc++ from glibc 2.31.
+common:sycl --repo_env=SYSROOT_DIST=linux_glibc_2_31
 common:sycl --repo_env=SYCL_BUILD_HERMETIC=0
 common:sycl --define=build_with_onednn_async=true
 
@@ -423,8 +418,8 @@ common:linux --@llvm-project//llvm:use_libunwind_for_eh_frame_registration=true
 # By default, build TF in C++ 17 mode.
 common:linux --cxxopt=-std=c++20
 common:linux --host_cxxopt=-std=c++20
-common:macos --cxxopt=-std=c++17
-common:macos --host_cxxopt=-std=c++17
+common:macos --cxxopt=-std=c++20
+common:macos --host_cxxopt=-std=c++20
 common:windows --cxxopt=/std:c++20
 common:windows --host_cxxopt=/std:c++20
 

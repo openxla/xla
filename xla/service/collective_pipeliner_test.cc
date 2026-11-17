@@ -34,6 +34,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/analysis/alias_info.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -51,6 +53,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal_util.h"
+#include "xla/service/call_graph.h"
 #include "xla/service/collective_pipeliner_utils.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_verifier.h"
@@ -222,6 +225,68 @@ ENTRY entry {
   EXPECT_EQ(get_tuple_index->opcode(), HloOpcode::kGetTupleElement);
   EXPECT_EQ(get_tuple_value->tuple_index(), 1);
   EXPECT_EQ(get_tuple_index->tuple_index(), 3);
+}
+
+TEST_F(CollectivePipelinerTest, TransformedWhileKeepsFrontendAttributes) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule module
+
+add {
+  lhs = bf16[] parameter(0)
+  rhs = bf16[] parameter(1)
+  ROOT add = bf16[] add(lhs, rhs)
+}
+
+while_cond {
+  param = (s32[], bf16[3,8,128], bf16[3,8,128]) parameter(0)
+  gte = s32[] get-tuple-element(param), index=0
+  constant.1 = s32[] constant(3)
+  ROOT cmp = pred[] compare(gte, constant.1), direction=LT
+}
+
+while_body {
+  param = (s32[], bf16[3,8,128], bf16[3,8,128]) parameter(0)
+  get-tuple-element.394 = s32[] get-tuple-element(param), index=0
+  get-tuple-element.395 = bf16[3,8,128] get-tuple-element(param), index=1
+  get-tuple-element.5 = bf16[3,8,128] get-tuple-element(param), index=2
+  constant.2557 = s32[] constant(1)
+  add.230 = s32[] add(get-tuple-element.394, constant.2557)
+  constant.2559 = s32[] constant(3)
+  subtract.139 = s32[] subtract(constant.2559, get-tuple-element.394)
+  constant.2560 = s32[] constant(-1)
+  add.231 = s32[] add(subtract.139, constant.2560)
+  constant.2561 = s32[] constant(0)
+  compare.747 = pred[] compare(add.231, constant.2561), direction=LT
+  constant.2562 = s32[] constant(2)
+  add.232 = s32[] add(subtract.139, constant.2562)
+  select.1348 = s32[] select(compare.747, add.232, add.231)
+  dynamic-slice.99 = bf16[1,8,128] dynamic-slice(get-tuple-element.5, select.1348, constant.2561, constant.2561), dynamic_slice_sizes={1,8,128}
+  mul = bf16[1,8,128] multiply(dynamic-slice.99, dynamic-slice.99)
+  ar.1 = bf16[1,8,128] all-reduce(mul), replica_groups={}, to_apply=add, channel_id=1
+  dynamic-update-slice.35 = bf16[3,8,128] dynamic-update-slice(get-tuple-element.395, ar.1, select.1348, constant.2561, constant.2561)
+  ROOT tuple = (s32[], bf16[3,8,128], bf16[3,8,128]) tuple(add.230, dynamic-update-slice.35, get-tuple-element.5)
+}
+
+ENTRY entry {
+  c0 = s32[] constant(0)
+  p0 = bf16[3,8,128] parameter(0)
+  tuple = (s32[], bf16[3,8,128], bf16[3,8,128]) tuple(c0, p0, p0)
+  while = (s32[], bf16[3,8,128], bf16[3,8,128]) while(tuple), condition=while_cond, body=while_body, frontend_attributes={test_attr="test_value"}
+  ROOT gte1 = bf16[3,8,128] get-tuple-element(while), index=1
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnUnverifiedModule(hlo_string, config_));
+  EXPECT_THAT(RunOptimizer(module.get(), /*last_run=*/true),
+              absl_testing::IsOkAndHolds(true));
+  XLA_VLOG_LINES(1, module->ToString());
+  const HloInstruction* while_inst = hlo_query::GetFirstInstructionWithOpcode(
+      *module->entry_computation(), HloOpcode::kWhile);
+  ASSERT_NE(while_inst, nullptr);
+  // The pipelined loop carries extra state, so this is the new loop.
+  EXPECT_EQ(while_inst->shape().tuple_shapes().size(), 4);
+  EXPECT_THAT(while_inst->frontend_attributes().map(),
+              ::testing::Contains(::testing::Pair("test_attr", "test_value")));
 }
 
 TEST_F(CollectivePipelinerTest, SinkableFrontendAttributeBypassesCheck) {
@@ -7269,6 +7334,182 @@ ENTRY entry {
   EXPECT_TRUE(changed);
   EXPECT_THAT(RunFileCheck(module->ToString(), hlo_string),
               absl_testing::IsOkAndHolds(true));
+}
+
+TEST_F(CollectivePipelinerTest, ClonedConditionalHasUniqueBranchesForward) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule module
+
+add {
+  lhs = bf16[] parameter(0)
+  rhs = bf16[] parameter(1)
+  ROOT sum = bf16[] add(lhs, rhs)
+}
+
+inner_true {
+  p = bf16[1,8,128] parameter(0)
+  ROOT out = bf16[1,8,128] add(p, p)
+}
+
+inner_false {
+  p = bf16[1,8,128] parameter(0)
+  ROOT out = bf16[1,8,128] negate(p)
+}
+
+inner_cond {
+  param = (s32[], bf16[1,8,128]) parameter(0)
+  j = s32[] get-tuple-element(param), index=0
+  limit = s32[] constant(2)
+  ROOT cmp = pred[] compare(j, limit), direction=LT
+}
+
+inner_body {
+  param = (s32[], bf16[1,8,128]) parameter(0)
+  j = s32[] get-tuple-element(param), index=0
+  acc = bf16[1,8,128] get-tuple-element(param), index=1
+  c0 = s32[] constant(0)
+  c1 = s32[] constant(1)
+  j_next = s32[] add(j, c1)
+  parity = s32[] and(j, c1)
+  is_even = pred[] compare(parity, c0), direction=EQ
+  next_acc = bf16[1,8,128] conditional(is_even, acc, acc),
+    true_computation=inner_true, false_computation=inner_false
+  ROOT tuple = (s32[], bf16[1,8,128]) tuple(j_next, next_acc)
+}
+
+branch_0 {
+  p = bf16[1,8,128] parameter(0)
+  ROOT out = bf16[1,8,128] add(p, p)
+}
+
+branch_1 {
+  p = bf16[1,8,128] parameter(0)
+  ROOT out = bf16[1,8,128] negate(p)
+}
+
+while_cond {
+  param = (s32[], bf16[4,2,128], bf16[4,8,128]) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  limit = s32[] constant(4)
+  ROOT cmp = pred[] compare(i, limit), direction=LT
+}
+
+while_body {
+  param = (s32[], bf16[4,2,128], bf16[4,8,128]) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  output = bf16[4,2,128] get-tuple-element(param), index=1
+  input = bf16[4,8,128] get-tuple-element(param), index=2
+  c0 = s32[] constant(0)
+  c1 = s32[] constant(1)
+  i_next = s32[] add(i, c1)
+  slice = bf16[1,8,128] dynamic-slice(input, i, c0, c0),
+    dynamic_slice_sizes={1,8,128}
+  inner_init = (s32[], bf16[1,8,128]) tuple(c0, slice)
+  inner_out = (s32[], bf16[1,8,128]) while(inner_init),
+    condition=inner_cond, body=inner_body
+  inner_val = bf16[1,8,128] get-tuple-element(inner_out), index=1
+  parity = s32[] and(i, c1)
+  cond_out = bf16[1,8,128] conditional(parity, inner_val, inner_val),
+    branch_computations={branch_0, branch_1}
+  rs = bf16[1,2,128] reduce-scatter(cond_out), channel_id=1,
+    replica_groups={{0,1,2,3},{4,5,6,7}}, use_global_device_ids=true,
+    dimensions={1}, to_apply=add
+  dus = bf16[4,2,128] dynamic-update-slice(output, rs, i, c0, c0)
+  ROOT tuple = (s32[], bf16[4,2,128], bf16[4,8,128]) tuple(i_next, dus, input)
+}
+
+ENTRY entry {
+  c0 = s32[] constant(0)
+  p0 = bf16[4,2,128] parameter(0)
+  p1 = bf16[4,8,128] parameter(1)
+  init = (s32[], bf16[4,2,128], bf16[4,8,128]) tuple(c0, p0, p1)
+  while = (s32[], bf16[4,2,128], bf16[4,8,128]) while(init),
+    condition=while_cond, body=while_body
+  ROOT gte = bf16[4,2,128] get-tuple-element(while), index=1
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string, config_));
+  ASSERT_THAT(
+      RunOptimizer(module.get(), /*last_run=*/true, /*level_to_operate_on=*/0,
+                   /*pipeline_use_tree=*/false,
+                   /*process_different_sized_ops=*/true,
+                   collective_pipeliner_utils::PipeliningDirection::kForward,
+                   HloPredicateIsOp<HloOpcode::kReduceScatter>),
+      absl_testing::IsOkAndHolds(true));
+  EXPECT_TRUE(CallGraph::Build(module.get())->IsFlattened());
+
+  AliasInfo alias_info;
+  EXPECT_THAT(HloAliasAnalysis::Run(module.get(), &alias_info),
+              absl_testing::IsOk());
+}
+
+TEST_F(CollectivePipelinerTest, ClonedConditionalHasUniqueBranchesBackward) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule module
+
+pre_true {
+  p = bf16[1,2,128] parameter(0)
+  ROOT out = bf16[1,2,128] add(p, p)
+}
+
+pre_false {
+  p = bf16[1,2,128] parameter(0)
+  ROOT out = bf16[1,2,128] negate(p)
+}
+
+while_cond {
+  param = (s32[], bf16[4,2,128], bf16[4,8,128]) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  limit = s32[] constant(4)
+  ROOT cmp = pred[] compare(i, limit), direction=LT
+}
+
+while_body {
+  param = (s32[], bf16[4,2,128], bf16[4,8,128]) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  input = bf16[4,2,128] get-tuple-element(param), index=1
+  output = bf16[4,8,128] get-tuple-element(param), index=2
+  c0 = s32[] constant(0)
+  c1 = s32[] constant(1)
+  i_next = s32[] add(i, c1)
+  ag_slice = bf16[1,2,128] dynamic-slice(input, i, c0, c0),
+    dynamic_slice_sizes={1,2,128}
+  parity = s32[] and(i, c1)
+  is_even = pred[] compare(parity, c0), direction=EQ
+  pre_cond = bf16[1,2,128] conditional(is_even, ag_slice, ag_slice),
+    true_computation=pre_true, false_computation=pre_false
+  ag = bf16[1,8,128] all-gather(pre_cond), channel_id=1,
+    replica_groups={{0,1,2,3},{4,5,6,7}}, use_global_device_ids=true,
+    dimensions={1}
+  dus = bf16[4,8,128] dynamic-update-slice(output, ag, i, c0, c0)
+  ROOT tuple = (s32[], bf16[4,2,128], bf16[4,8,128]) tuple(i_next, input, dus)
+}
+
+ENTRY entry {
+  c0 = s32[] constant(0)
+  p0 = bf16[4,2,128] parameter(0)
+  p1 = bf16[4,8,128] parameter(1)
+  init = (s32[], bf16[4,2,128], bf16[4,8,128]) tuple(c0, p0, p1)
+  while = (s32[], bf16[4,2,128], bf16[4,8,128]) while(init),
+    condition=while_cond, body=while_body
+  ROOT gte = bf16[4,8,128] get-tuple-element(while), index=2
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string, config_));
+  ASSERT_THAT(
+      RunOptimizer(module.get(), /*last_run=*/true, /*level_to_operate_on=*/0,
+                   /*pipeline_use_tree=*/true,
+                   /*process_different_sized_ops=*/true,
+                   collective_pipeliner_utils::PipeliningDirection::kBackward,
+                   IsAllGather),
+      absl_testing::IsOkAndHolds(true));
+  EXPECT_TRUE(CallGraph::Build(module.get())->IsFlattened());
+
+  AliasInfo alias_info;
+  EXPECT_THAT(HloAliasAnalysis::Run(module.get(), &alias_info),
+              absl_testing::IsOk());
 }
 
 }  // namespace

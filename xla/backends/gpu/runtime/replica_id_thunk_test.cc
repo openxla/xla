@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/backends/gpu/runtime/thunk_test_utils.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/device_assignment.h"
@@ -151,10 +152,10 @@ TEST(ReplicaIdThunkTest, ExecuteOnStream) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({dest}, 0, &allocator);
 
-  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
-      run_options, buffer_allocations, stream.get(),
-      /*command_buffer_trace_stream=*/nullptr, &collective_params,
-      /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr);
+  TestThunkParams thunk_params(executor, &buffer_allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options)
+      .WithCollectiveParams(&collective_params);
+  Thunk::ExecuteParams execute_params = thunk_params.ExecuteParams();
 
   ASSERT_OK(thunk.ExecuteOnStream(execute_params));
 
@@ -200,10 +201,10 @@ TEST(PartitionIdThunkTest, ExecuteOnStream) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({dest}, 0, &allocator);
 
-  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
-      run_options, buffer_allocations, stream.get(),
-      /*command_buffer_trace_stream=*/nullptr, &collective_params,
-      /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr);
+  TestThunkParams thunk_params(executor, &buffer_allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options)
+      .WithCollectiveParams(&collective_params);
+  Thunk::ExecuteParams execute_params = thunk_params.ExecuteParams();
 
   ASSERT_OK(thunk.ExecuteOnStream(execute_params));
 
@@ -251,10 +252,10 @@ TEST(ReplicaIdThunkTest, RecordCommandBuffer) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({dest}, 0, &allocator);
 
-  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
-      run_options, buffer_allocations, stream.get(),
-      /*command_buffer_trace_stream=*/nullptr, &collective_params,
-      /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr);
+  TestThunkParams thunk_params(executor, &buffer_allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options)
+      .WithCollectiveParams(&collective_params);
+  Thunk::ExecuteParams execute_params = thunk_params.ExecuteParams();
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -311,10 +312,10 @@ TEST(ReplicaIdThunkTest, RecordCommandBufferUpdate) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({dest}, 0, &allocator);
 
-  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
-      run_options, buffer_allocations, stream.get(),
-      /*command_buffer_trace_stream=*/nullptr, &collective_params,
-      /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr);
+  TestThunkParams thunk_params(executor, &buffer_allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options)
+      .WithCollectiveParams(&collective_params);
+  Thunk::ExecuteParams execute_params = thunk_params.ExecuteParams();
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -381,10 +382,10 @@ TEST(PartitionIdThunkTest, RecordCommandBuffer) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({dest}, 0, &allocator);
 
-  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
-      run_options, buffer_allocations, stream.get(),
-      /*command_buffer_trace_stream=*/nullptr, &collective_params,
-      /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr);
+  TestThunkParams thunk_params(executor, &buffer_allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options)
+      .WithCollectiveParams(&collective_params);
+  Thunk::ExecuteParams execute_params = thunk_params.ExecuteParams();
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};

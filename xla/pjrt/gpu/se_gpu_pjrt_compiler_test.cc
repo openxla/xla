@@ -454,7 +454,8 @@ TEST(StreamExecutorGpuCompilerTest, CrossCompilation) {
   ASSERT_NE(common_client, nullptr);
 
   se::StreamExecutor* stream_executor =
-      absl::down_cast<PjRtStreamExecutorRawClient*>(common_client->raw_client())
+      common_client->raw_client()
+          ->down_cast<PjRtStreamExecutorRawClient>()
           ->client()
           ->backend()
           .default_stream_executor();

@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/functional/bind_front.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -88,7 +89,8 @@ static absl::Status TranslateDeviceIds(PjRtClient* client,
   return absl::OkStatus();
 }
 
-PjRtCompiler::PjRtCompiler(PjRtClient* client) : client_(client) {}
+PjRtCompiler::PjRtCompiler(PjRtClient* absl_nullable client)
+    : client_(client) {}
 
 tsl::Future<LoadedExecutableRef> PjRtCompiler::CompileAndLoad(
     std::unique_ptr<Program> program, std::unique_ptr<CompileOptions> options) {
@@ -190,7 +192,7 @@ tsl::Future<ExecutableRef> PjRtCompiler::Compile(
 
 tsl::Future<LoadedExecutableRef> PjRtCompiler::DeserializeLoadedExecutable(
     const absl::Cord& serialized,
-    std::unique_ptr<DeserializeExecutableOptions> options) {
+    absl_nullable std::unique_ptr<DeserializeExecutableOptions> options) {
   if (client_ == nullptr) {
     return absl::InvalidArgumentError(
         "PjRtCompiler must be constructed with a Client to call "

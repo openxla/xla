@@ -37,10 +37,12 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/types/optional_ref.h"
 #include "google/protobuf/text_format.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/AsmParser/Parser.h"
@@ -73,6 +75,7 @@ limitations under the License.
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/codegen/cubin_custom_kernel_compiler.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
+#include "xla/backends/gpu/codegen/gpu_kernel_spec.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/runtime/host_execute_thunk.h"
@@ -881,7 +884,7 @@ absl::Status RunOptimizationPasses(
     pipeline.AddPass<WindowedEinsumHandler>();
   }
   pipeline.AddPass<TopKSplitter>();
-  pipeline.AddPass<TopkSpecializer>(gpu_version);
+  pipeline.AddPass<TopkSpecializer>(gpu_target_config.device_description);
   pipeline.AddPass<TopkDecomposer>();
 
   pipeline.AddPass<DotOperandConverter>(gpu_version);
@@ -2660,7 +2663,9 @@ absl::StatusOr<GpuCompiler::BackendCompileResult>
 GpuCompiler::CompileSingleModule(
     const HloModuleConfig& module_config,
     const stream_executor::DeviceDescription& device_description,
-    const HloModule* debug_module, llvm::Module* llvm_module, bool relocatable,
+    const HloModule* debug_module, llvm::Module* llvm_module,
+    absl::optional_ref<const GpuKernelSpec> spec,
+    absl::string_view kernel_fingerprint, bool relocatable,
     std::optional<int> shard_number) {
   tsl::profiler::TraceMe traceme("CompileSingleModule");
   const DebugOptions& debug_options = module_config.debug_options();
@@ -2703,29 +2708,57 @@ GpuCompiler::CompileSingleModule(
       CompileTargetBinary(module_config, llvm_module, device_description,
                           relocatable, debug_module, shard_number));
 
-  const bool should_dump =
-      DumpingEnabledForHloModule(debug_module ? debug_module->name() : "",
-                                 debug_options) &&
-      DumpingEnabledForEmitter("llvm", debug_options);
+  bool dumping_enabled = DumpingEnabledForHloModule(
+      debug_module ? debug_module->name() : "", debug_options);
+  if (dumping_enabled && !debug_module) {
+    LOG(ERROR) << "Dumping is not implemented since the file name cannot be "
+                  "inferred. Please implement (potentially MLIR) module -> "
+                  "filename heuristic.";
+    dumping_enabled = false;
+  }
 
-  if (should_dump) {
-    if (debug_module) {
-      llvm_ir::DumpIrIfEnabled(
-          *debug_module, *llvm_module,
-          /*optimized=*/true,
-          shard_number.has_value() ? std::to_string(*shard_number) : "");
-    } else {
-      LOG(ERROR) << "Dumping is not implemented since the file name cannot be "
-                    "inferred. Please implement (potentially MLIR) module -> "
-                    "filename heuristic.";
-    }
+  if (dumping_enabled && DumpingEnabledForEmitter("llvm", debug_options)) {
+    llvm_ir::DumpIrIfEnabled(
+        *debug_module, *llvm_module,
+        /*optimized=*/true,
+        shard_number.has_value() ? std::to_string(*shard_number) : "");
   }
 
   CallUserPostOptimizationHook(*llvm_module);
 
-  absl::MutexLock lock(user_asm_hook_m_);
-  if (user_asm_hook_ && !result.asm_text.empty()) {
-    user_asm_hook_(result.asm_text);
+  if (!result.asm_text.empty()) {
+    ABSL_ASSIGN_OR_RETURN(absl::string_view asm_extension, AsmFileExtension());
+    if (dumping_enabled &&
+        DumpingEnabledForEmitter(asm_extension, debug_options)) {
+      absl::string_view asm_text = result.asm_text;
+      std::string asm_storage;
+      if (spec.has_value()) {
+        std::string result_str;
+        tsl::protobuf::TextFormat::Printer printer;
+        printer.SetSingleLineMode(true);
+
+        ABSL_ASSIGN_OR_RETURN(GpuKernelSpecProto proto, spec->ToProto());
+        if (!printer.PrintToString(proto, &result_str)) {
+          return absl::InternalError("Failed to serialize GPU kernel spec.");
+        }
+
+        asm_storage = absl::StrCat(
+            "// Fingerprint: ", absl::CEscape(kernel_fingerprint), "\n",
+            "// GpuKernelSpec: ", result_str, "\n", result.asm_text);
+        asm_text = asm_storage;
+      }
+      DumpToFileInDirOrStdout(
+          *debug_module, "",
+          shard_number.has_value()
+              ? absl::StrCat(*shard_number, ".", asm_extension)
+              : asm_extension,
+          asm_text);
+    }
+
+    absl::MutexLock lock(user_asm_hook_m_);
+    if (user_asm_hook_) {
+      user_asm_hook_(result.asm_text);
+    }
   }
 
   return result;
@@ -2801,15 +2834,21 @@ GpuCompiler::CompileToBackendResult(
         BufferSizeBytesFunction();
 
     auto llvm_compiler =
-        [&](llvm::Module& llvm_module, const se::DeviceDescription& descr,
+        [&](llvm::Module& llvm_module,
+            absl::optional_ref<const GpuKernelSpec> spec,
+            absl::string_view kernel_fingerprint,
+            const se::DeviceDescription& descr,
             const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
-      llvm_ir::DumpIrIfEnabled(*module, llvm_module,
-                               /*optimized=*/false,
-                               std::to_string(shard_number.fetch_add(1)));
+      llvm_ir::DumpIrIfEnabled(
+          *module, llvm_module,
+          /*optimized=*/false,
+          std::to_string(shard_number.fetch_add(1, std::memory_order_relaxed)));
       ABSL_ASSIGN_OR_RETURN(
           BackendCompileResult result,
-          CompileSingleModule(module->config(), descr, module, &llvm_module,
-                              false, shard_number.fetch_add(1)));
+          CompileSingleModule(
+              module->config(), descr, module, &llvm_module, spec,
+              kernel_fingerprint, false,
+              shard_number.fetch_add(1, std::memory_order_relaxed)));
 
       absl::MutexLock lock(module_stats_m_);
       MergeModuleStatsInPlace(result.module_stats, module_stats);
@@ -3344,8 +3383,11 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
 absl::Status GpuCompiler::LoadAutotuneResultsFromFile(
     const DebugOptions& debug_options) {
   tsl::profiler::TraceMe traceme("LoadAutotuneResultsFromFile");
-  std::string file_path = debug_options.xla_gpu_load_autotune_results_from();
-  if (!file_path.empty()) {
+  if (absl::string_view file_path =
+          !debug_options.xla_load_autotune_cache_from().empty()
+              ? debug_options.xla_load_autotune_cache_from()
+              : debug_options.xla_gpu_load_autotune_results_from();
+      !file_path.empty()) {
     bool use_new_format = debug_options.xla_gpu_use_new_autotune_cache_format();
     static absl::once_flag once;
     absl::Status status = absl::OkStatus();
@@ -3392,7 +3434,9 @@ absl::Status GpuCompiler::SerializeAutotuneResultsToFile(
     const DebugOptions& debug_options) {
   // We are doing this after the timer is finished.
   if (absl::string_view file_path =
-          debug_options.xla_gpu_dump_autotune_results_to();
+          !debug_options.xla_dump_autotune_cache_to().empty()
+              ? debug_options.xla_dump_autotune_cache_to()
+              : debug_options.xla_gpu_dump_autotune_results_to();
       !file_path.empty()) {
     // Warning: This writes the autotune results at every compilation,
     // possibly multiple times per process.

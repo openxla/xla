@@ -30,9 +30,11 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/types/optional_ref.h"
 #include "llvm/IR/Module.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/autotune_results.pb.h"
+#include "xla/backends/gpu/codegen/gpu_kernel_spec.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
@@ -216,7 +218,9 @@ class GpuCompiler : public LLVMCompiler {
       const HloModuleConfig& module_config,
       const stream_executor::DeviceDescription& device_description,
       const HloModule* debug_module, llvm::Module* llvm_module,
-      bool relocatable, std::optional<int> shard_number);
+      absl::optional_ref<const GpuKernelSpec> spec,
+      absl::string_view kernel_fingerprint, bool relocatable,
+      std::optional<int> shard_number);
 
   absl::Status LoadAutotuneResultsFromFile(const DebugOptions& debug_options);
   absl::Status SerializeAutotuneResultsToFile(
@@ -244,6 +248,11 @@ class GpuCompiler : public LLVMCompiler {
       se::dnn::VersionInfo dnn_version,
       const se::SemanticVersion& toolkit_version,
       CompilationStats* compilation_stats) = 0;
+
+  // Returns the backend-specific file extension for asm files.
+  virtual absl::StatusOr<absl::string_view> AsmFileExtension() const {
+    return absl::UnimplementedError("AsmFileExtension is not implemented.");
+  }
 
   // TODO(timshen): Replace `debug_module` with some portable debug information
   // that accommodates both HLO and MLIR.

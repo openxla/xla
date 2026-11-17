@@ -442,6 +442,7 @@ cc_library(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
@@ -1216,7 +1217,6 @@ xla_test(
     args = [
         "--xla_tpu_order_dot_after_layout=true",
     ],
-    # placeholder for extra args for dot_operation_test_canonicalization_after_layout
     disabled_backends = [
         "cpu",
         "gpu",
@@ -1332,6 +1332,9 @@ xla_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -1823,6 +1826,7 @@ xla_test(
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
         ":xla_internal_test_main",
+        "//xla:comparison_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:test",
         "@com_google_absl//absl/strings",
@@ -2753,6 +2757,8 @@ xla_test(
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:types",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/transforms/collectives:all_reduce_simplifier",
         "//xla/service:device_assignment",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_runner_interface",
@@ -2762,6 +2768,7 @@ xla_test(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@ml_dtypes_py//ml_dtypes:float8",
