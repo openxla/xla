@@ -257,38 +257,27 @@ void GroupGemmUpdateArgs(hipStream_t stream,
       LOG(FATAL) << "Invalid ragged mode: " << static_cast<int>(p.ragged_mode);
   }
 #undef DISPATCH_KERNEL
-
+  // clang-format off
   GroupGemmKernelArgs kargs{
       static_cast<hipblaslt_ext::UserArguments*>(p.args.opaque()),
-      p.a.opaque(),
-      p.b.opaque(),
-      p.c.opaque(),
-      p.d.opaque(),
-      p.bias.opaque(),
-      p.group_sizes.opaque(),
-      p.stride_a_bytes,
-      p.stride_b_bytes,
+      p.a.opaque(), p.b.opaque(),
+      p.c.opaque(), p.d.opaque(),
+      p.bias.opaque(), p.group_sizes.opaque(),
+      p.stride_a_bytes, p.stride_b_bytes,
       p.c_stride_ragged_dim_bytes,
       p.output_stride_ragged_dim_bytes,
       p.must_swap_operands,
-      p.m,
-      p.n,
-      p.k,
-      p.batch,
-      p.strideA1,
-      p.strideA2,
-      p.strideB1,
-      p.strideB2,
-      p.strideC1,
-      p.strideC2,
-      p.strideD1,
-      p.strideD2,
+      p.m, p.n, p.k, p.batch,
+      p.strideA1, p.strideA2,
+      p.strideB1, p.strideB2,
+      p.strideC1, p.strideC2,
+      p.strideD1, p.strideD2,
       p.num_gemms,
       p.activation_type,
       p.bias_type,
       p.has_matrix_bias,
   };
-
+  // clang-format on
   // Calculate dynamic shared memory size for UserArguments array
   const uint32_t block_sz = BLOCK_SIZE;
   size_t shared_mem_size =
