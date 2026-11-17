@@ -15,8 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/move_copy_to_users.h"
 
+#include <cstdint>
+#include <optional>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -24,14 +27,19 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/hlo/analysis/while_loop_analysis.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout.h"
 #include "xla/service/hlo_creation_utils.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {
@@ -245,12 +253,217 @@ class MoveCopyToUsersVisitor : public DfsHloRewriteVisitor {
   }
 };
 
+// A use of an instruction as operand `operand_no` of `user`.
+struct Use {
+  HloInstruction* user;
+  int64_t operand_no;
+};
+
+// Returns the get-tuple-element instructions that read element `index` of
+// `tuple`.
+std::vector<HloInstruction*> ElementReaders(const HloInstruction* tuple,
+                                            int64_t index) {
+  std::vector<HloInstruction*> readers;
+  for (HloInstruction* user : tuple->users()) {
+    if (HloPredicateIsOp<HloOpcode::kGetTupleElement>(user) &&
+        user->tuple_index() == index) {
+      readers.push_back(user);
+    }
+  }
+  return readers;
+}
+
+bool AllUsersAreGetTupleElements(const HloInstruction* instruction) {
+  return absl::c_all_of(instruction->users(), [](const HloInstruction* user) {
+    return HloPredicateIsOp<HloOpcode::kGetTupleElement>(user);
+  });
+}
+
+bool IsUnused(const HloInstruction* instruction) {
+  return instruction->user_count() == 0 && !instruction->IsRoot();
+}
+
+std::optional<int64_t> TripCount(const HloInstruction* while_op) {
+  auto config = while_op->backend_config<WhileLoopBackendConfig>();
+  if (config.ok() && config->has_known_trip_count()) {
+    return config->known_trip_count().n();
+  }
+  return ComputeWhileLoopTripCount(while_op);
+}
+
+// Describes how to move the copy that produces element `index` of the initial
+// state of a while loop into the body of the loop.
+struct CopyIntoWhileBody {
+  HloInstruction* copy;
+  int64_t index;
+  // The uses of the element in the body that need the layout the copy
+  // produces. They are slices and dynamic-slices of the element.
+  std::vector<Use> body_uses;
+};
+
+// Returns how to move the copy that produces element `index` of the initial
+// state of `while_op` into the body of the loop, or nullopt if the copy can not
+// be moved or moving it does not pay off.
+//
+// The copy can be moved if the loop only reads the element: the body passes
+// it on unchanged, so the loop can carry the element in the layout it has
+// before the copy. Moving pays off if the body only reads slices of the
+// element and the slices of all iterations together are not larger than the
+// element. The copies of the slices then replace the copy of the element, and
+// the element is not kept in two layouts while the loop runs.
+std::optional<CopyIntoWhileBody> MatchCopyIntoWhileBody(
+    HloInstruction* while_op, int64_t index) {
+  HloInstruction* init = while_op->mutable_operand(0);
+  HloInstruction* copy = init->mutable_operand(index);
+  if (HloPredicateIsNotOp<HloOpcode::kCopy>(copy) || !copy->shape().IsArray() ||
+      copy->shape() == copy->operand(0)->shape()) {
+    return std::nullopt;
+  }
+
+  // The state must only be read element by element, so that the layout of one
+  // element can be changed. The element must not be read after the loop, where
+  // all of it would have to be copied again.
+  HloComputation* body = while_op->while_body();
+  const HloInstruction* body_parameter = body->parameter_instruction(0);
+  const HloInstruction* condition_parameter =
+      while_op->while_condition()->parameter_instruction(0);
+  if (while_op->IsRoot() || !AllUsersAreGetTupleElements(while_op) ||
+      !AllUsersAreGetTupleElements(body_parameter) ||
+      !AllUsersAreGetTupleElements(condition_parameter) ||
+      !absl::c_all_of(ElementReaders(while_op, index), IsUnused) ||
+      !absl::c_all_of(ElementReaders(condition_parameter, index), IsUnused)) {
+    return std::nullopt;
+  }
+
+  // The body must pass the element on unchanged.
+  const HloInstruction* body_root = body->root_instruction();
+  if (HloPredicateIsNotOp<HloOpcode::kTuple>(body_root)) {
+    return std::nullopt;
+  }
+  const HloInstruction* passed_on = body_root->operand(index);
+  if (HloPredicateIsNotOp<HloOpcode::kGetTupleElement>(passed_on) ||
+      passed_on->operand(0) != body_parameter ||
+      passed_on->tuple_index() != index) {
+    return std::nullopt;
+  }
+
+  // Apart from that, the body must only read slices of the element.
+  CopyIntoWhileBody result{copy, index, {}};
+  int64_t bytes_sliced_per_iteration = 0;
+  for (HloInstruction* reader : ElementReaders(body_parameter, index)) {
+    for (HloInstruction* user : reader->users()) {
+      for (int64_t operand_no : user->OperandIndices(reader)) {
+        if (user == body_root && operand_no == index) {
+          continue;
+        }
+        if (operand_no != 0 ||
+            HloPredicateIsNotOp<HloOpcode::kSlice, HloOpcode::kDynamicSlice>(
+                user)) {
+          return std::nullopt;
+        }
+        result.body_uses.push_back({user, operand_no});
+        bytes_sliced_per_iteration += ShapeUtil::ByteSizeOf(user->shape());
+      }
+    }
+  }
+  if (!result.body_uses.empty()) {
+    std::optional<int64_t> trip_count = TripCount(while_op);
+    if (!trip_count.has_value() || *trip_count * bytes_sliced_per_iteration >
+                                       ShapeUtil::ByteSizeOf(copy->shape())) {
+      return std::nullopt;
+    }
+  }
+  return result;
+}
+
+// Moves the copy described by `match` into the body of `while_op`: the loop
+// carries the element in the layout it has before the copy, and each slice of
+// the element in the body reads a copy of the element. MoveCopyToUsersVisitor
+// then moves that copy below the slice.
+absl::Status MoveCopyIntoWhileBody(HloInstruction* while_op,
+                                   const CopyIntoWhileBody& match) {
+  const int64_t index = match.index;
+  HloInstruction* init = while_op->mutable_operand(0);
+  HloInstruction* copied = match.copy->mutable_operand(0);
+  HloComputation* body = while_op->while_body();
+  const Shape copy_shape = match.copy->shape();
+  const Shape copied_shape = copied->shape();
+
+  // The slices in the body read the element in the layout of the copy.
+  for (const Use& use : match.body_uses) {
+    HloInstruction* reader = use.user->mutable_operand(use.operand_no);
+    ABSL_RETURN_IF_ERROR(use.user->ReplaceOperandWith(
+        use.operand_no, MakeCopyHlo(reader, copy_shape)));
+  }
+
+  // Everything that carries the element has the layout of the copied array.
+  ABSL_RETURN_IF_ERROR(init->ReplaceOperandWithDifferentShape(index, copied));
+  for (HloInstruction* state :
+       {init, while_op, body->parameter_instruction(0),
+        body->root_instruction(),
+        while_op->while_condition()->parameter_instruction(0)}) {
+    *state->mutable_shape()->mutable_tuple_shapes(index) = copied_shape;
+    for (HloInstruction* reader : ElementReaders(state, index)) {
+      *reader->mutable_shape() = copied_shape;
+    }
+  }
+
+  if (match.copy->user_count() == 0) {
+    ABSL_RETURN_IF_ERROR(match.copy->parent()->RemoveInstruction(match.copy));
+  }
+  return absl::OkStatus();
+}
+
+// Moves copies that produce an element of the initial state of a while loop
+// into the body of the loop, see MatchCopyIntoWhileBody.
+absl::StatusOr<bool> MoveCopiesIntoWhileBodies(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  std::vector<HloInstruction*> while_ops;
+  for (HloComputation* computation :
+       module->MakeNonfusionComputations(execution_threads)) {
+    for (HloInstruction* instruction : computation->instructions()) {
+      if (HloPredicateIsOp<HloOpcode::kWhile>(instruction)) {
+        while_ops.push_back(instruction);
+      }
+    }
+  }
+
+  bool changed = false;
+  for (HloInstruction* while_op : while_ops) {
+    // The initial state must be a tuple that is only used by the loop, and the
+    // body and the condition must only be called by the loop, so that the
+    // layout of an element can be changed in all of them.
+    const HloInstruction* init = while_op->operand(0);
+    if (HloPredicateIsNotOp<HloOpcode::kTuple>(init) ||
+        init->user_count() != 1 ||
+        while_op->while_body()->caller_instructions().size() != 1 ||
+        while_op->while_condition()->caller_instructions().size() != 1) {
+      continue;
+    }
+    for (int64_t index = 0; index < init->operand_count(); ++index) {
+      std::optional<CopyIntoWhileBody> match =
+          MatchCopyIntoWhileBody(while_op, index);
+      if (match.has_value()) {
+        ABSL_RETURN_IF_ERROR(MoveCopyIntoWhileBody(while_op, *match));
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
 }  // end namespace
 
 absl::StatusOr<bool> MoveCopyToUsers::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  return MoveCopyToUsersVisitor{}.RunOnModule(module, execution_threads);
+  ABSL_ASSIGN_OR_RETURN(bool moved_into_while_bodies,
+                        MoveCopiesIntoWhileBodies(module, execution_threads));
+  ABSL_ASSIGN_OR_RETURN(
+      bool moved_to_users,
+      MoveCopyToUsersVisitor{}.RunOnModule(module, execution_threads));
+  return moved_into_while_bodies || moved_to_users;
 }
 
 }  // end namespace xla
