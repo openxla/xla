@@ -31,6 +31,7 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/numeric/int128.h"
 #include "absl/random/uniform_int_distribution.h"
@@ -360,10 +361,9 @@ constexpr int64_t kMinElementsPerPartition = 16384;
 // state are independent of the host thread count and partition boundaries.
 // Tensors below 2 * kMinElementsPerPartition run inline to avoid thread
 // dispatch overhead.
-template <typename PerPartitionFn>
-void ParallelPopulateWithEngine(int64_t num_elements, std::minstd_rand0* engine,
-                                int64_t steps_per_element,
-                                PerPartitionFn&& fn) {
+void ParallelPopulateWithEngine(
+    int64_t num_elements, std::minstd_rand0* engine, int64_t steps_per_element,
+    absl::FunctionRef<void(int64_t, int64_t, std::minstd_rand0*)> fn) {
   if (num_elements <= 0) {
     return;
   }
@@ -477,7 +477,7 @@ void PopulateWithRandomFullRangeFloatingPointData(Literal* literal,
       });
 }
 
-template <typename FloatT, typename GeneratorT>
+template <typename FloatT, typename GeneratorT, bool kConstrained = true>
 void PopulateWithRandomFloatingPointData(
     Literal* literal, std::minstd_rand0* engine,
     std::optional<ConstraintInterval> interval) {
@@ -487,7 +487,7 @@ void PopulateWithRandomFloatingPointData(
   GeneratorT max = std::min<GeneratorT>(
       static_cast<GeneratorT>(0.2),
       static_cast<GeneratorT>(std::numeric_limits<FloatT>::max()));
-  if (interval.has_value() && !interval->IsUnconstrained()) {
+  if (kConstrained && interval.has_value() && !interval->IsUnconstrained()) {
     min = interval->min == ConstraintInterval::kMin
               ? min
               : static_cast<GeneratorT>(interval->min);
@@ -509,7 +509,8 @@ void PopulateWithRandomFloatingPointData(
     std::fill(data.begin(), data.end(), static_cast<FloatT>(min));
     return;
   }
-  const bool exclude_zero = interval.has_value() && interval->exclude_zero;
+  const bool exclude_zero =
+      kConstrained && interval.has_value() && interval->exclude_zero;
   if (static_cast<int64_t>(data.size()) < kMinElementsPerPartition) {
     std::uniform_real_distribution<GeneratorT> generator(min, max);
     for (FloatT& value : data) {
@@ -649,59 +650,66 @@ void PopulateWithUniformFullRangeFloatingPointData(Literal* literal,
       });
 }
 
-template <typename FloatT>
+template <typename FloatT, bool kConstrained = true>
 void PopulateWithFloatingPointData(
     Literal* literal, std::minstd_rand0* engine, bool no_duplicates,
     bool use_large_range, std::optional<int64_t> max_bits_of_precision,
-    std::function<double(std::minstd_rand0*)> generator = nullptr,
+    const std::function<double(std::minstd_rand0*)>& generator = nullptr,
     std::optional<ConstraintInterval> interval = std::nullopt) {
   using ComputeT =
       std::conditional_t<sizeof(FloatT) < sizeof(float), float, FloatT>;
   CHECK_NOTNULL(engine);
   CHECK_EQ(literal->shape().element_type(),
            primitive_util::NativeToPrimitiveType<FloatT>());
-  const int64_t bit_width =
+  constexpr int kBitWidth =
       primitive_util::BitWidth(primitive_util::NativeToPrimitiveType<FloatT>());
   // Floats with exceptionally small bit width can represent just a handful of
   // values. No sense in restricting the output values in the way we do for
   // higher precision formats. We just let the random generator do its thing.
-  const bool float_with_small_bit_width = (bit_width <= 4);
-  if (generator != nullptr) {
-    for (FloatT& value : literal->data<FloatT>()) {
-      value = static_cast<FloatT>(generator(engine));
+  if constexpr (kConstrained) {
+    if (generator != nullptr) {
+      for (FloatT& value : literal->data<FloatT>()) {
+        value = static_cast<FloatT>(generator(engine));
+      }
+      return;
     }
-  } else if (max_bits_of_precision.has_value()) {
-    CHECK(!use_large_range) << "Cannot set both use_large_range and "
+    if (max_bits_of_precision.has_value()) {
+      CHECK(!use_large_range) << "Cannot set both use_large_range and "
+                                 "max_bits_of_precision for floating points.";
+      CHECK(!no_duplicates) << "Cannot set both no_duplicates and "
                                "max_bits_of_precision for floating points.";
-    CHECK(!no_duplicates) << "Cannot set both no_duplicates and "
-                             "max_bits_of_precision for floating points.";
-    absl::uniform_int_distribution<int64_t> generator(
-        -(1 << *max_bits_of_precision), 1 << *max_bits_of_precision);
-    for (FloatT& value : literal->data<FloatT>()) {
-      int64_t temp = generator(*engine);
-      // We want to generate floating point numbers to a fixed precision, while
-      // keeping them between -1 and 1. This preserves their bits of precision
-      // while keeping the numbers small.
-      value = static_cast<FloatT>(
-          temp == 0 ? 0 : temp * pow(2, -ceil(log2(abs(temp)))));
+      absl::uniform_int_distribution<int64_t> generator(
+          -(1 << *max_bits_of_precision), 1 << *max_bits_of_precision);
+      for (FloatT& value : literal->data<FloatT>()) {
+        int64_t temp = generator(*engine);
+        // We want to generate floating point numbers to a fixed precision,
+        // while keeping them between -1 and 1. This preserves their bits of
+        // precision while keeping the numbers small.
+        value = static_cast<FloatT>(
+            temp == 0 ? 0 : temp * pow(2, -ceil(log2(abs(temp)))));
+      }
+      return;
     }
-  } else if (no_duplicates) {
-    PopulateWithNoDuplicateData<FloatT>(literal, engine);
-  } else if (float_with_small_bit_width) {
+    if (no_duplicates) {
+      PopulateWithNoDuplicateData<FloatT>(literal, engine);
+      return;
+    }
+  }
+  if constexpr (kBitWidth <= 4) {
     PopulateWithUniformFullRangeFloatingPointData<FloatT>(literal, engine);
   } else if (use_large_range) {
     PopulateWithRandomFullRangeFloatingPointData<FloatT>(literal, engine);
   } else {
-    PopulateWithRandomFloatingPointData<FloatT, ComputeT>(literal, engine,
-                                                          interval);
+    PopulateWithRandomFloatingPointData<FloatT, ComputeT, kConstrained>(
+        literal, engine, interval);
   }
 }
 
-template <typename ComplexT>
+template <typename ComplexT, bool kConstrained = true>
 void PopulateWithComplexData(
     Literal* result, std::minstd_rand0* engine, bool no_duplicates,
     bool use_large_range,
-    std::function<double(std::minstd_rand0*)> generator = nullptr) {
+    const std::function<double(std::minstd_rand0*)>& generator = nullptr) {
   using InnerFloatT = typename ComplexT::value_type;
   CHECK_NOTNULL(engine);
   CHECK_EQ(result->shape().element_type(),
@@ -711,10 +719,10 @@ void PopulateWithComplexData(
   Literal real_lit(floating_point_shape);
   Literal imaginary_lit(floating_point_shape);
 
-  PopulateWithFloatingPointData<InnerFloatT>(
+  PopulateWithFloatingPointData<InnerFloatT, kConstrained>(
       &real_lit, engine, no_duplicates, use_large_range,
       /*max_bits_of_precision=*/std::nullopt, generator);
-  PopulateWithFloatingPointData<InnerFloatT>(
+  PopulateWithFloatingPointData<InnerFloatT, kConstrained>(
       &imaginary_lit, engine, no_duplicates, use_large_range,
       /*max_bits_of_precision=*/std::nullopt, generator);
 
@@ -766,11 +774,11 @@ using RngT = std::conditional_t<
 //   (multiplication, squaring, etc.) and float conversion explosions.
 // - Expands to full range if no_duplicates requires more unique elements than
 //   B/2 capacity.
-template <typename IntT>
+template <typename IntT, bool kConstrained = true>
 std::pair<IntT, IntT> GetIntegralBounds(
     const Shape& shape, bool use_large_range, bool no_duplicates,
     std::optional<std::pair<int64_t, int64_t>> limit) {
-  if (!limit.has_value()) {
+  if (!kConstrained || !limit.has_value()) {
     return {std::numeric_limits<IntT>::lowest(),
             std::numeric_limits<IntT>::max()};
   }
@@ -875,7 +883,7 @@ uint64_t SampleIntegralOffset(std::minstd_rand0* engine, uint64_t span_minus_1,
       64);
 }
 
-template <typename IntT>
+template <typename IntT, bool kConstrained = true>
 void PopulateWithRandomIntegralDataWithBounds(
     Literal* literal, std::minstd_rand0* engine, bool no_duplicates, IntT min,
     IntT max, std::optional<IntT> alignment,
@@ -885,75 +893,78 @@ void PopulateWithRandomIntegralDataWithBounds(
            primitive_util::NativeToPrimitiveType<IntT>());
   CHECK(!(no_duplicates && alignment.has_value()))
       << "Cannot set both no_duplicates and alignment for integral types.";
-  if (no_duplicates &&
-      ShapeUtil::ElementsIn(literal->shape()) < static_cast<int64_t>(max)) {
-    int32_t start = 0;
-    if (primitive_util::IsSignedIntegralType(literal->shape().element_type())) {
-      // Generate negative numbers also.
-      auto size = literal->data<IntT>().size();
-      start = size / 2 - size;
-    }
-    std::iota(literal->data<IntT>().begin(), literal->data<IntT>().end(),
-              static_cast<IntT>(start));
-    std::shuffle(literal->data<IntT>().begin(), literal->data<IntT>().end(),
-                 *engine);
-  } else {
-    absl::Span<IntT> data = literal->data<IntT>();
-    if (static_cast<int64_t>(data.size()) < kMinElementsPerPartition) {
-      absl::uniform_int_distribution<RngT<IntT>> generator(
-          static_cast<RngT<IntT>>(min), static_cast<RngT<IntT>>(max));
-      for (IntT& value : data) {
-        value = static_cast<IntT>(generator(*engine));
-        if (alignment.has_value()) {
-          value = (value / *alignment) * *alignment;
-        }
-        if (index_known_zeroes.has_value()) {
-          value &= ~*index_known_zeroes;
-        }
+  if constexpr (kConstrained) {
+    if (no_duplicates &&
+        ShapeUtil::ElementsIn(literal->shape()) < static_cast<int64_t>(max)) {
+      int32_t start = 0;
+      if (primitive_util::IsSignedIntegralType(
+              literal->shape().element_type())) {
+        // Generate negative numbers also.
+        auto size = literal->data<IntT>().size();
+        start = size / 2 - size;
       }
+      std::iota(literal->data<IntT>().begin(), literal->data<IntT>().end(),
+                static_cast<IntT>(start));
+      std::shuffle(literal->data<IntT>().begin(), literal->data<IntT>().end(),
+                   *engine);
       return;
     }
-    // Map signed bounds into an order-preserving unsigned domain by flipping
-    // the sign bit so `u_max - u_min` never overflows signed arithmetic.
-    using SignedOrUnsignedRngT = RngT<IntT>;
-    using UnsignedRngT = std::make_unsigned_t<SignedOrUnsignedRngT>;
-    constexpr UnsignedRngT kSignBit =
-        std::is_signed_v<SignedOrUnsignedRngT>
-            ? (UnsignedRngT{1} << (sizeof(UnsignedRngT) * 8 - 1))
-            : UnsignedRngT{0};
-    const SignedOrUnsignedRngT min_rng = static_cast<SignedOrUnsignedRngT>(min);
-    const SignedOrUnsignedRngT max_rng = static_cast<SignedOrUnsignedRngT>(max);
-    const uint64_t u_min =
-        static_cast<uint64_t>(static_cast<UnsignedRngT>(min_rng) ^ kSignBit);
-    const uint64_t u_max =
-        static_cast<uint64_t>(static_cast<UnsignedRngT>(max_rng) ^ kSignBit);
-    CHECK_LE(u_min, u_max);
-    const uint64_t span_minus_1 = u_max - u_min;
-
-    const int64_t steps_per_element =
-        span_minus_1 < (uint64_t{1} << 20)
-            ? 1
-            : (span_minus_1 <= std::numeric_limits<uint32_t>::max() ? 2 : 4);
-    ParallelPopulateWithEngine(
-        static_cast<int64_t>(data.size()), engine, steps_per_element,
-        [&](int64_t start, int64_t end, std::minstd_rand0* local_engine) {
-          for (int64_t i = start; i < end; ++i) {
-            const uint64_t offset = SampleIntegralOffset(
-                local_engine, span_minus_1, steps_per_element);
-            const SignedOrUnsignedRngT sampled =
-                static_cast<SignedOrUnsignedRngT>(
-                    static_cast<UnsignedRngT>(u_min + offset) ^ kSignBit);
-            IntT value = static_cast<IntT>(sampled);
-            if (alignment.has_value()) {
-              value = (value / *alignment) * *alignment;
-            }
-            if (index_known_zeroes.has_value()) {
-              value &= ~*index_known_zeroes;
-            }
-            data[i] = value;
-          }
-        });
   }
+  absl::Span<IntT> data = literal->data<IntT>();
+  if (static_cast<int64_t>(data.size()) < kMinElementsPerPartition) {
+    absl::uniform_int_distribution<RngT<IntT>> generator(
+        static_cast<RngT<IntT>>(min), static_cast<RngT<IntT>>(max));
+    for (IntT& value : data) {
+      value = static_cast<IntT>(generator(*engine));
+      if (kConstrained && alignment.has_value()) {
+        value = (value / *alignment) * *alignment;
+      }
+      if (kConstrained && index_known_zeroes.has_value()) {
+        value &= ~*index_known_zeroes;
+      }
+    }
+    return;
+  }
+  // Map signed bounds into an order-preserving unsigned domain by flipping
+  // the sign bit so `u_max - u_min` never overflows signed arithmetic.
+  using SignedOrUnsignedRngT = RngT<IntT>;
+  using UnsignedRngT = std::make_unsigned_t<SignedOrUnsignedRngT>;
+  constexpr UnsignedRngT kSignBit =
+      std::is_signed_v<SignedOrUnsignedRngT>
+          ? (UnsignedRngT{1} << (sizeof(UnsignedRngT) * 8 - 1))
+          : UnsignedRngT{0};
+  const SignedOrUnsignedRngT min_rng = static_cast<SignedOrUnsignedRngT>(min);
+  const SignedOrUnsignedRngT max_rng = static_cast<SignedOrUnsignedRngT>(max);
+  const uint64_t u_min =
+      static_cast<uint64_t>(static_cast<UnsignedRngT>(min_rng) ^ kSignBit);
+  const uint64_t u_max =
+      static_cast<uint64_t>(static_cast<UnsignedRngT>(max_rng) ^ kSignBit);
+  CHECK_LE(u_min, u_max);
+  const uint64_t span_minus_1 = u_max - u_min;
+
+  const int64_t steps_per_element =
+      span_minus_1 < (uint64_t{1} << 20)
+          ? 1
+          : (span_minus_1 <= std::numeric_limits<uint32_t>::max() ? 2 : 4);
+  ParallelPopulateWithEngine(
+      static_cast<int64_t>(data.size()), engine, steps_per_element,
+      [&](int64_t start, int64_t end, std::minstd_rand0* local_engine) {
+        for (int64_t i = start; i < end; ++i) {
+          const uint64_t offset = SampleIntegralOffset(
+              local_engine, span_minus_1, steps_per_element);
+          const SignedOrUnsignedRngT sampled =
+              static_cast<SignedOrUnsignedRngT>(
+                  static_cast<UnsignedRngT>(u_min + offset) ^ kSignBit);
+          IntT value = static_cast<IntT>(sampled);
+          if (kConstrained && alignment.has_value()) {
+            value = (value / *alignment) * *alignment;
+          }
+          if (kConstrained && index_known_zeroes.has_value()) {
+            value &= ~*index_known_zeroes;
+          }
+          data[i] = value;
+        }
+      });
 }
 
 // Populates a PRED (boolean) literal with uniform random booleans, using the
@@ -1295,28 +1306,20 @@ void PopulateWithRandomPredData(Literal* literal, std::minstd_rand0* engine) {
   return l.GetFirstInteger();
 }
 
-absl::StatusOr<Literal> MakeFakeLiteral(const Shape& shape, bool pseudo_random,
-                                        bool use_large_range) {
-  auto engine = pseudo_random ? std::make_unique<std::minstd_rand0>() : nullptr;
-  return MakeFakeLiteral(shape, engine.get(), /*limit=*/std::nullopt,
-                         /*is_sorted=*/false,
-                         /*no_duplicates=*/false, use_large_range,
-                         /*max_bits_of_precision=*/std::nullopt,
-                         /*index_alignment=*/std::nullopt,
-                         /*index_known_zeroes=*/std::nullopt,
-                         /*float_generator=*/nullptr,
-                         /*interval=*/std::nullopt);
-}
+namespace {
 
-absl::StatusOr<Literal> MakeFakeLiteral(
-    const Shape& shape, std::minstd_rand0* engine,
-    std::optional<std::pair<int64_t, int64_t>> limit, bool is_sorted,
-    bool no_duplicates, bool use_large_range,
-    std::optional<int64_t> max_bits_of_precision,
-    std::optional<int64_t> index_alignment,
-    std::optional<uint64_t> index_known_zeroes,
-    std::function<double(std::minstd_rand0*)> float_generator,
-    std::optional<ConstraintInterval> interval) {
+// When kConstrained=false, omits sorting, deduplication, and value-constraint
+// branches across all 32 array types for the 3-argument MakeFakeLiteral API.
+template <bool kConstrained>
+absl::StatusOr<Literal> MakeFakeLiteralImpl(
+    const Shape& shape, std::minstd_rand0* engine, bool use_large_range,
+    std::optional<std::pair<int64_t, int64_t>> limit = std::nullopt,
+    bool is_sorted = false, bool no_duplicates = false,
+    std::optional<int64_t> max_bits_of_precision = std::nullopt,
+    std::optional<int64_t> index_alignment = std::nullopt,
+    std::optional<uint64_t> index_known_zeroes = std::nullopt,
+    const std::function<double(std::minstd_rand0*)>& float_generator = nullptr,
+    std::optional<ConstraintInterval> interval = std::nullopt) {
   if (shape.IsTuple()) {
     std::vector<Literal> elements;
     const auto& shape_tuple_shapes = shape.tuple_shapes();
@@ -1324,10 +1327,10 @@ absl::StatusOr<Literal> MakeFakeLiteral(
     for (const Shape& element_shape : shape_tuple_shapes) {
       ABSL_ASSIGN_OR_RETURN(
           Literal element,
-          MakeFakeLiteral(element_shape, engine, limit, is_sorted,
-                          no_duplicates, use_large_range, max_bits_of_precision,
-                          index_alignment, index_known_zeroes, float_generator,
-                          interval));
+          MakeFakeLiteralImpl<kConstrained>(
+              element_shape, engine, use_large_range, limit, is_sorted,
+              no_duplicates, max_bits_of_precision, index_alignment,
+              index_known_zeroes, float_generator, interval));
       elements.push_back(std::move(element));
     }
     return LiteralUtil::MakeTupleOwned(std::move(elements));
@@ -1353,7 +1356,7 @@ absl::StatusOr<Literal> MakeFakeLiteral(
           using NativeT = primitive_util::NativeTypeOf<primitive_type_constant>;
           if constexpr (primitive_util::IsFloatingPointType(
                             primitive_type_constant)) {
-            PopulateWithFloatingPointData<NativeT>(
+            PopulateWithFloatingPointData<NativeT, kConstrained>(
                 &literal, engine, no_duplicates, use_large_range,
                 max_bits_of_precision, float_generator, interval);
             return absl::OkStatus();
@@ -1364,39 +1367,44 @@ absl::StatusOr<Literal> MakeFakeLiteral(
           }
           if constexpr (primitive_util::IsIntegralType(
                             primitive_type_constant)) {
-            auto [min, max] = GetIntegralBounds<NativeT>(
+            auto [min, max] = GetIntegralBounds<NativeT, kConstrained>(
                 new_shape, use_large_range, no_duplicates, limit);
-            if (max_bits_of_precision.has_value()) {
-              max = std::min(max,
-                             static_cast<NativeT>(1 << *max_bits_of_precision));
-              if (primitive_util::IsSignedIntegralType(
-                      primitive_type_constant)) {
-                min = std::max(
-                    min, static_cast<NativeT>(-(1 << *max_bits_of_precision)));
+            std::optional<NativeT> alignment_native = std::nullopt;
+            std::optional<NativeT> index_known_zeroes_native = std::nullopt;
+            if constexpr (kConstrained) {
+              if (max_bits_of_precision.has_value()) {
+                max = std::min(
+                    max, static_cast<NativeT>(1 << *max_bits_of_precision));
+                if (primitive_util::IsSignedIntegralType(
+                        primitive_type_constant)) {
+                  min = std::max(min, static_cast<NativeT>(
+                                          -(1 << *max_bits_of_precision)));
+                }
+              }
+              if (index_alignment.has_value()) {
+                alignment_native = static_cast<NativeT>(*index_alignment);
+              }
+              if (index_known_zeroes.has_value()) {
+                index_known_zeroes_native =
+                    static_cast<NativeT>(*index_known_zeroes);
               }
             }
-            std::optional<NativeT> alignment_native = std::nullopt;
-            if (index_alignment.has_value()) {
-              alignment_native = static_cast<NativeT>(*index_alignment);
-            }
-            std::optional<NativeT> index_known_zeroes_native = std::nullopt;
-            if (index_known_zeroes.has_value()) {
-              index_known_zeroes_native =
-                  static_cast<NativeT>(*index_known_zeroes);
-            }
-            PopulateWithRandomIntegralDataWithBounds<NativeT>(
+            PopulateWithRandomIntegralDataWithBounds<NativeT, kConstrained>(
                 &literal, engine, no_duplicates, min, max, alignment_native,
                 index_known_zeroes_native);
-            if (is_sorted) {
-              std::sort(literal.data<NativeT>().begin(),
-                        literal.data<NativeT>().end());
+            if constexpr (kConstrained) {
+              if (is_sorted) {
+                std::sort(literal.data<NativeT>().begin(),
+                          literal.data<NativeT>().end());
+              }
             }
             return absl::OkStatus();
           }
           if constexpr (primitive_util::IsComplexType(
                             primitive_type_constant)) {
-            PopulateWithComplexData<NativeT>(&literal, engine, no_duplicates,
-                                             use_large_range, float_generator);
+            PopulateWithComplexData<NativeT, kConstrained>(
+                &literal, engine, no_duplicates, use_large_range,
+                float_generator);
             return absl::OkStatus();
           }
         }
@@ -1407,6 +1415,30 @@ absl::StatusOr<Literal> MakeFakeLiteral(
       },
       shape.element_type()));
   return std::move(literal);
+}
+
+}  // namespace
+
+absl::StatusOr<Literal> MakeFakeLiteral(const Shape& shape, bool pseudo_random,
+                                        bool use_large_range) {
+  auto engine = pseudo_random ? std::make_unique<std::minstd_rand0>() : nullptr;
+  return MakeFakeLiteralImpl</*kConstrained=*/false>(shape, engine.get(),
+                                                     use_large_range);
+}
+
+absl::StatusOr<Literal> MakeFakeLiteral(
+    const Shape& shape, std::minstd_rand0* engine,
+    std::optional<std::pair<int64_t, int64_t>> limit, bool is_sorted,
+    bool no_duplicates, bool use_large_range,
+    std::optional<int64_t> max_bits_of_precision,
+    std::optional<int64_t> index_alignment,
+    std::optional<uint64_t> index_known_zeroes,
+    std::function<double(std::minstd_rand0*)> float_generator,
+    std::optional<ConstraintInterval> interval) {
+  return MakeFakeLiteralImpl</*kConstrained=*/true>(
+      shape, engine, use_large_range, limit, is_sorted, no_duplicates,
+      max_bits_of_precision, index_alignment, index_known_zeroes,
+      float_generator, interval);
 }
 
 /*static*/ std::vector<const Literal*> LiteralUtil::MakePointers(
