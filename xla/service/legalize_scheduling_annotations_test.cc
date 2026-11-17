@@ -297,9 +297,7 @@ TEST_F(LegalizeSchedulingAnnotationsTest, MoveFusedOpAnnotationToCaller) {
       LegalizeSchedulingAnnotations(config).Run(hlo_module.get()).status());
 
   HloInstruction* fusion = hlo_module->entry_computation()->root_instruction();
-  const auto& attrs = fusion->frontend_attributes().map();
-  EXPECT_TRUE(attrs.contains(kXlaSchedulingGroupIdAttr));
-  EXPECT_EQ(attrs.at(kXlaSchedulingGroupIdAttr), "1");
+  EXPECT_EQ(fusion->get_frontend_attribute(kXlaSchedulingGroupIdAttr), "1");
 }
 
 TEST_F(LegalizeSchedulingAnnotationsTest, FusedOpsWithDifferentAnnotationIds) {
@@ -348,8 +346,7 @@ TEST_F(LegalizeSchedulingAnnotationsTest, DropAnnotationFromBitcast) {
       LegalizeSchedulingAnnotations(config).Run(hlo_module.get()).status());
   HloInstruction* bitcast =
       hlo_module->entry_computation()->root_instruction()->mutable_operand(0);
-  EXPECT_FALSE(
-      bitcast->frontend_attributes().map().contains(kXlaSchedulingGroupIdAttr));
+  EXPECT_FALSE(bitcast->has_frontend_attribute(kXlaSchedulingGroupIdAttr));
 }
 
 TEST_F(LegalizeSchedulingAnnotationsTest, DropAnnotationFromTrivialGroups) {
@@ -385,14 +382,10 @@ TEST_F(LegalizeSchedulingAnnotationsTest, DropAnnotationFromTrivialGroups) {
   HloInstruction* bitcast2 = bitcast3->mutable_operand(0);
   HloInstruction* all_reduce = bitcast2->mutable_operand(0);
   HloInstruction* bitcast = all_reduce->mutable_operand(0);
-  EXPECT_TRUE(all_reduce->frontend_attributes().map().contains(
-      kXlaSchedulingGroupIdAttr));
-  EXPECT_FALSE(
-      bitcast->frontend_attributes().map().contains(kXlaSchedulingGroupIdAttr));
-  EXPECT_FALSE(bitcast2->frontend_attributes().map().contains(
-      kXlaSchedulingGroupIdAttr));
-  EXPECT_FALSE(bitcast3->frontend_attributes().map().contains(
-      kXlaSchedulingGroupIdAttr));
+  EXPECT_TRUE(all_reduce->has_frontend_attribute(kXlaSchedulingGroupIdAttr));
+  EXPECT_FALSE(bitcast->has_frontend_attribute(kXlaSchedulingGroupIdAttr));
+  EXPECT_FALSE(bitcast2->has_frontend_attribute(kXlaSchedulingGroupIdAttr));
+  EXPECT_FALSE(bitcast3->has_frontend_attribute(kXlaSchedulingGroupIdAttr));
 }
 
 TEST_F(LegalizeSchedulingAnnotationsTest,
@@ -497,8 +490,7 @@ ENTRY entry {
   HloInstruction* add =
       hlo_module->GetComputationWithName("entry")->GetInstructionWithName("a0");
   CHECK(add != nullptr);
-  const auto& attrs = add->frontend_attributes().map();
-  EXPECT_FALSE(attrs.contains(kXlaSchedulingGroupIdAttr));
+  EXPECT_FALSE(add->has_frontend_attribute(kXlaSchedulingGroupIdAttr));
 }
 
 TEST_F(LegalizeSchedulingAnnotationsTest, ProgagateAnnotationToGap) {
@@ -528,9 +520,7 @@ TEST_F(LegalizeSchedulingAnnotationsTest, ProgagateAnnotationToGap) {
   HloInstruction* slice =
       hlo_module->entry_computation()->GetInstructionWithName("slice");
   CHECK(slice != nullptr);
-  const auto& attrs = slice->frontend_attributes().map();
-  EXPECT_TRUE(attrs.contains(kXlaSchedulingGroupIdAttr));
-  EXPECT_EQ(attrs.at(kXlaSchedulingGroupIdAttr), "1");
+  EXPECT_EQ(slice->get_frontend_attribute(kXlaSchedulingGroupIdAttr), "1");
 }
 
 TEST_F(SchedulingAnnotationPropagationTest, NothingToPropagate) {
@@ -607,19 +597,15 @@ TEST_F(SchedulingAnnotationPropagationTest, GapDueToControlDependency) {
   HloInstruction* c0 =
       hlo_module->entry_computation()->GetInstructionWithName("c0");
   CHECK(c0 != nullptr);
-  const auto& attrs = c0->frontend_attributes().map();
-  EXPECT_TRUE(attrs.contains(kXlaSchedulingGroupIdAttr));
-  EXPECT_EQ(attrs.at(kXlaSchedulingGroupIdAttr), "1");
+  EXPECT_EQ(c0->get_frontend_attribute(kXlaSchedulingGroupIdAttr), "1");
   HloInstruction* slice =
       hlo_module->entry_computation()->GetInstructionWithName("slice");
   CHECK(slice != nullptr);
-  EXPECT_FALSE(
-      slice->frontend_attributes().map().contains(kXlaSchedulingGroupIdAttr));
+  EXPECT_FALSE(slice->has_frontend_attribute(kXlaSchedulingGroupIdAttr));
   HloInstruction* c1 =
       hlo_module->entry_computation()->GetInstructionWithName("c1");
   CHECK(c1 != nullptr);
-  EXPECT_FALSE(
-      c1->frontend_attributes().map().contains(kXlaSchedulingGroupIdAttr));
+  EXPECT_FALSE(c1->has_frontend_attribute(kXlaSchedulingGroupIdAttr));
 }
 
 TEST_F(SchedulingAnnotationPropagationTest, GapDueToControlDependency2) {
@@ -648,21 +634,15 @@ TEST_F(SchedulingAnnotationPropagationTest, GapDueToControlDependency2) {
   HloInstruction* slice =
       hlo_module->entry_computation()->GetInstructionWithName("slice");
   CHECK(slice != nullptr);
-  const auto& attrs = slice->frontend_attributes().map();
-  EXPECT_TRUE(attrs.contains(kXlaSchedulingGroupIdAttr));
-  EXPECT_EQ(attrs.at(kXlaSchedulingGroupIdAttr), "1");
+  EXPECT_EQ(slice->get_frontend_attribute(kXlaSchedulingGroupIdAttr), "1");
   HloInstruction* c0 =
       hlo_module->entry_computation()->GetInstructionWithName("c0");
   CHECK(c0 != nullptr);
-  const auto& attrs_c0 = c0->frontend_attributes().map();
-  EXPECT_TRUE(attrs_c0.contains(kXlaSchedulingGroupIdAttr));
-  EXPECT_EQ(attrs_c0.at(kXlaSchedulingGroupIdAttr), "1");
+  EXPECT_EQ(c0->get_frontend_attribute(kXlaSchedulingGroupIdAttr), "1");
   HloInstruction* c1 =
       hlo_module->entry_computation()->GetInstructionWithName("c1");
   CHECK(c1 != nullptr);
-  const auto& attrs_c1 = c1->frontend_attributes().map();
-  EXPECT_TRUE(attrs_c1.contains(kXlaSchedulingGroupIdAttr));
-  EXPECT_EQ(attrs_c1.at(kXlaSchedulingGroupIdAttr), "1");
+  EXPECT_EQ(c1->get_frontend_attribute(kXlaSchedulingGroupIdAttr), "1");
 }
 
 TEST_F(SchedulingAnnotationPropagationTest, TwoGroups) {
@@ -692,9 +672,7 @@ TEST_F(SchedulingAnnotationPropagationTest, TwoGroups) {
   HloInstruction* slice =
       hlo_module->entry_computation()->GetInstructionWithName("slice");
   CHECK(slice != nullptr);
-  const auto& attrs = slice->frontend_attributes().map();
-  EXPECT_TRUE(attrs.contains(kXlaSchedulingGroupIdAttr));
-  EXPECT_EQ(attrs.at(kXlaSchedulingGroupIdAttr), "3");
+  EXPECT_EQ(slice->get_frontend_attribute(kXlaSchedulingGroupIdAttr), "3");
 }
 
 TEST_F(SchedulingAnnotationPropagationTest, CrossComputationAnnotation) {
@@ -743,9 +721,7 @@ TEST_F(SchedulingAnnotationPropagationTest, CrossComputationAnnotation) {
   HloInstruction* slice = hlo_module->GetComputationWithName("while_body")
                               ->GetInstructionWithName("slice");
   CHECK(slice != nullptr);
-  const auto& attrs = slice->frontend_attributes().map();
-  EXPECT_TRUE(attrs.contains(kXlaSchedulingGroupIdAttr));
-  EXPECT_EQ(attrs.at(kXlaSchedulingGroupIdAttr), "1");
+  EXPECT_EQ(slice->get_frontend_attribute(kXlaSchedulingGroupIdAttr), "1");
 }
 
 TEST_F(SchedulingAnnotationPropagationTest, ConflictingAnnotationGroups) {
@@ -1471,8 +1447,7 @@ ENTRY %entry (p0: f32[16,64]) -> (f32[64,64], f32[16,64]) {
                 IsOkAndHolds(true));
     HloInstruction* copy = FindInstruction(module.get(), HloOpcode::kCopy);
     ASSERT_NE(copy, nullptr);
-    EXPECT_FALSE(
-        copy->frontend_attributes().map().contains(kXlaSchedulingGroupIdAttr));
+    EXPECT_FALSE(copy->has_frontend_attribute(kXlaSchedulingGroupIdAttr));
   }
   {
     // Inlined: %copy is now in ENTRY in the gap between %c0 and %c1, so
@@ -1488,10 +1463,7 @@ ENTRY %entry (p0: f32[16,64]) -> (f32[64,64], f32[16,64]) {
     HloInstruction* copy =
         FindInstruction(inlined_module.get(), HloOpcode::kCopy);
     ASSERT_NE(copy, nullptr);
-    EXPECT_TRUE(
-        copy->frontend_attributes().map().contains(kXlaSchedulingGroupIdAttr));
-    EXPECT_EQ(copy->frontend_attributes().map().at(kXlaSchedulingGroupIdAttr),
-              "1");
+    EXPECT_EQ(copy->get_frontend_attribute(kXlaSchedulingGroupIdAttr), "1");
   }
 }
 
@@ -1541,8 +1513,7 @@ ENTRY %entry (p0: f32[16,64]) -> (f32[64,64], f32[16,64]) {
                 IsOkAndHolds(true));
     HloInstruction* copy = FindInstruction(module.get(), HloOpcode::kCopy);
     ASSERT_NE(copy, nullptr);
-    EXPECT_FALSE(
-        copy->frontend_attributes().map().contains(kXlaSchedulingGroupIdAttr));
+    EXPECT_FALSE(copy->has_frontend_attribute(kXlaSchedulingGroupIdAttr));
   }
   {
     // Inlined: %callee_c0 is now in ENTRY before %caller_copy, so %caller_copy
@@ -1559,10 +1530,7 @@ ENTRY %entry (p0: f32[16,64]) -> (f32[64,64], f32[16,64]) {
     HloInstruction* copy =
         FindInstruction(inlined_module.get(), HloOpcode::kCopy);
     ASSERT_NE(copy, nullptr);
-    EXPECT_TRUE(
-        copy->frontend_attributes().map().contains(kXlaSchedulingGroupIdAttr));
-    EXPECT_EQ(copy->frontend_attributes().map().at(kXlaSchedulingGroupIdAttr),
-              "1");
+    EXPECT_EQ(copy->get_frontend_attribute(kXlaSchedulingGroupIdAttr), "1");
   }
 }
 
