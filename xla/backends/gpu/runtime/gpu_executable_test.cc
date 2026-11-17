@@ -2217,6 +2217,98 @@ TEST_P(GpuExecutableCacheNcclWindowFlagTest, PropagatesToCollectiveParams) {
 INSTANTIATE_TEST_SUITE_P(CacheEnabled, GpuExecutableCacheNcclWindowFlagTest,
                          ::testing::Bool());
 
+class CollectivesWithNcclVersion : public LoopbackCollectives {
+ public:
+  explicit CollectivesWithNcclVersion(int nccl_version)
+      : nccl_version_(nccl_version) {}
+  int NcclVersion() const override { return nccl_version_; }
+
+ private:
+  int nccl_version_;
+};
+
+class WindowTypeThunk : public Thunk {
+ public:
+  explicit WindowTypeThunk(bool* symmetric_windows)
+      : Thunk(Kind::kKernel, ThunkInfo()),
+        symmetric_windows_(symmetric_windows) {}
+
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
+    *symmetric_windows_ = params.collective_params->nccl_window_symmetric;
+    return absl::OkStatus();
+  }
+
+  BufferUses buffer_uses() const override { return {}; }
+
+  absl::StatusOr<ThunkProto> ToProto() const override { return ThunkProto(); }
+
+ private:
+  bool* symmetric_windows_;
+};
+
+TEST_F(GpuExecutableTest,
+       SymmetricMemoryOptionsGiveSymmetricWindowsFromNccl232) {
+  ASSERT_OK_AND_ASSIGN(
+      se::Platform * platform,
+      se::PlatformManager::PlatformWithId(stream_executor_platform_id()));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                       executor->CreateStream());
+  FakeDeviceAddressAllocator allocator(platform);
+  DeviceAssignment device_assn(/*replica_count=*/1, /*computation_count=*/1);
+  device_assn(0, 0) = 0;
+
+  DebugOptions window_flag, global_flag, list;
+  window_flag.set_xla_gpu_experimental_nccl_window_symmetric(true);
+  global_flag.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(true);
+  list.add_xla_enable_nccl_symmetric_buffers_for_collectives()->set_collective(
+      DebugOptions::ALLGATHER);
+  struct Case {
+    DebugOptions options;
+    int nccl_version;
+    bool symmetric_windows;
+  };
+  const Case cases[] = {{DebugOptions(), 23200, false},
+                        {window_flag, 0, true},
+                        {global_flag, 23107, false},
+                        {global_flag, 23200, true},
+                        {list, 0, false},
+                        {list, 23107, false},
+                        {list, 23200, true},
+                        {list, 23203, true}};
+  for (const Case& c : cases) {
+    SCOPED_TRACE(absl::StrCat(c.options.ShortDebugString(), " with version ",
+                              c.nccl_version));
+    bool symmetric_windows = !c.symmetric_windows;
+    ThunkSequence thunks;
+    thunks.Emplace<WindowTypeThunk>(&symmetric_windows);
+    GpuExecutable::Params params;
+    params.module_name = "symmetric_windows_test";
+    params.executable = std::make_unique<ThunkExecutor>(std::move(thunks));
+    params.debug_options = c.options;
+    params.device_description = device_description();
+    params.enable_debug_info_manager = false;
+    SetDummyBufferAssignment(params);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> exec,
+                         GpuExecutable::Create(std::move(params)));
+
+    CollectivesWithNcclVersion collectives(c.nccl_version);
+    GpuExecutableRunOptions gpu_opts;
+    gpu_opts.set_collectives(&collectives);
+    ExecutableRunOptions exec_run_options;
+    exec_run_options.set_stream(stream.get());
+    exec_run_options.set_allocator(&allocator);
+    exec_run_options.set_device_assignment(&device_assn);
+    exec_run_options.set_gpu_executable_run_options(&gpu_opts);
+    ServiceExecutableRunOptions run_opts(exec_run_options);
+    ASSERT_OK(
+        exec->ExecuteAsyncOnStream(&run_opts, std::vector<ExecutionInput>{}));
+    ASSERT_OK(stream->BlockHostUntilDone());
+    EXPECT_EQ(symmetric_windows, c.symmetric_windows);
+  }
+}
+
 constexpr absl::Duration kTestTimeout = absl::Seconds(10);
 
 class DummyThunk : public Thunk {

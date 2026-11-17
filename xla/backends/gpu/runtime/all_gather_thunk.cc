@@ -146,7 +146,7 @@ AllGatherThunk::GetCliqueRequirements(const GpuCliqueKey& clique_key,
 
 absl::Status AllGatherThunk::PrepareCollective(const PrepareParams& params,
                                                const GpuCliqueKey& clique_key) {
-  if (use_one_sided() && clique_key.is_local()) {
+  if (use_symmetric_memory() && clique_key.is_local()) {
     CollectiveMemoryRequests& mem_requests = *params.collective_memory_requests;
     for (const Buffer& buffer : buffers()) {
       ABSL_RETURN_IF_ERROR(mem_requests.RequestSymmetricAllocationSlice(
@@ -203,7 +203,7 @@ absl::Status AllGatherThunk::RunCollective(const ExecuteParams& params,
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                              config_.config.operand_element_type));
-  if (use_one_sided() && clique_key.is_local()) {
+  if (use_symmetric_memory() && clique_key.is_local()) {
     XLA_VLOG_DEVICE(3, device_ordinal)
         << "AllGather: using one-sided mode (Put+Signal)";
     return RunOneSidedAllGather(device_buffers, stream, clique_key, params,

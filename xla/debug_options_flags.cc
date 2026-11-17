@@ -119,9 +119,6 @@ void AbslStringify(Sink& sink, DebugOptions::CollectivesMode mode) {
     case DebugOptions::COLLECTIVES_PEER_MEMORY:
       sink.Append("peer");
       break;
-    case DebugOptions::COLLECTIVES_ONE_SIDED:
-      sink.Append("one_sided");
-      break;
     default:
       sink.Append("invalid");
       break;
@@ -1027,18 +1024,24 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
   // values: "private", "symmetric", "peer".
   auto collectives_mode_setter_for =
       [debug_options](
-          void (DebugOptions::*member_setter)(DebugOptions::CollectivesMode)) {
-        return [debug_options, member_setter](const std::string& value) {
+          void (DebugOptions::*member_setter)(DebugOptions::CollectivesMode),
+          DebugOptions::CollectiveOpType collective) {
+        return [debug_options, member_setter,
+                collective](const std::string& value) {
           DebugOptions::CollectivesMode mode;
           std::string lower = absl::AsciiStrToLower(value);
           if (lower == "private") {
             mode = DebugOptions::COLLECTIVES_PRIVATE_MEMORY;
           } else if (lower == "symmetric") {
-            mode = DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY;
+            // The symmetric mode runs one sided transfers, kept for backward
+            // compatibility of AOT executables. The private mode calls NCCL,
+            // and the added filter puts the collective on symmetric memory.
+            debug_options
+                ->add_xla_enable_nccl_symmetric_buffers_for_collectives()
+                ->set_collective(collective);
+            mode = DebugOptions::COLLECTIVES_PRIVATE_MEMORY;
           } else if (lower == "peer") {
             mode = DebugOptions::COLLECTIVES_PEER_MEMORY;
-          } else if (lower == "one_sided") {
-            mode = DebugOptions::COLLECTIVES_ONE_SIDED;
           } else {
             return false;
           }
@@ -2575,7 +2578,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         "Collectives that run on NCCL symmetric memory, as "
         "Kind[:max_result_bytes[:operand_type]] or all. Their buffers are "
         "placed in collective memory, registered as NCCL windows and passed to "
-        "NCCL. Same list as "
+        "NCCL. With NCCL 2.32 or later the windows have the symmetric type, "
+        "which lets NCCL select its symmetric kernels. An older NCCL needs "
+        "--xla_gpu_experimental_nccl_window_symmetric for that. Same list as "
         "--xla_enable_nccl_symmetric_buffers_for_collectives."));
 
     flag_list->push_back(tsl::Flag(
@@ -3263,16 +3268,19 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
     flag_list->push_back(tsl::Flag(
         "xla_gpu_collective_permute_mode",
         collectives_mode_setter_for(
-            &DebugOptions::set_xla_gpu_collective_permute_mode),
+            &DebugOptions::set_xla_gpu_collective_permute_mode,
+            DebugOptions::COLLECTIVEPERMUTE),
         absl::StrCat(debug_options->xla_gpu_collective_permute_mode()),
-        "Memory mode for collective-permute: private, symmetric, "
-        "one_sided, peer. See CollectivesMode for details."));
+        "Memory mode for collective-permute: private, symmetric, peer. "
+        "symmetric is deprecated, same as --xla_gpu_use_symmetric_"
+        "memory_for_collectives=collectivepermute."));
     flag_list->push_back(tsl::Flag(
         "xla_gpu_all_gather_mode",
-        collectives_mode_setter_for(&DebugOptions::set_xla_gpu_all_gather_mode),
+        collectives_mode_setter_for(&DebugOptions::set_xla_gpu_all_gather_mode,
+                                    DebugOptions::ALLGATHER),
         absl::StrCat(debug_options->xla_gpu_all_gather_mode()),
-        "Memory mode for all-gather: private, symmetric, one_sided, peer. "
-        "See CollectivesMode for details."));
+        "Deprecated, symmetric is the same as "
+        "--xla_gpu_use_symmetric_memory_for_collectives=allgather."));
     flag_list->push_back(tsl::Flag(
         "xla_gpu_dump_autotune_logs_to",
         string_setter_for(&DebugOptions::set_xla_dump_autotune_logs_to),
@@ -4040,11 +4048,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
     flag_list->push_back(
         tsl::Flag("xla_gpu_ragged_all_to_all_mode",
                   collectives_mode_setter_for(
-                      &DebugOptions::set_xla_gpu_ragged_all_to_all_mode),
+                      &DebugOptions::set_xla_gpu_ragged_all_to_all_mode,
+                      DebugOptions::RAGGEDALLTOALL),
                   absl::StrCat(debug_options->xla_gpu_ragged_all_to_all_mode()),
-                  "Memory mode for ragged-all-to-all: private, symmetric, "
-                  "one_sided, peer. In one_sided mode, the put/signal path is "
-                  "used. See CollectivesMode for details."));
+                  "Deprecated, symmetric is the same as --xla_gpu_use_"
+                  "symmetric_memory_for_collectives=raggedalltoall."));
     flag_list->push_back(
         tsl::Flag("xla_gpu_enable_gxl_ragged_all_to_all",
                   bool_setter_for(

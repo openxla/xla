@@ -264,6 +264,11 @@ static ncclComm_t Cast(const Communicator* comm) {
   return comm_state->comm;
 }
 
+int NcclCollectives::NcclVersion() const {
+  static const int linked = GetLinkedNcclVersion().value_or(0);
+  return linked < NCCL_VERSION_CODE ? linked : NCCL_VERSION_CODE;
+}
+
 absl::StatusOr<CliqueId> NcclCollectives::CreateUniqueCliqueId() const {
   ncclUniqueId id;
   XLA_NCCL_RETURN_IF_ERROR(ncclGetUniqueId(&id));

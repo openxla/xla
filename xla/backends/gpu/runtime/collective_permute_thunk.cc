@@ -117,7 +117,7 @@ absl::Status CollectivePermuteThunk::PrepareCollective(
     const PrepareParams& params, const GpuCliqueKey& clique_key) {
   CollectiveMemoryRequests& mem_requests = *params.collective_memory_requests;
 
-  if (use_one_sided() && clique_key.is_local()) {
+  if (use_symmetric_memory() && clique_key.is_local()) {
     // Request symmetric memory for both source and destination buffers.
     // One-sided Put requires both send and receive buffers to be registered
     // as symmetric memory windows.
@@ -151,7 +151,8 @@ P2PConfig CollectivePermuteThunk::GetP2PConfig(
     int64_t partition_count, bool connected_components_enabled) {
   P2PConfig collective_permute_config;
   auto& config = collective_permute_config.config;
-  config.use_symmetric_buffer = RecordedOnSymmetricMemory(instr);
+  config.use_symmetric_buffer = IsNcclSymmetricBuffersEnabledForCollective(
+      instr, instr->GetModule()->config().debug_options());
   for (const HloInstruction* operand : instr->operands()) {
     config.operand_element_type.push_back(operand->shape().element_type());
   }
@@ -304,7 +305,7 @@ absl::Status CollectivePermuteThunk::RunCollective(
   // One-sided mode: use Put + Signal to write directly to peer symmetric
   // memory without host-side rendezvous or pointer exchange.
   // Only for local cliques — inter-node falls back to host-initiated.
-  if (use_one_sided() && clique_key.is_local()) {
+  if (use_symmetric_memory() && clique_key.is_local()) {
     XLA_VLOG_DEVICE(3, device_ordinal)
         << "CollectivePermute: using one-sided mode (Put+Signal)";
     return RunOneSidedPermute(source_target_ranks, device_buffers, stream,

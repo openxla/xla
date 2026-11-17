@@ -2622,96 +2622,6 @@ struct RequiresCollectiveSymmetricMemorySpaceParams {
   bool use_input_output_alias;
 };
 
-// Record and placement per collective under the list with a size bound.
-TEST_F(GpuCompilerTest,
-       SymmetricMemoryRuleRecordsAndPlacesSelectedCollectives) {
-  constexpr absl::string_view kHloText = R"(
-HloModule test
-
-add {
-  a = f32[] parameter(0)
-  b = f32[] parameter(1)
-  ROOT s = f32[] add(a, b)
-}
-
-ENTRY test_computation {
-  p0 = f32[512] parameter(0)
-  p1 = f32[512] parameter(1)
-  p2 = f32[4096] parameter(2)
-  ag = f32[1024] all-gather(p0), dimensions={0}, replica_groups={{0,1}}
-  rs = f32[256] reduce-scatter(p0), dimensions={0}, to_apply=add,
-    replica_groups={{0,1}}
-  a2a = f32[512] all-to-all(p0), dimensions={0}, replica_groups={{0,1}}
-  single = f32[512] collective-permute(p0), source_target_pairs={{0,1},{1,0}}
-  mixed = f32[512] add(single, p1)
-  combined = (f32[512], f32[512]) collective-permute(mixed, p1),
-    source_target_pairs={{0,1},{1,0}}
-  cb = f32[512] collective-broadcast(p1), replica_groups={{0,1}}
-  ar = f32[4096] all-reduce(p2), to_apply=add, replica_groups={{0,1}}
-  ROOT result = (f32[1024], f32[256], f32[512], f32[512], (f32[512], f32[512]),
-    f32[512], f32[4096]) tuple(ag, rs, a2a, single, combined, cb, ar)
-}
-  )";
-  HloModuleConfig config = GetModuleConfigForTest(/*replica_count=*/2);
-  auto* filter = config.mutable_debug_options()
-                     .add_xla_enable_nccl_symmetric_buffers_for_collectives();
-  filter->set_collective(DebugOptions::ALLCOLLECTIVES);
-  filter->set_max_size_bytes(8192);
-  ASSERT_OK_AND_ASSIGN(auto optimized_module_and_executable,
-                       GetOptimizedModuleForExecutable(kHloText, config));
-  const HloModule* optimized_module = optimized_module_and_executable.first;
-
-  int collectives = 0;
-  for (const HloComputation* computation : optimized_module->computations()) {
-    if (computation->IsAsyncComputation()) {
-      continue;
-    }
-    for (const HloInstruction* instr : computation->instructions()) {
-      const HloInstruction* collective =
-          instr->opcode() == HloOpcode::kAsyncStart
-              ? instr->async_wrapped_instruction()
-              : instr;
-      bool selected;
-      switch (collective->opcode()) {
-        case HloOpcode::kAllGather:
-        case HloOpcode::kAllGatherStart:
-        case HloOpcode::kReduceScatter:
-        case HloOpcode::kAllToAll:
-          selected = true;
-          break;
-        case HloOpcode::kCollectivePermute:
-        case HloOpcode::kCollectivePermuteStart:
-          selected = collective->operand_count() == 1;
-          break;
-        case HloOpcode::kCollectiveBroadcast:
-        case HloOpcode::kAllReduce:
-        case HloOpcode::kAllReduceStart:
-          selected = false;
-          break;
-        default:
-          continue;
-      }
-      ++collectives;
-      ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                           instr->backend_config<GpuBackendConfig>());
-      EXPECT_EQ(gpu_config.collective_backend_config().collectives_mode() ==
-                    DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY,
-                selected)
-          << instr->name();
-      bool in_collective_memory = false;
-      ShapeUtil::ForEachSubshape(
-          instr->shape(), [&](const Shape& subshape, const ShapeIndex&) {
-            if (subshape.has_layout() && subshape.layout().memory_space() ==
-                                             Layout::kCollectiveMemorySpace) {
-              in_collective_memory = true;
-            }
-          });
-      EXPECT_EQ(in_collective_memory, selected) << instr->name();
-    }
-  }
-  EXPECT_EQ(collectives, 7);
-}
-
 class RequiresCollectiveSymmetricMemorySpaceTest
     : public GpuCompilerTest,
       public ::testing::WithParamInterface<
@@ -4373,6 +4283,65 @@ TEST_F(GpuCompilerTest, SymmetricBuffersOverlappingFilters) {
                                                  .set_print_metadata(false)),
                   expected_check),
               absl_testing::IsOkAndHolds(true));
+}
+
+TEST_F(GpuCompilerTest, SymmetricBuffersDecomposedCollectivePermute) {
+  constexpr absl::string_view kHloText = R"hlo(
+    HloModule test
+
+    while_condition {
+      params = (s32[], f32[16], f32[16]) parameter(0)
+      i = s32[] get-tuple-element(params), index=0
+      limit = s32[] constant(3)
+      ROOT lt = pred[] compare(i, limit), direction=LT
+    }
+
+    while_body {
+      params = (s32[], f32[16], f32[16]) parameter(0)
+      i = s32[] get-tuple-element(params), index=0
+      a = f32[16] get-tuple-element(params), index=1
+      forward = f32[16] collective-permute(a), source_target_pairs={{0,1},{1,2},{2,3}}, channel_id=1
+      back = f32[16] collective-permute(a), source_target_pairs={{3,0}}, channel_id=2
+      one = s32[] constant(1)
+      next = s32[] add(i, one)
+      ROOT result = (s32[], f32[16], f32[16]) tuple(next, back, forward)
+    }
+
+    ENTRY main {
+      zero = s32[] constant(0)
+      p = f32[16] parameter(0)
+      init = (s32[], f32[16], f32[16]) tuple(zero, p, p)
+      loop = (s32[], f32[16], f32[16]) while(init), condition=while_condition, body=while_body
+      ROOT out = f32[16] get-tuple-element(loop), index=2
+    }
+  )hlo";
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  DebugOptions& debug_options = config.mutable_debug_options();
+  debug_options.set_xla_gpu_experimental_pipeline_parallelism_opt_level(
+      DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE);
+  debug_options.set_xla_gpu_collective_permute_decomposer_threshold(0);
+  debug_options.set_xla_gpu_enable_latency_hiding_scheduler(true);
+  debug_options.add_xla_enable_nccl_symmetric_buffers_for_collectives()
+      ->set_collective(DebugOptions::COLLECTIVEPERMUTE);
+
+  std::pair<const HloModule*, std::unique_ptr<OpaqueExecutable>>
+      optimized_module_and_executable;
+  ASSERT_OK_AND_ASSIGN(optimized_module_and_executable,
+                       GetOptimizedModuleForExecutable(kHloText, config));
+  const HloModule* optimized_module = optimized_module_and_executable.first;
+
+  constexpr absl::string_view expected_check = R"(
+    // CHECK-DAG: (f32[16]{0:S(7)}, {{.*}} send(
+    // CHECK-DAG: (f32[16]{0:S(7)}, {{.*}} recv(
+  )";
+
+  std::string optimized_text = optimized_module->ToString(
+      HloPrintOptions{}.set_print_operand_shape(false).set_print_metadata(
+          false));
+  EXPECT_THAT(RunFileCheck(optimized_text, expected_check),
+              absl_testing::IsOkAndHolds(true))
+      << optimized_text;
 }
 
 TEST_F(GpuCompilerTest, TritonGemmDisabledDotNormalizationToCublas) {

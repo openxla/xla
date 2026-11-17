@@ -170,6 +170,9 @@ class GpuCollectives : public Collectives {
   // Returns true if GPU collectives are implemented.
   virtual bool IsImplemented() const = 0;
 
+  // Lower of the NCCL build and library versions, 0 for other backends.
+  virtual int NcclVersion() const { return 0; }
+
   // Executes a group of collective launches. All communicators used by the
   // `group` must be listed in `comms`, otherwise behavior is undefined.
   virtual absl::Status GroupLaunch(

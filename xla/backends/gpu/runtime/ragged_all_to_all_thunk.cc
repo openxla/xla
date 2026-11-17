@@ -475,8 +475,9 @@ absl::Status RunNcclFallbackRaggedAllToAll(
 
   int64_t num_updates_per_replica = num_total_updates / num_ranks;
 
-  bool use_put_path = collectives_mode == DebugOptions::COLLECTIVES_ONE_SIDED &&
-                      output_symmetric_memory != nullptr;
+  bool use_put_path =
+      collectives_mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY &&
+      output_symmetric_memory != nullptr;
 
   if (!use_put_path) {
     // `output_offsets` of the RaggedAllToAll instruction are sharded in a way,
@@ -1250,7 +1251,7 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
 
   SymmetricMemory* output_sym_mem = nullptr;
   size_t output_base_offset = 0;
-  if (use_one_sided() && params.collective_memory) {
+  if (use_symmetric_memory() && params.collective_memory) {
     auto [sym, offset] = params.collective_memory->FindSymmetricMemory(
         clique_key, device_buffers[1].destination_buffer);
     output_sym_mem = sym;
@@ -1329,7 +1330,7 @@ absl::Status RaggedAllToAllThunk::PrepareCollective(
     const PrepareParams& params, const GpuCliqueKey& clique_key) {
   if ((config_.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel &&
        clique_key.num_devices() > 1) ||
-      use_one_sided()) {
+      use_symmetric_memory()) {
     // Request symmetric memory for the output buffer only.
     const Buffer& output_buffer = buffers()[1];
     ABSL_RETURN_IF_ERROR(

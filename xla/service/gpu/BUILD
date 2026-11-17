@@ -145,7 +145,6 @@ xla_cc_test(
     srcs = ["gpu_memory_space_assignment_test.cc"],
     deps = [
         ":gpu_memory_space_assignment",
-        "//xla/backends/gpu/transforms/collectives:collective_backend_assigner",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",

@@ -1536,6 +1536,9 @@ void AddCollectiveCombinerPasses(
       opts.xla_gpu_collective_permute_combine_threshold_bytes(),
       opts.xla_gpu_collective_combine_threshold_count());
 
+  // Assign collective backends after combining, so that combined collectives
+  // get the correct backend config.
+  pipeline.AddPass<CollectiveBackendAssigner>();
   // Pattern based Collective fusion passes.
   {
     // Annotate collective ops with the Triton kernel strategy (one-shot /
@@ -1884,8 +1887,6 @@ absl::Status GpuCompiler::OptimizeHloModule(
   ABSL_RETURN_IF_ERROR(RunPostFusionPasses(
       hlo_module, device_description, alias_info, pointer_size_, options,
       gpu_topology, mlir_context, compilation_stats));
-  // After the last collective rewrite, before the async wrappers copy configs.
-  ABSL_RETURN_IF_ERROR(CollectiveBackendAssigner().Run(hlo_module).status());
   ABSL_RETURN_IF_ERROR(RunAsyncCollectivesConversionPasses(hlo_module));
   ABSL_RETURN_IF_ERROR(RunPostFusionSimplificationPasses(
       hlo_module,

@@ -822,6 +822,10 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
       debug_options.xla_gpu_enable_highest_priority_async_stream();
   bool nccl_window_symmetric =
       debug_options.xla_gpu_experimental_nccl_window_symmetric();
+  bool uses_symmetric_memory =
+      debug_options.xla_gpu_experimental_enable_nccl_symmetric_buffers() ||
+      !debug_options.xla_enable_nccl_symmetric_buffers_for_collectives()
+           .empty();
 
   se::Stream* main_stream = run_options->stream();
   se::StreamExecutor* executor = main_stream->parent();
@@ -1015,7 +1019,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
                                LocalDeviceId(device_ordinal),
                                collective_max_nchannels, p2p_max_nchannels,
                                collective_use_minimal_resource,
-                               nccl_window_symmetric));
+                               nccl_window_symmetric, uses_symmetric_memory));
   collective_params.cache_nccl_window_in_communicator =
       debug_options.xla_gpu_experimental_cache_nccl_window_in_communicator();
 

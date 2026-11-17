@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/backends/gpu/hlo/transforms/collectives/collective_backend_assigner.h"
 
 #include <cstdint>
-#include <optional>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
@@ -26,7 +25,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
@@ -45,28 +43,6 @@ bool IsCollectivePermuteOp(const HloInstruction* instr) {
 bool IsAllGatherOp(const HloInstruction* instr) {
   return HloPredicateIsOp<HloOpcode::kAllGather, HloOpcode::kAllGatherStart>(
       instr);
-}
-
-// True puts the op on NCCL symmetric memory, false leaves it as it is.
-bool IsSelectedBySymmetricMemoryRules(const HloInstruction* instr) {
-  std::optional<DebugOptions::CollectiveOpType> type =
-      GetCollectiveOpType(instr);
-  // Broadcast has no window path, a record would place what it never registers.
-  if (!type.has_value() || *type == DebugOptions::COLLECTIVEBROADCAST) {
-    return false;
-  }
-  // The permute thunk registers windows for a single buffer only.
-  if (*type == DebugOptions::COLLECTIVEPERMUTE && instr->operand_count() > 1) {
-    return false;
-  }
-  // An existing record wins, from a mode flag or from the module itself.
-  auto config = instr->backend_config<GpuBackendConfig>();
-  if (config.ok() && config->collective_backend_config().collectives_mode() !=
-                         DebugOptions::COLLECTIVES_MODE_INVALID) {
-    return false;
-  }
-  return IsNcclSymmetricBuffersEnabledForCollective(
-      instr, instr->GetModule()->config().debug_options());
 }
 
 absl::StatusOr<bool> AssignCollectivesMode(
@@ -115,11 +91,6 @@ absl::StatusOr<bool> CollectiveBackendAssigner::RunImpl(
           IsAllGatherOp));
   changed |= all_gather_mode_changed;
 
-  ABSL_ASSIGN_OR_RETURN(
-      bool symmetric_memory_changed,
-      AssignCollectivesMode(module, DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY,
-                            IsSelectedBySymmetricMemoryRules));
-  changed |= symmetric_memory_changed;
   return changed;
 }
 

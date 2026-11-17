@@ -50,7 +50,7 @@ struct CollectiveParams {
       LocalDeviceId local_device_id, int64_t collective_max_nchannels = 0,
       int64_t p2p_max_nchannels = 0,
       bool collective_use_minimal_resource = false,
-      bool nccl_window_symmetric = false);
+      bool nccl_window_symmetric = false, bool uses_symmetric_memory = false);
 
   GpuCollectives* collectives;
   se::StreamExecutor* executor;

@@ -143,8 +143,7 @@ static bool RequiresCollectiveSymmetricMemorySpace(const HloInstruction* inst) {
     return false;
   }
   const auto mode = gpu_config->collective_backend_config().collectives_mode();
-  return mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY ||
-         mode == DebugOptions::COLLECTIVES_ONE_SIDED;
+  return mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY;
 }
 
 static bool RequiresTritonSymmetricOutput(const HloInstruction* inst) {
@@ -152,6 +151,11 @@ static bool RequiresTritonSymmetricOutput(const HloInstruction* inst) {
 }
 
 bool IsCollectiveMemoryInstruction(const HloInstruction* inst) {
+  // A device send or recv is one half of a decomposed collective permute.
+  if (inst->opcode() == HloOpcode::kSend ||
+      inst->opcode() == HloOpcode::kRecv) {
+    return !Cast<HloSendRecvInstruction>(inst)->is_host_transfer();
+  }
   return kSupportedCollectiveOpcodes->contains(inst->opcode()) ||
          // opcode or async wrapped opcode is in kSupportedCollectiveOpcodes.
          ((inst->opcode() == HloOpcode::kAsyncStart ||
@@ -164,7 +168,8 @@ bool IsNcclSymmetricOrUserBuffersEnabledForInstruction(
   if (!IsCollectiveMemoryInstruction(inst)) {
     return false;
   }
-  return option.xla_gpu_enable_nccl_user_buffers();
+  return option.xla_gpu_enable_nccl_user_buffers() ||
+         IsNcclSymmetricBuffersEnabledForCollective(inst, option);
 }
 
 // Returns the memory space requested for the given operand use, or

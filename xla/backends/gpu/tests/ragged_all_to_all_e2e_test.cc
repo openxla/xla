@@ -71,17 +71,18 @@ class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
       : CollectiveOpsWithFlagsBase(
             enable_async, /*enable_p2p_memcpy=*/false,
             /*enable_symmetric_buffer=*/
-            collectives_mode == DebugOptions::COLLECTIVES_ONE_SIDED,
+            collectives_mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY,
             /*memory_size=*/64 * kMB,
             /*collectives_memory_size=*/
-            collectives_mode == DebugOptions::COLLECTIVES_ONE_SIDED ? 64 * kMB
-                                                                    : 0),
+            collectives_mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY
+                ? 64 * kMB
+                : 0),
         impl_type_(impl_type),
         collectives_mode_(collectives_mode) {}
 
   bool IsSymmetricNcclPath() const {
     return impl_type_ == RaggedAllToAllImplType::kNcclFallback &&
-           collectives_mode_ == DebugOptions::COLLECTIVES_ONE_SIDED;
+           collectives_mode_ == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY;
   }
 
   bool RequiresSymmetricMemory() const {
@@ -89,7 +90,7 @@ class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
            impl_type_ == RaggedAllToAllImplType::kDeviceKernel ||
            impl_type_ ==
                RaggedAllToAllImplType::kOneShotWithMultiGpuBarrierWithNccl ||
-           collectives_mode_ == DebugOptions::COLLECTIVES_ONE_SIDED;
+           collectives_mode_ == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY;
   }
 
   // Creates random test data for a ragged-all-to-all.
@@ -1100,8 +1101,8 @@ std::string CollectivesModeName(DebugOptions::CollectivesMode mode) {
   switch (mode) {
     case DebugOptions::COLLECTIVES_PRIVATE_MEMORY:
       return "private";
-    case DebugOptions::COLLECTIVES_ONE_SIDED:
-      return "one_sided";
+    case DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY:
+      return "symmetric";
     case DebugOptions::COLLECTIVES_PEER_MEMORY:
       return "peer";
     default:
@@ -1110,7 +1111,7 @@ std::string CollectivesModeName(DebugOptions::CollectivesMode mode) {
 }
 
 // Builds the test parameters: NCCL impl is exercised against all collectives
-// modes (private/one_sided/peer); the device-kernel impl requires symmetric
+// modes (private/symmetric/peer); the device-kernel impl requires symmetric
 // memory; other impls only need PRIVATE since they don't dispatch on the mode.
 std::vector<
     std::tuple<bool, RaggedAllToAllImplType, DebugOptions::CollectivesMode>>
@@ -1121,7 +1122,7 @@ BuildRaggedAllToAllTestParams() {
   for (bool enable_async : {false, true}) {
     for (DebugOptions::CollectivesMode mode :
          {DebugOptions::COLLECTIVES_PRIVATE_MEMORY,
-          DebugOptions::COLLECTIVES_ONE_SIDED,
+          DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY,
           DebugOptions::COLLECTIVES_PEER_MEMORY}) {
       params.emplace_back(enable_async, RaggedAllToAllImplType::kNcclFallback,
                           mode);
@@ -1134,7 +1135,7 @@ BuildRaggedAllToAllTestParams() {
                           DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
     }
     params.emplace_back(enable_async, RaggedAllToAllImplType::kDeviceKernel,
-                        DebugOptions::COLLECTIVES_ONE_SIDED);
+                        DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY);
   }
   return params;
 }

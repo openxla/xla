@@ -510,22 +510,6 @@ TEST(DebugOptions, DeduplicateBackendConfigsMinSizeDefaultIsMaxInt) {
             std::numeric_limits<int64_t>::max());
 }
 
-TEST(DebugOptionsFlags, SymmetricMemoryFlagNamesShareOneList) {
-  DebugOptions opts;
-  std::vector<tsl::Flag> flags;
-  MakeDebugOptionsFlags(&flags, &opts);
-  std::vector<std::string> args = {
-      "--xla_gpu_use_symmetric_memory_for_collectives=AllGather",
-      "--xla_enable_nccl_symmetric_buffers_for_collectives=AllReduce:1024"};
-  EXPECT_TRUE(tsl::Flags::Parse(args, flags));
-  ASSERT_EQ(opts.xla_enable_nccl_symmetric_buffers_for_collectives_size(), 2);
-  const auto& filters =
-      opts.xla_enable_nccl_symmetric_buffers_for_collectives();
-  EXPECT_EQ(filters[0].collective(), DebugOptions::ALLGATHER);
-  EXPECT_EQ(filters[1].collective(), DebugOptions::ALLREDUCE);
-  EXPECT_EQ(filters[1].max_size_bytes(), 1024);
-}
-
 TEST(DebugOptions, DeduplicateBackendConfigsMinSizeFlagsParsing) {
   DebugOptions opts;
   std::vector<tsl::Flag> flags;

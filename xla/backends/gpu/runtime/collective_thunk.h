@@ -68,9 +68,6 @@ struct CollectiveConfig {
   static CollectiveConfig FromProto(const CollectiveConfigProto& proto);
 };
 
-// True when the recorded mode is symmetric memory or one sided.
-bool RecordedOnSymmetricMemory(const HloInstruction* hlo);
-
 CollectiveConfig GetCollectiveConfig(const HloInstruction* hlo,
                                      std::optional<bool> use_global_device_ids);
 
@@ -152,7 +149,6 @@ class CollectiveThunk : public Command {
   // Shorthands for checking the collectives memory mode of this thunk.
   bool use_private_memory() const;
   bool use_symmetric_memory() const;
-  bool use_one_sided() const;
   bool use_peer_memory() const;
 
  protected:
