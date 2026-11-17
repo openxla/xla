@@ -50,7 +50,10 @@ using absl::StrAppend;
 class LiveRangeRegions {
  public:
   struct InstructionInfo {
-    InstructionInfo() : value_definition(nullptr), is_definition(false) {}
+    InstructionInfo()
+        : value_definition(nullptr),
+          is_definition(false),
+          is_root_position(false) {}
 
     // The instruction that defines the value being used. It basically saves
     // the defining instruction of each HloValue.
@@ -64,6 +67,9 @@ class LiveRangeRegions {
     // create a new HloValue aliasing without defining a new value (cannot be
     // value_definition).
     bool is_definition;
+    // Whether the instruction is the root of its computation and holds a value
+    // from this live range in its output positions.
+    bool is_root_position;
 
     std::string ToString() const {
       return absl::StrCat(
@@ -292,8 +298,9 @@ class Relation {
 class ComputeRelativeLocation {
  public:
   typedef LiveRangeRegions::InstructionEntry InstructionEntry;
-  ComputeRelativeLocation(HloOrdering* ordering, const AliasInfo* alias_info)
-      : ordering_(ordering), alias_info_(alias_info) {
+  ComputeRelativeLocation(HloOrdering* ordering, const AliasInfo* alias_info,
+                          const HloDataflowAnalysis* dataflow = nullptr)
+      : ordering_(ordering), alias_info_(alias_info), dataflow_(dataflow) {
     VLOG(3) << "New analysis";
   }
 
@@ -356,6 +363,7 @@ class ComputeRelativeLocation {
 
   HloOrdering* ordering_;
   const AliasInfo* alias_info_;
+  const HloDataflowAnalysis* dataflow_;
   absl::flat_hash_map<
       HloInstruction*,
       absl::flat_hash_map<HloInstruction*, Relation::RuntimeOrder>>
@@ -388,9 +396,15 @@ class CopyRemover {
   // being spliced. std::list requires a reference to the list object to
   // splice.
   struct ValueNode {
-    explicit ValueNode(const HloValue* v) : value(v) {}
+    explicit ValueNode(const HloValue* v)
+        : value(v), positions(v->positions().begin(), v->positions().end()) {}
 
     const HloValue* value;
+
+    // Positions where this value (or any elided copy merged into this node)
+    // appears, updated as copies are removed so computation root checks still
+    // see forwarded bitcast and passthrough root positions.
+    std::vector<HloPosition> positions;
 
     // The uses are maintained outside of HloValue::uses() because
     // HloValue::uses() is not updatable (a fully updatable dataflow analysis
@@ -425,7 +439,8 @@ class CopyRemover {
 
   // Appends to `node->uses` a use at every reader of a view of `value`: a
   // use at operand 0 of a view colored instruction, followed through the view
-  // colored bitcasts and copies that forward its address (the reader side of
+  // colored bitcasts, view colored copies, and configured passthrough
+  // instructions that forward its address (the reader side of
   // ExtendViewBaseLiveRanges in hlo_live_range.cc).
   //
   // The walk is flat, and correct only under a contract the pass that creates
@@ -434,9 +449,10 @@ class CopyRemover {
   // would happen later than the position recorded here; a reader never
   // writes through it; and its operand 0 is never itself view colored (views
   // are one level deep, so the readers found here read `value`'s own buffer).
-  // A view colored user that is not a bitcast or copy is recorded as a reader
-  // at its own position on purpose: an in place writer through a view is
-  // ordered only when its write is also a dataflow use of the viewed buffer.
+  // A view colored user that is not a bitcast, copy, or passthrough is
+  // recorded as a reader at its own position on purpose: an in place writer
+  // through a view is ordered only when its write is also a dataflow use of
+  // the viewed buffer.
   void AddViewUses(const HloValue* value, ValueNode* node);
 
   // Returns true if `use` was synthesized by AddViewUses rather than taken

@@ -5443,5 +5443,635 @@ ENTRY main {
               ElementsAre(&analysis.GetValueDefinedAt(dst)));
 }
 
+// Verifies that configuring `is_passthrough` forwards operand values across
+// stacked, unused, and root passthrough custom calls while filtering non root
+// passthroughs out of HloValue::GetUses (including across wide tuple user lists
+// via UseCache::NestedValueUsers) and unwrapping passthrough operands in
+// CanShareOperandBufferWithUser and CanShareOperandValueBufferWithUser.
+TEST_F(HloDataflowAnalysisTest,
+       PassthroughPredicateForwardsValuesAndFiltersUses) {
+  absl::string_view hlo_str = R"(
+HloModule PassthroughTest
+
+callee {
+  cp = f32[8] parameter(0)
+  neg_cp = f32[8] negate(cp)
+  ROOT m_callee = f32[8] custom-call(neg_cp), custom_call_target="passthrough"
+}
+
+inplace_fus_comp {
+  fp0 = f32[8] parameter(0)
+  fp1 = f32[8] parameter(1)
+  fu = f32[2] parameter(2)
+  fidx = s32[] parameter(3)
+  fdus = f32[8] dynamic-update-slice(fp0, fu, fidx)
+  fneg = f32[8] negate(fp1)
+  ROOT fout = (f32[8], f32[8]) tuple(fdus, fneg)
+}
+
+ENTRY main {
+  p0 = f32[8] parameter(0)
+  p_call = f32[8] parameter(1)
+  u = f32[2] parameter(2)
+  c0 = f32[8] constant({0, 1, 2, 3, 4, 5, 6, 7})
+  z = s32[] constant(0)
+  a = f32[8] add(p0, p0)
+  m1 = f32[8] custom-call(a), custom_call_target="passthrough"
+  m2 = f32[8] custom-call(m1), custom_call_target="passthrough"
+  unused_m = f32[8] custom-call(a), custom_call_target="passthrough",
+      custom_call_has_side_effect=true
+  tanh_a = f32[8] tanh(m2)
+  mc = f32[8] custom-call(c0), custom_call_target="passthrough"
+  neg_c = f32[8] negate(mc)
+  msort = f32[8] custom-call(a), custom_call_target="passthrough"
+  sorted = f32[8] sort(msort), dimensions={0}, to_apply={
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT lt = pred[] compare(lhs, rhs), direction=LT
+  }
+  mdus0 = f32[8] custom-call(a), custom_call_target="passthrough"
+  mdus1 = f32[8] custom-call(a), custom_call_target="passthrough"
+  dus_same = f32[8] dynamic-update-slice(mdus0, mdus1, z)
+  dus_disjoint = f32[8] dynamic-update-slice(a, mdus1, z),
+      frontend_attributes={xla_disjoint_read_write_regions="true"}
+  fus_inplace = (f32[8], f32[8]) fusion(mdus0, mdus1, u, z),
+      kind=kLoop, calls=inplace_fus_comp
+  called = f32[8] call(p_call), to_apply=callee
+  out_tuple = (f32[8], f32[8], f32[8], f32[8], f32[8], f32[8], (f32[8], f32[8]))
+      tuple(tanh_a, neg_c, sorted, dus_same, dus_disjoint, called, fus_inplace)
+  gte0 = f32[8] get-tuple-element(out_tuple), index=0
+  gte1 = f32[8] get-tuple-element(out_tuple), index=1
+  gte2 = f32[8] get-tuple-element(out_tuple), index=2
+  gte3 = f32[8] get-tuple-element(out_tuple), index=3
+  gte4 = f32[8] get-tuple-element(out_tuple), index=4
+  gte5 = f32[8] get-tuple-element(out_tuple), index=5
+  nonroot_tup_m0 = (f32[8], f32[8], f32[8], f32[8], f32[8], f32[8],
+                    (f32[8], f32[8]))
+      custom-call(out_tuple), custom_call_target="passthrough",
+      custom_call_has_side_effect=true
+  nonroot_tup_m1 = (f32[8], f32[8], f32[8], f32[8], f32[8], f32[8],
+                    (f32[8], f32[8]))
+      custom-call(out_tuple), custom_call_target="passthrough",
+      custom_call_has_side_effect=true
+  nonroot_tup_m2 = (f32[8], f32[8], f32[8], f32[8], f32[8], f32[8],
+                    (f32[8], f32[8]))
+      custom-call(out_tuple), custom_call_target="passthrough",
+      custom_call_has_side_effect=true
+  ROOT root_m = (f32[8], f32[8], f32[8], f32[8], f32[8], f32[8],
+                 (f32[8], f32[8]))
+      custom-call(out_tuple), custom_call_target="passthrough"
+}
+)";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_str));
+  auto is_passthrough = [](const HloInstruction* inst) {
+    return inst->IsCustomCall("passthrough");
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloDataflowAnalysis> analysis,
+      HloDataflowAnalysis::Run(
+          *module_, /*ssa_form=*/true, /*bitcast_defines_value=*/false,
+          /*execution_threads=*/{}, /*propagate_through_calls=*/true,
+          /*precompute_uses=*/std::nullopt,
+          /*propagate_through_control_flow=*/true, is_passthrough));
+
+  HloInstruction* a = FindInstruction(module_.get(), "a");
+  HloInstruction* p_call = FindInstruction(module_.get(), "p_call");
+  HloInstruction* m1 = FindInstruction(module_.get(), "m1");
+  HloInstruction* m2 = FindInstruction(module_.get(), "m2");
+  HloInstruction* unused_m = FindInstruction(module_.get(), "unused_m");
+  HloInstruction* tanh_a = FindInstruction(module_.get(), "tanh_a");
+  HloInstruction* mc = FindInstruction(module_.get(), "mc");
+  HloInstruction* neg_c = FindInstruction(module_.get(), "neg_c");
+  HloInstruction* msort = FindInstruction(module_.get(), "msort");
+  HloInstruction* sorted = FindInstruction(module_.get(), "sorted");
+  HloInstruction* mdus0 = FindInstruction(module_.get(), "mdus0");
+  HloInstruction* mdus1 = FindInstruction(module_.get(), "mdus1");
+  HloInstruction* dus_same = FindInstruction(module_.get(), "dus_same");
+  HloInstruction* dus_disjoint = FindInstruction(module_.get(), "dus_disjoint");
+  HloInstruction* fus_inplace = FindInstruction(module_.get(), "fus_inplace");
+  HloInstruction* called = FindInstruction(module_.get(), "called");
+  HloInstruction* out_tuple = FindInstruction(module_.get(), "out_tuple");
+  HloInstruction* nonroot_tup_m0 =
+      FindInstruction(module_.get(), "nonroot_tup_m0");
+  HloInstruction* root_m = FindInstruction(module_.get(), "root_m");
+
+  EXPECT_TRUE(analysis->ValueIsDefinedAt(a));
+  EXPECT_FALSE(analysis->ValueIsDefinedAt(m1));
+  EXPECT_FALSE(analysis->ValueIsDefinedAt(m2));
+  EXPECT_FALSE(analysis->ValueIsDefinedAt(unused_m));
+  EXPECT_FALSE(analysis->ValueIsDefinedAt(root_m, {}));
+  EXPECT_FALSE(analysis->ValueIsDefinedAt(root_m, {0}));
+
+  const HloValue& val_a = analysis->GetValueDefinedAt(a);
+  EXPECT_EQ(&analysis->GetUniqueValueAt(m2), &val_a);
+  EXPECT_THAT(val_a.GetUses(),
+              UnorderedElementsAre(
+                  HloUse{tanh_a, 0, {}}, HloUse{sorted, 0, {}},
+                  HloUse{dus_same, 0, {}}, HloUse{dus_same, 1, {}},
+                  HloUse{dus_disjoint, 0, {}}, HloUse{dus_disjoint, 1, {}},
+                  HloUse{fus_inplace, 0, {}}, HloUse{fus_inplace, 1, {}}));
+
+  // `out_tuple` has 10 users (> kMaxUsersToScan = 8); non root tuple
+  // passthroughs (`nonroot_tup_m0..2`) are filtered out by
+  // UseCache::NestedValueUsers while `root_m` is kept as the computation root.
+  const HloValue& val_tanh = analysis->GetValueDefinedAt(tanh_a);
+  EXPECT_TRUE(val_tanh.live_out_of_module());
+  EXPECT_THAT(val_tanh.GetUses(), ElementsAre(HloUse{root_m, 0, {0}}));
+  EXPECT_EQ(&analysis->GetUniqueValueAt(root_m, {}),
+            &analysis->GetValueDefinedAt(out_tuple, {}));
+
+  AliasInfo alias_info;
+  // Unwraps passthrough around a constant: constants cannot share buffers.
+  EXPECT_FALSE(
+      analysis->CanShareOperandBufferWithUser(mc, {}, neg_c, {}, &alias_info));
+  // Unwraps passthrough chain to detect that `a` has multiple users, so `sort`
+  // cannot share `a`'s buffer in place.
+  EXPECT_FALSE(analysis->CanShareOperandBufferWithUser(msort, {}, sorted, {},
+                                                       &alias_info));
+  // Unwraps distinct passthrough operands (`mdus0`, `mdus1`) to detect that
+  // `dus_same` and `fus_inplace` read the same underlying producer `a` in two
+  // operand slots.
+  EXPECT_FALSE(analysis->CanShareOperandBufferWithUser(mdus0, {}, dus_same, {},
+                                                       &alias_info));
+  EXPECT_FALSE(analysis->CanShareOperandBufferWithUser(mdus1, {}, dus_same, {},
+                                                       &alias_info));
+  EXPECT_FALSE(analysis->CanShareOperandBufferWithUser(mdus0, {}, fus_inplace,
+                                                       {0}, &alias_info));
+  EXPECT_FALSE(analysis->CanShareOperandBufferWithUser(mdus1, {}, fus_inplace,
+                                                       {0}, &alias_info));
+  // When `xla_disjoint_read_write_regions` is set, both the direct in place
+  // operand (`a`) and the passthrough operand (`mdus1`) can share with
+  // `dus_disjoint`.
+  EXPECT_TRUE(analysis->CanShareOperandBufferWithUser(a, {}, dus_disjoint, {},
+                                                      &alias_info));
+  EXPECT_TRUE(analysis->CanShareOperandBufferWithUser(mdus1, {}, dus_disjoint,
+                                                      {}, &alias_info));
+  // Unwraps `m_callee` on `callee`'s root so `kCall` sees the elementwise root.
+  EXPECT_TRUE(analysis->CanShareOperandBufferWithUser(p_call, {}, called, {},
+                                                      &alias_info));
+  // Tuple passthroughs only share buffers at matching tuple indices, and
+  // non root passthroughs return false from CanShareOperandValueBufferWithUser.
+  EXPECT_TRUE(analysis->CanShareOperandBufferWithUser(out_tuple, {0}, root_m,
+                                                      {0}, &alias_info));
+  EXPECT_FALSE(analysis->CanShareOperandBufferWithUser(out_tuple, {0}, root_m,
+                                                       {1}, &alias_info));
+  EXPECT_TRUE(analysis->CanShareOperandValueBufferWithUser(val_tanh, root_m,
+                                                           {0}, &alias_info));
+  EXPECT_FALSE(analysis->CanShareOperandValueBufferWithUser(val_tanh, root_m,
+                                                            {1}, &alias_info));
+  EXPECT_FALSE(analysis->CanShareOperandValueBufferWithUser(
+      val_tanh, nonroot_tup_m0, {0}, &alias_info));
+}
+
+// Verifies loop crossing `async-start` / `async-update` / `async-done` value
+// forwarding across passthroughs on the async chain operands, custom
+// AliasInfo::MayAlias handling across wrapper shape changes and multi operand
+// uses, `kCall` subshape preservation across inner passthroughs, and
+// `execution_threads` filtering in `IsPassthrough`.
+TEST_F(HloDataflowAnalysisTest,
+       PassthroughUnwrapsLoopCrossingAsyncAndCustomMayAlias) {
+  absl::string_view async_hlo = R"(
+HloModule AsyncLoopCrossingPassthrough
+
+async_dus_comp {
+  p0 = f32[8] parameter(0)
+  u = f32[2] parameter(1)
+  c0 = s32[] constant(0)
+  ROOT dus = f32[8] dynamic-update-slice(p0, u, c0)
+}, execution_thread="parallel"
+
+body {
+  state = (((f32[8], f32[2]), f32[8], s32[])) parameter(0)
+  prev_chain = ((f32[8], f32[2]), f32[8], s32[]) get-tuple-element(state),
+      index=0
+  m_upd = ((f32[8], f32[2]), f32[8], s32[]) custom-call(prev_chain),
+      custom_call_target="Sharding"
+  upd = ((f32[8], f32[2]), f32[8], s32[]) async-update(m_upd),
+      async_execution_thread="parallel", calls=async_dus_comp
+  ROOT next = (((f32[8], f32[2]), f32[8], s32[])) tuple(upd)
+}
+
+cond {
+  state = (((f32[8], f32[2]), f32[8], s32[])) parameter(0)
+  ROOT done_pred = pred[] constant(false)
+}
+
+ENTRY main {
+  p = f32[8] parameter(0)
+  u = f32[2] parameter(1)
+  start = ((f32[8], f32[2]), f32[8], s32[]) async-start(p, u),
+      async_execution_thread="parallel", calls=async_dus_comp
+  init = (((f32[8], f32[2]), f32[8], s32[])) tuple(start)
+  loop = (((f32[8], f32[2]), f32[8], s32[])) while(init),
+      condition=cond, body=body
+  loop_chain = ((f32[8], f32[2]), f32[8], s32[]) get-tuple-element(loop),
+      index=0
+  m_done = ((f32[8], f32[2]), f32[8], s32[]) custom-call(loop_chain),
+      custom_call_target="Sharding"
+  ROOT done = f32[8] async-done(m_done),
+      async_execution_thread="parallel", calls=async_dus_comp
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> async_mod,
+                       ParseAndReturnVerifiedModule(async_hlo));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloDataflowAnalysis> async_analysis,
+      HloDataflowAnalysis::Run(
+          *async_mod, /*ssa_form=*/false, /*bitcast_defines_value=*/false,
+          /*execution_threads=*/{}, /*propagate_through_calls=*/true,
+          /*precompute_uses=*/std::nullopt,
+          /*propagate_through_control_flow=*/true,
+          [](const HloInstruction* inst) {
+            return inst->IsCustomCall("Sharding");
+          }));
+  EXPECT_OK(async_analysis->Verify());
+  HloInstruction* p = FindInstruction(async_mod.get(), "p");
+  HloInstruction* start = FindInstruction(async_mod.get(), "start");
+  HloInstruction* upd = FindInstruction(async_mod.get(), "upd");
+  HloInstruction* done = FindInstruction(async_mod.get(), "done");
+  const HloValue& p_val = async_analysis->GetValueDefinedAt(p);
+  EXPECT_EQ(&async_analysis->GetUniqueValueAt(start, {1}), &p_val);
+  EXPECT_EQ(&async_analysis->GetUniqueValueAt(upd, {1}), &p_val);
+  EXPECT_EQ(&async_analysis->GetUniqueValueAt(upd, {2}),
+            &async_analysis->GetValueDefinedAt(upd, {2}));
+  EXPECT_EQ(&async_analysis->GetUniqueValueAt(done, {}), &p_val);
+
+  class TestMayAliasInfo : public AliasInfo {
+   public:
+    std::optional<bool> MayAlias(const HloInstruction* operand,
+                                 const ShapeIndex& operand_index,
+                                 const HloInstruction* user,
+                                 const ShapeIndex& user_index) const override {
+      if (user->opcode() == HloOpcode::kAllReduce) {
+        return user->OperandIndices(operand).size() == 1;
+      }
+      if (user->IsCustomCall("nullopt_then_false")) {
+        if (user->operand(1) == operand) {
+          return false;
+        }
+        return std::nullopt;
+      }
+      if (user->name() == "cond_shape_diff" ||
+          (user->name() == "async_disjoint_start" &&
+           user_index == ShapeIndex{1})) {
+        return true;
+      }
+      if (user->opcode() == HloOpcode::kFusion && !user->IsCustomFusion()) {
+        return absl::c_all_of(
+            user->OperandIndices(operand), [&](int64_t op_num) {
+              return op_num == 0 || user->name() == "fus_both_ok";
+            });
+      }
+      return std::nullopt;
+    }
+  };
+
+  absl::string_view alias_hlo = R"(
+HloModule CustomMayAliasTest
+
+sum {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
+
+fus_mem_change_comp {
+  p0 = f32[8]{0:S(1)} parameter(0)
+  p1 = f32[8]{0:S(1)} parameter(1)
+  ROOT add = f32[8]{0:S(1)} add(p0, p1)
+}
+
+fus_both_ok_comp {
+  p0 = f32[8]{0:S(1)} parameter(0)
+  p1 = f32[8]{0:S(1)} parameter(1)
+  ROOT add = f32[8]{0:S(1)} add(p0, p1)
+}
+
+fus_second_bad_comp {
+  p0 = f32[8]{0:S(1)} parameter(0)
+  p1 = f32[8]{0:S(1)} parameter(1)
+  ROOT sub = f32[8]{0:S(1)} subtract(p0, p1)
+}
+
+cond_true_comp {
+  cp = f32[8]{0} parameter(0)
+  ROOT neg = f32[8]{0} negate(cp)
+}
+
+cond_false_comp {
+  cp = f32[8]{0} parameter(0)
+  ROOT exp = f32[8]{0} exponential(cp)
+}
+
+cond_true_2d_comp {
+  cp = f32[8]{0} parameter(0)
+  ROOT bc = f32[2,4]{1,0} bitcast(cp)
+}
+
+cond_false_2d_comp {
+  cp = f32[8]{0} parameter(0)
+  neg = f32[8]{0} negate(cp)
+  ROOT bc = f32[2,4]{1,0} bitcast(neg)
+}
+
+callee_mem_bad {
+  cp = f32[8]{0} parameter(0)
+  m_in = f32[8]{0:S(1)} custom-call(cp), custom_call_target="passthrough"
+  neg = f32[8]{0:S(1)} negate(m_in)
+  ROOT m_out = f32[8]{0} custom-call(neg), custom_call_target="passthrough"
+}
+
+callee_tup_ok {
+  cp = (f32[8]{0}) parameter(0)
+  gte = f32[8]{0} get-tuple-element(cp), index=0
+  m_in = f32[8]{0} custom-call(gte), custom_call_target="passthrough"
+  neg = f32[8]{0} negate(m_in)
+  ROOT m_out = f32[8]{0} custom-call(neg), custom_call_target="passthrough"
+}
+
+callee_tup_bad {
+  cp = (f32[8]{0}) parameter(0)
+  gte = f32[8]{0} get-tuple-element(cp), index=0
+  m_in = f32[8]{0:S(1)} custom-call(gte), custom_call_target="passthrough"
+  neg = f32[8]{0:S(1)} negate(m_in)
+  ROOT m_out = f32[8]{0} custom-call(neg), custom_call_target="passthrough"
+}
+
+callee_tup_copy_bad {
+  cp = (f32[8]{0}) parameter(0)
+  m_s1 = (f32[8]{0:S(1)}) custom-call(cp), custom_call_target="passthrough"
+  m_s0 = (f32[8]{0}) custom-call(m_s1), custom_call_target="passthrough"
+  tup_copy = (f32[8]{0}) copy(m_s0)
+  gte = f32[8]{0} get-tuple-element(tup_copy), index=0
+  ROOT neg = f32[8]{0} negate(gte)
+}
+
+parallel_callee {
+  pp = f32[8]{0} parameter(0)
+  ROOT m_par = f32[8]{0} custom-call(pp), custom_call_target="passthrough"
+}, execution_thread="parallel"
+
+parallel_comp {
+  pp = f32[8]{0} parameter(0)
+  ROOT call_par = f32[8]{0} call(pp), to_apply=parallel_callee
+}, execution_thread="parallel"
+
+async_disjoint_comp {
+  p0 = f32[8]{0} parameter(0)
+  p1 = f32[8]{0} parameter(1)
+  ROOT disjoint_op = f32[2,4]{1,0} custom-call(p0, p1),
+      custom_call_target="disjoint_kernel",
+      frontend_attributes={xla_disjoint_read_write_regions="true"}
+}, execution_thread="parallel"
+
+ENTRY main {
+  a = f32[8]{0} parameter(0)
+  b = f32[8]{0} parameter(1)
+  a_s1 = f32[8]{0:S(1)} parameter(2)
+  pred_in = pred[] parameter(3)
+  p_call_bad = f32[8]{0} parameter(4)
+  p_tup_ok = (f32[8]{0}) parameter(5)
+  p_tup_bad = (f32[8]{0}) parameter(6)
+  p_tup_copy_bad = (f32[8]{0}) parameter(7)
+  z = s32[] constant(0)
+  m0 = f32[8]{0} custom-call(a), custom_call_target="passthrough"
+  m1 = f32[8]{0} custom-call(a), custom_call_target="passthrough"
+  add_wrapped = f32[8]{0} add(m0, m1)
+  add_unwrapped = f32[8]{0} add(b, b)
+  cond_wrapped = f32[8]{0} conditional(pred_in, m0, m1),
+      true_computation=cond_true_comp, false_computation=cond_false_comp
+  cond_shape_diff = f32[2,4]{1,0} conditional(pred_in, m0, m1),
+      true_computation=cond_true_2d_comp, false_computation=cond_false_2d_comp
+  veto_second = f32[8]{0} custom-call(m0, m1),
+      custom_call_target="nullopt_then_false"
+  ar_single = f32[8]{0} all-reduce(m0), replica_groups={}, to_apply=sum
+  ar_both_wrapped = (f32[8]{0}, f32[8]{0}) all-reduce(m0, m1),
+      replica_groups={}, to_apply=sum
+  ar_mixed = (f32[8]{0}, f32[8]{0}) all-reduce(a, m0),
+      replica_groups={}, to_apply=sum
+  m_mem_change = f32[8]{0:S(1)} custom-call(a), custom_call_target="passthrough"
+  m_mem_back = f32[8]{0} custom-call(m_mem_change),
+      custom_call_target="passthrough"
+  neg_mem_back = f32[8]{0} negate(m_mem_back)
+  add_mem_back = f32[8]{0} add(a, m_mem_back)
+  fus_mem_change = f32[8]{0:S(1)} fusion(m_mem_change, m_mem_change),
+      kind=kLoop, calls=fus_mem_change_comp
+  dus_disjoint_mem = f32[8]{0} dynamic-update-slice(a, m_mem_change, z),
+      frontend_attributes={xla_disjoint_read_write_regions="true"}
+  ms0 = f32[8]{0:S(1)} custom-call(a_s1), custom_call_target="passthrough"
+  ms1 = f32[8]{0:S(1)} custom-call(a_s1), custom_call_target="passthrough"
+  fus_both_ok = f32[8]{0:S(1)} fusion(ms0, ms1),
+      kind=kLoop, calls=fus_both_ok_comp
+  fus_second_bad = f32[8]{0:S(1)} fusion(ms0, ms1),
+      kind=kLoop, calls=fus_second_bad_comp
+  call_mem_bad = f32[8]{0} call(p_call_bad), to_apply=callee_mem_bad
+  call_tup_ok = f32[8]{0} call(p_tup_ok), to_apply=callee_tup_ok
+  call_tup_bad = f32[8]{0} call(p_tup_bad), to_apply=callee_tup_bad
+  call_tup_copy_bad = f32[8]{0} call(p_tup_copy_bad),
+      to_apply=callee_tup_copy_bad
+  m_tup_s1 = (f32[8]{0:S(1)}) custom-call(p_tup_bad),
+      custom_call_target="passthrough"
+  gte_s1 = f32[8]{0:S(1)} get-tuple-element(m_tup_s1), index=0
+  neg_gte_s1 = f32[8]{0:S(1)} negate(gte_s1)
+  async_start = ((f32[8]{0}), f32[8]{0}, s32[]) async-start(b),
+      async_execution_thread="parallel", calls=parallel_comp
+  async_done = f32[8]{0} async-done(async_start),
+      async_execution_thread="parallel", calls=parallel_comp
+  async_disjoint_start = ((f32[8]{0}, f32[8]{0}), f32[2,4]{1,0}, s32[])
+      async-start(m0, m1), async_execution_thread="parallel",
+      calls=async_disjoint_comp
+  async_disjoint_done = f32[2,4]{1,0} async-done(async_disjoint_start),
+      async_execution_thread="parallel", calls=async_disjoint_comp
+  ROOT out = (f32[8]{0}, f32[8]{0}, f32[8]{0}, f32[2,4]{1,0}, f32[8]{0},
+              f32[8]{0}, (f32[8]{0}, f32[8]{0}), (f32[8]{0}, f32[8]{0}),
+              f32[8]{0:S(1)}, f32[8]{0}, f32[8]{0}, f32[8]{0}, f32[8]{0:S(1)},
+              f32[8]{0:S(1)}, f32[8]{0}, f32[8]{0}, f32[8]{0}, f32[8]{0},
+              f32[8]{0:S(1)}, f32[8]{0}, f32[2,4]{1,0})
+      tuple(add_wrapped, add_unwrapped, cond_wrapped, cond_shape_diff,
+            veto_second, ar_single, ar_both_wrapped, ar_mixed, fus_mem_change,
+            neg_mem_back, add_mem_back, dus_disjoint_mem, fus_both_ok,
+            fus_second_bad, call_mem_bad, call_tup_ok, call_tup_bad,
+            call_tup_copy_bad, neg_gte_s1, async_done, async_disjoint_done)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> alias_mod,
+                       ParseAndReturnVerifiedModule(alias_hlo));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloDataflowAnalysis> main_analysis,
+      HloDataflowAnalysis::Run(
+          *alias_mod, /*ssa_form=*/true, /*bitcast_defines_value=*/false,
+          /*execution_threads=*/{HloInstruction::kMainExecutionThread},
+          /*propagate_through_calls=*/true, /*precompute_uses=*/std::nullopt,
+          /*propagate_through_control_flow=*/true,
+          [](const HloInstruction* inst) {
+            return inst->IsCustomCall("passthrough");
+          }));
+
+  TestMayAliasInfo test_alias_info;
+  HloInstruction* a = FindInstruction(alias_mod.get(), "a");
+  HloInstruction* b = FindInstruction(alias_mod.get(), "b");
+  HloInstruction* m0 = FindInstruction(alias_mod.get(), "m0");
+  HloInstruction* add_wrapped = FindInstruction(alias_mod.get(), "add_wrapped");
+  HloInstruction* add_unwrapped =
+      FindInstruction(alias_mod.get(), "add_unwrapped");
+  HloInstruction* cond_wrapped =
+      FindInstruction(alias_mod.get(), "cond_wrapped");
+  HloInstruction* cond_shape_diff =
+      FindInstruction(alias_mod.get(), "cond_shape_diff");
+  HloInstruction* veto_second = FindInstruction(alias_mod.get(), "veto_second");
+  HloInstruction* ar_single = FindInstruction(alias_mod.get(), "ar_single");
+  HloInstruction* ar_both_wrapped =
+      FindInstruction(alias_mod.get(), "ar_both_wrapped");
+  HloInstruction* ar_mixed = FindInstruction(alias_mod.get(), "ar_mixed");
+  HloInstruction* m_mem_change =
+      FindInstruction(alias_mod.get(), "m_mem_change");
+  HloInstruction* m_mem_back = FindInstruction(alias_mod.get(), "m_mem_back");
+  HloInstruction* neg_mem_back =
+      FindInstruction(alias_mod.get(), "neg_mem_back");
+  HloInstruction* add_mem_back =
+      FindInstruction(alias_mod.get(), "add_mem_back");
+  HloInstruction* fus_mem_change =
+      FindInstruction(alias_mod.get(), "fus_mem_change");
+  HloInstruction* dus_disjoint_mem =
+      FindInstruction(alias_mod.get(), "dus_disjoint_mem");
+  HloInstruction* ms0 = FindInstruction(alias_mod.get(), "ms0");
+  HloInstruction* fus_both_ok = FindInstruction(alias_mod.get(), "fus_both_ok");
+  HloInstruction* fus_second_bad =
+      FindInstruction(alias_mod.get(), "fus_second_bad");
+  HloInstruction* p_call_bad = FindInstruction(alias_mod.get(), "p_call_bad");
+  HloInstruction* call_mem_bad =
+      FindInstruction(alias_mod.get(), "call_mem_bad");
+  HloInstruction* p_tup_ok = FindInstruction(alias_mod.get(), "p_tup_ok");
+  HloInstruction* call_tup_ok = FindInstruction(alias_mod.get(), "call_tup_ok");
+  HloInstruction* p_tup_bad = FindInstruction(alias_mod.get(), "p_tup_bad");
+  HloInstruction* call_tup_bad =
+      FindInstruction(alias_mod.get(), "call_tup_bad");
+  HloInstruction* p_tup_copy_bad =
+      FindInstruction(alias_mod.get(), "p_tup_copy_bad");
+  HloInstruction* call_tup_copy_bad =
+      FindInstruction(alias_mod.get(), "call_tup_copy_bad");
+  HloInstruction* async_disjoint_start =
+      FindInstruction(alias_mod.get(), "async_disjoint_start");
+  HloInstruction* m_par = FindInstruction(alias_mod.get(), "m_par");
+
+  // Multi operand elementwise and conditional instructions fall through
+  // `query_may_alias` to standard sharing rules, `query_may_alias` combines
+  // `true` hints for `kConditional` and `HasDisjointReadWriteRegions`, and
+  // explicit `false` on a later slot vetoes sharing after an earlier
+  // `std::nullopt` slot.
+  EXPECT_TRUE(main_analysis->CanShareOperandBufferWithUser(
+      m0, {}, add_wrapped, {}, &test_alias_info));
+  EXPECT_TRUE(main_analysis->CanShareOperandBufferWithUser(
+      b, {}, add_unwrapped, {}, &test_alias_info));
+  EXPECT_TRUE(main_analysis->CanShareOperandBufferWithUser(
+      m0, {}, cond_wrapped, {}, &test_alias_info));
+  EXPECT_TRUE(main_analysis->CanShareOperandBufferWithUser(
+      m0, {}, cond_shape_diff, {}, &test_alias_info));
+  EXPECT_TRUE(main_analysis->CanShareOperandBufferWithUser(
+      m0, {}, async_disjoint_start, {1}, &test_alias_info));
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      m0, {}, veto_second, {}, &test_alias_info));
+
+  // Single slot MayAlias allows `ar_single(m0)` and rejects both
+  // `ar_both_wrapped(m0, m1)` and `ar_mixed(a, m0)`.
+  EXPECT_TRUE(main_analysis->CanShareOperandBufferWithUser(
+      m0, {}, ar_single, {}, &test_alias_info));
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      m0, {}, ar_both_wrapped, {0}, &test_alias_info));
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      a, {}, ar_mixed, {0}, &test_alias_info));
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      m0, {}, ar_mixed, {1}, &test_alias_info));
+  // Passthrough changing memory space (`a{S(0)} -> m_mem_change{S(1)}`) cannot
+  // share buffers with its producer or its user, even when chained back to
+  // `S(0)` (`m_mem_back`) or when `xla_disjoint_read_write_regions` is set.
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      a, {}, m_mem_change, {}, &test_alias_info));
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      m_mem_back, {}, neg_mem_back, {}, &test_alias_info));
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      a, {}, add_mem_back, {}, &test_alias_info));
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      m_mem_change, {}, fus_mem_change, {}, &test_alias_info));
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      a, {}, dus_disjoint_mem, {}, &test_alias_info));
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      m_mem_change, {}, dus_disjoint_mem, {}, &test_alias_info));
+  // Multi operand fusion MayAlias checks every shared operand slot.
+  EXPECT_TRUE(main_analysis->CanShareOperandBufferWithUser(
+      ms0, {}, fus_both_ok, {}, &test_alias_info));
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      ms0, {}, fus_second_bad, {}, &test_alias_info));
+  // `kCall` and non passthrough value forwarding instructions
+  // (`get-tuple-element`, shallow tuple `copy`) reject sharing when upstream
+  // passthroughs change memory space, both on the outer `kCall` and on the
+  // inner defining instruction, while allowing tuple parameters when shapes
+  // match.
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      p_call_bad, {}, call_mem_bad, {}, &test_alias_info));
+  EXPECT_TRUE(main_analysis->CanShareOperandBufferWithUser(
+      p_tup_ok, {0}, call_tup_ok, {}, &test_alias_info));
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      p_tup_bad, {0}, call_tup_bad, {}, &test_alias_info));
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      p_tup_copy_bad, {0}, call_tup_copy_bad, {}, &test_alias_info));
+  HloInstruction* callee_copy_neg =
+      call_tup_copy_bad->to_apply()->root_instruction();
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      callee_copy_neg->mutable_operand(0), {}, callee_copy_neg, {},
+      &test_alias_info));
+  EXPECT_FALSE(main_analysis->CanShareOperandValueBufferWithUser(
+      main_analysis->GetValueDefinedAt(p_tup_copy_bad, {0}), callee_copy_neg,
+      {}, &test_alias_info));
+  HloInstruction* gte_s1 = FindInstruction(alias_mod.get(), "gte_s1");
+  HloInstruction* neg_gte_s1 = FindInstruction(alias_mod.get(), "neg_gte_s1");
+  EXPECT_FALSE(main_analysis->CanShareOperandBufferWithUser(
+      gte_s1, {}, neg_gte_s1, {}, &test_alias_info));
+  EXPECT_FALSE(main_analysis->CanShareOperandValueBufferWithUser(
+      main_analysis->GetValueDefinedAt(p_tup_bad, {0}), neg_gte_s1, {},
+      &test_alias_info));
+  // `m_par` is on excluded thread `"parallel"`, so `IsPassthrough` returns
+  // false even though `"main"` had passthroughs.
+  EXPECT_FALSE(main_analysis->IsPassthrough(m_par));
+}
+
+TEST_F(HloDataflowAnalysisTest, CallOutputPassthroughMemorySpaceMismatch) {
+  absl::string_view hlo_str = R"(
+HloModule CallPassthroughSubshapeMismatch
+
+%callee {
+  %cp = f32[8]{0} parameter(0)
+  ROOT %m_mem = f32[8]{0:S(1)} custom-call(%cp), custom_call_target="passthrough"
+}
+
+ENTRY %main {
+  %p0 = f32[8]{0} parameter(0)
+  %a = f32[8]{0} add(%p0, %p0)
+  %c = f32[8]{0:S(1)} call(%a), to_apply=%callee
+  ROOT %neg = f32[8]{0:S(1)} negate(%c)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_str));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloDataflowAnalysis> analysis,
+      HloDataflowAnalysis::Run(
+          *module_, /*ssa_form=*/true, /*bitcast_defines_value=*/false,
+          /*execution_threads=*/{}, /*propagate_through_calls=*/true,
+          /*precompute_uses=*/std::nullopt,
+          /*propagate_through_control_flow=*/true,
+          [](const HloInstruction* inst) {
+            return inst->IsCustomCall("passthrough");
+          }));
+  AliasInfo alias_info;
+  HloInstruction* a = FindInstruction(module_.get(), "a");
+  HloInstruction* c = FindInstruction(module_.get(), "c");
+  HloInstruction* neg = FindInstruction(module_.get(), "neg");
+  EXPECT_FALSE(
+      analysis->CanShareOperandBufferWithUser(c, {}, neg, {}, &alias_info));
+  EXPECT_FALSE(analysis->CanShareOperandValueBufferWithUser(
+      analysis->GetValueDefinedAt(a), neg, {}, &alias_info));
+}
+
 }  // namespace
 }  // namespace xla
