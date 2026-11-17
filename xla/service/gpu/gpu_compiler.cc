@@ -813,10 +813,12 @@ Decision IsScaledDotSupportedByBackend(const HloInstruction* instr,
 
 // Whether no use of `instr`, other than operand `skip_index` of `skip_user`,
 // could fuse a broadcast in its place: every use is an operand that its user
-// updates in place (e.g. operand 0 of a dynamic-update-slice or a scatter) or
-// an operand of a custom call. Bitcasts, reshapes, transposes, copies and
-// converts are looked through, since the simplifier folds them into a sunk
-// broadcast.
+// updates in place (e.g. operand 0 of a dynamic-update-slice or a scatter), an
+// operand of a custom call, or an operand of a dot or convolution. Whether a
+// dot becomes a library call (cuBLAS/hipBLASLt), which reads a materialized
+// buffer, or a GEMM fusion is only decided later, so a dot operand does not
+// count as a fusing use. Bitcasts, reshapes, transposes, copies and converts
+// are looked through, since the simplifier folds them into a sunk broadcast.
 bool NoUseCanFuseBroadcast(const HloInstruction* instr,
                            const HloInstruction* skip_user,
                            int64_t skip_index) {
@@ -833,6 +835,10 @@ bool NoUseCanFuseBroadcast(const HloInstruction* instr,
         }
         continue;
       case HloOpcode::kCustomCall:
+      case HloOpcode::kDot:
+      case HloOpcode::kScaledDot:
+      case HloOpcode::kRaggedDot:
+      case HloOpcode::kConvolution:
         continue;
       default:
         break;
@@ -858,9 +864,9 @@ bool NoUseCanFuseBroadcast(const HloInstruction* instr,
 
 // WhileLoopConstantSinking hook: keeps a broadcast of a constant in the loop
 // state when no use of it in the body can fuse it. Sinking it would only add a
-// broadcast kernel to every iteration, where a custom call reads the carried
-// buffer as is and copy insertion gives an in-place user a copy of the same
-// size.
+// broadcast kernel to every iteration, where a custom call or a GEMM library
+// call reads the carried buffer as is and copy insertion gives an in-place
+// user a copy of the same size.
 bool ShouldSinkIntoWhileLoop(const HloInstruction& init_value,
                              const HloInstruction& body_gte) {
   if (init_value.opcode() != HloOpcode::kBroadcast ||

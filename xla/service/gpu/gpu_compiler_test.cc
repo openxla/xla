@@ -1062,6 +1062,11 @@ constexpr absl::string_view kCustomCallUse = R"(
   cc = f32[128,128] custom-call(zeros, acc), custom_call_target="__xla_test_sliced_custom_call", api_version=API_VERSION_TYPED_FFI
   next_acc = f32[128,128] add(acc, cc))";
 
+// `zeros` is only a dot operand. If the dot becomes a library call (cuBLAS or
+// hipBLASLt), it reads a materialized buffer, so the broadcast is kept.
+constexpr absl::string_view kDotUse = R"(
+  next_acc = f32[128,128] dot(acc, zeros), lhs_contracting_dims={1}, rhs_contracting_dims={0})";
+
 // `zeros` is updated in place, but an add also reads it and can fuse it.
 constexpr absl::string_view kInPlaceAndFusibleUse = R"(
   zero = s32[] constant(0)
@@ -1079,7 +1084,7 @@ TEST_F(GpuCompilerWhileLoopSinkingTest, SinksFusibleBroadcastWithFlag) {
 
 TEST_F(GpuCompilerWhileLoopSinkingTest, KeepsBroadcastNoUseCanFuse) {
   for (absl::string_view use :
-       {kInPlaceUse, kTransposedInPlaceUse, kCustomCallUse}) {
+       {kInPlaceUse, kTransposedInPlaceUse, kCustomCallUse, kDotUse}) {
     SCOPED_TRACE(use);
     EXPECT_THAT(CountCarriedBuffers(use, true), absl_testing::IsOkAndHolds(2));
   }
