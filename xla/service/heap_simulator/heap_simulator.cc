@@ -3016,6 +3016,8 @@ ConstrainedGlobalDecreasingSizeBestFitHeap::FinishBestOfSpatialTemporal() {
 int64_t ConstrainedGlobalDecreasingSizeBestFitHeap::AllocateBuffersInSingleHeap(
     std::list<BufferInterval>& buffer_intervals_in_order) {
   int64_t max_end = 0;
+  // Only exceeds size_limit_per_heap_ with round_up_oversized_heaps_.
+  uint64_t heap_limit = size_limit_per_heap_;
   // Place buffers into the currently processed heap as many as possible.
   for (auto it = buffer_intervals_in_order.begin();
        it != buffer_intervals_in_order.end();) {
@@ -3029,13 +3031,23 @@ int64_t ConstrainedGlobalDecreasingSizeBestFitHeap::AllocateBuffersInSingleHeap(
     }
     BufferInterval buffer_interval = *it;
     Chunk chunk_candidate = FindChunkCandidate(buffer_interval);
-    if (chunk_candidate.chunk_end() <= size_limit_per_heap_ ||
+    const int64_t size = GetMaxColocationSize(buffer_interval);
+    const int64_t chunk_end = chunk_candidate.offset + size;
+    // A rounded up heap only takes buffers that need all of its limit.
+    const bool fits =
+        chunk_end <= heap_limit && (heap_limit == size_limit_per_heap_ ||
+                                    size + size_limit_per_heap_ > heap_limit);
+    if (fits ||
         // Commit the chunk as long as the heap is empty. We do this because
         // we want the size constraint to be soft, meaning that results are
         // successfully generated even if there are some buffer sizes larger
         // than the given constraint size.
         result_.heap_size == 0) {
-      max_end = std::max(max_end, chunk_candidate.chunk_end());
+      if (round_up_oversized_heaps_ && result_.heap_size == 0 &&
+          chunk_end > heap_limit) {
+        heap_limit = RoundUpTo<uint64_t>(chunk_end, size_limit_per_heap_);
+      }
+      max_end = std::max(max_end, chunk_end);
       CommitChunkAndInterval(buffer_interval, chunk_candidate);
       it = buffer_intervals_in_order.erase(it);
       continue;
