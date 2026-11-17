@@ -337,7 +337,10 @@ AllocateDeviceMemory(StreamExecutor* executor,
       // multicast consumers can require a single physical handle.
       chunk_size = kFallbackChunkSize / granularity * granularity;
       int multicast_supported = 0;
+      int driver_version = 0;
       if (chunk_size != 0 &&
+          cuDriverGetVersion(&driver_version) == CUDA_SUCCESS &&
+          driver_version >= 12010 &&
           cuDeviceGetAttribute(&multicast_supported,
                                CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED,
                                device) == CUDA_SUCCESS &&
