@@ -18,6 +18,13 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
+
+#include "absl/status/status_matchers.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -26,6 +33,24 @@ namespace {
 
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
+
+TEST(ShuffleTest, PermuteSetsTheIndices) {
+  const Literal indices = LiteralUtil::CreateR2<int32_t>({{1, 0}, {0, 1}});
+
+  const ShuffleMode mode = Permute(indices);
+
+  EXPECT_EQ(mode.mode_case(), ShuffleMode::kPermute);
+  ASSERT_OK_AND_ASSIGN(const Literal mode_indices, GetPermuteIndices(mode));
+  EXPECT_EQ(mode_indices, indices);
+}
+
+TEST(ShuffleTest, GetPermuteIndicesShapeReturnsTheShapeOfTheIndices) {
+  const ShuffleMode mode =
+      Permute(LiteralUtil::CreateR2<int8_t>({{1, 0}, {0, 1}}));
+
+  EXPECT_THAT(GetPermuteIndicesShape(mode),
+              absl_testing::IsOkAndHolds(ShapeUtil::MakeShape(S8, {2, 2})));
+}
 
 TEST(ShuffleTest, RotateSetsTheShifts) {
   const ShuffleMode mode = Rotate({2, 3});
