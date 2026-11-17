@@ -1250,11 +1250,11 @@ absl::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(
   }
   stride_a_bytes *= ByteWidth(cfg_.type_a);
   stride_b_bytes *= ByteWidth(cfg_.type_b);
-  uint64_t c_stride_ragged_dim_bytes = 
+  uint64_t c_stride_ragged_dim_bytes =
       static_cast<uint64_t>(cfg_.c_stride_ragged_dim) * ByteWidth(cfg_.type_c);
   uint64_t output_stride_ragged_dim_bytes =
-      static_cast<uint64_t>(cfg_.output_stride_ragged_dim)
-            * ByteWidth(cfg_.type_d);
+      static_cast<uint64_t>(cfg_.output_stride_ragged_dim) *
+      ByteWidth(cfg_.type_d);
 
   GroupGemmUpdateArgsParams update_args_params{
       /*args=*/d_userArgs,
@@ -1274,10 +1274,14 @@ absl::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(
       /*n=*/static_cast<uint32_t>(cfg_.n),
       /*k=*/static_cast<uint32_t>(cfg_.k),
       /*batch=*/static_cast<uint32_t>(cfg_.batch_count),
-      strideA1, strideA2,
-      strideB1, strideB2,
-      strideC1, strideC2,
-      strideD1, strideD2,
+      strideA1,
+      strideA2,
+      strideB1,
+      strideB2,
+      strideC1,
+      strideC2,
+      strideD1,
+      strideD2,
       cfg_.ragged_mode,
       /*num_gemms=*/static_cast<uint32_t>(cfg_.group_count),
       activation_type_,

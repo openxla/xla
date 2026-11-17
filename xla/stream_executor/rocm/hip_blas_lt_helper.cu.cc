@@ -49,7 +49,7 @@ __device__ __forceinline__ void copy_shared_to_global(const void* shared_src,
   uint8_t* dest8 = reinterpret_cast<uint8_t*>(global_dest);
   size_t ofs = count_uint4 * sizeof(uint4);
   for (size_t i = ofs + threadIdx.x; i < total_bytes; i += blockDim.x) {
-      dest8[i] = src8[i];
+    dest8[i] = src8[i];
   }
 }
 
@@ -58,9 +58,9 @@ __device__ __forceinline__ void copy_shared_to_global(const void* shared_src,
 // keeps the kernel signature to a single argument.
 struct GroupGemmKernelArgs {
   hipblaslt_ext::UserArguments* dest_args;
-  const void* a, *b, *c;
+  const void *a, *b, *c;
   void* d;
-  const void* bias, *group_sizes;
+  const void *bias, *group_sizes;
   // Byte strides (element stride premultiplied by the operand's element width),
   // with stride_a/stride_b already swapped on the host when must_swap_operands.
   uint64_t stride_a, stride_b, c_stride_ragged_dim, output_stride_ragged_dim;
@@ -86,7 +86,7 @@ __device__ __forceinline__ void* OffsetPtr(const void* base, uint64_t index,
 // ragged-dot modes (strides, alpha/beta, scales, bias, activation).
 // The SetUserArgsKernel kernels below build hipblaslt_ext::UserArguments in
 // uninitialized LDS and copy whole structs to global memory, so every field
-// must be written. 
+// must be written.
 __device__ __forceinline__ void FillCommonUserArgs(
     hipblaslt_ext::UserArguments& arg, const GroupGemmKernelArgs& p) {
   arg.strideA1 = p.strideA1;
@@ -218,7 +218,7 @@ __launch_bounds__(BLOCK_SIZE) __global__
       }
 
       FillCommonUserArgs(arg, p);
-    } // if (idx < p.num_gemms)
+    }  // if (idx < p.num_gemms)
 
     __barrier(__CLK_LOCAL_MEM_FENCE);
 
@@ -233,19 +233,18 @@ __launch_bounds__(BLOCK_SIZE) __global__
                           total_bytes);
     // Synchronize before next iteration to ensure copy is complete
     __barrier(__CLK_LOCAL_MEM_FENCE | __CLK_GLOBAL_MEM_FENCE);
-  } // for
+  }  // for
 }
 
 void GroupGemmUpdateArgs(hipStream_t stream,
                          const GroupGemmUpdateArgsParams& p) {
-
-#define DISPATCH_KERNEL(Mode) \
-  case gpu::RaggedDotMode::Mode: \
-    if (p.group_size_bytewidth == 4) { \
+#define DISPATCH_KERNEL(Mode)                                         \
+  case gpu::RaggedDotMode::Mode:                                      \
+    if (p.group_size_bytewidth == 4) {                                \
       kernel = SetUserArgsKernel<uint32_t, gpu::RaggedDotMode::Mode>; \
-    } else { \
+    } else {                                                          \
       kernel = SetUserArgsKernel<uint64_t, gpu::RaggedDotMode::Mode>; \
-    } \
+    }                                                                 \
     break;
 
   using KernelFn = void (*)(GroupGemmKernelArgs);
@@ -261,17 +260,29 @@ void GroupGemmUpdateArgs(hipStream_t stream,
 
   GroupGemmKernelArgs kargs{
       static_cast<hipblaslt_ext::UserArguments*>(p.args.opaque()),
-      p.a.opaque(), p.b.opaque(), p.c.opaque(), p.d.opaque(),
-      p.bias.opaque(), p.group_sizes.opaque(),
-      p.stride_a_bytes, p.stride_b_bytes,
+      p.a.opaque(),
+      p.b.opaque(),
+      p.c.opaque(),
+      p.d.opaque(),
+      p.bias.opaque(),
+      p.group_sizes.opaque(),
+      p.stride_a_bytes,
+      p.stride_b_bytes,
       p.c_stride_ragged_dim_bytes,
       p.output_stride_ragged_dim_bytes,
       p.must_swap_operands,
-      p.m, p.n, p.k, p.batch,
-      p.strideA1, p.strideA2,
-      p.strideB1, p.strideB2,
-      p.strideC1, p.strideC2,
-      p.strideD1, p.strideD2,
+      p.m,
+      p.n,
+      p.k,
+      p.batch,
+      p.strideA1,
+      p.strideA2,
+      p.strideB1,
+      p.strideB2,
+      p.strideC1,
+      p.strideC2,
+      p.strideD1,
+      p.strideD2,
       p.num_gemms,
       p.activation_type,
       p.bias_type,
