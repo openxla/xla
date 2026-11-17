@@ -72,3 +72,9 @@ py_library(
     srcs = ["setup_py_nvidia_dependencies_util.py"],
     visibility = ["//visibility:public"],
 )
+
+alias(
+    name = "tensorflow",
+    actual = "//tensorflow:tensorflow_py",
+    visibility = ["//visibility:public"],
+)
