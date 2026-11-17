@@ -57,7 +57,7 @@ constexpr AccuracyBudget kAtanF64Budget = {
 
 // Exp
 constexpr AccuracyBudget kExpF32Budget = {
-    /*cpu=*/{/*regular=*/6,
+    /*cpu=*/{/*regular=*/1,
              /*subnormal=*/27},
     /*gpu=*/
     {/*regular=*/7,

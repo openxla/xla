@@ -48,7 +48,7 @@ class IntrinsicFunction {
                                            intrinsics::IntrinsicOptions options,
                                            absl::string_view name) const = 0;
 
-  // The vectorized function name, e.g. "xla.ldexp.v8f64.v8i32".
+  // The vectorized function name, e.g. "xla.exp.v8f64".
   virtual std::string GenerateVectorizedFunctionName(
       absl::Span<const intrinsics::Type> types) const = 0;
 

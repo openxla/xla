@@ -38,9 +38,9 @@ module {
 }
 
 // CHECK: func @exp_f32
-// CHECK-NOT: @xla.exp.f64
-// CHECK: math.exp %arg0 : f32
-// CHECK: return
+// CHECK-NOT: math.exp
+// CHECK: %[[RESULT:.*]] = call @xla.exp.f32(%arg0) : (f32) -> f32
+// CHECK: return %[[RESULT]] : f32
 
 // -----
 
@@ -187,8 +187,11 @@ func.func @exp_f16(%arg0: f16) -> f16 {
   return %ret : f16
 }
 // CHECK-LABEL: @exp_f16
-// CHECK: math.exp %arg0 : f16
-// CHECK: return
+// CHECK-NOT: math.exp
+// CHECK: %[[EXT:.*]] = arith.extf %arg0 : f16 to f32
+// CHECK: %[[CALL:.*]] = call @xla.exp.f32(%[[EXT]])
+// CHECK: %[[TRUNC:.*]] = arith.truncf %[[CALL]] : f32 to f16
+// CHECK: return %[[TRUNC]]
 
 
 // -----
@@ -330,6 +333,17 @@ func.func @log1p_f32_vector_16(%arg0: vector<16xf32>) -> vector<16xf32> {
 
 // -----
 
+func.func @exp_f32_vector_16(%arg0: vector<16xf32>) -> vector<16xf32> {
+  %ret = math.exp %arg0 : vector<16xf32>
+  return %ret : vector<16xf32>
+}
+// CHECK-LABEL: @exp_f32_vector_16
+// CHECK-NOT: vector.extract_strided_slice
+// CHECK: %[[CALL:.*]] = call @xla.exp.v16f32(%arg0) : (vector<16xf32>) -> vector<16xf32>
+// CHECK: return %[[CALL]]
+
+// -----
+
 func.func @log_f32_vector_16(%arg0: vector<16xf32>) -> vector<16xf32> {
   %ret = math.log %arg0 : vector<16xf32>
   return %ret : vector<16xf32>
@@ -434,21 +448,14 @@ module {
 
 // -----
 
-// expm1 vector_16 variant is gated on CPU features (AVX512).
 func.func @expm1_f32_vector_16(%arg0: vector<16xf32>) -> vector<16xf32> {
   %ret = math.expm1 %arg0 : vector<16xf32>
   return %ret : vector<16xf32>
 }
 // CHECK-LABEL: @expm1_f32_vector_16
-// CHECK: %[[S0:.*]] = vector.extract_strided_slice %arg0 offsets = [0], sizes = [8], strides = [1] : vector<16xf32> to vector<8xf32>
-// CHECK: %[[C0:.*]] = call @xla.expm1.v8f32(%[[S0]])
-// CHECK: %[[S1:.*]] = vector.extract_strided_slice %arg0 offsets = [8], sizes = [8], strides = [1] : vector<16xf32> to vector<8xf32>
-// CHECK: %[[C1:.*]] = call @xla.expm1.v8f32(%[[S1]])
-// CHECK: return
-
-// AVX512-LABEL: @expm1_f32_vector_16
-// AVX512: %[[CALL:.*]] = call @xla.expm1.v16f32(%arg0) : (vector<16xf32>) -> vector<16xf32>
-// AVX512: return %[[CALL]]
+// CHECK-NOT: vector.extract_strided_slice
+// CHECK: %[[CALL:.*]] = call @xla.expm1.v16f32(%arg0) : (vector<16xf32>) -> vector<16xf32>
+// CHECK: return %[[CALL]]
 
 // -----
 

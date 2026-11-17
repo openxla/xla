@@ -18,8 +18,12 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -56,6 +60,9 @@ std::string ToString(const llvm::VecDesc& vec_desc) {
 }
 
 TEST(IntrinsicLibTest, ExpVectorizations) {
+  if (!AreCppGenIntrinsicsAvailable()) {
+    GTEST_SKIP();
+  }
   IntrinsicOptions options;
   auto lib = IntrinsicFunctionLib(options);
   std::vector<llvm::VecDesc> vec_descs = lib.Vectorizations();
@@ -67,6 +74,10 @@ TEST(IntrinsicLibTest, ExpVectorizations) {
   }
 
   EXPECT_THAT(vec_descs_str, UnorderedElementsAre(
+                                 "xla.exp.f32:xla.exp.v2f32:2:_ZGV_LLVM_N2v",
+                                 "xla.exp.f32:xla.exp.v4f32:4:_ZGV_LLVM_N4v",
+                                 "xla.exp.f32:xla.exp.v8f32:8:_ZGV_LLVM_N8v",
+                                 "xla.exp.f32:xla.exp.v16f32:16:_ZGV_LLVM_N16v",
                                  "xla.exp.f64:xla.exp.v2f64:2:_ZGV_LLVM_N2v",
                                  "xla.exp.f64:xla.exp.v4f64:4:_ZGV_LLVM_N4v",
                                  "xla.exp.f64:xla.exp.v8f64:8:_ZGV_LLVM_N8v"));
@@ -199,41 +210,113 @@ TEST(IntrinsicLibTest, AtanHasNoLibmCallsAfterInlining) {
 }
 
 TEST(IntrinsicLibTest, Expm1Vectorizations) {
-  IntrinsicOptions options;
-  auto lib = IntrinsicFunctionLib(options);
-  std::vector<llvm::VecDesc> vec_descs = lib.Vectorizations();
-  std::vector<std::string> vec_descs_str;
-  for (const auto& vec_desc : vec_descs) {
-    if (vec_desc.getScalarFnName().starts_with("xla.expm1")) {
-      vec_descs_str.push_back(ToString(vec_desc));
+  for (absl::string_view features : {"", "+avx512f"}) {
+    IntrinsicOptions options;
+    options.features = features;
+    auto lib = IntrinsicFunctionLib(options);
+    std::vector<std::string> vec_descs_str;
+    for (const auto& vec_desc : lib.Vectorizations()) {
+      if (vec_desc.getScalarFnName().starts_with("xla.expm1")) {
+        vec_descs_str.push_back(ToString(vec_desc));
+      }
     }
+
+    EXPECT_THAT(
+        vec_descs_str,
+        UnorderedElementsAre("xla.expm1.f32:xla.expm1.v2f32:2:_ZGV_LLVM_N2v",
+                             "xla.expm1.f32:xla.expm1.v4f32:4:_ZGV_LLVM_N4v",
+                             "xla.expm1.f32:xla.expm1.v8f32:8:_ZGV_LLVM_N8v",
+                             "xla.expm1.f32:xla.expm1.v16f32:16:_ZGV_LLVM_N16v",
+                             "xla.expm1.f64:xla.expm1.v2f64:2:_ZGV_LLVM_N2v",
+                             "xla.expm1.f64:xla.expm1.v4f64:4:_ZGV_LLVM_N4v",
+                             "xla.expm1.f64:xla.expm1.v8f64:8:_ZGV_LLVM_N8v"))
+        << "features: " << features;
   }
-
-  EXPECT_THAT(
-      vec_descs_str,
-      UnorderedElementsAre("xla.expm1.f32:xla.expm1.v4f32:4:_ZGV_LLVM_N4v",
-                           "xla.expm1.f32:xla.expm1.v8f32:8:_ZGV_LLVM_N8v",
-                           "xla.expm1.f64:xla.expm1.v4f64:4:_ZGV_LLVM_N4v"));
-
-  IntrinsicOptions options_avx512;
-  options_avx512.features = "+avx512f";
-  auto lib_avx512 = IntrinsicFunctionLib(options_avx512);
-  std::vector<llvm::VecDesc> vec_descs_512 = lib_avx512.Vectorizations();
-  std::vector<std::string> vec_descs_512_str;
-  for (const auto& vec_desc : vec_descs_512) {
-    if (vec_desc.getScalarFnName().starts_with("xla.expm1")) {
-      vec_descs_512_str.push_back(ToString(vec_desc));
-    }
-  }
-
-  EXPECT_THAT(
-      vec_descs_512_str,
-      UnorderedElementsAre("xla.expm1.f32:xla.expm1.v4f32:4:_ZGV_LLVM_N4v",
-                           "xla.expm1.f32:xla.expm1.v8f32:8:_ZGV_LLVM_N8v",
-                           "xla.expm1.f32:xla.expm1.v16f32:16:_ZGV_LLVM_N16v",
-                           "xla.expm1.f64:xla.expm1.v4f64:4:_ZGV_LLVM_N4v",
-                           "xla.expm1.f64:xla.expm1.v8f64:8:_ZGV_LLVM_N8v"));
 }
+
+// Returns a JIT of a function `kernel` that calls the intrinsic `name` on a
+// value of the LLVM type `type`.
+std::unique_ptr<intrinsic::JitRunner> JitCalling(const std::string& name,
+                                                 const std::string& type) {
+  auto context = std::make_unique<llvm::LLVMContext>();
+  std::unique_ptr<llvm::Module> module =
+      ParseEmbeddedBitcode(*context, absl::Substitute(R"(
+        declare $0 @$1($0)
+        define $0 @kernel($0 %x) {
+          %r = call $0 @$1($0 %x)
+          ret $0 %r
+        }
+      )",
+                                                      type, name));
+  IntrinsicFunctionLib lib((IntrinsicOptions()));
+  lib.Vectorizations();
+  EXPECT_THAT(lib.DefineIntrinsicFunctions(*module),
+              UnorderedElementsAre(name));
+  return std::make_unique<intrinsic::JitRunner>(std::move(module),
+                                                std::move(context));
+}
+
+// Expects the N-lane definition of `op` to give the bits of the scalar one.
+template <size_t N, typename T, size_t Size>
+void ExpectWideDefinitionMatchesScalar(const std::string& op,
+                                       const std::array<T, Size>& x) {
+  const std::string type = sizeof(T) == 4 ? "float" : "double";
+  const std::string suffix = absl::StrCat("f", 8 * sizeof(T));
+  auto scalar_jit = JitCalling(absl::StrCat("xla.", op, ".", suffix), type);
+  auto scalar = scalar_jit->template GetScalarFn<T(T)>("kernel");
+  auto wide_jit = JitCalling(absl::StrCat("xla.", op, ".v", N, suffix),
+                             absl::Substitute("<$0 x $1>", N, type));
+  auto wide = wide_jit->template GetVectorizedFn<N, T, T>("kernel");
+  for (size_t i = 0; i < Size; i += N) {
+    std::array<T, N> chunk;
+    std::copy_n(x.begin() + i, N, chunk.begin());
+    const std::array<T, N> y = wide(chunk);
+    for (size_t j = 0; j < N; ++j) {
+      const T expected = scalar(chunk[j]);
+      EXPECT_EQ(std::memcmp(&y[j], &expected, sizeof(T)), 0)
+          << op << " with " << N << " lanes: x = " << chunk[j]
+          << ", wide = " << y[j] << ", scalar = " << expected;
+    }
+  }
+}
+
+// Runs the definitions of `op` at every width, also the ones that the
+// vectorizer does not pick on the machine that runs the tests.
+void ExpectWideDefinitionsMatchScalar(const std::string& op) {
+  constexpr float kInfF = std::numeric_limits<float>::infinity();
+  constexpr double kInfD = std::numeric_limits<double>::infinity();
+  // Zeros, infinities, NaN, overflow, underflow and ordinary values.
+  const std::array<float, 16> x32 = {
+      0.0f,  -0.0f,   kInfF,   -kInfF, std::numeric_limits<float>::quiet_NaN(),
+      89.0f, -104.0f, 88.7f,   -87.0f, 1e-6f,
+      0.35f, -0.4f,   0.6931f, 5.2f,   17.1f,
+      -1.0f};
+  const std::array<double, 8> x64 = {
+      0.0,   -0.0,   kInfD, -kInfD, std::numeric_limits<double>::quiet_NaN(),
+      710.0, -746.0, 0.35};
+  ExpectWideDefinitionMatchesScalar<2>(op, x32);
+  ExpectWideDefinitionMatchesScalar<4>(op, x32);
+  ExpectWideDefinitionMatchesScalar<8>(op, x32);
+  ExpectWideDefinitionMatchesScalar<16>(op, x32);
+  ExpectWideDefinitionMatchesScalar<2>(op, x64);
+  ExpectWideDefinitionMatchesScalar<4>(op, x64);
+  ExpectWideDefinitionMatchesScalar<8>(op, x64);
+}
+
+TEST(IntrinsicLibTest, WideExpDefinitionsMatchScalar) {
+  if (!AreCppGenIntrinsicsAvailable()) {
+    GTEST_SKIP();
+  }
+  ExpectWideDefinitionsMatchScalar("exp");
+}
+
+TEST(IntrinsicLibTest, WideExpm1DefinitionsMatchScalar) {
+  if (!AreCppGenIntrinsicsAvailable()) {
+    GTEST_SKIP();
+  }
+  ExpectWideDefinitionsMatchScalar("expm1");
+}
+
 TEST(IntrinsicLibTest, SinAndCosVectorizations) {
   auto descs_with_prefix = [](absl::string_view features,
                               absl::string_view prefix) {

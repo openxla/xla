@@ -578,12 +578,12 @@ static absl::StatusOr<std::unique_ptr<llvm::Module>> CompileIr(
   return ir_module;
 }
 
-TEST(IrCompilerTest, DataFlowSanitizerInstrumentsPolynomialApproximations) {
+TEST(IrCompilerTest, DataFlowSanitizerInstrumentsIntrinsics) {
   constexpr absl::string_view kExpIr = R"(
-  declare float @llvm.exp.f32(float)
+  declare float @xla.exp.f32(float)
 
   define float @test_exp(float %x) {
-    %res = call float @llvm.exp.f32(float %x)
+    %res = call float @xla.exp.f32(float %x)
     ret float %res
   }
   )";

@@ -26,18 +26,16 @@ define dso_local void @func(double* %0, double* %1, i32 %2) local_unnamed_addr #
   br i1 %16, label %7, label %8
 }
 
-; Check that we have vectorized and inlined the call to ldexp:
+; Check that we have vectorized and inlined the call to exp. The matched line is
+; the first step of the argument reduction, x - b * ln2_hi.
 ; CHECK: vector.body:
-; Check that the call to ldexp is inlined:
-; CHECK: %b{{.*}} = ashr <{{[0-9]+}} x i64> {{.*}}splat (i64 2)
-; CHECK-NOT: {{.*}}call{{.*}}ldexp
-; vectorized minimum:
-; CHECK call <{{[0-9]+}} x double> @llvm.minimum.v4f64{{.+}}0x40862E42FEFA39EF
-; CHECK-NOT: {{.*}}call{{.*}}ldexp
+; CHECK: call <[[N:[0-9]+]] x double> @llvm.fma.v[[N]]f64({{.*}}splat (double f0xBFE62E42FEE00000)
+; CHECK-NOT: xla.exp
 
-; Check that the loop epilogue does an unvectorized minimum.
+; Check that the loop epilogue inlines the scalar exp.
 ; CHECK: scalar.ph:
-; CHECK: call double @llvm.minimum.f64{{.+}}0x40862E42FEFA39EF
+; CHECK: @llvm.fma.{{.*}}f64({{.*}}double f0xBFE62E42FEE00000
+; CHECK-NOT: xla.exp
 
 declare double @xla.exp.f64(double) #1
 
