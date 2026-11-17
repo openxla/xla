@@ -79,8 +79,8 @@ using ::testing::Contains;
 using ::testing::Each;
 using ::testing::ElementsAre;
 using ::testing::Field;
-using ::testing::Ge;
 using ::testing::IsEmpty;
+using ::testing::Le;
 using ::testing::Not;
 using ::xla::xtile::BlockLevelParameters;
 
@@ -616,16 +616,16 @@ ENTRY main {
   constexpr int64_t kParam1SizeBytes = 911 * 4;
   constexpr int64_t kOutputSizeBytes = 512 * 911 * 4;
 
-  // Launch grid consists of 128 blocks. Each block reads 1 tile of shape [4,
+  // Launch grid consists of 256 blocks. Each block reads 1 tile of shape [2,
   // 911] from param_0 and full param_1. In total param_0 is read once and
-  // param_1 is read 128 times.
+  // param_1 is read 256 times.
   constexpr int64_t kExpectedBytesRead =
-      kParam0SizeBytes + 128 * kParam1SizeBytes;
+      kParam0SizeBytes + 256 * kParam1SizeBytes;
 
   EXPECT_EQ(tiled_runtime_data.block_level_parameters.output_tile_sizes.size(),
             1);
   EXPECT_THAT(tiled_runtime_data.block_level_parameters.output_tile_sizes[0],
-              ElementsAre(4, 1024));
+              ElementsAre(2, 1024));
   EXPECT_EQ(tiled_runtime_data.block_level_parameters.num_warps, 4);
 
   EXPECT_EQ(tiled_runtime_data.runtime_data.bytes_read, kExpectedBytesRead);
@@ -672,7 +672,7 @@ ENTRY main {
 
   EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.read_time), 2932, 2);
   EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.compute_time), 14, 1);
-  EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.exec_time), 2932, 2);
+  EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.exec_time), 2936, 2);
 }
 
 TEST_F(GpuIndexingPerformanceModelTest,
@@ -713,6 +713,63 @@ ENTRY main {
             4 * 128 * (96 * 64 / 96)        // ==> %p1
                 + 4 * 128 * (96 * 32 / 96)  // ==> %p0
   );
+}
+
+TEST_F(GpuIndexingPerformanceModelTest,
+       EstimateRunTimeForTiledFusion_SingleReduceOverlapScalesWithOccupancy) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule softmax
+
+max_computation {
+  arg_0 = f32[] parameter(0)
+  arg_1 = f32[] parameter(1)
+  ROOT maximum = f32[] maximum(arg_0, arg_1)
+}
+
+softmax {
+  param_0 = f32[65536,2048]{1,0} parameter(0)
+  constant_neg_inf = f32[] constant(-inf)
+  reduce = f32[65536]{0} reduce(param_0, constant_neg_inf), dimensions={1}, to_apply=max_computation
+  broadcast = f32[65536,2048]{1,0} broadcast(reduce), dimensions={0}
+  ROOT subtract = f32[65536,2048]{1,0} subtract(param_0, broadcast)
+}
+
+ENTRY main {
+  param_0 = f32[65536,2048]{1,0} parameter(0)
+  ROOT fusion = f32[65536,2048]{1,0} fusion(param_0), kind=kCustom, calls=softmax
+})"));
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
+      module->entry_computation()->root_instruction());
+
+  // Returns the fraction of the compute/memory overlap that the estimate does
+  // not credit, which is one over the number of resident blocks per core.
+  auto lost_overlap_fraction = [](const EstimateRunTimeData& data) {
+    const absl::Duration memory_time = data.read_time + data.write_time;
+    const absl::Duration fully_overlapped =
+        GpuPerformanceModelBase::CombineComputeAndMemoryAccessTime(
+            data.compute_time, memory_time);
+    return absl::FDivDuration(
+        data.exec_time - fully_overlapped,
+        data.compute_time + memory_time - fully_overlapped);
+  };
+
+  // The 16384 registers of the largest tile limit a core to 4 blocks.
+  ASSERT_OK_AND_ASSIGN(
+      auto register_limited,
+      indexing_cost_model_.EstimateRunTimeForTiledFusion(
+          *fusion_adaptor,
+          BlockLevelParameters{/*output_tile_sizes=*/{{8, 2048}},
+                               /*num_warps=*/8}));
+  EXPECT_NEAR(lost_overlap_fraction(register_limited), 1.0 / 4, 1e-4);
+
+  // The 64 threads of a block limit a core to 24 blocks.
+  ASSERT_OK_AND_ASSIGN(
+      auto thread_limited,
+      indexing_cost_model_.EstimateRunTimeForTiledFusion(
+          *fusion_adaptor,
+          BlockLevelParameters{/*output_tile_sizes=*/{{1, 2048}},
+                               /*num_warps=*/2}));
+  EXPECT_NEAR(lost_overlap_fraction(thread_limited), 1.0 / 24, 1e-4);
 }
 
 TEST_F(GpuIndexingPerformanceModelTest,
@@ -1520,7 +1577,7 @@ ENTRY main {
       indexing_cost_model_.EstimateRunTimeForTiledFusion(
           *fusion_adaptor, BlockLevelParameters{/*output_tile_sizes=*/{{4, 4}},
                                                 /*num_warps=*/8}));
-  EXPECT_NEAR(absl::ToDoubleMicroseconds(res1.exec_time), 147, 1);
+  EXPECT_NEAR(absl::ToDoubleMicroseconds(res1.exec_time), 160, 1);
 
   ASSERT_OK_AND_ASSIGN(
       auto res2,
@@ -2515,9 +2572,45 @@ TEST_F(GpuIndexingPerformanceModelTest,
     CHECK_OK(result);
     return std::get<absl::InlinedVector<TiledRunTimeData, 4>>(*result);
   };
-  auto get_top_k = [&](int64_t d0, int64_t d1, int64_t reduce_dim) {
+  auto get_top_k = [&](int64_t d0, int64_t d1, int64_t reduce_dim,
+                       absl::string_view type = "f32",
+                       absl::string_view reducer = "add") {
     return get_top_k_for_hlo(absl::Substitute(
         R"(
+HloModule m
+reducer {
+  p0 = $4[] parameter(0)
+  p1 = $4[] parameter(1)
+  ROOT r = $4[] $5(p0, p1)
+}
+fused {
+  p0 = $4[$0,$1]{1,0} parameter(0)
+  c0 = $4[] constant(0)
+  ROOT reduce = $4[$2]{0} reduce(p0, c0), dimensions={$3}, to_apply=reducer
+}
+ENTRY main {
+  p0 = $4[$0,$1]{1,0} parameter(0)
+  ROOT fusion = $4[$2]{0} fusion(p0), kind=kCustom, calls=fused
+})",
+        d0, d1, reduce_dim == 0 ? d1 : d0, reduce_dim, type, reducer));
+  };
+  auto seq_tiles_are = [](auto matcher) {
+    return Field(&TiledRunTimeData::block_level_parameters,
+                 Field(&BlockLevelParameters::sequential_tile_sizes, matcher));
+  };
+
+  // Contiguous reductions are kept untiled.
+  EXPECT_THAT(get_top_k(128, 256, /*reduce_dim=*/1),
+              Each(seq_tiles_are(IsEmpty())));
+  EXPECT_THAT(get_top_k(128, 192, /*reduce_dim=*/1),
+              Each(seq_tiles_are(IsEmpty())));
+  EXPECT_THAT(get_top_k(16, 65536, /*reduce_dim=*/1),
+              Each(seq_tiles_are(IsEmpty())));
+
+  // Strided reduction with reduction_size > 64 and minor_parallel >= 32 is
+  // tiled in [2, 256]. All the dimensions that are more minor than the
+  // reduction dimension count towards minor_parallel.
+  auto strided = get_top_k_for_hlo(R"(
 HloModule m
 add {
   p0 = f32[] parameter(0)
@@ -2525,41 +2618,31 @@ add {
   ROOT add = f32[] add(p0, p1)
 }
 fused {
-  p0 = f32[$0,$1]{1,0} parameter(0)
+  p0 = f32[1024,16,16]{2,1,0} parameter(0)
   c0 = f32[] constant(0)
-  ROOT reduce = f32[$2]{0} reduce(p0, c0), dimensions={$3}, to_apply=add
+  ROOT reduce = f32[16,16]{1,0} reduce(p0, c0), dimensions={0}, to_apply=add
 }
 ENTRY main {
-  p0 = f32[$0,$1]{1,0} parameter(0)
-  ROOT fusion = f32[$2]{0} fusion(p0), kind=kCustom, calls=fused
-})",
-        d0, d1, reduce_dim == 0 ? d1 : d0, reduce_dim));
-  };
-  auto seq_tiles_are = [](auto matcher) {
-    return Field(&TiledRunTimeData::block_level_parameters,
-                 Field(&BlockLevelParameters::sequential_tile_sizes, matcher));
-  };
+  p0 = f32[1024,16,16]{2,1,0} parameter(0)
+  ROOT fusion = f32[16,16]{1,0} fusion(p0), kind=kCustom, calls=fused
+})");
+  EXPECT_THAT(strided, Contains(seq_tiles_are(ElementsAre(2))));
+  EXPECT_THAT(strided, Each(seq_tiles_are(Each(Le(256)))));
 
-  // Power-of-two contiguous reduction <= 256 is kept untiled.
-  EXPECT_THAT(get_top_k(128, 256, /*reduce_dim=*/1),
+  // Tiled loops accumulate in the output type, so sub-32-bit float reductions
+  // are only tiled for exact reducers such as `maximum`. Other reducers produce
+  // wrong results: e.g. a bf16 sum stops growing once the accumulator is much
+  // larger than the partial sum of one iteration.
+  EXPECT_THAT(get_top_k(128, 256, /*reduce_dim=*/0, "bf16", "add"),
               Each(seq_tiles_are(IsEmpty())));
-
-  // Non-power-of-two contiguous reduction in (128, 256) is tiled, with
-  // sequential tile sizes < 16 pruned.
-  auto non_pow2 = get_top_k(128, 192, /*reduce_dim=*/1);
-  EXPECT_THAT(non_pow2, Contains(seq_tiles_are(Not(IsEmpty()))));
-  EXPECT_THAT(non_pow2, Each(seq_tiles_are(Each(Ge(16)))));
-
-  // Strided reduction with reduction_size >= 64 and minor_dim_size >= 128
-  // is tiled and retains small sequential tile sizes (< 16).
-  EXPECT_THAT(get_top_k(128, 256, /*reduce_dim=*/0),
+  EXPECT_THAT(get_top_k(128, 256, /*reduce_dim=*/0, "bf16", "maximum"),
               Contains(seq_tiles_are(ElementsAre(2))));
 
-  // Strided reductions with reduction_size < 64 or (reduction_size <= 256 and
-  // minor_dim_size < 128) are kept untiled.
-  EXPECT_THAT(get_top_k(32, 256, /*reduce_dim=*/0),
+  // Strided reductions with reduction_size <= 64 or minor_parallel < 32 are
+  // kept untiled.
+  EXPECT_THAT(get_top_k(64, 256, /*reduce_dim=*/0),
               Each(seq_tiles_are(IsEmpty())));
-  EXPECT_THAT(get_top_k(128, 64, /*reduce_dim=*/0),
+  EXPECT_THAT(get_top_k(128, 16, /*reduce_dim=*/0),
               Each(seq_tiles_are(IsEmpty())));
 
   // Zero-sized reduction dimension is kept untiled without error.
