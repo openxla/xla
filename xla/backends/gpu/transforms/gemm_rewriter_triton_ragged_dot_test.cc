@@ -74,7 +74,7 @@ class TritonRaggedDotTest
     // leaves a bare kRaggedDot, then re-runs the GemmRewriter pipeline over
     // it, which can lower the ragged-dot to __cublas$lt$groupedMatmul and hide
     // the Triton XTile path these tests exercise.
-    debug_options.add_xla_gpu_experimental_autotune_backends(
+    debug_options.add_xla_config_assigner_backends(
         static_cast<::xla::autotuner::Backend>(2) /* TRITON */);
     return debug_options;
   }
@@ -801,7 +801,7 @@ class TritonRaggedDotAutotunedTest
     // only TritonBackend; HIPBLASLT_FISSION (=16) would otherwise re-run the
     // GemmRewriter pipeline over the extracted computation and lower the
     // ragged-dot to __cublas$lt$groupedMatmul.
-    debug_options.add_xla_gpu_experimental_autotune_backends(
+    debug_options.add_xla_config_assigner_backends(
         static_cast<::xla::autotuner::Backend>(2) /* TRITON */);
     return debug_options;
   }
@@ -1059,7 +1059,7 @@ class TritonRaggedDotConfigInjectionTest
     // group_size=2.  These differ from the default (BLOCK_M=32, BLOCK_N=32,
     // group_size=1) so the CHECK for "sizes":["64","16"] is sensitive: it
     // FAILS if the autotuner never ran or applied the wrong config.
-    debug_options.set_xla_gpu_override_gemm_autotuner(
+    debug_options.set_xla_gpu_override_triton_config(
         "block_m: 64 block_n: 16 block_k: 32 "
         "num_stages: 1 num_warps: 4 num_ctas: 1 group_size: 2");
     // Autotune with the Triton backend only.  HIPBLASLT_FISSION (=16) claims
@@ -1067,7 +1067,7 @@ class TritonRaggedDotConfigInjectionTest
     // leaves a bare kRaggedDot, then re-runs the GemmRewriter pipeline over
     // it, which can lower the ragged-dot to __cublas$lt$groupedMatmul and hide
     // the Triton XTile path these tests exercise.
-    debug_options.add_xla_gpu_experimental_autotune_backends(
+    debug_options.add_xla_config_assigner_backends(
         static_cast<::xla::autotuner::Backend>(2) /* TRITON */);
     // autotune_level=0 → select_first_config=true: the override config is
     // applied deterministically without GPU profiling. Without this, autotune
@@ -1144,7 +1144,7 @@ class TritonRaggedDotBatchTest
     // leaves a bare kRaggedDot, then re-runs the GemmRewriter pipeline over
     // it, which can lower the ragged-dot to __cublas$lt$groupedMatmul and hide
     // the Triton XTile path these tests exercise.
-    debug_options.add_xla_gpu_experimental_autotune_backends(
+    debug_options.add_xla_config_assigner_backends(
         static_cast<::xla::autotuner::Backend>(2) /* TRITON */);
     return debug_options;
   }
@@ -1391,7 +1391,7 @@ class TritonRaggedDotBatchAutotunedTest
     // leaves a bare kRaggedDot, then re-runs the GemmRewriter pipeline over
     // it, which can lower the ragged-dot to __cublas$lt$groupedMatmul and hide
     // the Triton XTile path these tests exercise.
-    debug_options.add_xla_gpu_experimental_autotune_backends(
+    debug_options.add_xla_config_assigner_backends(
         static_cast<::xla::autotuner::Backend>(2) /* TRITON */);
     return debug_options;
   }
@@ -1493,7 +1493,7 @@ class TritonRaggedDotExhaustiveTest
     opts.set_xla_gpu_experimental_use_ragged_dot_fusion(false);
     opts.set_xla_gpu_experimental_use_ragged_dot_grouped_gemm(false);
     opts.set_xla_gpu_exhaustive_tiling_search(true);
-    opts.add_xla_gpu_experimental_autotune_backends(
+    opts.add_xla_config_assigner_backends(
         static_cast<::xla::autotuner::Backend>(2) /* TRITON */);
     return opts;
   }
