@@ -110,30 +110,30 @@ TEST_F(ReorderReduceTransposeTest, ReduceScatterConvertTransposeInWhileBody) {
 HloModule main
 
 %reduction {
-  %x = f32[] parameter(0)
-  %y = f32[] parameter(1)
-  ROOT %add = f32[] add(f32[] %x, f32[] %y)
+  %x = bf16[] parameter(0)
+  %y = bf16[] parameter(1)
+  ROOT %add = bf16[] add(bf16[] %x, bf16[] %y)
 }
 
 %while_cond {
-  %param = (f32[4,4], s32[4,2], s32[4,2]) parameter(0)
+  %param = (bf16[4,4], f32[4,2], f32[4,2]) parameter(0)
   ROOT cond = pred[] constant(true)
 }
 
 %while_body {
-  %param = (f32[4,4], s32[4,2], s32[4,2]) parameter(0)
-  %gte.0 = f32[4,4] get-tuple-element(%param), index=0
-  %gte.1 = s32[4,2] get-tuple-element(%param), index=1
-  %reduce_scatter.0 = f32[2,4] reduce-scatter(%gte.0), dimensions={0}, replica_groups={{0,1}}, to_apply=%reduction
-  %convert.0 = s32[2,4] convert(%reduce_scatter.0)
-  %transpose.0 = s32[4,2] transpose(%convert.0), dimensions={1,0}
-  %add.0 = s32[4,2] add(%transpose.0, %gte.1)
-  ROOT tuple = (f32[4,4], s32[4,2], s32[4,2]) tuple(%gte.0, %add.0, %gte.1)
+  %param = (bf16[4,4], f32[4,2], f32[4,2]) parameter(0)
+  %gte.0 = bf16[4,4] get-tuple-element(%param), index=0
+  %gte.1 = f32[4,2] get-tuple-element(%param), index=1
+  %reduce_scatter.0 = bf16[2,4] reduce-scatter(%gte.0), dimensions={0}, replica_groups={{0,1}}, to_apply=%reduction
+  %convert.0 = f32[2,4] convert(%reduce_scatter.0)
+  %transpose.0 = f32[4,2] transpose(%convert.0), dimensions={1,0}
+  %add.0 = f32[4,2] add(%transpose.0, %gte.1)
+  ROOT tuple = (bf16[4,4], f32[4,2], f32[4,2]) tuple(%gte.0, %add.0, %gte.1)
 }
 
 ENTRY main {
-  %init_param = (f32[4,4], s32[4,2], s32[4,2]) parameter(0)
-  ROOT while = (f32[4,4], s32[4,2], s32[4,2]) while(%init_param), condition=%while_cond, body=%while_body
+  %init_param = (bf16[4,4], f32[4,2], f32[4,2]) parameter(0)
+  ROOT while = (bf16[4,4], f32[4,2], f32[4,2]) while(%init_param), condition=%while_cond, body=%while_body
 }
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
@@ -152,7 +152,7 @@ ENTRY main {
                         op::GetTupleElement()));
   HloComputation* reduction =
       while_body->root_instruction()->operand(1)->operand(0)->to_apply();
-  EXPECT_EQ(reduction->root_instruction()->shape().element_type(), S32);
+  EXPECT_EQ(reduction->root_instruction()->shape().element_type(), F32);
 }
 
 TEST_F(ReorderReduceTransposeTest,
@@ -161,30 +161,30 @@ TEST_F(ReorderReduceTransposeTest,
 HloModule main
 
 %reduction {
-  %x = f32[] parameter(0)
-  %y = f32[] parameter(1)
-  ROOT %sub = f32[] subtract(f32[] %x, f32[] %y)
+  %x = bf16[] parameter(0)
+  %y = bf16[] parameter(1)
+  ROOT %sub = bf16[] subtract(bf16[] %x, bf16[] %y)
 }
 
 %while_cond {
-  %param = (f32[4,4], s32[4,2], s32[4,2]) parameter(0)
+  %param = (bf16[4,4], f32[4,2], f32[4,2]) parameter(0)
   ROOT cond = pred[] constant(true)
 }
 
 %while_body {
-  %param = (f32[4,4], s32[4,2], s32[4,2]) parameter(0)
-  %gte.0 = f32[4,4] get-tuple-element(%param), index=0
-  %gte.1 = s32[4,2] get-tuple-element(%param), index=1
-  %reduce_scatter.0 = f32[2,4] reduce-scatter(%gte.0), dimensions={0}, replica_groups={{0,1}}, to_apply=%reduction
-  %convert.0 = s32[2,4] convert(%reduce_scatter.0)
-  %transpose.0 = s32[4,2] transpose(%convert.0), dimensions={1,0}
-  %add.0 = s32[4,2] add(%transpose.0, %gte.1)
-  ROOT tuple = (f32[4,4], s32[4,2], s32[4,2]) tuple(%gte.0, %add.0, %gte.1)
+  %param = (bf16[4,4], f32[4,2], f32[4,2]) parameter(0)
+  %gte.0 = bf16[4,4] get-tuple-element(%param), index=0
+  %gte.1 = f32[4,2] get-tuple-element(%param), index=1
+  %reduce_scatter.0 = bf16[2,4] reduce-scatter(%gte.0), dimensions={0}, replica_groups={{0,1}}, to_apply=%reduction
+  %convert.0 = f32[2,4] convert(%reduce_scatter.0)
+  %transpose.0 = f32[4,2] transpose(%convert.0), dimensions={1,0}
+  %add.0 = f32[4,2] add(%transpose.0, %gte.1)
+  ROOT tuple = (bf16[4,4], f32[4,2], f32[4,2]) tuple(%gte.0, %add.0, %gte.1)
 }
 
 ENTRY main {
-  %init_param = (f32[4,4], s32[4,2], s32[4,2]) parameter(0)
-  ROOT while = (f32[4,4], s32[4,2], s32[4,2]) while(%init_param), condition=%while_cond, body=%while_body
+  %init_param = (bf16[4,4], f32[4,2], f32[4,2]) parameter(0)
+  ROOT while = (bf16[4,4], f32[4,2], f32[4,2]) while(%init_param), condition=%while_cond, body=%while_body
 }
 )";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
@@ -254,30 +254,30 @@ TEST_F(ReorderConvertReduceAddTest, SimpleConvertReduceScatterAddInWhileBody) {
 HloModule main
 
 %reduction {
-  %x = f32[] parameter(0)
-  %y = f32[] parameter(1)
-  ROOT %add = f32[] add(f32[] %x, f32[] %y)
+  %x = bf16[] parameter(0)
+  %y = bf16[] parameter(1)
+  ROOT %add = bf16[] add(bf16[] %x, bf16[] %y)
 }
 
 %while_cond {
-  %param = (f32[4,4], s32[2,4], s32[]) parameter(0)
+  %param = (bf16[4,4], f32[2,4], s32[]) parameter(0)
   ROOT cond = pred[] constant(true)
 }
 
 %while_body {
-  %param = (f32[4,4], s32[2,4], s32[]) parameter(0)
-  %gte.0 = f32[4,4] get-tuple-element(%param), index=0
-  %gte.1 = s32[2,4] get-tuple-element(%param), index=1
+  %param = (bf16[4,4], f32[2,4], s32[]) parameter(0)
+  %gte.0 = bf16[4,4] get-tuple-element(%param), index=0
+  %gte.1 = f32[2,4] get-tuple-element(%param), index=1
   %gte.2 = s32[] get-tuple-element(%param), index=2
-  %reduce_scatter.0 = f32[2,4] reduce-scatter(%gte.0), dimensions={0}, replica_groups={{0,1}}, to_apply=%reduction
-  %convert.0 = s32[2,4] convert(%reduce_scatter.0)
-  %add.0 = s32[2,4] add(%convert.0, %gte.1)
-  ROOT tuple = (f32[4,4], s32[2,4], s32[]) tuple(%gte.0, %add.0, %gte.2)
+  %reduce_scatter.0 = bf16[2,4] reduce-scatter(%gte.0), dimensions={0}, replica_groups={{0,1}}, to_apply=%reduction
+  %convert.0 = f32[2,4] convert(%reduce_scatter.0)
+  %add.0 = f32[2,4] add(%convert.0, %gte.1)
+  ROOT tuple = (bf16[4,4], f32[2,4], s32[]) tuple(%gte.0, %add.0, %gte.2)
 }
 
 ENTRY main {
-  %init_param = (f32[4,4], s32[2,4], s32[]) parameter(0)
-  ROOT while = (f32[4,4], s32[2,4], s32[]) while(%init_param), condition=%while_cond, body=%while_body
+  %init_param = (bf16[4,4], f32[2,4], s32[]) parameter(0)
+  ROOT while = (bf16[4,4], f32[2,4], s32[]) while(%init_param), condition=%while_cond, body=%while_body
 }
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
@@ -296,7 +296,7 @@ ENTRY main {
                         op::GetTupleElement()));
   HloComputation* reduction =
       while_body->root_instruction()->operand(1)->operand(0)->to_apply();
-  EXPECT_EQ(reduction->root_instruction()->shape().element_type(), S32);
+  EXPECT_EQ(reduction->root_instruction()->shape().element_type(), F32);
 }
 
 TEST_F(ReorderConvertReduceAddTest, ConvertAllReduceAddNotInWhileBody) {
@@ -326,30 +326,30 @@ TEST_F(ReorderConvertReduceAddTest, ConvertReduceScatterAddInWhileBody) {
 HloModule main
 
 %reduction {
-  %x = f32[] parameter(0)
-  %y = f32[] parameter(1)
-  ROOT %add = f32[] add(f32[] %x, f32[] %y)
+  %x = bf16[] parameter(0)
+  %y = bf16[] parameter(1)
+  ROOT %add = bf16[] add(bf16[] %x, bf16[] %y)
 }
 
 %while_cond {
-  %param = (f32[4,4], s32[2,4], s32[]) parameter(0)
+  %param = (bf16[4,4], f32[2,4], s32[]) parameter(0)
   ROOT cond = pred[] constant(true)
 }
 
 %while_body {
-  %param = (f32[4,4], s32[2,4], s32[]) parameter(0)
-  %gte.0 = f32[4,4] get-tuple-element(%param), index=0
-  %gte.1 = s32[2,4] get-tuple-element(%param), index=1
+  %param = (bf16[4,4], f32[2,4], s32[]) parameter(0)
+  %gte.0 = bf16[4,4] get-tuple-element(%param), index=0
+  %gte.1 = f32[2,4] get-tuple-element(%param), index=1
   %gte.2 = s32[] get-tuple-element(%param), index=2
-  %reduce_scatter.0 = f32[2,4] reduce-scatter(%gte.0), dimensions={0}, replica_groups={{0,1}}, to_apply=%reduction
-  %convert.0 = s32[2,4] convert(%reduce_scatter.0)
-  %add.0 = s32[2,4] add(%convert.0, %gte.1)
-  ROOT tuple = (f32[4,4], s32[2,4], s32[]) tuple(%gte.0, %add.0, %gte.2)
+  %reduce_scatter.0 = bf16[2,4] reduce-scatter(%gte.0), dimensions={0}, replica_groups={{0,1}}, to_apply=%reduction
+  %convert.0 = f32[2,4] convert(%reduce_scatter.0)
+  %add.0 = f32[2,4] add(%convert.0, %gte.1)
+  ROOT tuple = (bf16[4,4], f32[2,4], s32[]) tuple(%gte.0, %add.0, %gte.2)
 }
 
 ENTRY main {
-  %init_param = (f32[4,4], s32[2,4], s32[]) parameter(0)
-  ROOT while = (f32[4,4], s32[2,4], s32[]) while(%init_param), condition=%while_cond, body=%while_body
+  %init_param = (bf16[4,4], f32[2,4], s32[]) parameter(0)
+  ROOT while = (bf16[4,4], f32[2,4], s32[]) while(%init_param), condition=%while_cond, body=%while_body
 }
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
@@ -373,30 +373,30 @@ TEST_F(ReorderConvertReduceAddTest, DisableReduceScatter) {
 HloModule main
 
 %reduction {
-  %x = f32[] parameter(0)
-  %y = f32[] parameter(1)
-  ROOT %add = f32[] add(f32[] %x, f32[] %y)
+  %x = bf16[] parameter(0)
+  %y = bf16[] parameter(1)
+  ROOT %add = bf16[] add(bf16[] %x, bf16[] %y)
 }
 
 %while_cond {
-  %param = (f32[4,4], s32[2,4], s32[]) parameter(0)
+  %param = (bf16[4,4], f32[2,4], s32[]) parameter(0)
   ROOT cond = pred[] constant(true)
 }
 
 %while_body {
-  %param = (f32[4,4], s32[2,4], s32[]) parameter(0)
-  %gte.0 = f32[4,4] get-tuple-element(%param), index=0
-  %gte.1 = s32[2,4] get-tuple-element(%param), index=1
+  %param = (bf16[4,4], f32[2,4], s32[]) parameter(0)
+  %gte.0 = bf16[4,4] get-tuple-element(%param), index=0
+  %gte.1 = f32[2,4] get-tuple-element(%param), index=1
   %gte.2 = s32[] get-tuple-element(%param), index=2
-  %reduce_scatter.0 = f32[2,4] reduce-scatter(%gte.0), dimensions={0}, replica_groups={{0,1}}, to_apply=%reduction
-  %convert.0 = s32[2,4] convert(%reduce_scatter.0)
-  %add.0 = s32[2,4] add(%convert.0, %gte.1)
-  ROOT tuple = (f32[4,4], s32[2,4], s32[]) tuple(%gte.0, %add.0, %gte.2)
+  %reduce_scatter.0 = bf16[2,4] reduce-scatter(%gte.0), dimensions={0}, replica_groups={{0,1}}, to_apply=%reduction
+  %convert.0 = f32[2,4] convert(%reduce_scatter.0)
+  %add.0 = f32[2,4] add(%convert.0, %gte.1)
+  ROOT tuple = (bf16[4,4], f32[2,4], s32[]) tuple(%gte.0, %add.0, %gte.2)
 }
 
 ENTRY main {
-  %init_param = (f32[4,4], s32[2,4], s32[]) parameter(0)
-  ROOT while = (f32[4,4], s32[2,4], s32[]) while(%init_param), condition=%while_cond, body=%while_body
+  %init_param = (bf16[4,4], f32[2,4], s32[]) parameter(0)
+  ROOT while = (bf16[4,4], f32[2,4], s32[]) while(%init_param), condition=%while_cond, body=%while_body
 }
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
@@ -410,30 +410,30 @@ TEST_F(ReorderConvertReduceAddTest, ConvertAllReduceAddInWhileBody) {
 HloModule main
 
 %reduction {
-  %x = f32[] parameter(0)
-  %y = f32[] parameter(1)
-  ROOT %add = f32[] add(f32[] %x, f32[] %y)
+  %x = bf16[] parameter(0)
+  %y = bf16[] parameter(1)
+  ROOT %add = bf16[] add(bf16[] %x, bf16[] %y)
 }
 
 %while_cond {
-  %param = (f32[2,4], s32[2,4], s32[]) parameter(0)
+  %param = (bf16[2,4], f32[2,4], s32[]) parameter(0)
   ROOT cond = pred[] constant(true)
 }
 
 %while_body {
-  %param = (f32[2,4], s32[2,4], s32[]) parameter(0)
-  %gte.0 = f32[2,4] get-tuple-element(%param), index=0
-  %gte.1 = s32[2,4] get-tuple-element(%param), index=1
+  %param = (bf16[2,4], f32[2,4], s32[]) parameter(0)
+  %gte.0 = bf16[2,4] get-tuple-element(%param), index=0
+  %gte.1 = f32[2,4] get-tuple-element(%param), index=1
   %gte.2 = s32[] get-tuple-element(%param), index=2
-  %all_reduce.0 = f32[2,4] all-reduce(%gte.0), replica_groups={{0,1}}, to_apply=%reduction
-  %convert.0 = s32[2,4] convert(%all_reduce.0)
-  %add.0 = s32[2,4] add(%convert.0, %gte.1)
-  ROOT tuple = (f32[2,4], s32[2,4], s32[]) tuple(%gte.0, %add.0, %gte.2)
+  %all_reduce.0 = bf16[2,4] all-reduce(%gte.0), replica_groups={{0,1}}, to_apply=%reduction
+  %convert.0 = f32[2,4] convert(%all_reduce.0)
+  %add.0 = f32[2,4] add(%convert.0, %gte.1)
+  ROOT tuple = (bf16[2,4], f32[2,4], s32[]) tuple(%gte.0, %add.0, %gte.2)
 }
 
 ENTRY main {
-  %init_param = (f32[2,4], s32[2,4], s32[]) parameter(0)
-  ROOT while = (f32[2,4], s32[2,4], s32[]) while(%init_param), condition=%while_cond, body=%while_body
+  %init_param = (bf16[2,4], f32[2,4], s32[]) parameter(0)
+  ROOT while = (bf16[2,4], f32[2,4], s32[]) while(%init_param), condition=%while_cond, body=%while_body
 }
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
@@ -452,7 +452,7 @@ ENTRY main {
                 op::GetTupleElement()));
   HloComputation* reduction =
       while_body->root_instruction()->operand(1)->operand(0)->to_apply();
-  EXPECT_EQ(reduction->root_instruction()->shape().element_type(), S32);
+  EXPECT_EQ(reduction->root_instruction()->shape().element_type(), F32);
 }
 
 TEST_F(ReorderConvertReduceAddTest, ConvertReduceConvertBackPattern) {

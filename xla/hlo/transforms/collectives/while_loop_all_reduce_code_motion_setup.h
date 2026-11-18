@@ -23,6 +23,9 @@ limitations under the License.
 
 namespace xla {
 
+// Returns true when `conv` commutes with `red` for additive loop accumulation.
+bool CanReorderConvert(const HloInstruction* conv, const HloInstruction* red);
+
 // Reorder the sequence of reduce-scatter, convert, transpose, and add
 // operations. This transformation changes the pattern from:
 //   add(transpose(convert(reduce-scatter(operand))), get-tuple(parameter(0))
