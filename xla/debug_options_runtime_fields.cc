@@ -93,6 +93,8 @@ constexpr int kRuntimeFields[] = {
     DebugOptions::kXlaGpuRequireExactBlasLtAlgorithmFieldNumber,          // 563
     DebugOptions::kXlaGpuExecutionWarnStuckTimeoutFieldNumber,            // 585
     DebugOptions::kXlaGpuDeviceExecutionWarnStuckTimeoutFieldNumber,      // 586
+    DebugOptions::                                                        //
+    kXlaGpuExperimentalCacheNcclWindowInCommunicatorFieldNumber,          // 587
 };
 
 // Hand-written because std::is_sorted and std::adjacent_find are not

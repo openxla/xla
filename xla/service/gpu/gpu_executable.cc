@@ -1016,6 +1016,8 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
                                collective_max_nchannels, p2p_max_nchannels,
                                collective_use_minimal_resource,
                                nccl_window_symmetric));
+  collective_params.cache_nccl_window_in_communicator =
+      debug_options.xla_gpu_experimental_cache_nccl_window_in_communicator();
 
   CollectiveCliqueRequests collective_clique_requests;
   CollectiveMemoryRequests collective_memory_requests(buffer_allocations);
@@ -1863,6 +1865,13 @@ GpuExecutable::ModuleConfigMetadataFromProto(
   if (load_time_debug_options.xla_gpu_experimental_nccl_window_symmetric()) {
     metadata.debug_options.set_xla_gpu_experimental_nccl_window_symmetric(true);
   }
+  if (load_time_debug_options
+          .has_xla_gpu_experimental_cache_nccl_window_in_communicator()) {
+    metadata.debug_options
+        .set_xla_gpu_experimental_cache_nccl_window_in_communicator(
+            load_time_debug_options
+                .xla_gpu_experimental_cache_nccl_window_in_communicator());
+  }
 
   metadata.slice_size = config.partition_size();
 
@@ -1926,6 +1935,14 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
       params.debug_module->mutable_config()
           .mutable_debug_options()
           .set_xla_gpu_experimental_nccl_window_symmetric(true);
+    }
+    if (params.debug_options
+            .has_xla_gpu_experimental_cache_nccl_window_in_communicator()) {
+      params.debug_module->mutable_config()
+          .mutable_debug_options()
+          .set_xla_gpu_experimental_cache_nccl_window_in_communicator(
+              params.debug_options
+                  .xla_gpu_experimental_cache_nccl_window_in_communicator());
     }
   }
 
