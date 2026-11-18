@@ -437,6 +437,25 @@ TEST_F(MoveCopyToUsersTest, SlicesInWhileBodyAndAfterWhileLoop) {
 )");
 }
 
+TEST_F(MoveCopyToUsersTest, CopyWithOtherUserIsMovedIntoWhileBody) {
+  // The copy is also read outside of the loop. The loop carries the stack in
+  // the layout of the parameter, and the copy is kept for its other user.
+  CheckMoveCopyToUsers(
+      WhileLoopOverCopiedStack(kDynamicSliceOfStack, "stack", /*trip_count=*/8,
+                               "flat = f32[4096]{0} reshape(copy)"),
+      R"(
+// CHECK:       body
+// CHECK:         [[stack:%[^ ]+]] = f32[8,16,32]{2,1,0} get-tuple-element({{.*}}), index=1
+// CHECK:         [[slice:%[^ ]+]] = f32[1,16,32]{2,1,0} dynamic-slice([[stack]], {{.*}}), dynamic_slice_sizes={1,16,32}
+// CHECK:         f32[1,16,32]{1,0,2} copy([[slice]])
+// CHECK:       ENTRY
+// CHECK:         [[weights:%[^ ]+]] = f32[8,16,32]{2,1,0} parameter(0)
+// CHECK-DAG:     [[copy:%[^ ]+]] = f32[8,16,32]{1,0,2} copy([[weights]])
+// CHECK-DAG:     f32[4096]{0} reshape([[copy]])
+// CHECK-DAG:     (s32[], f32[8,16,32]{2,1,0}, f32[1,16,32]{1,0,2}) tuple({{.*}}, [[weights]], {{.*}})
+)");
+}
+
 TEST_F(MoveCopyToUsersTest, SliceCopiesTwiceTheArrayInWhileBody) {
   // The slice copies one layer in each of 16 iterations, which is twice the 8
   // layers of the stack.
