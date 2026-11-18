@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -392,6 +393,48 @@ ENTRY main {
                                         {-9.0f, -10.0f, -11.0f, -12.0f},
                                         {-13.0f, -14.0f, -15.0f, -16.0f}},
                                        LiteralSlice(result, {1}), error_spec_);
+}
+
+// exp of a NaN that reaches the fused exp as a compile-time constant must be
+// NaN. FPToSI of the NaN exponent used to be frozen to an arbitrary integer,
+// which could turn the result into a finite value, 0 or an infinity.
+TEST_F(CpuFusionTest, ExpOfConstantNanIsNan) {
+  const char* const hlo_string = R"hlo(
+HloModule ExpOfConstantNan
+
+exp_fusion {
+  x = f32[16] parameter(0)
+  b = f32[] parameter(1)
+  zero = f32[] constant(0)
+  gt = pred[] compare(b, zero), direction=GT
+  mask = pred[16] broadcast(gt), dimensions={}
+  nan_value = f32[] constant(nan)
+  nan_vector = f32[16] broadcast(nan_value), dimensions={}
+  select = f32[16] select(mask, x, nan_vector)
+  ROOT exp = f32[16] exponential(select)
+}
+
+ENTRY main {
+  x = f32[16] parameter(0)
+  b = f32[] parameter(1)
+  ROOT fusion = f32[16] fusion(x, b), kind=kLoop, calls=exp_fusion
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+
+  auto x_literal = LiteralUtil::CreateR1<float>(
+      {1, 6, 0, -1, 2, 3, 4, 5, -2, -3, -4, -5, 10, 20, -10, -20});
+  // b = -1 makes the predicate false, so every element is exp(nan).
+  auto b_literal = LiteralUtil::CreateR0<float>(-1);
+
+  ASSERT_OK_AND_ASSIGN(const Literal result,
+                       Execute(std::move(module), {&x_literal, &b_literal}));
+
+  for (int64_t i = 0; i < 16; ++i) {
+    EXPECT_TRUE(std::isnan(result.Get<float>({i})))
+        << "element " << i << " is " << result.Get<float>({i});
+  }
 }
 
 TEST_F(CpuFusionTest, DynamicUpdateSliceOutOfPlaceWithBitcast) {
