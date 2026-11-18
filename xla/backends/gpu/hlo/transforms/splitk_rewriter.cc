@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -178,6 +179,31 @@ SplitKCostWeights GetCostWeights(const se::DeviceDescription& device) {
   return {100.0, 0.0666955, 467.815, 5.65307e+07};
 }
 
+// gfx950 weights for unbatched decode-shaped dots that the default weights
+// leave unsplit although their unsplit output leaves CUs idle. Elsewhere
+// (batched, small or short-K dots, outputs that already fill the GPU, or
+// raising a split the default weights already make) they choose slower splits
+// than the default.
+constexpr SplitKCostWeights kRocmDecodeWeights = {100.0, 0.0333, 46.8,
+                                                  5.65e+05};
+constexpr int64_t kRocmDecodeMaxM = 32;
+constexpr int64_t kRocmDecodeMinK = 2048;
+constexpr int64_t kRocmDecodeMinRhsBytes = int64_t{1} << 20;
+
+bool UseRocmDecodeWeights(const DotDimensions& dims,
+                          const se::DeviceDescription& device) {
+  const se::RocmComputeCapability* rocm_cc =
+      device.gpu_compute_capability().rocm_compute_capability();
+  if (rocm_cc == nullptr || !rocm_cc->gfx9_mi350() || dims.b != 1 ||
+      dims.m > kRocmDecodeMaxM || dims.k < kRocmDecodeMinK) {
+    return false;
+  }
+  const int64_t output_tiles =
+      CeilOfRatio(dims.m, kMTileSize) * CeilOfRatio(dims.n, kNTileSize);
+  return 2 * output_tiles <= int64_t{device.core_count()} &&
+         dims.n * dims.k * dims.rhs_element_bits / 8 >= kRocmDecodeMinRhsBytes;
+}
+
 }  // namespace
 
 double EstimateGemmCostAfterSplitK(const DotDimensions& gemm, int64_t splitk,
@@ -245,20 +271,28 @@ double EstimateGemmCostAfterSplitK(const DotDimensions& gemm, int64_t splitk,
          reduction_cost;
 }
 
-size_t ChooseSplitK(const DotDimensions& dims,
-                    const se::DeviceDescription& device_description) {
+size_t ChooseSplitKWithWeights(const DotDimensions& dims, int num_cores,
+                               const SplitKCostWeights& weights) {
   std::vector<int64_t> candidates = {1,  2,   4,   8,   16,   32,
                                      64, 128, 256, 512, 1024, 2048};
   std::vector<double> costs;
   costs.reserve(candidates.size());
 
-  SplitKCostWeights weights = GetCostWeights(device_description);
-
   absl::c_transform(candidates, std::back_inserter(costs), [&](int64_t splitk) {
-    return EstimateGemmCostAfterSplitK(
-        dims, splitk, device_description.core_count(), weights);
+    return EstimateGemmCostAfterSplitK(dims, splitk, num_cores, weights);
   });
   return candidates[absl::c_min_element(costs) - costs.begin()];
+}
+
+size_t ChooseSplitK(const DotDimensions& dims,
+                    const se::DeviceDescription& device_description) {
+  const int num_cores = device_description.core_count();
+  size_t split_k = ChooseSplitKWithWeights(dims, num_cores,
+                                           GetCostWeights(device_description));
+  if (split_k == 1 && UseRocmDecodeWeights(dims, device_description)) {
+    split_k = ChooseSplitKWithWeights(dims, num_cores, kRocmDecodeWeights);
+  }
+  return split_k;
 }
 
 // Pads the given instruction with zeros along the given dimension to the given
