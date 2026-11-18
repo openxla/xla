@@ -42,9 +42,12 @@ namespace xla {
 class HloAliasAnalysis {
  public:
   // The callgraph of the given HloModule must be flattened
-  // (xla::FlattenCallGraph) prior to running the analysis.
+  // (xla::FlattenCallGraph) prior to running the analysis. When
+  // `is_passthrough` is set, matching instructions are treated as transparent
+  // passthroughs by the underlying HloDataflowAnalysis.
   static absl::StatusOr<std::unique_ptr<HloAliasAnalysis>> Run(
-      const HloModule* module, const AliasInfo* alias_info);
+      const HloModule* module, const AliasInfo* alias_info,
+      HloDataflowAnalysis::PassthroughPredicate is_passthrough = nullptr);
 
   std::string ToString() const;
 
