@@ -127,6 +127,7 @@ func.func @main(%arg0: tensor<8xf32>, %arg1: tensor<f32>) -> tensor<f32> {
 }
 
 // CHECK:  ENTRY
+// CHECK-NOT:   frontend_attributes={
 // CHECK:       %[[ALL_REDUCE:.*]] = (f32[8], f32[]) all-reduce
 // CHECK-SAME:  frontend_attributes={_xla_stream_annotation="collective"}
 // CHECK:       get-tuple-element(%[[ALL_REDUCE]]), index=0
@@ -170,8 +171,34 @@ func.func @main(%arg0: !mhlo.token) -> tensor<3x4xi32> {
 }
 
 // CHECK:  ENTRY
-// CHECK:       %[[RECV_DONE:.*]] = (s32[3,4], token[]) recv-done
+// CHECK:       %[[RECV:.*]] = (s32[3,4], u32[], token[]) recv
+// CHECK-SAME:  frontend_attributes={{.*}}_xla_stream_annotation="collective"
+// CHECK:       %[[RECV_DONE:.*]] = (s32[3,4], token[]) recv-done(%[[RECV]])
+// CHECK-SAME:  frontend_attributes={{.*}}_xla_stream_annotation="collective"
 // CHECK:       get-tuple-element(%[[RECV_DONE]]), index=0
 // CHECK-NOT:   frontend_attributes={
 // CHECK:       get-tuple-element(%[[RECV_DONE]]), index=1
 // CHECK-NOT:   frontend_attributes={
+
+// -----
+
+// Tests that the tuple packing the operands of a multi-operand op, and the
+// get-tuple-elements unpacking its results, do not inherit its
+// frontend_attributes.
+
+func.func @main(%arg0: tensor<f32>, %arg1: tensor<f32>) -> tensor<f32> {
+  %0:2 = "mhlo.optimization_barrier"(%arg0, %arg1) {mhlo.frontend_attributes = {_xla_stream_annotation = "collective"}} : (tensor<f32>, tensor<f32>) -> (tensor<f32>, tensor<f32>)
+  %1 = mhlo.add %0#0, %0#1 : tensor<f32>
+  func.return %1 : tensor<f32>
+}
+
+// CHECK:  ENTRY
+// CHECK:       %[[TUPLE:.*]] = (f32[], f32[]) tuple
+// CHECK-NOT:   frontend_attributes={
+// CHECK:       %[[BARRIER:.*]] = (f32[], f32[]) opt-barrier(%[[TUPLE]])
+// CHECK-SAME:  frontend_attributes={_xla_stream_annotation="collective"}
+// CHECK:       get-tuple-element(%[[BARRIER]]), index=0
+// CHECK-NOT:   frontend_attributes={
+// CHECK:       get-tuple-element(%[[BARRIER]]), index=1
+// CHECK-NOT:   frontend_attributes={
+// CHECK:       ROOT
