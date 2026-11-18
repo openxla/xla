@@ -3506,7 +3506,6 @@ TEST_F(ShapeInferenceTest, ConvWithSparsity) {
   sparsity_config.mutable_rhs()->set_num_non_zero(1);
   sparsity_config.mutable_rhs()->set_block_size(4);
   sparsity_config.mutable_rhs()->set_dimension(0);
-  sparsity_config.mutable_rhs()->set_stride(1);
   // Set dnums to a good default.
   ConvolutionDimensionNumbers dnums;
   dnums.set_input_batch_dimension(0);
@@ -3537,7 +3536,6 @@ TEST_F(ShapeInferenceTest, ConvWithSparsityFail) {
   sparsity_config.mutable_rhs()->set_num_non_zero(0);
   sparsity_config.mutable_rhs()->set_block_size(4);
   sparsity_config.mutable_rhs()->set_dimension(0);
-  sparsity_config.mutable_rhs()->set_stride(1);
   // Set dnums to a good default.
   ConvolutionDimensionNumbers dnums;
   dnums.set_input_batch_dimension(0);
@@ -3566,7 +3564,6 @@ TEST_F(ShapeInferenceTest, ConvAndDotWithMtoNSparsity) {
   rhs_sp->set_num_non_zero(2);
   rhs_sp->set_block_size(4);
   rhs_sp->set_dimension(0);
-  rhs_sp->set_stride(1);
 
   ConvolutionDimensionNumbers cdnums;
   cdnums.set_input_batch_dimension(0);
