@@ -605,5 +605,42 @@ TEST_F(MoveCopyToUsersTest, ArrayReadAfterWhileLoopNoChange) {
       std::nullopt);
 }
 
+TEST_F(MoveCopyToUsersTest, NegativeTripCountNoChange) {
+  CheckMoveCopyToUsers(
+      WithKnownTripCount(WithUnknownInitialInductionVariable(
+                             WhileLoopOverCopiedStack(kDynamicSliceOfStack)),
+                         "-8"),
+      std::nullopt);
+}
+
+TEST_F(MoveCopyToUsersTest, CopyToOtherMemorySpaceNoChange) {
+  // The copy changes the memory space, so it is not a layout choice.
+  CheckMoveCopyToUsers(
+      absl::StrReplaceAll(WhileLoopOverCopiedStack(kDynamicSliceOfStack),
+                          {{"f32[8,16,32]{1,0,2}", "f32[8,16,32]{1,0,2:S(5)}"}}),
+      std::nullopt);
+}
+
+TEST_F(MoveCopyToUsersTest, CopyToPackedLayoutNoChange) {
+  // The copy packs the elements, so it is not a layout choice.
+  CheckMoveCopyToUsers(
+      absl::StrReplaceAll(WhileLoopOverCopiedStack(kDynamicSliceOfStack),
+                          {{"f32[", "s4["}, {"{1,0,2}", "{1,0,2:E(4)}"}}),
+      std::nullopt);
+}
+
+TEST_F(MoveCopyToUsersTest, CopyWithControlDependencyIsMovedIntoWhileBody) {
+  // The control dependency of the removed copy must not make the removal fail.
+  CheckMoveCopyToUsers(
+      absl::StrReplaceAll(
+          WhileLoopOverCopiedStack(kDynamicSliceOfStack),
+          {{"copy(weights)", "copy(weights), control-predecessors={acc}"}}),
+      R"(
+// CHECK:       ENTRY
+// CHECK-NOT:     copy(
+// CHECK:         while(
+)");
+}
+
 }  // namespace
 }  // namespace xla

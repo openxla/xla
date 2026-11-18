@@ -283,6 +283,25 @@ bool IsUnused(const HloInstruction* instruction) {
   return instruction->user_count() == 0 && !instruction->IsRoot();
 }
 
+// Returns true if `copy` only changes the dimension order of its operand: it
+// has the same memory space, element size, tiling and so on, and static
+// dimensions. Other copies, e.g. to another memory space or to a packed
+// sub-byte layout, are not layout choices and must stay where they are.
+bool ChangesOnlyDimensionOrder(const HloInstruction* copy) {
+  const Shape& dst = copy->shape();
+  const Shape& src = copy->operand(0)->shape();
+  if (!dst.IsArray() || !src.IsArray() || !dst.is_static() ||
+      !src.is_static() || !dst.has_layout() || !src.has_layout() ||
+      dst.layout().minor_to_major() == src.layout().minor_to_major()) {
+    return false;
+  }
+  Layout dst_with_src_order = dst.layout();
+  dst_with_src_order.mutable_minor_to_major()->assign(
+      src.layout().minor_to_major().begin(),
+      src.layout().minor_to_major().end());
+  return dst_with_src_order == src.layout();
+}
+
 std::optional<int64_t> TripCount(const HloInstruction* while_op) {
   absl::StatusOr<WhileLoopBackendConfig> config =
       while_op->backend_config<WhileLoopBackendConfig>();
@@ -355,8 +374,8 @@ std::optional<CopyIntoWhileBody> MatchCopyIntoWhileBody(
     HloInstruction* while_op, int64_t index) {
   HloInstruction* init = while_op->mutable_operand(0);
   HloInstruction* copy = init->mutable_operand(index);
-  if (HloPredicateIsNotOp<HloOpcode::kCopy>(copy) || !copy->shape().IsArray() ||
-      copy->shape() == copy->operand(0)->shape()) {
+  if (HloPredicateIsNotOp<HloOpcode::kCopy>(copy) ||
+      !ChangesOnlyDimensionOrder(copy)) {
     return std::nullopt;
   }
 
@@ -414,7 +433,7 @@ std::optional<CopyIntoWhileBody> MatchCopyIntoWhileBody(
     std::optional<int64_t> trip_count = TripCount(while_op);
     // The trip count is checked on its own first, so that the size of the
     // slices of all iterations does not overflow for a large trip count.
-    if (!trip_count.has_value() ||
+    if (!trip_count.has_value() || *trip_count < 0 ||
         *trip_count > max_slice_bytes / slice_bytes_per_iteration) {
       return std::nullopt;
     }
@@ -458,7 +477,8 @@ absl::Status MoveCopyIntoWhileBody(HloInstruction* while_op,
     }
   }
 
-  if (match.copy->user_count() == 0) {
+  if (IsUnused(match.copy)) {
+    ABSL_RETURN_IF_ERROR(match.copy->SafelyDropAllControlDependencies());
     ABSL_RETURN_IF_ERROR(match.copy->parent()->RemoveInstruction(match.copy));
   }
   return absl::OkStatus();
