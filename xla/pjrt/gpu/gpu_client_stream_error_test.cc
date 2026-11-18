@@ -22,6 +22,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -31,6 +32,7 @@ limitations under the License.
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/literal.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
@@ -38,6 +40,7 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -123,6 +126,14 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "IllegalAccess", "CUDA",
                          kIllegalAccess);
 
 TEST_P(PjRtGpuClientStreamErrorTest, AbortsOnStreamError) {
+  // The execution error below poisons the CUDA context asynchronously, so pin
+  // the literal up front to avoid racing with it.
+  Literal literal(ShapeUtil::MakeShape(F32, {4}));
+  ASSERT_OK(client_->DmaMap(literal.untyped_data(), literal.size_bytes()));
+  absl::Cleanup unmap = [&] {
+    client_->DmaUnmap(literal.untyped_data()).IgnoreError();
+  };
+
   static constexpr absl::string_view kIllegalProgram = R"(
     HloModule illegal_access
     ENTRY main {
@@ -148,13 +159,12 @@ TEST_P(PjRtGpuClientStreamErrorTest, AbortsOnStreamError) {
   ASSERT_EQ(async_result->size(), 1);
   const PjrtExecuteResult& result_buffers = (*async_result)[0];
   ASSERT_EQ(result_buffers.size(), 1);
-  auto result = result_buffers[0]->ToLiteral().Await();
+  absl::Status result = result_buffers[0]->ToLiteral(&literal).Await();
   // Execution should both exit with an error and not hang.
-  EXPECT_THAT(
-      result.status(),
-      AllOf(StatusIs(absl::StatusCode::kInternal,
-                     HasSubstr("CUDA_ERROR_ILLEGAL_ADDRESS")),
-            StatusHasPayload("executable_name", HasSubstr("illegal_access"))));
+  EXPECT_THAT(result, AllOf(StatusIs(absl::StatusCode::kInternal,
+                                     HasSubstr("CUDA_ERROR_ILLEGAL_ADDRESS")),
+                            StatusHasPayload("executable_name",
+                                             HasSubstr("illegal_access"))));
 }
 
 TEST_P(PjRtGpuClientStreamErrorTest, OOMIncludesContext) {
