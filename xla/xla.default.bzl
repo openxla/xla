@@ -66,7 +66,7 @@ _XLA_SHARED_OBJECT_SENSITIVE_DEPS = [
     Label("//xla/service:hlo_proto_cc_impl"),
     Label("//xla/service:metrics_proto_cc_impl"),
     Label("//xla/service/gpu:backend_configs_cc_impl"),
-    Label("//xla/service/gpu/model:hlo_op_profile_proto_cc_impl"),
+    Label("//xla/backends/gpu/cost_model:hlo_op_profile_proto_cc_impl"),
     Label("//xla/stream_executor:device_description_proto_cc_impl"),
     Label("//xla/stream_executor:stream_executor_impl"),
     Label("//xla/stream_executor/cuda:cuda_compute_capability_proto_cc_impl"),
@@ -99,8 +99,15 @@ def xla_cc_test(
     Args:
       name: The name of the test.
       deps: The dependencies of the test.
-      **kwargs: Other arguments to pass to the test.
+      **kwargs: Other arguments to pass to the test, including:
+        - tags: Tags for the test.
+        - flaky: If True, retries test up to 3 times.
     """
+
+    # Set flaky attribute if "flaky" tag is present
+    existing_tags = kwargs.get("tags", [])
+    if "flaky" in existing_tags and not kwargs.get("flaky", False):
+        kwargs["flaky"] = True
 
     strict_cc_test(
         name = name,

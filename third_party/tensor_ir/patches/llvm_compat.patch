@@ -1,0 +1,101 @@
+diff --git a/include/tensor_ir/Dialect/TensorDialect.td b/include/tensor_ir/Dialect/TensorDialect.td
+--- a/include/tensor_ir/Dialect/TensorDialect.td
++++ b/include/tensor_ir/Dialect/TensorDialect.td
+@@ -111,6 +111,7 @@
+ 
+   // Add this line when we define attributes in this dialect.
+   let useDefaultAttributePrinterParser = 1;
++  let useStrictPropertiesInAssemblyFormat = 0;
+   // OSS has no dialect-defined types, so TableGen emits no type parser/printer
+   // bodies. Only declare the overrides when their type definitions are present.
+   let hasOperationAttrVerify = 1;
+diff --git a/lib/Conversion/TensorToCudaTile/TensorToCudaTile.cpp b/lib/Conversion/TensorToCudaTile/TensorToCudaTile.cpp
+--- a/lib/Conversion/TensorToCudaTile/TensorToCudaTile.cpp
++++ b/lib/Conversion/TensorToCudaTile/TensorToCudaTile.cpp
+@@ -56,6 +56,10 @@
+     // Convert tensor types to 0-D tiles, as the actual tile shape is not
+     // available during the type conversion (depends on the iteration space).
+     addConversion([=](RankedTensorType tensorTy) -> Type {
++      if (isa<Float4E2M1FNType>(tensorTy.getElementType())) {
++        return cuda_tile::TileType::get(/*shape=*/llvm::ArrayRef<int64_t>{2},
++                                        tensorTy.getElementType());
++      }
+       return convertType(tensorTy.getElementType());
+     });
+   }
+diff --git a/lib/Registration/Registration.cpp b/lib/Registration/Registration.cpp
+--- a/lib/Registration/Registration.cpp
++++ b/lib/Registration/Registration.cpp
+@@ -11,12 +11,14 @@
+ #include "tensor_ir/Transform/Passes.h"
+ 
+ #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
++#include "mlir/Conversion/ComplexToLLVM/ComplexToLLVM.h"
+ #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
+ #include "mlir/Conversion/GPUCommon/GPUToLLVM.h"
+ #include "mlir/Conversion/MathToLLVM/MathToLLVM.h"
+ #include "mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h"
+ #include "mlir/Conversion/Passes.h"
+ #include "mlir/Conversion/PtrToLLVM/PtrToLLVM.h"
++#include "mlir/Conversion/UBToLLVM/UBToLLVM.h"
+ #include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h"
+ #include "mlir/Dialect/Affine/IR/AffineOps.h"
+ #include "mlir/Dialect/Affine/IR/ValueBoundsOpInterfaceImpl.h"
+@@ -24,6 +26,7 @@
+ #include "mlir/Dialect/Arith/IR/ValueBoundsOpInterfaceImpl.h"
+ #include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
+ #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
++#include "mlir/Dialect/Bufferization/IR/ValueBoundsOpInterfaceImpl.h"
+ #include "mlir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
+ #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+ #include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
+@@ -48,6 +51,7 @@
+ #include "mlir/Dialect/Tensor/IR/ValueBoundsOpInterfaceImpl.h"
+ #include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
+ #include "mlir/Dialect/Tensor/Transforms/SubsetInsertionOpInterfaceImpl.h"
++#include "mlir/Dialect/UB/IR/UBOps.h"
+ #include "mlir/Dialect/Vector/IR/ValueBoundsOpInterfaceImpl.h"
+ #include "mlir/Dialect/Vector/IR/VectorOps.h"
+ #include "mlir/Dialect/Vector/Transforms/IndexedAccessOpInterfaceImpl.h"
+@@ -88,6 +92,7 @@
+     ptr::PtrDialect,
+     scf::SCFDialect,
+     tensor::TensorDialect,
++    ub::UBDialect,
+     vector::VectorDialect,
+     cuda_tile::CudaTileDialect,
+     nv_tensor_ir::TensorIRDialect
+@@ -106,12 +111,14 @@
+   // Register ConvertToLLVM interfaces for every upstream dialect above that
+   // provides one.
+   arith::registerConvertArithToLLVMInterface(registry);
++  registerConvertComplexToLLVMInterface(registry);
+   registerConvertFuncToLLVMInterface(registry);
+   cf::registerConvertControlFlowToLLVMInterface(registry);
+   gpu::registerConvertGpuToLLVMInterface(registry);
+   registerConvertMathToLLVMInterface(registry);
+   registerConvertMemRefToLLVMInterface(registry);
+   ptr::registerConvertPtrToLLVMInterface(registry);
++  ub::registerConvertUBToLLVMInterface(registry);
+   vector::registerConvertVectorToLLVMInterface(registry);
+ 
+   // Register bufferization models used by the Linalg pipeline.
+@@ -128,6 +135,7 @@
+   // Register external operation interface models for the upstream dialects.
+   affine::registerValueBoundsOpInterfaceExternalModels(registry);
+   arith::registerValueBoundsOpInterfaceExternalModels(registry);
++  bufferization::registerValueBoundsOpInterfaceExternalModels(registry);
+   gpu::registerIndexedAccessOpInterfaceExternalModels(registry);
+   gpu::registerValueBoundsOpInterfaceExternalModels(registry);
+   linalg::registerSubsetOpInterfaceExternalModels(registry);
+diff --git a/lib/Transform/HostToLLVM.cpp b/lib/Transform/HostToLLVM.cpp
+--- a/lib/Transform/HostToLLVM.cpp
++++ b/lib/Transform/HostToLLVM.cpp
+@@ -6,6 +6,7 @@
+ #include "tensor_ir/Transform/Passes.h" // IWYU pragma: keep
+ 
+ #include "mlir/Analysis/DataLayoutAnalysis.h"
++#include "mlir/Conversion/ArithCommon/CeilFloorDivExpansion.h"
+ #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
+ #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
+ #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"

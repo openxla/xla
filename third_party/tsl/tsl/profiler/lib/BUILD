@@ -87,6 +87,7 @@ cc_library(
         "@xla//xla/python:__pkg__",
         "//learning/brain/tfrc/executor/api:__pkg__",
         "//net/grpc/internal/src/core/ext/xprof_profiler:__pkg__",
+        "//third_party/py/jax/jaxlib:__pkg__",
         "//third_party/py/torch_tpu:__subpackages__",
     ]),
     deps = [
@@ -132,6 +133,7 @@ tsl_cc_test(
         "//tsl/profiler/protobuf:profiler_options_proto_cc",
         "//tsl/profiler/protobuf:xplane_proto_cc",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:macros",
@@ -148,6 +150,7 @@ cc_library(
         "@xla//xla/tsl/profiler:internal",
         "@xla//xla/tsl/profiler:xla_profiler_backends",
         "//net/grpc/internal/src/core/ext/xprof_profiler:__pkg__",
+        "//third_party/py/jax/jaxlib:__pkg__",
         "//third_party/py/torch_tpu:__subpackages__",
     ]),
     deps = [
@@ -216,6 +219,7 @@ cc_library(
         ":profiler_interface",
         "//tsl/profiler/protobuf:xplane_proto_cc",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@xla//xla/tsl/platform:logging",
     ],
@@ -239,6 +243,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@xla//xla/tsl/platform:env",
@@ -362,7 +367,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@xla//xla/tsl/platform:logging",
         "@xla//xla/tsl/platform:macros",
-        "@xla//xla/tsl/platform:types",
         "@xla//xla/tsl/profiler/utils:no_init",
     ] + if_not_android([
         "@xla//xla/tsl/profiler/backends/cpu:traceme_recorder",
@@ -473,6 +477,18 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+tsl_cc_test(
+    name = "scoped_memory_debug_annotation_test",
+    size = "small",
+    srcs = ["scoped_memory_debug_annotation_test.cc"],
+    deps = [
+        ":scoped_memory_debug_annotation",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+        "@xla//xla/tsl/platform:test",
     ],
 )
 

@@ -17,8 +17,11 @@ limitations under the License.
 #define XLA_SERVICE_GPU_ALIAS_INFO_H_
 
 #include <optional>
+#include <utility>
+#include <vector>
 
 #include "xla/hlo/analysis/alias_info.h"
+#include "xla/hlo/analysis/hlo_operand_index.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -38,8 +41,12 @@ class GpuAliasInfo : public AliasInfo {
                                const HloInstruction* user,
                                const ShapeIndex& user_index) const override;
 
- protected:
   bool IsNoOpForAliasAnalysis(const HloInstruction* instruction) const override;
+
+ protected:
+  std::optional<std::vector<std::pair<HloOperandIndex, ShapeIndex>>>
+  GetNonDefaultInPlaceInputOutputPairs(
+      const HloInstruction* user) const override;
 
   se::DeviceDescription device_description_;
 };

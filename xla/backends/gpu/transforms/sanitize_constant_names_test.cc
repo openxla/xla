@@ -107,6 +107,35 @@ TEST_F(SanitizeConstantNamesTest, BufferSanitizedNameCollisionResolved) {
               GmockMatch(m::Constant()));
 }
 
+TEST_F(SanitizeConstantNamesTest, IgnoresExecutionThreadFilter) {
+  constexpr absl::string_view kHloText = R"(
+    HloModule m
+
+      parallel {
+        ROOT c.1 = f32[] constant(41)
+      }
+
+      ENTRY main {
+        ROOT c = f32[] constant(42)
+      }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+
+  HloComputation* parallel = module->GetComputationWithName("parallel");
+  ASSERT_NE(parallel, nullptr);
+  parallel->SetExecutionThread(HloInstruction::kParallelExecutionThread);
+
+  SanitizeConstantNames pass;
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      pass.Run(module.get(), {HloInstruction::kMainExecutionThread}));
+
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(parallel->root_instruction()->name(), "c_1");
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

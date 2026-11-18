@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -77,6 +78,10 @@ struct ModuleIsolationOptions {
   // would be silently accepted. Enable it only for fuzzing-style runs where
   // the false positive rate matters more than the miss rate.
   bool retry_without_excess_precision = false;
+
+  // If true, re-runs a failing module with FusionDebugger enabled to compare
+  // intermediate instructions inside the fusion against the reference runner.
+  bool enable_fusion_debugger = true;
 
   std::function<absl::StatusOr<Literal>(
       std::unique_ptr<HloModule> module, HloRunnerInterface* runner,
@@ -171,6 +176,15 @@ int64_t GetFusionCountInNestedFusion(const HloInstruction* fusion_instr);
 bool ModuleContainsLargeKeyValueSort(const HloModule& module);
 bool ModuleTestsFloatsForEquality(const HloModule& module);
 bool ComputationHasRng(const HloComputation* computation);
+
+// Returns whether a main thread computation of `module` starts an async chain
+// on the `sparsecore` thread, that is, whether it offloads to SparseCore.
+bool IsSparseCoreModule(const HloModule& module);
+
+// Returns a skip reason (`CONTAINS_RNG`, `CONTAINS_MOSAIC_KERNEL`, or
+// `NO_WORK_IN_SPARSECORE_OFFLOAD`) when `module` cannot be meaningfully
+// evaluated in isolation, or `std::nullopt` otherwise.
+std::optional<std::string> SparseCoreOffloadSkipReason(const HloModule& module);
 
 }  // namespace hlo_isolation
 }  // namespace xla

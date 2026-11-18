@@ -49,11 +49,13 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/scaled_dot_rewriter.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
+#include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -72,9 +74,11 @@ using absl_testing::StatusIs;
 using ::testing::Each;
 using ::testing::Eq;
 using ::testing::Field;
+using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::Not;
+using ::testing::Optional;
 
 // Returns the default platform.
 se::Platform* GetDefaultPlatform() {
@@ -334,6 +338,7 @@ TEST_P(FissionTest, CanCreateFissionBackend) {
     expected_name = "HIPBLASLT_FISSION";
   }
   EXPECT_EQ(fission_backend_->name(), expected_name);
+  EXPECT_FALSE(fission_backend_->CanProduceWrongResults());
 }
 
 TEST_P(FissionTest, GetSupportedConfigs) {
@@ -580,6 +585,102 @@ TEST_F(CublasFissionBackendTest, ApplyConfigReplacesFusionWithControlDeps) {
   EXPECT_THAT(module->ToString(), testing::Not(HasSubstr("__triton_gemm")));
 }
 
+// The scales of a cuDNN scaled dot fusion are pre-swizzled, so decomposing it
+// would be wrong.
+TEST_F(CublasFissionBackendTest, ScaledDotCudnnFusionIsNotSupported) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+  c {
+    lhs = f8e4m3fn[256,128] parameter(0)
+    rhs = f8e4m3fn[384,128] parameter(1)
+    lhs_scale = f8e8m0fnu[256,4] parameter(2)
+    rhs_scale = f8e8m0fnu[384,4] parameter(3)
+    ROOT dot = f32[256,384] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+        lhs_contracting_dims={1}, rhs_contracting_dims={1}
+  }
+
+  main {
+    lhs = f8e4m3fn[256,128] parameter(0)
+    rhs = f8e4m3fn[384,128] parameter(1)
+    lhs_scale = f8e8m0fnu[256,4] parameter(2)
+    rhs_scale = f8e8m0fnu[384,4] parameter(3)
+    ROOT f = f32[256,384] fusion(lhs, rhs, lhs_scale, rhs_scale),
+      kind=kCustom, calls=c,
+      backend_config={"fusion_backend_config":{"kind":"__cudnn$fusion"}}
+  })"));
+  HloInstruction& fusion = *module->entry_computation()->root_instruction();
+  EXPECT_FALSE(fission_backend_->IsSupported(fusion));
+  EXPECT_THAT(fission_backend_->GetSupportedConfigs(fusion),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(fission_backend_->ApplyConfig(fusion, BackendConfig{}),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("does not support")));
+}
+
+// A Triton GEMM fusion whose dynamic-slice was annotated with a loop-dependent
+// `DynamicSliceConfig` while it was inside a while loop.
+constexpr absl::string_view kLoopDependentDynamicSliceFusionHlo = R"(
+  gemm_fusion {
+    act = bf16[4096,128]{0,1} parameter(0)
+    weights = bf16[4,128,128]{2,1,0} parameter(1)
+    layer = s32[] parameter(2)
+    c0 = s32[] constant(0)
+    ds = bf16[1,128,128]{2,1,0} dynamic-slice(weights, layer, c0, c0),
+        dynamic_slice_sizes={1,128,128},
+        backend_config={"dynamic_slice_config":{"loop_index":"0",
+          "linear":{"byte_offset":"0","byte_stride":"32768"}}}
+    w = bf16[128,128]{1,0} bitcast(ds)
+    dot = bf16[128,4096]{0,1} dot(w, act),
+        lhs_contracting_dims={0}, rhs_contracting_dims={1}
+    ROOT out = bf16[4096,128]{1,0} bitcast(dot)
+  }
+
+  ENTRY main {
+    act = bf16[4096,128]{0,1} parameter(0)
+    weights = bf16[4,128,128]{2,1,0} parameter(1)
+    layer = s32[] parameter(2)
+    ROOT fusion = bf16[4096,128]{1,0} fusion(act, weights, layer),
+        kind=kCustom, calls=gemm_fusion,
+        backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+  })";
+
+// The autotuner compiles the fusion outside of its enclosing while loop, so the
+// candidate must compute slice offsets from the offset operands instead of the
+// loop iteration (b/581519944).
+TEST_F(CublasFissionBackendTest,
+       CompileIgnoresLoopDependentDynamicSliceConfig) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kLoopDependentDynamicSliceFusionHlo));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                       fission_backend_->GetSupportedConfigs(*fusion));
+  ASSERT_THAT(configs, Not(IsEmpty()));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
+                       fission_backend_->Compile(*fusion, *configs[0]));
+  auto* gpu_executable = dynamic_cast<GpuExecutable*>(executable.get());
+  ASSERT_NE(gpu_executable, nullptr);
+  EXPECT_THAT(gpu_executable->thunk_executor().thunks().ToString(0),
+              Not(HasSubstr("kDynamicSliceFusion")));
+}
+
+// Applying the config to the original module keeps the annotation, since the
+// instruction stays inside its enclosing while loop.
+TEST_F(CublasFissionBackendTest,
+       ApplyConfigKeepsLoopDependentDynamicSliceConfig) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kLoopDependentDynamicSliceFusionHlo));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                       fission_backend_->GetSupportedConfigs(*fusion));
+  ASSERT_THAT(configs, Not(IsEmpty()));
+
+  ASSERT_OK(fission_backend_->ApplyConfig(*fusion, *configs[0]));
+  EXPECT_THAT(module->ToString(), HasSubstr("\"dynamic_slice_config\""));
+}
+
 TEST_F(CublasFissionBackendTest, ApplyConfigRemovesComputation) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kTritonFusionHlo));
@@ -590,6 +691,76 @@ TEST_F(CublasFissionBackendTest, ApplyConfigRemovesComputation) {
   ASSERT_THAT(configs, Not(IsEmpty()));
   EXPECT_THAT(fission_backend_->ApplyConfig(*fusion, *configs[0]), IsOk());
   EXPECT_EQ(module->computation_count(), 1);
+}
+
+// A Triton GEMM fusion whose FP8 dequantization was normalized to f32 (as
+// FloatNormalization does for a bf16 multiply on platforms without bf16
+// arithmetic) must still be rewritten into an FP8 GEMM by the fission backend.
+TEST_F(CublasFissionBackendTest, ApplyConfigRewritesNormalizedBf16DequantToF8) {
+  const auto& comp = device_description_.gpu_compute_capability();
+  absl::string_view fp8_type;
+  if (comp.IsRocm()) {
+    const auto& rocm = *comp.rocm_compute_capability();
+    if (rocm.has_nanoo_fp8_support()) {
+      fp8_type = "f8e4m3fnuz";
+    } else if (rocm.has_ocp_fp8_support()) {
+      fp8_type = "f8e4m3fn";
+    }
+  } else if (comp.cuda_compute_capability()->IsAtLeastAda()) {
+    fp8_type = "f8e4m3fn";
+  }
+  if (fp8_type.empty()) {
+    GTEST_SKIP() << "Requires FP8 support.";
+  }
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(absl::Substitute(R"(
+  gemm_fusion {
+    x = $0[256,256] parameter(0)
+    y = $0[256,256] parameter(1)
+    x_scale = bf16[] parameter(2)
+    y_scale = bf16[] parameter(3)
+    x_f32 = f32[256,256] convert(x)
+    y_f32 = f32[256,256] convert(y)
+    x_scale_bcast = bf16[256,256] broadcast(x_scale), dimensions={}
+    y_scale_bcast = bf16[256,256] broadcast(y_scale), dimensions={}
+    x_scale_f32 = f32[256,256] convert(x_scale_bcast)
+    y_scale_f32 = f32[256,256] convert(y_scale_bcast)
+    x_dq = f32[256,256] multiply(x_f32, x_scale_f32)
+    y_dq = f32[256,256] multiply(y_f32, y_scale_f32)
+    x_bf16 = bf16[256,256] convert(x_dq)
+    y_bf16 = bf16[256,256] convert(y_dq)
+    ROOT dot = bf16[256,256] dot(x_bf16, y_bf16),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  }
+
+  ENTRY main {
+    x = $0[256,256] parameter(0)
+    y = $0[256,256] parameter(1)
+    x_scale = bf16[] parameter(2)
+    y_scale = bf16[] parameter(3)
+    ROOT fusion = bf16[256,256] fusion(x, y, x_scale, y_scale),
+      kind=kCustom, calls=gemm_fusion,
+      backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+  })",
+                                                    fp8_type)));
+  HloInstruction& fusion = *module->entry_computation()->root_instruction();
+  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                       fission_backend_->GetSupportedConfigs(fusion));
+  ASSERT_THAT(configs, Not(IsEmpty()));
+  EXPECT_OK(fission_backend_->ApplyConfig(fusion, *configs[0]));
+  // The rewritten call takes the fusion's scales, not unit scales.
+  const HloInstruction* f8_gemm = nullptr;
+  for (const HloInstruction* instr :
+       module->entry_computation()->instructions()) {
+    if (instr->IsCustomCall("__cublas$lt$matmul$f8")) {
+      f8_gemm = instr;
+    }
+  }
+  ASSERT_NE(f8_gemm, nullptr) << module->ToString();
+  ASSERT_GE(f8_gemm->operand_count(), 4);
+  EXPECT_NE(f8_gemm->operand(2)->opcode(), HloOpcode::kConstant);
+  EXPECT_NE(f8_gemm->operand(3)->opcode(), HloOpcode::kConstant);
 }
 
 TEST_F(CublasFissionBackendTest, CublasFallbackForTf32Tf32F32X3Algorithm) {
@@ -754,6 +925,55 @@ TEST_F(CublasFissionBackendTest,
   EXPECT_THAT(configs, testing::Not(testing::IsEmpty()));
 }
 
+// A scaled E5M2 x E4M3 dot with an E4M3 output needs no D-scaled kernels, so
+// hipBLASLt fuses its FP8 output instead of leaving a much slower Triton GEMM.
+TEST_F(CublasFissionBackendTest, HipblasLtConfigsForMixedFp8OutputFusion) {
+  const auto* rocm_cc =
+      device_description_.gpu_compute_capability().rocm_compute_capability();
+  if (rocm_cc == nullptr || !rocm_cc->has_ocp_fp8_support()) {
+    GTEST_SKIP() << "Requires a ROCm GPU with OCP FP8 support.";
+  }
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+  computation {
+    x = f8e5m2[64,128]{1,0} parameter(0)
+    y = f8e4m3fn[128,64]{1,0} parameter(1)
+    x_scale = f32[] parameter(2)
+    y_scale = f32[] parameter(3)
+    z_scale = f32[] parameter(4)
+    x_f32 = f32[64,128]{1,0} convert(x)
+    y_f32 = f32[128,64]{1,0} convert(y)
+    x_scale_bcast = f32[64,128]{1,0} broadcast(x_scale), dimensions={}
+    y_scale_bcast = f32[128,64]{1,0} broadcast(y_scale), dimensions={}
+    x_unscaled = f32[64,128]{1,0} multiply(x_f32, x_scale_bcast)
+    y_unscaled = f32[128,64]{1,0} multiply(y_f32, y_scale_bcast)
+    dot = f32[64,64]{1,0} dot(x_unscaled, y_unscaled), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    z_scale_bcast = f32[64,64]{1,0} broadcast(z_scale), dimensions={}
+    dot_scaled = f32[64,64]{1,0} divide(dot, z_scale_bcast)
+    c1 = f32[] constant(-448)
+    c1_bcast = f32[64,64]{1,0} broadcast(c1), dimensions={}
+    c2 = f32[] constant(448)
+    c2_bcast = f32[64,64]{1,0} broadcast(c2), dimensions={}
+    dot_clamped = f32[64,64]{1,0} clamp(c1_bcast, dot_scaled, c2_bcast)
+    ROOT out = f8e4m3fn[64,64]{1,0} convert(dot_clamped)
+  }
+
+  ENTRY main {
+    x = f8e5m2[64,128]{1,0} parameter(0)
+    y = f8e4m3fn[128,64]{1,0} parameter(1)
+    x_scale = f32[] parameter(2)
+    y_scale = f32[] parameter(3)
+    z_scale = f32[] parameter(4)
+    ROOT fusion = f8e4m3fn[64,64]{1,0} fusion(x, y, x_scale, y_scale, z_scale),
+      kind=kCustom, calls=computation,
+      backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+  })"));
+  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                       fission_backend_->GetSupportedConfigs(
+                           *module->entry_computation()->root_instruction()));
+  EXPECT_THAT(configs, Not(IsEmpty()));
+}
+
 TEST_F(CublasFissionBackendTest,
        GetSupportedConfigsWithEstimatesComposesPrologueEpilogueAndGemm) {
   if (IsRocm(stream_executor_)) {
@@ -771,9 +991,11 @@ TEST_F(CublasFissionBackendTest,
   EXPECT_LT(epilogue_time, prologue_and_epilogue_time);
 }
 
-TEST_F(
-    CublasFissionBackendTest,
-    GetSupportedConfigsWithEstimatesUntileableFusionReturnsNulloptEstimates) {
+TEST_F(CublasFissionBackendTest,
+       GetSupportedConfigsWithEstimatesSupportsUntileableEpilogueFusion) {
+  if (IsRocm(stream_executor_)) {
+    GTEST_SKIP() << "HipblasLtBackend does not support config estimates.";
+  }
   constexpr absl::string_view kUntileableFusionHlo = R"(
     HloModule module
     computation {
@@ -804,7 +1026,78 @@ TEST_F(
   ASSERT_THAT(estimated_configs, Not(IsEmpty()));
   EXPECT_THAT(estimated_configs,
               Each(Field(&CodegenBackend::EstimatedConfig::estimated_runtime,
-                         Eq(std::nullopt))));
+                         Optional(Gt(absl::ZeroDuration())))));
+}
+
+TEST_F(
+    CublasFissionBackendTest,
+    GetSupportedConfigsWithEstimatesUsesTiledEstimateForSlowTransposePrologue) {
+  if (IsRocm(stream_executor_)) {
+    GTEST_SKIP() << "HipblasLtBackend does not support config estimates.";
+  }
+  constexpr absl::string_view kPureDotHlo = R"(
+    HloModule module
+    computation {
+      lhs = f32[3072,512]{1,0} parameter(0)
+      rhs = f32[512,512]{1,0} parameter(1)
+      ROOT dot = f32[3072,512]{1,0} dot(lhs, rhs),
+          lhs_contracting_dims={1}, rhs_contracting_dims={1}
+    }
+    ENTRY main {
+      lhs = f32[3072,512]{1,0} parameter(0)
+      rhs = f32[512,512]{1,0} parameter(1)
+      ROOT fusion = f32[3072,512]{1,0} fusion(lhs, rhs),
+        kind=kCustom, calls=computation,
+        backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+    })";
+  constexpr absl::string_view kPureTransposePrologueHlo = R"(
+    HloModule module
+    computation {
+      p0 = f32[512,1024,3]{2,1,0} parameter(0)
+      t = f32[3,1024,512]{2,1,0} transpose(p0), dimensions={2,1,0}
+      lhs = f32[3072,512]{1,0} bitcast(t)
+      rhs = f32[512,512]{1,0} parameter(1)
+      ROOT dot = f32[3072,512]{1,0} dot(lhs, rhs),
+          lhs_contracting_dims={1}, rhs_contracting_dims={1}
+    }
+    ENTRY main {
+      p0 = f32[512,1024,3]{2,1,0} parameter(0)
+      rhs = f32[512,512]{1,0} parameter(1)
+      ROOT fusion = f32[3072,512]{1,0} fusion(p0, rhs),
+        kind=kCustom, calls=computation,
+        backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+    })";
+  constexpr absl::string_view kFusedNegateTransposePrologueHlo = R"(
+    HloModule module
+    computation {
+      p0 = f32[512,1024,3]{2,1,0} parameter(0)
+      neg = f32[512,1024,3]{2,1,0} negate(p0)
+      t = f32[3,1024,512]{2,1,0} transpose(neg), dimensions={2,1,0}
+      lhs = f32[3072,512]{1,0} bitcast(t)
+      rhs = f32[512,512]{1,0} parameter(1)
+      ROOT dot = f32[3072,512]{1,0} dot(lhs, rhs),
+          lhs_contracting_dims={1}, rhs_contracting_dims={1}
+    }
+    ENTRY main {
+      p0 = f32[512,1024,3]{2,1,0} parameter(0)
+      rhs = f32[512,512]{1,0} parameter(1)
+      ROOT fusion = f32[3072,512]{1,0} fusion(p0, rhs),
+        kind=kCustom, calls=computation,
+        backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+    })";
+
+  ASSERT_OK_AND_ASSIGN(absl::Duration pure_dot_time,
+                       GetFirstEstimate(kPureDotHlo));
+  ASSERT_OK_AND_ASSIGN(absl::Duration tiled_transpose_time,
+                       GetFirstEstimate(kPureTransposePrologueHlo));
+  ASSERT_OK_AND_ASSIGN(absl::Duration loop_transpose_time,
+                       GetFirstEstimate(kFusedNegateTransposePrologueHlo));
+  // GetDefaultBackend assigns the pure slow transpose prologue to the
+  // block-level emitter, whose tiled estimate avoids the uncoalesced
+  // minor-dim-3 kLoop read and is several times smaller than the kLoop
+  // transpose estimate.
+  EXPECT_LT(2 * (tiled_transpose_time - pure_dot_time),
+            loop_transpose_time - pure_dot_time);
 }
 
 }  // namespace

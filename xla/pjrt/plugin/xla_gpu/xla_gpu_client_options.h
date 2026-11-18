@@ -23,8 +23,8 @@ limitations under the License.
 
 #include "absl/time/time.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
+#include "xla/pjrt/gpu/allocator_config.h"
 #include "xla/pjrt/host_memory_allocator.h"
-#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 
 namespace xla {
 
@@ -81,6 +81,13 @@ struct GpuClientOptions {
   std::optional<bool> use_async_dispatch;
 
   std::optional<int> max_inflight_computations = 32;
+
+  // Priority of the compute stream to create on each GPU device, in the
+  // platform's convention (CUDA: 0 is the default and lowest priority, more
+  // negative values are higher priorities). Every execution of this client
+  // runs at that priority. The H2D and D2H streams are created at the same
+  // priority. If unset, the streams are created at the default priority.
+  std::optional<int> compute_stream_priority;
 
   bool verify_topology_fingerprint = true;
 };

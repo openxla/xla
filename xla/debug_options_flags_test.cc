@@ -89,11 +89,15 @@ TEST(DebugOptions, CommandBufferUpdateModeDefaultsToAlwaysUpdate) {
       DebugOptions::ALWAYS_UPDATE);
 }
 
-TEST(DebugOptions, SchedulerMemoryFencingDefaultsToDisabled) {
+TEST(DebugOptions,
+     SchedulerMemoryFencingDefaultsToAutomaticWithOneSlackWindow) {
   EXPECT_EQ(
       DefaultDebugOptionsIgnoringFlags()
           .xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(),
-      -1);
+      0);
+  EXPECT_EQ(DefaultDebugOptionsIgnoringFlags()
+                .xla_gpu_experimental_scheduler_memory_fencing_slack_windows(),
+            1);
 }
 
 TEST(DebugOptions, CommandBufferUpdateModesParseFromFlags) {
@@ -243,6 +247,12 @@ TEST(DebugOptions, CollectiveKernelsFlagUnderscoreAllGather) {
   DebugOptions opts = ParseCollectiveKernelsFlag("all_gather");
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
               ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER));
+}
+
+TEST(DebugOptions, CollectiveKernelsFlagAllToAll) {
+  DebugOptions opts = ParseCollectiveKernelsFlag("ALL_TO_ALL");
+  EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_TO_ALL));
 }
 
 TEST(DebugOptions, CollectiveKernelsFlagBothHyphenated) {
@@ -525,5 +535,105 @@ TEST(DebugOptions, DeterministicOpsTriton) {
   EXPECT_FALSE(parse("invalid"));
 }
 
+TEST(DebugOptions, AutotuneCacheRequireStrictCodegenMatchDefaultIsFalse) {
+  DebugOptions opts = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_FALSE(opts.xla_autotune_cache_require_strict_codegen_match());
+}
+
+TEST(DebugOptions, AutotuneCacheRequireStrictCodegenMatchFlagsParsing) {
+  DebugOptions opts;
+  std::vector<tsl::Flag> flags;
+  MakeDebugOptionsFlags(&flags, &opts);
+  std::vector<std::string> flag_args = {
+      "--xla_autotune_cache_require_strict_codegen_match=true"};
+  EXPECT_TRUE(tsl::Flags::Parse(flag_args, flags));
+  EXPECT_TRUE(opts.xla_autotune_cache_require_strict_codegen_match());
+}
+
+TEST(DebugOptions,
+     ExperimentalUseAutotuneCacheAlsoForDeterministicOpsDefaultIsFalse) {
+  const DebugOptions opts = DefaultDebugOptionsIgnoringFlags();
+  const bool use_cache =
+      opts.xla_gpu_experimental_use_autotune_cache_also_for_deterministic_ops();
+  EXPECT_FALSE(use_cache);
+}
+
+TEST(DebugOptions,
+     ExperimentalUseAutotuneCacheAlsoForDeterministicOpsFlagsParsing) {
+  DebugOptions opts = DefaultDebugOptionsIgnoringFlags();
+  std::vector<tsl::Flag> flags;
+  MakeDebugOptionsFlags(&flags, &opts);
+  std::vector<std::string> flag_args = {
+      "--xla_gpu_experimental_use_autotune_cache_also_for_deterministic_ops="
+      "true"};
+  EXPECT_TRUE(tsl::Flags::Parse(flag_args, flags));
+  const bool use_cache =
+      opts.xla_gpu_experimental_use_autotune_cache_also_for_deterministic_ops();
+  EXPECT_TRUE(use_cache);
+}
+
+TEST(DebugOptions, ResetFlagValuesPreservesCudaDataDirFromEnv) {
+  // Allocates the process-wide flags before the reset under test.
+  (void)GetDebugOptionsFromFlags();
+  tsl::setenv("XLA_FLAGS", "--xla_gpu_cuda_data_dir=/custom/cuda/dir", 1);
+
+  ResetFlagValues();
+  ParseDebugOptionFlagsFromEnv(/*reset_envvar=*/true);
+
+  EXPECT_EQ(GetDebugOptionsFromFlags().xla_gpu_cuda_data_dir(),
+            "/custom/cuda/dir");
+
+  tsl::unsetenv("XLA_FLAGS");
+  ResetFlagValues();
+  ParseDebugOptionFlagsFromEnv(/*reset_envvar=*/true);
+}
+TEST(DebugOptions, XlaCpuMaxIsaDefaultIsEmpty) {
+  EXPECT_EQ(DefaultDebugOptionsIgnoringFlags().xla_cpu_max_isa(), "");
+}
+
+TEST(DebugOptions, ExecutionWarnStuckTimeoutFlagsParsing) {
+  DebugOptions opts = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_EQ(opts.xla_gpu_execution_warn_stuck_timeout(), "");
+  EXPECT_EQ(opts.xla_gpu_device_execution_warn_stuck_timeout(), "");
+
+  std::vector<tsl::Flag> flags;
+  MakeDebugOptionsFlags(&flags, &opts);
+  std::vector<std::string> flag_args = {
+      "--xla_gpu_execution_warn_stuck_timeout=15s",
+      "--xla_gpu_device_execution_warn_stuck_timeout=30s"};
+  EXPECT_TRUE(tsl::Flags::Parse(flag_args, flags));
+  EXPECT_EQ(opts.xla_gpu_execution_warn_stuck_timeout(), "15s");
+  EXPECT_EQ(opts.xla_gpu_device_execution_warn_stuck_timeout(), "30s");
+
+  std::vector<std::string> inf_args = {
+      "--xla_gpu_execution_warn_stuck_timeout=inf",
+      "--xla_gpu_device_execution_warn_stuck_timeout=inf"};
+  EXPECT_TRUE(tsl::Flags::Parse(inf_args, flags));
+  EXPECT_EQ(opts.xla_gpu_execution_warn_stuck_timeout(), "inf");
+  EXPECT_EQ(opts.xla_gpu_device_execution_warn_stuck_timeout(), "inf");
+
+  std::vector<std::string> empty_args = {
+      "--xla_gpu_execution_warn_stuck_timeout=",
+      "--xla_gpu_device_execution_warn_stuck_timeout="};
+  EXPECT_TRUE(tsl::Flags::Parse(empty_args, flags));
+  EXPECT_EQ(opts.xla_gpu_execution_warn_stuck_timeout(), "");
+  EXPECT_EQ(opts.xla_gpu_device_execution_warn_stuck_timeout(), "");
+
+  std::vector<std::string> zero_args = {
+      "--xla_gpu_execution_warn_stuck_timeout=0s",
+      "--xla_gpu_device_execution_warn_stuck_timeout=0s"};
+  EXPECT_TRUE(tsl::Flags::Parse(zero_args, flags));
+  EXPECT_EQ(opts.xla_gpu_execution_warn_stuck_timeout(), "0s");
+  EXPECT_EQ(opts.xla_gpu_device_execution_warn_stuck_timeout(), "0s");
+
+  for (const std::string& invalid : {"not_a_duration", "-5s", "-inf"}) {
+    std::vector<std::string> invalid_warn_args = {
+        "--xla_gpu_device_execution_warn_stuck_timeout=" + invalid};
+    EXPECT_FALSE(tsl::Flags::Parse(invalid_warn_args, flags)) << invalid;
+    std::vector<std::string> invalid_terminate_args = {
+        "--xla_gpu_execution_terminate_timeout=" + invalid};
+    EXPECT_FALSE(tsl::Flags::Parse(invalid_terminate_args, flags)) << invalid;
+  }
+}
 }  // namespace
 }  // namespace xla

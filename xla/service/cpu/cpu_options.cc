@@ -102,7 +102,7 @@ absl::StatusOr<int64_t> SmallWhileLoopByteThreshold(
 
   auto itr = extra_options_map.find(kSmallWhileLoopByteThreshold);
   if (itr == extra_options_map.end()) {
-    return 1024;  // Default value.
+    return 1000000000;  // Default value.
   }
 
   int64_t byte_threshold;
@@ -165,6 +165,21 @@ bool UseMultiOutputFusion(const HloModuleConfig& config) {
   const auto& extra_options_map =
       config.debug_options().xla_backend_extra_options();
   return extra_options_map.count(kUseMultiOutputFusion) > 0;
+}
+
+absl::StatusOr<int64_t> MaxFusionOperands(const HloModuleConfig& config) {
+  const auto& extra_options_map =
+      config.debug_options().xla_backend_extra_options();
+  auto it = extra_options_map.find(kMaxFusionOperands);
+  if (it == extra_options_map.end()) {
+    return 96;  // Default value.
+  }
+  int64_t max_operands;
+  if (!absl::SimpleAtoi(it->second, &max_operands)) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Failed to parse value for: ", kMaxFusionOperands, "."));
+  }
+  return max_operands;
 }
 
 bool EnableTiledEmitter(const HloModuleConfig& config) {

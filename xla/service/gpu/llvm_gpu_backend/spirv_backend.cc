@@ -93,8 +93,8 @@ std::string EmitModuleToSPIRV(llvm::Module* module,
   // TODO(intel-tf): Revisit this once the SPIR-V backend is fixed to support
   // O2.
   target_machine->setOptLevel(llvm::CodeGenOptLevel::None);
-  target_machine->getObjFileLowering()->Initialize(mmiwp->getMMI().getContext(),
-                                                   *target_machine);
+  target_machine->getObjFileLowering()->initialize(mmiwp->getMMI().getContext(),
+                                                   *target_machine, *module);
   target_machine->addPassesToEmitFile(pm, buffered_stream, nullptr,
                                       llvm::CodeGenFileType::ObjectFile);
 
@@ -188,6 +188,9 @@ absl::StatusOr<std::string> CompileToSPIRV(
   absl::call_once(backend_init_flag, SPIRVBackendInit);
   auto llvm_opts = GetSPIRVBackendOptions(debug_options);
   llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_opts);
+  // SLP and VectorCombine read their options from the LLVMContext
+  llvm_ir::LLVMCommandLineOptionsLock::ApplyLibraryOptions(
+      module->getContext());
 
   // Preserve the existing rewrite of SPIR-V kernel pointer arguments in the
   // default LLVM address space to CrossWorkgroup. Kernel signatures can also

@@ -66,6 +66,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/codegen/xtile/codegen/dot_algorithms.h"
 #include "xla/codegen/xtile/codegen/emitter_helpers.h"
+#include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "xla/hlo/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/service/algorithm_util.h"
 #include "xla/tsl/platform/errors.h"
@@ -367,9 +368,12 @@ class LowerReduce : public mlir::OpRewritePattern<stablehlo::ReduceOp> {
 
     mlir::IRMapping combine_mapping;
     for (std::size_t i = 0; i < num_inputs; ++i) {
-      combine_mapping.map(old_block.getArgument(i), res_tensors[i]);
+      // Argument i is the accumulator, argument num_inputs + i is the current
+      // element. The tt.reduce result plays the role of the element here, the
+      // init value the role of the accumulator.
+      combine_mapping.map(old_block.getArgument(i), broadcasted_inits[i]);
       combine_mapping.map(old_block.getArgument(num_inputs + i),
-                          broadcasted_inits[i]);
+                          res_tensors[i]);
     }
 
     for (mlir::Operation& body_op : old_block.without_terminator()) {
@@ -558,6 +562,10 @@ struct TritonPrecisionSpec {
   ::xla::PrecisionConfig::Algorithm algorithm;
   // Encodes `tt.dot`'s `inputPrecision` attribute.
   ttir::InputPrecision ttir_input_precision;
+  mlir::stablehlo::Precision lhs_operand_precision =
+      mlir::stablehlo::Precision::DEFAULT;
+  mlir::stablehlo::Precision rhs_operand_precision =
+      mlir::stablehlo::Precision::DEFAULT;
 };
 
 mlir::Type ElementType(mlir::Value v) { return mlir::getElementTypeOrSelf(v); }
@@ -580,10 +588,13 @@ absl::StatusOr<Value> EmitDotAlgUnset(
   Value acc = dot_operands.accumulator;
 
   int max_num_imprecise_acc = 0;
-  if (ElementType(lhs).isFloat(8) || ElementType(rhs).isFloat(8)) {
-    // For fp8 dots, disable accumulator promotion to mimick cuBLAS. It may make
-    // sense to enable frequent accumulator promotion at higher matmul
-    // precisions set in the config.
+  if ((ElementType(lhs).isFloat(8) || ElementType(rhs).isFloat(8)) &&
+      precision_spec.lhs_operand_precision !=
+          mlir::stablehlo::Precision::HIGHEST &&
+      precision_spec.rhs_operand_precision !=
+          mlir::stablehlo::Precision::HIGHEST) {
+    // For fp8 dots with default precision, disable accumulator promotion to
+    // mimic cuBLAS fast accumulation; HIGHEST keeps max_num_imprecise_acc = 0.
     max_num_imprecise_acc = std::numeric_limits<int>::max();
   }
 
@@ -601,10 +612,13 @@ absl::StatusOr<Value> EmitRegularDot(
   Value rhs = dot_operands.rhs;
 
   int max_num_imprecise_acc = 0;
-  if (ElementType(lhs).isFloat(8) || ElementType(rhs).isFloat(8)) {
-    // For fp8 dots, disable accumulator promotion to mimick cuBLAS. It may make
-    // sense to enable frequent accumulator promotion at higher matmul
-    // precisions set in the config.
+  if ((ElementType(lhs).isFloat(8) || ElementType(rhs).isFloat(8)) &&
+      precision_spec.lhs_operand_precision !=
+          mlir::stablehlo::Precision::HIGHEST &&
+      precision_spec.rhs_operand_precision !=
+          mlir::stablehlo::Precision::HIGHEST) {
+    // For fp8 dots with default precision, disable accumulator promotion to
+    // mimic cuBLAS fast accumulation; HIGHEST keeps max_num_imprecise_acc = 0.
     max_num_imprecise_acc = std::numeric_limits<int>::max();
   }
 
@@ -958,8 +972,8 @@ LogicalResult RewriteDotGeneralToTritonDot(mlir::PatternRewriter& rewriter,
     ttir_input_precision = InferFpDotPrecision(precision_spec);
   }
 
-  TritonPrecisionSpec triton_precision_spec{*hlo_algorithm,
-                                            ttir_input_precision};
+  TritonPrecisionSpec triton_precision_spec{
+      *hlo_algorithm, ttir_input_precision, lhs_precision, rhs_precision};
   absl::StatusOr<Value> triton_dot_op =
       (*algorithm_emitter)(builder, dot_operands, triton_precision_spec);
   if (!triton_dot_op.ok()) {
@@ -1042,6 +1056,18 @@ class LowerAllGather : public mlir::OpRewritePattern<stablehlo::AllGatherOp> {
   }
 };
 
+class LowerAllToAll : public mlir::OpRewritePattern<stablehlo::AllToAllOp> {
+ public:
+  using OpRewritePattern::OpRewritePattern;
+
+ private:
+  mlir::LogicalResult matchAndRewrite(
+      stablehlo::AllToAllOp op,
+      mlir::PatternRewriter& rewriter) const override {
+    return ::xla::gpu::RewriteAllToAll(op, rewriter);
+  }
+};
+
 class LowerAllReduce : public mlir::OpRewritePattern<stablehlo::AllReduceOp> {
  public:
   using OpRewritePattern::OpRewritePattern;
@@ -1055,13 +1081,13 @@ class LowerAllReduce : public mlir::OpRewritePattern<stablehlo::AllReduceOp> {
 };
 
 class LowerReduceScatter
-    : public mlir::OpRewritePattern<stablehlo::ReduceScatterOp> {
+    : public mlir::OpRewritePattern<::xla::xtile::ReduceScatterOp> {
  public:
   using OpRewritePattern::OpRewritePattern;
 
  private:
   mlir::LogicalResult matchAndRewrite(
-      stablehlo::ReduceScatterOp op,
+      ::xla::xtile::ReduceScatterOp op,
       mlir::PatternRewriter& rewriter) const override {
     return ::xla::gpu::RewriteReduceScatter(op, rewriter);
   }
@@ -1079,8 +1105,8 @@ class StableHLOLowerToTritonPass
     {
       mlir::RewritePatternSet patterns(mlir_context);
       patterns.add<LowerTranspose, LowerIotaToMakeRange, LowerBroadcastInDim,
-                   LowerReduce, LowerReshape, LowerAllGather, LowerAllReduce,
-                   LowerReduceScatter>(mlir_context);
+                   LowerReduce, LowerReshape, LowerAllGather, LowerAllToAll,
+                   LowerAllReduce, LowerReduceScatter>(mlir_context);
       patterns.add<CanonicalizeDotGeneral>(mlir_context);
       patterns.add<LowerDotGeneral>(mlir_context, warp_specialization_allowed_);
       if (mlir::failed(mlir::applyPatternsGreedily(getOperation(),

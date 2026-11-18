@@ -33,9 +33,12 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "google/protobuf/text_format.h"
 #include "tsl/platform/protobuf.h"
+#include "xla/autotune_results.pb.h"
+#include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/autotune_fingerprint.h"
 #include "xla/backends/autotuner/autotuner_cache_interface.h"
 #include "xla/backends/autotuner/autotuning.pb.h"
+#include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_orchestrator.h"
 #include "xla/backends/autotuner/config_runner.h"
 #include "xla/backends/autotuner/config_selector.h"
@@ -232,7 +235,8 @@ tsl::Future<Autotuner::Config> Autotuner::GetTunedConfig(
 
         ABSL_ASSIGN_OR_RETURN(
             std::vector<ConfigRunner::ConfigProfile> profiles,
-            runners_[runner_index]->ProfileAll(std::move(candidates), instr));
+            runners_[runner_index]->ProfileAll(std::move(candidates), instr,
+                                               options_.excluded_backends));
 
         LogConfigProfiles(*instr, profiles, compilation_failures);
 

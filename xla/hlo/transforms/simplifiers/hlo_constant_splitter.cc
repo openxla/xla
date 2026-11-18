@@ -30,6 +30,7 @@ limitations under the License.
 #include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/pass/hlo_pass_registry.h"
 
 namespace xla {
 
@@ -113,6 +114,10 @@ absl::StatusOr<bool> DuplicateConstantExpressionPerUser(
   }
   return changed;
 }
+
+const HloPassFactory* const kHloConstantSplitterRegistration =
+    RegisterHloPassFactory<DefaultHloPassFactory<HloConstantSplitter>>(
+        "hlo-constant-splitter");
 
 }  // namespace
 

@@ -847,8 +847,9 @@ ServiceExecutableRunOptions HloRunnerLegacy::GetServiceRunOptionsForDevice(
     run_options.set_device_assignment(device_assignment);
   }
   run_options.set_run_id(run_id);
-  return ServiceExecutableRunOptions(run_options,
-                                     backend().StreamBorrowerWithPriority());
+  return ServiceExecutableRunOptions(
+      run_options, backend().StreamBorrowerWithPriority(),
+      backend().LocalityDomainStreamBorrowerWithPriority());
 }
 
 Backend& HloRunnerLegacy::backend() { return *backend_; }

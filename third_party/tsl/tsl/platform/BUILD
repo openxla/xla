@@ -175,7 +175,6 @@ cc_library(
     srcs = ["numbers.cc"],
     hdrs = ["numbers.h"],
     deps = [
-        ":stringpiece",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -710,7 +709,6 @@ cc_library(
     name = "net",
     textual_hdrs = ["net.h"],
     deps = tf_windows_aware_platform_deps("net") + [
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -1212,10 +1210,13 @@ tsl_cc_test(
     srcs = ["unbounded_work_queue_test.cc"],
     deps = [
         ":blocking_counter",
+        ":platform",
+        ":platform_port",
         ":random",
+        ":thread_annotations",
         ":unbounded_work_queue",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:env",
         "@xla//xla/tsl/platform:test",
@@ -1463,7 +1464,6 @@ tsl_cc_test(
     deps = [
         ":numbers",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:test",
         "@xla//xla/tsl/platform:types",

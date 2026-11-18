@@ -54,6 +54,7 @@ limitations under the License.
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/StandardInstrumentations.h"
 #include "llvm/Support/CodeGen.h"
+#include "llvm/Support/LibraryOptionsContext.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
@@ -66,6 +67,7 @@ limitations under the License.
 #include "xla/codegen/intrinsic_lib.h"
 #include "xla/service/gpu/llvm_gpu_backend/load_ir_module.h"
 #include "xla/service/gpu/llvm_gpu_backend/utils.h"
+#include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/service/llvm_ir/llvm_type_conversion_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -77,10 +79,6 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
-
-namespace {
-static llvm::codegen::RegisterCodeGenFlags CGF;
-}
 
 // Initializes LLVM passes. Uses the PassRegistry mechanism.
 void InitializePasses(llvm::PassRegistry* pass_registry) {
@@ -96,6 +94,23 @@ void InitializePasses(llvm::PassRegistry* pass_registry) {
   llvm::initializeCodeGenPrepareLegacyPassPass(*pass_registry);
 }
 
+namespace {
+
+// Makes the global command-line parser (e.g. the XLA LLVM options) accept the
+// CodeGen tool options such as --frame-pointer and -mcpu, which LLVM declares
+// in TableGen instead of registering them as cl::opt.
+struct RegisterCodeGenToolOptions {
+  RegisterCodeGenToolOptions() {
+    for (const llvm::cl::LibraryOptions* options :
+         llvm::codegen::getToolOptions()) {
+      llvm::cl::addLibraryOptions(*options);
+    }
+  }
+};
+static RegisterCodeGenToolOptions CGTO;
+
+}  // namespace
+
 // Returns the TargetMachine, given a triple.
 std::unique_ptr<llvm::TargetMachine> GetTargetMachine(
     llvm::Triple triple, absl::string_view cpu_name,
@@ -109,8 +124,13 @@ std::unique_ptr<llvm::TargetMachine> GetTargetMachine(
     return nullptr;
   }
 
+  // The TargetMachine reads its library options (e.g. -nvptx-prec-divf32)
+  // through target_options.MCOptions.LibraryOptions, so pass the long-lived
+  // context that the options lock parsed the client options into.
+  const llvm::cl::LibraryOptionsContext& library_options =
+      llvm_ir::LLVMCommandLineOptionsLock::GetLibraryOptions();
   llvm::TargetOptions target_options =
-      llvm::codegen::InitTargetOptionsFromCodeGenFlags(llvm::Triple());
+      llvm::codegen::getTargetOptions(library_options, llvm::Triple());
 
   // Set the verbose assembly options.
   target_options.MCOptions.AsmVerbose = false;
@@ -133,8 +153,8 @@ std::unique_ptr<llvm::TargetMachine> GetTargetMachine(
   }
   return absl::WrapUnique(target->createTargetMachine(
       triple, llvm_ir::AsStringRef(cpu_name), llvm_ir::AsStringRef(feature_str),
-      target_options, llvm::codegen::getExplicitRelocModel(),
-      llvm::codegen::getExplicitCodeModel(), codegen_opt_level));
+      target_options, llvm::codegen::getExplicitRelocModel(library_options),
+      llvm::codegen::getExplicitCodeModel(library_options), codegen_opt_level));
 }
 
 // Returns whether the module could use any device bitcode library functions.
@@ -305,7 +325,8 @@ absl::Status LinkAndOptimizeModule(
   llvm::StandardInstrumentations si(module->getContext(), false);
   si.registerCallbacks(pic, &mam);
 
-  llvm::PassBuilder pb(target_machine, pto, std::nullopt, &pic);
+  llvm::PassBuilder pb(module->getContext(), target_machine, pto, std::nullopt,
+                       &pic);
   pb.registerModuleAnalyses(mam);
   pb.registerCGSCCAnalyses(cgam);
   pb.registerFunctionAnalyses(fam);

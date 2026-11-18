@@ -20,7 +20,6 @@ limitations under the License.
 #include <numeric>
 #include <utility>
 
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Pass/Pass.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 // Above header needs to be included first to avoid 'major' macro collision.
@@ -85,10 +84,6 @@ bool HasBroadcastConsumer(Operation* op) {
   return false;
 }
 
-PointerType GetTensorPtrType(Type type) {
-  return PointerType::get(xtile::StorageType(type));
-}
-
 // Canonicalizes tile strides. Currently this converts zero strides to 1.
 // If validation is requested and a tile stride is 0:
 // If the corresponding tile shape or original shape value at the same index is
@@ -125,6 +120,16 @@ bool IsOffsetDivisibilityGuaranteed(mlir::Value offset_val,
   int64_t divisor = kByteDivisibilityFactor /
                     std::gcd(kByteDivisibilityFactor, element_byte_size);
   return xtriton::IsGuaranteedDivisible(offset_val, divisor);
+}
+
+// Returns true if `layout` is major-to-minor up to unit dimensions of `shape`,
+// i.e. transposing between logical and physical order is a reshape.
+bool IsMajorToMinorIgnoringUnitDims(ArrayRef<int64_t> shape,
+                                    ArrayRef<int64_t> layout) {
+  int64_t last_non_unit_dim = -1;
+  return absl::c_all_of(llvm::reverse(layout), [&](int64_t dim) {
+    return shape[dim] == 1 || std::exchange(last_non_unit_dim, dim) < dim;
+  });
 }
 
 // Limitations of TMA are documented in IsTmaCompatible
@@ -377,24 +382,26 @@ class RewriteExtract : public mlir::OpRewritePattern<ExtractOp> {
           xtriton::IndexCast(builder, builder.getI32Type(), ordered_offsets),
           /*cachePolicy=*/nullptr);
 
-      // Insert a transpose if the layout is not major-to-minor.
-      if (!xtriton::IsMajorToMinorLayout(src_layout)) {
+      // Insert a transpose if the layout is not major-to-minor, unless it only
+      // moves unit dimensions. A reshape suffices then, and lets Triton feed
+      // the TMA-loaded shared memory directly to a dot.
+      if (!IsMajorToMinorIgnoringUnitDims(sizes, src_layout)) {
         result = TransOp::create(
             builder, result, xtriton::GetInverseLayoutPermutation(src_layout));
       }
-      // Insert a reshape if the result is rank-reduced.
-      if (sizes.size() != tile_shape.size()) {
-        result = ReshapeOp::create(builder, tile_shape, result,
-                                   /*allowReorder=*/false);
+      // Insert a reshape if the result is rank-reduced or still in physical
+      // order.
+      if (result.getType() != tile_type) {
+        result = ReshapeOp::create(builder, tile_shape, result);
       }
 
       rewriter.replaceOp(op, result);
       return mlir::success();
     }
 
-    if (TdmAllowed(
-            CanUseTdm(allow_tdm_, src_shape, sizes, strides, src_layout,
-                      tile_type.getElementType().getIntOrFloatBitWidth()))) {
+    if (TdmAllowed(CanUseTdm(
+            allow_tdm_, src_shape, sizes, strides, src_layout, offsets,
+            tile_type.getElementType().getIntOrFloatBitWidth()))) {
       SmallVector<int64_t> singleton_dims =
           GetSingletonTileDims(sizes, src_layout);
       TdmDescriptorOperands operands(op.getSrc(), src_shape, src_layout, sizes,
@@ -421,8 +428,7 @@ class RewriteExtract : public mlir::OpRewritePattern<ExtractOp> {
             xtriton::GetInverseLayoutPermutation(operands.layout));
       }
       if (ArrayRef<int64_t>(operands.sizes) != tile_shape) {
-        result = ReshapeOp::create(builder, tile_shape, result,
-                                   /*allowReorder=*/false);
+        result = ReshapeOp::create(builder, tile_shape, result);
       }
 
       rewriter.replaceOp(op, result);
@@ -519,16 +525,20 @@ class RewriteInsert : public mlir::OpRewritePattern<InsertOp> {
           builder, desc_type, op.getDst());
 
       Value src = op.getSrc();
-      // Insert a expand_dims if the source is rank-reduced.
-      for (auto dim : reduced_dims) {
-        src = ExpandDimsOp::create(builder, src, dim);
-      }
-      // Insert a transpose if the layout is not major-to-minor.
-      if (!xtriton::IsMajorToMinorLayout(dst_layout)) {
+      if (!IsMajorToMinorIgnoringUnitDims(sizes, dst_layout)) {
+        // Insert an expand_dims if the source is rank-reduced.
+        for (auto dim : reduced_dims) {
+          src = ExpandDimsOp::create(builder, src, dim);
+        }
         // Transpose to a major-to-minor tensor by simply reversing the layout.
-        auto transpose_order = llvm::to_vector_of<int32_t>(dst_layout);
-        std::reverse(transpose_order.begin(), transpose_order.end());
-        src = TransOp::create(builder, src, transpose_order);
+        src = TransOp::create(
+            builder, src,
+            llvm::to_vector_of<int32_t>(llvm::reverse(dst_layout)));
+      }
+      // Insert a reshape if the source is rank-reduced or still in logical
+      // order.
+      if (src.getType() != result_type) {
+        src = ReshapeOp::create(builder, result_type.getShape(), src);
       }
 
       auto ordered_offsets = xtriton::GetMajorToMinorOrder(offsets, dst_layout);
@@ -536,7 +546,7 @@ class RewriteInsert : public mlir::OpRewritePattern<InsertOp> {
           builder, cast_to_tensor_desc.getResult(0), src,
           xtriton::IndexCast(builder, builder.getI32Type(), ordered_offsets));
     } else if (TdmAllowed(CanUseTdm(
-                   allow_tdm_, dst_shape, sizes, strides, dst_layout,
+                   allow_tdm_, dst_shape, sizes, strides, dst_layout, offsets,
                    tile_type.getElementType().getIntOrFloatBitWidth()))) {
       SmallVector<int64_t> singleton_dims =
           GetSingletonTileDims(sizes, dst_layout);
@@ -553,8 +563,7 @@ class RewriteInsert : public mlir::OpRewritePattern<InsertOp> {
 
       Value src = op.getSrc();
       if (ArrayRef<int64_t>(operands.sizes) != tile_shape) {
-        src = ReshapeOp::create(builder, operands.sizes, src,
-                                /*allowReorder=*/false);
+        src = ReshapeOp::create(builder, operands.sizes, src);
       }
       if (!xtriton::IsMajorToMinorLayout(operands.layout)) {
         auto transpose_order = llvm::to_vector_of<int32_t>(operands.layout);
@@ -580,51 +589,6 @@ class RewriteInsert : public mlir::OpRewritePattern<InsertOp> {
   const int num_stages_;
 };
 
-// Rewriting tensor::InsertOp as tt.store.
-class RewriteScalarInsert : public mlir::OpRewritePattern<tensor::InsertOp> {
- public:
-  using OpRewritePattern::OpRewritePattern;
-
- private:
-  mlir::LogicalResult matchAndRewrite(
-      tensor::InsertOp op, mlir::PatternRewriter& rewriter) const override {
-    if (op.getDest().getType().getRank() != 0) {
-      return rewriter.notifyMatchFailure(op, "Expected dest to be scalar.");
-    }
-    ImplicitLocOpBuilder builder(op.getLoc(), rewriter);
-    auto ptr_type = GetTensorPtrType(op.getScalar().getType());
-    auto cast_dst_to_tensor_ptr_type = mlir::UnrealizedConversionCastOp::create(
-                                           builder, ptr_type, op.getDest())
-                                           .getResult(0);
-    StoreOp::create(builder, cast_dst_to_tensor_ptr_type, op.getScalar());
-    rewriter.replaceOp(op, op.getDest());
-    return mlir::success();
-  }
-};
-
-class RewriteScalarExtract : public mlir::OpRewritePattern<tensor::ExtractOp> {
- public:
-  using OpRewritePattern::OpRewritePattern;
-
- private:
-  // Rewriting ExtractOp as tt.advance + tt.store.
-  mlir::LogicalResult matchAndRewrite(
-      tensor::ExtractOp op, mlir::PatternRewriter& rewriter) const override {
-    if (op.getTensor().getType().getRank() != 0) {
-      return rewriter.notifyMatchFailure(op, "Expected src to be scalar.");
-    }
-    ImplicitLocOpBuilder builder(op.getLoc(), rewriter);
-    auto ptr_type = GetTensorPtrType(op.getType());
-    auto cast_src_to_tensor_ptr_type = mlir::UnrealizedConversionCastOp::create(
-                                           builder, ptr_type, op.getTensor())
-                                           .getResult(0);
-    auto scalar = LoadOp::create(builder, cast_src_to_tensor_ptr_type,
-                                 /*isVolatile=*/false);
-    rewriter.replaceOp(op, scalar.getResult());
-    return mlir::success();
-  }
-};
-
 class TritonXLAExtractInsertToTritonPass
     : public impl::TritonXLAExtractInsertToTritonPassBase<
           TritonXLAExtractInsertToTritonPass> {
@@ -638,7 +602,6 @@ class TritonXLAExtractInsertToTritonPass
     patterns.add<RewriteExtract, RewriteInsert>(
         mlir_context, allow_tma_.getValue(), allow_tdm_.getValue(),
         num_stages_.getValue());
-    patterns.add<RewriteScalarExtract, RewriteScalarInsert>(mlir_context);
     if (mlir::failed(
             mlir::applyPatternsGreedily(getOperation(), std::move(patterns)))) {
       return signalPassFailure();

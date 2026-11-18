@@ -21,7 +21,7 @@ limitations under the License.
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/multi_output_fusion.h"
+#include "xla/hlo/transforms/multi_output_fusion.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 
@@ -76,8 +76,11 @@ bool CpuMultiOutputFusion::IsFusible(HloInstruction* instr) {
     return false;
   }
 
+  // Dot and scatter fusions are emitted by dedicated emitters that do not
+  // support multi-output fusion roots.
   if (instr->IsLoopFusion() &&
-      instr->fused_expression_root()->opcode() != HloOpcode::kDot) {
+      instr->fused_expression_root()->opcode() != HloOpcode::kDot &&
+      instr->fused_expression_root()->opcode() != HloOpcode::kScatter) {
     return true;
   }
 

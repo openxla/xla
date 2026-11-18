@@ -32,9 +32,9 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
+#include "absl/base/casts.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/numeric/int128.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -42,13 +42,12 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "absl/types/span.h"
-#include "tsl/platform/fingerprint.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/generic_memory_allocation.h"
 #include "xla/stream_executor/generic_memory_allocator.h"
+#include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_args.h"
 #include "xla/stream_executor/kernel_args_packing_spec.h"
@@ -247,12 +246,6 @@ absl::StatusOr<std::unique_ptr<sycl::kernel>> GetModuleFunction(
   return std::make_unique<sycl::kernel>(kernel);
 }
 
-// Computes a 128-bit fingerprint for the given string.
-absl::uint128 Fingerprint128(const absl::string_view s) {
-  auto fp = tsl::Fingerprint128(s);
-  return absl::MakeUint128(fp.high64, fp.low64);
-}
-
 // Retrieves the device address and size of a global symbol from a Level Zero
 // module in the given SYCL context.
 absl::Status GetModuleSymbol(SyclContext* context, ze_module_handle_t module,
@@ -315,6 +308,9 @@ absl::Status SyclSynchronousMemcpyD2H(SyclContext* context, void* host_dst,
       host_dst);
   return absl::OkStatus();
 }
+
+static_assert(kUsmAlignBytes >= gpu::kDeviceMemoryAlignBytes,
+              "USM allocations must honor the GpuExecutor alignment contract");
 
 // Allocates memory on the GPU device.
 void* DeviceAllocate(SyclContext* context, uint64_t bytes) {
@@ -425,83 +421,93 @@ absl::Status SyclExecutor::Init() {
 
 absl::StatusOr<std::unique_ptr<Kernel>> SyclExecutor::LoadKernel(
     const KernelLoaderSpec& spec) {
-  // Check that a SPIR-V binary is provided in the spec.
-  if (!spec.has_cuda_cubin_in_memory()) {
-    return absl::InternalError(
-        "SyclExecutor::LoadKernel: No SPIR-V binary provided in spec.");
-  }
-
-  // Create a new SyclKernel instance for the loaded kernel.
   auto sycl_kernel = std::make_unique<SyclKernel>(this);
   const std::string& kernel_name = spec.kernel_name();
-  const char* spirv_binary = reinterpret_cast<const char*>(
-      spec.cuda_cubin_in_memory()->cubin_bytes.data());
-  size_t spirv_size = spec.cuda_cubin_in_memory()->cubin_bytes.size();
+  std::unique_ptr<sycl::kernel> kernel_function;
 
-  ModuleHandle module_handle{spirv_binary};
-  ze_module_handle_t module = nullptr;
-
-  // Check if the module is already loaded.
-  {
-    absl::MutexLock lock{&in_memory_modules_mu_};
-    auto in_mem_it = in_memory_modules_.find(module_handle);
-    if (in_mem_it != in_memory_modules_.end()) {
-      module = in_mem_it->second;
-    }
-  }
-
-  // If module is not loaded, load it outside the lock for efficiency.
-  // Only the first thread to load the module inserts it into the cache.
-  // Other threads reuse the cached module and unload their own redundant
-  // module.
-  if (module == nullptr) {
+  if (spec.has_in_process_symbol()) {
+    ABSL_ASSIGN_OR_RETURN(sycl::context sycl_context, GetContext());
+    using KernelIdGetter = absl::StatusOr<sycl::kernel_id> (*)();
     ABSL_ASSIGN_OR_RETURN(
-        module,
-        LoadLevelZeroModule(sycl_context_.get(), spirv_binary, spirv_size));
+        sycl::kernel_id kernel_id,
+        absl::bit_cast<KernelIdGetter>(spec.in_process_symbol()->symbol)());
+    try {
+      auto kernel_bundle =
+          sycl::get_kernel_bundle<sycl::bundle_state::executable>(sycl_context,
+                                                                  {kernel_id});
+      kernel_function =
+          std::make_unique<sycl::kernel>(kernel_bundle.get_kernel(kernel_id));
+    } catch (const sycl::exception& e) {
+      return absl::InternalError(absl::StrCat(
+          "SyclExecutor::LoadKernel: Failed to get kernel bundle for '",
+          kernel_name, "', got ", e.what()));
+    }
+  } else if (spec.has_cuda_cubin_in_memory()) {
+    const char* spirv_binary = reinterpret_cast<const char*>(
+        spec.cuda_cubin_in_memory()->cubin_bytes.data());
+    size_t spirv_size = spec.cuda_cubin_in_memory()->cubin_bytes.size();
+
+    // Lookup key for the module cache; keyed by pointer address, not content.
+    ModuleHandle module_handle{spirv_binary};
+
+    ze_module_handle_t lz_module_handle = nullptr;
+    // Check if the module is already loaded.
     {
       absl::MutexLock lock{&in_memory_modules_mu_};
-      // Try to insert the newly loaded module into the cache.
-      auto [in_mem_it, inserted] =
-          in_memory_modules_.emplace(module_handle, module);
-      if (!inserted) {
-        // Another thread loaded the module first.
-        // Unload the redundant module inside the lock since unloading is fast
-        // and also to avoid resource leaks.
-        UnloadLevelZeroModule(sycl_context_.get(), module);
-        module = in_mem_it->second;
-
-        // Increment reference count in gpu_binary_to_module_.
-        auto gpu_bin_it = gpu_binary_to_module_.find(module_handle);
-        if (gpu_bin_it != gpu_binary_to_module_.end()) {
-          ++(gpu_bin_it->second.second);
-        } else {
-          // This should not happen since in_memory_modules_ and
-          // gpu_binary_to_module_ should be consistent.
-          return absl::InternalError(
-              "SyclExecutor::LoadKernel: Inconsistent module cache state.");
-        }
-      } else {
-        // Newly inserted module: Set reference count to 1 in
-        // gpu_binary_to_module_.
-        gpu_binary_to_module_[module_handle] = std::make_pair(module, 1);
+      auto in_mem_it = in_memory_modules_.find(module_handle);
+      if (in_mem_it != in_memory_modules_.end()) {
+        lz_module_handle = in_mem_it->second;
+        ABSL_RETURN_IF_ERROR(IncrementModuleRefCount(module_handle));
       }
     }
+    // If module is not loaded, load it outside the lock for efficiency.
+    // Only the first thread to load the module inserts it into the cache.
+    // Other threads reuse the cached module.
+    if (lz_module_handle == nullptr) {
+      ABSL_ASSIGN_OR_RETURN(
+          lz_module_handle,
+          LoadLevelZeroModule(sycl_context_.get(), spirv_binary, spirv_size));
+      {
+        absl::MutexLock lock{&in_memory_modules_mu_};
+        // Try to insert the newly loaded module into the cache.
+        auto [in_mem_it, inserted] =
+            in_memory_modules_.emplace(module_handle, lz_module_handle);
+        if (!inserted) {
+          // Another thread already loaded the module, so unload and use
+          // existing handle.
+          UnloadLevelZeroModule(sycl_context_.get(), lz_module_handle);
+          lz_module_handle = in_mem_it->second;
+          ABSL_RETURN_IF_ERROR(IncrementModuleRefCount(module_handle));
+        } else {
+          // Newly inserted module: Set reference count to 1 in
+          // gpu_binary_to_module_.
+          gpu_binary_to_module_[module_handle] =
+              std::make_pair(lz_module_handle, 1);
+        }
+      }
+    }
+    // Retrieve the kernel function from the loaded module.
+    VLOG(2) << "Getting function " << kernel_name << " from module "
+            << lz_module_handle;
+    ABSL_ASSIGN_OR_RETURN(
+        kernel_function,
+        GetModuleFunction(sycl_context_.get(), lz_module_handle,
+                          kernel_name.c_str()));
+    {
+      absl::MutexLock lock{&in_memory_modules_mu_};
+      kernel_to_gpu_binary_[sycl_kernel.get()] = module_handle;
+    }
+  } else {
+    return absl::InternalError(
+        "SyclExecutor::LoadKernel: No method of loading SYCL kernel "
+        "provided.");
   }
-
-  // Retrieve the kernel function from the loaded module.
-  VLOG(2) << "Getting function " << kernel_name << " from module " << module;
-  ABSL_ASSIGN_OR_RETURN(
-      std::unique_ptr<sycl::kernel> function,
-      GetModuleFunction(sycl_context_.get(), module, kernel_name.c_str()));
   {
     absl::MutexLock lock{&in_memory_modules_mu_};
-    // Track which kernels are loaded and their associated modules.
-    kernel_to_gpu_binary_[sycl_kernel.get()] = module_handle;
     loaded_kernels_.insert(sycl_kernel.get());
   }
-
   // Set kernel function and metadata.
-  sycl_kernel->set_gpu_function(function.release());
+  sycl_kernel->set_gpu_function(kernel_function.release());
   // We have to trust the kernel loader spec arity because there doesn't
   // appear to be a way to reflect on the number of expected arguments w/the
   // SPIR API.
@@ -566,64 +572,6 @@ absl::StatusOr<ModuleHandle> SyclExecutor::LoadModule(
   }
   return absl::InternalError(
       "SyclExecutor::LoadModule: No SPIR-V binary found, cannot load module.");
-}
-
-absl::StatusOr<std::shared_ptr<DeviceMemoryBase>>
-SyclExecutor::CreateOrShareConstant(Stream* stream,
-                                    absl::Span<const uint8_t> content) {
-  absl::MutexLock lock{&shared_constants_mu_};
-  // We assume all constants are uniquely identified by this hash. In the
-  // (highly unlikely) event of a hash collision, the program will likely crash
-  // (because the cached constant that will be returned by mistake is unlikely
-  // to have the correct size).
-  absl::uint128 fingerprint = Fingerprint128(absl::string_view(
-      reinterpret_cast<const char*>(content.data()), content.size()));
-  // Must insert nullptr first to get an iterator to the insertion point.
-  auto insert_result = shared_constants_.insert(
-      {fingerprint, std::weak_ptr<DeviceMemoryBase>()});
-  auto it = insert_result.first;
-  bool was_already_in_cache = !insert_result.second;
-  std::shared_ptr<DeviceMemoryBase> shared_constant;
-
-  if (was_already_in_cache) {
-    shared_constant = it->second.lock();
-  }
-
-  if (shared_constant == nullptr) {
-    // Either the constant wasn't found in the cache, or it was but its
-    // weak_ptr had expired.
-    DeviceMemoryBase* new_constant =
-        new DeviceMemoryBase(Allocate(content.size(), /*memory_space=*/0));
-    if (new_constant->opaque() == nullptr) {
-      return absl::InternalError(
-          absl::StrFormat("SyclExecutor::CreateOrShareConstant: Failed to "
-                          "allocate %d bytes for new constant",
-                          content.size()));
-    }
-
-    ABSL_RETURN_IF_ERROR(
-        stream->Memcpy(new_constant, content.data(), content.size()));
-    absl::Status status = stream->BlockHostUntilDone();
-    if (!status.ok()) {
-      Deallocate(new_constant);
-      status.Update(absl::InternalError(
-          absl::StrFormat("SyclExecutor::CreateOrShareConstant: Memcpy to "
-                          "device address %p failed",
-                          new_constant->opaque())));
-      return status;
-    }
-
-    // Capturing 'this' in the custom deleter means this executor must
-    // outlive all shared uses of this constant.
-    shared_constant = std::shared_ptr<DeviceMemoryBase>(
-        new_constant, [this](DeviceMemoryBase* p) {
-          Deallocate(p);
-          delete p;
-        });
-    it->second = std::weak_ptr<DeviceMemoryBase>(shared_constant);
-  }
-
-  return shared_constant;
 }
 
 DeviceMemoryBase SyclExecutor::Allocate(uint64_t size, int64_t memory_space) {
@@ -974,6 +922,19 @@ bool SyclExecutor::UnloadGpuBinary(ModuleHandle module_handle) {
     if (mem_it != ModuleHandle{}) in_memory_modules_.erase(mem_it);
   }
   return true;
+}
+
+absl::Status SyclExecutor::IncrementModuleRefCount(ModuleHandle module_handle) {
+  auto module_it = gpu_binary_to_module_.find(module_handle);
+  if (module_it == gpu_binary_to_module_.end()) {
+    // This should not happen since in_memory_modules_ and
+    // gpu_binary_to_module_ should be consistent.
+    return absl::InternalError(
+        "SyclExecutor::IncrementModuleRefCount: Inconsistent module cache "
+        "state.");
+  }
+  ++(module_it->second.second);
+  return absl::OkStatus();
 }
 
 absl::StatusOr<DeviceAddressBase> SyclExecutor::GetSymbol(

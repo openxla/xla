@@ -179,6 +179,7 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
@@ -236,6 +237,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 
@@ -253,6 +255,7 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 

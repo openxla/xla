@@ -387,6 +387,31 @@ TEST_P(YnnFusionTest, DotWithConstant) {
   RunTest(kModuleStr);
 }
 
+TEST_P(YnnFusionTest, DotWithTransposedLhs) {
+  // The LHS contracting dimension is the major one (lhs_contracting_dims={0}),
+  // i.e. the LHS is stored transposed. Use distinct M, K, N so that a wrong
+  // transpose can't produce the right result.
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule dot_with_transposed_lhs
+
+    ynn_fusion {
+      %lhs = $dtype[16, 8] parameter(0)
+      %rhs = $dtype[16, 12] parameter(1)
+      ROOT %dot = $dtype[8, 12] dot(%lhs, %rhs), lhs_contracting_dims={0},
+        rhs_contracting_dims={0}
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[16, 8] parameter(0)
+      %p1 = $dtype[16, 12] parameter(1)
+      ROOT %fusion = $dtype[8, 12] fusion(%p0, %p1), kind=kCustom,
+        calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
 TEST_P(YnnFusionTest, SliceWithStrides) {
   constexpr absl::string_view kModuleStr = R"(
     HloModule slice_with_strides
@@ -588,6 +613,38 @@ TEST_P(YnnFusionReduceWindowTest, ConvertReduce) {
     })";
 
   RunTest(kModuleStr);
+}
+
+// Converting through an integer type must not be elided, even when excess
+// precision is allowed.
+TEST_P(YnnFusionReduceWindowTest, IntegerRoundTripReduce) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule integer_round_trip_reduce
+
+    %add {
+      %lhs = $dtype[] parameter(0)
+      %rhs = $dtype[] parameter(1)
+      ROOT %add = $dtype[] add(%lhs, %rhs)
+    }
+
+    ynn_fusion {
+      %input = $dtype[64, 2] parameter(0)
+      %zero = $dtype[] constant(0)
+      %quantized = $int_dtype[64, 2] convert(%input)
+      %dequantized = $dtype[64, 2] convert(%quantized)
+      ROOT %reduce = $dtype[64] reduce(%dequantized, %zero), dimensions={1}, to_apply=%add
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[64, 2] parameter(0)
+      ROOT %fusion = $dtype[64] fusion(%p0), kind=kCustom, calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  for (absl::string_view int_dtype : {"s8", "u8"}) {
+    SCOPED_TRACE(int_dtype);
+    RunTest(absl::StrReplaceAll(kModuleStr, {{"$int_dtype", int_dtype}}));
+  }
 }
 
 TEST_P(YnnFusionReduceWindowTest, MixedPrecisionReduce) {

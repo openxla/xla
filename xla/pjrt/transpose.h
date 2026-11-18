@@ -103,13 +103,13 @@ class TransposePlan {
     kDefault,
     // A and B have the same stride-1 dimension, so the inner loop is a memcpy.
     kMemcpy,
-    // B's stride-1 dimension has size 3 and A's stride-1 dimension is large:
-    // three contiguous rows of A, `lda` bytes apart, are merged element by
-    // element into one contiguous run of B, i.e. b[3 * i + k] = a[k][i].
+    // B's stride-1 dimension has a small size K and A's is large, each after
+    // being coalesced with any dimensions contiguous with it in both A and B:
+    // K rows of A, `lda` bytes apart, are merged element by element into one
+    // contiguous run of B, i.e. b[K * i + k] = a[k][i].
     kInterleave,
-    // The reverse of kInterleave: A's stride-1 dimension has size 3 and one
-    // contiguous run of A is split into three rows of B, `ldb` bytes apart,
-    // i.e. b[k][i] = a[3 * i + k].
+    // The reverse of kInterleave: one contiguous run of A is split into K rows
+    // of B, `ldb` bytes apart, i.e. b[k][i] = a[K * i + k].
     kDeinterleave,
   };
 
@@ -150,6 +150,12 @@ class TransposePlan {
     int num_threads = 1;
 
     ChunkContiguity chunk_contiguity = ChunkContiguity::kNone;
+
+    // If set, sets the padding bytes in the tiled output buffer to this value.
+    // When `dest_bits_per_element` is set, the low `dest_bits_per_element` bits
+    // are repeated for each padded sub-byte element and any unused high bits in
+    // the final byte. Zero-element transposes remain a no-op.
+    std::optional<uint8_t> tile_padding = std::nullopt;
 
     // DEPRECATED: Use input_tiling or input_striding instead.
     // This field is only present for backward compatibility.
@@ -196,6 +202,12 @@ class TransposePlan {
   }
   int64_t OutputChunkSizeBytes(int chunk_id) const {
     return output_chunk_size_bytes_[chunk_id];
+  }
+
+  // Maximum chunk size in bytes across all chunks in the plan.
+  int64_t MaxInputChunkSizeBytes() const { return max_input_chunk_size_bytes_; }
+  int64_t MaxOutputChunkSizeBytes() const {
+    return max_output_chunk_size_bytes_;
   }
 
   // Returns a human-readable description of the plan.
@@ -298,10 +310,26 @@ class TransposePlan {
   }
 
  private:
+  struct MemsetLoop {
+    int64_t count;
+    int64_t stride_bytes;
+  };
+
+  struct StridedMemset {
+    int64_t offset_bytes = 0;  // Byte offset relative to chunk's `bc`.
+    int64_t size_bytes = 0;    // Innermost contiguous memset size in bytes.
+    absl::InlinedVector<MemsetLoop, 4> loops;  // Outer strided loops.
+  };
+
   // Performs plan initialization.
   absl::Status Initialize();
 
   void BuildPlanNodes(int chunk_id, std::vector<Node>& nodes);
+  void BuildTilePaddingMemsets(int chunk_id,
+                               std::vector<StridedMemset>& memsets) const;
+  static void ExecuteStridedMemset(absl::Span<const MemsetLoop> loops,
+                                   char* dst, int64_t size_bytes,
+                                   uint8_t value);
 
   // Chooses a parallelism for each loop. Returns the number of separate chunks
   // in the plan, and populates the `parallelism` field of each loop.
@@ -376,6 +404,8 @@ class TransposePlan {
   bool a_is_tiled_ = false;
   bool b_is_tiled_ = false;
   bool is_identity_permutation_ = false;
+  // K for kInterleave and kDeinterleave. Placed here to fill padding.
+  int interleave_size_ = 0;
 
   // Per-chunk loop nests. Each loop nest has its own start/end bounds
   // representing one chunk of the work.
@@ -398,6 +428,8 @@ class TransposePlan {
   std::vector<int64_t> output_chunk_iteration_offsets_;
   std::vector<int64_t> input_chunk_size_bytes_;
   std::vector<int64_t> output_chunk_size_bytes_;
+  int64_t max_input_chunk_size_bytes_ = 0;
+  int64_t max_output_chunk_size_bytes_ = 0;
 
   // Root nodes of the plan, i.e., pointing to the outermost loops in the loop
   // nest. The outer vector is indexed on the thread ID.
@@ -433,6 +465,8 @@ class TransposePlan {
   bool use_fallback_pack_ = false;
 
   ChunkContiguity chunk_contiguity_ = ChunkContiguity::kNone;
+  std::optional<uint8_t> tile_padding_ = std::nullopt;
+  std::vector<std::vector<StridedMemset>> chunk_padding_memsets_;
 
   // Size of the per-thread scratch buffer. 0 means "no scratch buffer required"
   int64_t scratch_size_ = 0;
@@ -452,6 +486,7 @@ struct TransposePlanCacheKey {
   std::optional<int> dest_bits_per_element;
   int num_threads;
   TransposePlan::ChunkContiguity chunk_contiguity;
+  std::optional<uint8_t> tile_padding;
 
   bool operator==(const TransposePlanCacheKey& other) const;
 };

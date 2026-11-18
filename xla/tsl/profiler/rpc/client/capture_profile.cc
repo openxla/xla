@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/tsl/profiler/rpc/client/capture_profile.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <memory>
@@ -26,9 +27,10 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/strip.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "tsl/platform/host_info.h"
@@ -104,15 +106,31 @@ NewProfileSessionRequest PopulateNewProfileSessionRequest(
     absl::string_view repository_root, absl::string_view session_id,
     const RemoteProfilerSessionManagerOptions& opts) {
   NewProfileSessionRequest request;
-  std::vector<absl::string_view> parts =
-      absl::StrSplit(opts.service_addresses(0), ':');
-  DCHECK(!parts.empty());
+  absl::string_view host_port = opts.service_addresses(0);
+  absl::string_view host = host_port;
+  const size_t colon_pos = host_port.rfind(':');
+  const size_t close_bracket_pos = host_port.rfind(']');
+  const bool has_unbracketed_port =
+      close_bracket_pos == absl::string_view::npos &&
+      host_port.find(':') == colon_pos;
+  const bool has_bracketed_port =
+      close_bracket_pos != absl::string_view::npos &&
+      colon_pos > close_bracket_pos;
+  if (colon_pos != absl::string_view::npos &&
+      (has_unbracketed_port || has_bracketed_port)) {
+    host = host_port.substr(0, colon_pos);
+  }
+  if (absl::StartsWith(host, "[") && absl::EndsWith(host, "]")) {
+    host = absl::StripPrefix(host, "[");
+    host = absl::StripSuffix(host, "]");
+  }
+  DCHECK(!host.empty());
 
   *request.mutable_request() =
-      PopulateProfileRequest(repository_root, session_id, parts[0], opts);
+      PopulateProfileRequest(repository_root, session_id, host, opts);
   request.set_repository_root(repository_root.data(), repository_root.size());
   request.set_session_id(session_id.data(), session_id.size());
-  for (const auto& hostname : opts.service_addresses()) {
+  for (const std::string& hostname : opts.service_addresses()) {
     request.add_hosts(hostname);
   }
   return request;
@@ -199,6 +217,9 @@ absl::Status NewSession(absl::string_view repository_root,
 absl::Status StartContinuousProfiling(
     const char* service_addr,
     const tensorflow::RemoteProfilerSessionManagerOptions& opts) {
+  if (service_addr == nullptr) {
+    return absl::InvalidArgumentError("No service address provided.");
+  }
   std::string session_id = GetCurrentTimeStampAsString();
   // repository_root is empty because we don't want to save profiles to a
   // repository with this request.
@@ -212,6 +233,9 @@ absl::Status StartContinuousProfiling(
 }
 
 absl::Status StopContinuousProfiling(const char* service_addr) {
+  if (service_addr == nullptr) {
+    return absl::InvalidArgumentError("No service address provided.");
+  }
   tensorflow::StopContinuousProfilingRequest request;
   tensorflow::StopContinuousProfilingResponse response;
   ABSL_RETURN_IF_ERROR(tsl::profiler::StopContinuousProfilingGrpc(
@@ -220,6 +244,12 @@ absl::Status StopContinuousProfiling(const char* service_addr) {
 }
 
 absl::Status GetSnapshot(const char* service_addr, const char* logdir) {
+  if (service_addr == nullptr) {
+    return absl::InvalidArgumentError("No service address provided.");
+  }
+  if (logdir == nullptr) {
+    return absl::InvalidArgumentError("No logdir provided.");
+  }
   tensorflow::GetSnapshotRequest request;
   ProfileResponse response;
   ABSL_RETURN_IF_ERROR(GetSnapshotGrpc(service_addr, request, &response));
@@ -351,12 +381,18 @@ absl::Status CaptureRemoteTrace(
     bool include_dataset_ops, int duration_ms, int num_tracing_attempts,
     const absl::flat_hash_map<std::string,
                               std::variant<bool, int, std::string>>& options) {
+  if (logdir == nullptr) {
+    return absl::InvalidArgumentError("No logdir provided.");
+  }
+  const auto to_sv = [](const char* s) -> absl::string_view {
+    return s != nullptr ? s : "";
+  };
   // TPU capture is true if the user sets worker_list.
   bool is_cloud_tpu_session = false;
   RemoteProfilerSessionManagerOptions opts =
-      GetRemoteSessionManagerOptionsLocked(service_addr, logdir, worker_list,
-                                           include_dataset_ops, duration_ms,
-                                           options, &is_cloud_tpu_session);
+      GetRemoteSessionManagerOptionsLocked(
+          to_sv(service_addr), logdir, to_sv(worker_list), include_dataset_ops,
+          duration_ms, options, &is_cloud_tpu_session);
   ABSL_RETURN_IF_ERROR(ValidateRemoteProfilerSessionManagerOptions(opts));
 
   {

@@ -115,8 +115,8 @@ absl::StatusOr<stream_executor::StreamExecutor*> GetStreamExecutor(
   const auto* gpu_client = dynamic_cast<const CommonPjRtClient*>(client);
   if (gpu_client != nullptr) {
     if (const auto* raw_gpu_client =
-            dynamic_cast<const PjRtStreamExecutorRawClient*>(
-                gpu_client->raw_client())) {
+            gpu_client->raw_client()
+                ->down_cast<const PjRtStreamExecutorRawClient>()) {
       return raw_gpu_client->client()->backend().default_stream_executor();
     }
   }
@@ -195,8 +195,7 @@ static absl::StatusOr<std::unique_ptr<PjRtExecutable>> CrossCompile(
                         client->GetTopologyDescription());
   PjRtStreamExecutorRawClient* raw_client = nullptr;
   if (client) {
-    raw_client =
-        dynamic_cast<PjRtStreamExecutorRawClient*>(client->raw_client());
+    raw_client = client->raw_client()->down_cast<PjRtStreamExecutorRawClient>();
   }
   return raw_client->CrossCompile(
       std::move(module), std::move(options), client->process_index(),
@@ -210,8 +209,7 @@ static absl::StatusOr<std::unique_ptr<PjRtExecutable>> CrossCompile(
                         client->GetTopologyDescription());
   PjRtStreamExecutorRawClient* raw_client = nullptr;
   if (client) {
-    raw_client =
-        dynamic_cast<PjRtStreamExecutorRawClient*>(client->raw_client());
+    raw_client = client->raw_client()->down_cast<PjRtStreamExecutorRawClient>();
   }
   return raw_client->CrossCompile(
       computation, std::move(options), client->process_index(),
@@ -267,7 +265,7 @@ StreamExecutorGpuCompiler::Compile(
     LOG_EVERY_N(INFO, 60) << "Early exit after layout assignment is enabled. "
                              "Note that this is always "
                              "a deviceless compilation.";
-  } else if (client != nullptr) {
+  } else if (se_client != nullptr) {
     ABSL_ASSIGN_OR_RETURN(stream_executor::StreamExecutor * stream_executor,
                           GetStreamExecutor(client));
     gpu::GpuTargetConfig local_gpu_target_config(stream_executor);
@@ -329,7 +327,7 @@ StreamExecutorGpuCompiler::Compile(
   aot_options.set_gpu_topology(xla_gpu_topology);
   aot_options.set_run_backend_only(
       options.executable_build_options.run_backend_only());
-  if (client != nullptr) {
+  if (se_client != nullptr) {
     ABSL_ASSIGN_OR_RETURN(stream_executor::StreamExecutor * stream_executor,
                           GetStreamExecutor(client));
     aot_options.set_executor(stream_executor);
@@ -413,7 +411,7 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
     return executable;
   }
 
-  if (topology_with_target_config.ok() && client != nullptr) {
+  if (topology_with_target_config.ok() && se_client != nullptr) {
     ABSL_ASSIGN_OR_RETURN(stream_executor::StreamExecutor * stream_executor,
                           GetStreamExecutor(client));
     gpu::GpuTargetConfig local_gpu_target_config(stream_executor);
@@ -509,7 +507,8 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>>
 StreamExecutorGpuCompiler::DeserializeExecutable(
     const PjRtTopologyDescription& topology,
     riegeli::Any<riegeli::Reader*> reader,
-    std::optional<CompileOptions>&& options) {
+    std::optional<CompileOptions>&& options,
+    const DeserializeExecutableOptions& deserialize_options) {
   return StreamExecutorExecutable::Deserialize(std::move(reader), topology,
                                                std::move(options));
 }

@@ -497,6 +497,21 @@ bool IsTritonCollectiveKernel(
              CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_TWO_SHOT;
 }
 
+bool IsTritonTwoShotAllGather(const HloInstruction& instr) {
+  if (instr.opcode() == HloOpcode::kAllGather) {
+    absl::StatusOr<GpuBackendConfig> gpu_config =
+        instr.backend_config<GpuBackendConfig>();
+    return gpu_config.ok() &&
+           gpu_config->collective_backend_config().kernel_strategy() ==
+               CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_TWO_SHOT;
+  }
+  return instr.IsCustomFusion() &&
+         absl::c_any_of(instr.fused_instructions_computation()->instructions(),
+                        [](const HloInstruction* fused) {
+                          return IsTritonTwoShotAllGather(*fused);
+                        });
+}
+
 absl::StatusOr<absl::flat_hash_set<HloOpcode>> OpcodesForTritonCollectives(
     const DebugOptions& debug_options) {
   absl::flat_hash_set<HloOpcode> instructions_to_annotate;
@@ -514,10 +529,14 @@ absl::StatusOr<absl::flat_hash_set<HloOpcode>> OpcodesForTritonCollectives(
       case xla::DebugOptions::COLLECTIVE_KERNEL_REDUCE_SCATTER:
         instructions_to_annotate.insert(HloOpcode::kReduceScatter);
         break;
+      case xla::DebugOptions::COLLECTIVE_KERNEL_ALL_TO_ALL:
+        instructions_to_annotate.insert(HloOpcode::kAllToAll);
+        break;
       case xla::DebugOptions::COLLECTIVE_KERNEL_ALL_COLLECTIVES:
+        instructions_to_annotate.insert(HloOpcode::kAllGather);
         instructions_to_annotate.insert(HloOpcode::kAllReduce);
         instructions_to_annotate.insert(HloOpcode::kAllReduceStart);
-        instructions_to_annotate.insert(HloOpcode::kAllGather);
+        instructions_to_annotate.insert(HloOpcode::kAllToAll);
         instructions_to_annotate.insert(HloOpcode::kReduceScatter);
         break;
       default:

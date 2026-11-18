@@ -28,13 +28,13 @@ limitations under the License.
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
+#include "xla/backends/gpu/cost_model/fusion_analysis_cache.h"
+#include "xla/backends/gpu/cost_model/gpu_indexing_performance_model.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/compiler.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/model/fusion_analysis_cache.h"
-#include "xla/service/gpu/model/gpu_indexing_performance_model.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/xla.pb.h"
 
@@ -66,7 +66,6 @@ class BlockLevelEmitterBackend : public GpuCodegenBackend {
         indexing_performance_model_(
             &target_config->device_description, &fusion_analysis_cache_,
             shape_size_fn_, &mlir_context_,
-            debug_options->xla_gpu_experimental_enable_tiling_propagation(),
             debug_options
                 ->xla_gpu_experimental_enable_same_shape_multi_output_fusion(),
             mlir_context_pool),

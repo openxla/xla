@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/types/span.h"
 #include "xla/service/platform_util.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
 #include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/kernel_args.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
@@ -141,6 +143,65 @@ TEST_F(GpuCommandBufferTest, LaunchSingleKernel) {
   std::fill(dst.begin(), dst.end(), 42);
   ASSERT_OK(stream->Memcpy(dst.data(), d, byte_length));
   ASSERT_EQ(dst, expected);
+}
+
+// DynShmemKernel is an in-process kernel (loaded from its host symbol), so this
+// also covers recording such kernels with dynamic shared memory.
+TEST_F(GpuCommandBufferTest, LaunchKernelWithDynamicSharedMemory) {
+  Platform* platform = GpuPlatform();
+  StreamExecutor* executor = platform->ExecutorForDevice(0).value();
+
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(auto kernel, LoadDynShmemTestKernel(executor));
+
+  // DynShmemKernel reverses an n_cols x n_rows byte buffer through dynamic
+  // shared memory of n_cols * n_rows bytes, one thread per column.
+  constexpr uint32_t kCols = 64;
+  constexpr uint32_t kMaxRows = 512;
+  DeviceAddress<uint8_t> buf =
+      executor->AllocateArray<uint8_t>(kCols * kMaxRows);
+  DeviceAddress<uint32_t> cols = executor->AllocateScalar<uint32_t>();
+  DeviceAddress<uint32_t> rows = executor->AllocateScalar<uint32_t>();
+  ASSERT_OK(stream->Memcpy(&cols, &kCols, sizeof(kCols)));
+
+  auto upload = [&](uint32_t n_rows) -> absl::StatusOr<std::vector<uint8_t>> {
+    uint32_t n = kCols * n_rows;
+    std::vector<uint8_t> host(n);
+    for (uint32_t i = 0; i < n; ++i) {
+      host[i] = static_cast<uint8_t>(i * 7 + 3);
+    }
+    ABSL_RETURN_IF_ERROR(stream->Memcpy(&buf, host.data(), n));
+    ABSL_RETURN_IF_ERROR(stream->Memcpy(&rows, &n_rows, sizeof(n_rows)));
+    return host;
+  };
+  auto expect_reversed = [&](const std::vector<uint8_t>& before) {
+    std::vector<uint8_t> after(before.size());
+    ASSERT_OK(stream->Memcpy(after.data(), buf, after.size()));
+    ASSERT_OK(stream->BlockHostUntilDone());
+    std::vector<uint8_t> expected(before.rbegin(), before.rend());
+    ASSERT_EQ(after, expected);
+  };
+
+  // Create with a small dynamic shared memory request.
+  ASSERT_OK_AND_ASSIGN(std::vector<uint8_t> before, upload(16));
+  ASSERT_OK_AND_ASSIGN(auto cmd_buffer, executor->CreateCommandBuffer(primary));
+  ASSERT_OK_AND_ASSIGN(auto* launch,
+                       cmd_buffer->CreateLaunch(
+                           ThreadDim(kCols), BlockDim(1), {}, *kernel,
+                           *PackKernelArgs(kCols * 16, buf, cols, rows), {}));
+  ASSERT_OK(cmd_buffer->Finalize());
+  ASSERT_OK(cmd_buffer->Submit(stream.get()));
+  ASSERT_NO_FATAL_FAILURE(expect_reversed(before));
+
+  // Update to a larger request.
+  ASSERT_OK_AND_ASSIGN(before, upload(kMaxRows));
+  ASSERT_OK(cmd_buffer->Update());
+  ASSERT_OK(cmd_buffer->UpdateLaunch(
+      launch, ThreadDim(kCols), BlockDim(1), {}, *kernel,
+      *PackKernelArgs(kCols * kMaxRows, buf, cols, rows)));
+  ASSERT_OK(cmd_buffer->Finalize());
+  ASSERT_OK(cmd_buffer->Submit(stream.get()));
+  ASSERT_NO_FATAL_FAILURE(expect_reversed(before));
 }
 
 TEST_F(GpuCommandBufferTest, TraceSingleKernel) {
@@ -314,6 +375,63 @@ TEST_F(GpuCommandBufferTest, MemcpyDeviceToDevice) {
   std::fill(dst.begin(), dst.end(), 0);
   ASSERT_OK(stream->Memcpy(dst.data(), a, byte_length));
   ASSERT_EQ(dst, expected);
+}
+
+TEST_F(GpuCommandBufferTest, MemcpyH2D2H) {
+  Platform* platform = GpuPlatform();
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
+                       executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CommandBuffer> cmd_buffer,
+                       executor->CreateCommandBuffer(primary));
+  DeviceAddress<int32_t> device_buf = executor->AllocateArray<int32_t>(1);
+
+  int32_t src = 123;
+  ASSERT_OK_AND_ASSIGN(
+      const CommandBuffer::Command* h2d_cmd,
+      cmd_buffer->CreateMemcpyH2D(&device_buf, &src, sizeof(int32_t), {}));
+  ASSERT_NE(h2d_cmd, nullptr);
+
+  int32_t dst = 0;
+  ASSERT_OK_AND_ASSIGN(const CommandBuffer::Command* d2h_cmd,
+                       cmd_buffer->CreateMemcpyD2H(&dst, device_buf,
+                                                   sizeof(int32_t), {h2d_cmd}));
+  ASSERT_NE(d2h_cmd, nullptr);
+
+  ASSERT_OK(cmd_buffer->Finalize());
+  ASSERT_OK(cmd_buffer->Submit(stream.get()));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  EXPECT_EQ(dst, 123);
+
+  // Updating both nodes retargets the copies at new host buffers.
+  int32_t src2 = 456;
+  int32_t dst2 = 0;
+  ASSERT_OK(cmd_buffer->Update());
+  ASSERT_OK(cmd_buffer->UpdateMemcpyH2D(h2d_cmd, &device_buf, &src2,
+                                        sizeof(int32_t)));
+  ASSERT_OK(
+      cmd_buffer->UpdateMemcpyD2H(d2h_cmd, &dst2, device_buf, sizeof(int32_t)));
+  ASSERT_OK(cmd_buffer->Finalize());
+  ASSERT_OK(cmd_buffer->Submit(stream.get()));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  EXPECT_EQ(dst, 123);
+  EXPECT_EQ(dst2, 456);
+
+  // ... and at a new device buffer.
+  DeviceAddress<int32_t> device_buf2 = executor->AllocateArray<int32_t>(1);
+  int32_t src3 = 789;
+  int32_t dst3 = 0;
+  ASSERT_OK(cmd_buffer->Update());
+  ASSERT_OK(cmd_buffer->UpdateMemcpyH2D(h2d_cmd, &device_buf2, &src3,
+                                        sizeof(int32_t)));
+  ASSERT_OK(cmd_buffer->UpdateMemcpyD2H(d2h_cmd, &dst3, device_buf2,
+                                        sizeof(int32_t)));
+  ASSERT_OK(cmd_buffer->Finalize());
+  ASSERT_OK(cmd_buffer->Submit(stream.get()));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  EXPECT_EQ(dst2, 456);
+  EXPECT_EQ(dst3, 789);
 }
 
 TEST_F(GpuCommandBufferTest, Memset) {
@@ -873,6 +991,27 @@ TEST_F(GpuCommandBufferTest, EmptyNodeOnly) {
   (void)empty_cmd;
   ASSERT_OK(cmd_buffer->Finalize());
 
+  ASSERT_OK(cmd_buffer->Submit(stream.get()));
+  ASSERT_OK(stream->BlockHostUntilDone());
+}
+
+// Tests that an empty command buffer can be updated and submitted again.
+TEST_F(GpuCommandBufferTest, UpdateEmptyCommandBuffer) {
+  Platform* platform = GpuPlatform();
+  StreamExecutor* executor = platform->ExecutorForDevice(0).value();
+
+  if (executor->GetPlatform()->id() == cuda::kCudaPlatformId) {
+    GTEST_SKIP() << "Tests a ROCm-only code path";
+  }
+
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+
+  ASSERT_OK_AND_ASSIGN(auto cmd_buffer, executor->CreateCommandBuffer(primary));
+  ASSERT_OK(cmd_buffer->Finalize());
+  ASSERT_OK(cmd_buffer->Submit(stream.get()));
+
+  ASSERT_OK(cmd_buffer->Update());
+  ASSERT_OK(cmd_buffer->Finalize());
   ASSERT_OK(cmd_buffer->Submit(stream.get()));
   ASSERT_OK(stream->BlockHostUntilDone());
 }

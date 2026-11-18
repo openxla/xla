@@ -272,6 +272,21 @@ func.func @main(%arg0: tensor<3x3xf32>) -> tensor<3x3xf32> {
 
 // -----
 
+// CHECK-LABEL: HloModule main, entry_computation_layout={(f32[4]{0}, f32[4]{0}, f32[4]{0})->f32[4]{0}}
+
+// CHECK:       ENTRY %[[$main_5:[^ ]+]]
+// CHECK-NEXT:  %[[Arg_0_1:[^ ]+]] = f32[4] parameter(0)
+// CHECK-NEXT:  %[[Arg_1_2:[^ ]+]] = f32[4] parameter(1)
+// CHECK-NEXT:  %[[Arg_2_3:[^ ]+]] = f32[4] parameter(2)
+// CHECK-NEXT:  ROOT %[[fma_4:[^ ]+]] = f32[4] fma(%[[Arg_0_1]], %[[Arg_1_2]], %[[Arg_2_3]])
+func.func @main(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>, %arg2: tensor<4xf32>) -> tensor<4xf32> {
+  %0 = stablehlo.fma %arg0, %arg1, %arg2 : tensor<4xf32>
+  return %0 : tensor<4xf32>
+}
+// CHECK-DIRECT: stablehlo.fma
+
+// -----
+
 // CHECK-LABEL: HloModule main, entry_computation_layout={(f32[16,8]{1,0})->f32[16,8]{1,0}}
 
 // CHECK:       ENTRY %[[$main_3:[^ ]+]]
@@ -1328,7 +1343,7 @@ module {
 // CHECK-NEXT:  %[[Arg_3_4:[^ ]+]] = bf16[] parameter(3)
 // CHECK-NEXT:  %[[Arg_0_1:[^ ]+]] = bf16[16,256] parameter(0)
 // CHECK-NEXT:  %[[Arg_2_3:[^ ]+]] = s32[16,256] parameter(2)
-// CHECK-NEXT:  %[[sort_11:[^ ]+]] = (bf16[16,256], s32[16,256]) sort(%[[Arg_0_1]], %[[Arg_2_3]]), dimensions={1}, is_stable=true, to_apply=%[[$top_k_gt_comparator_5]], metadata=
+// CHECK-NEXT:  %[[sort_11:[^ ]+]] = (bf16[16,256], s32[16,256]) sort(%[[Arg_0_1]], %[[Arg_2_3]]), dimensions={1}, to_apply=%[[$top_k_gt_comparator_5]], metadata=
 // CHECK-NEXT:  %[[get_tuple_element_12:[^ ]+]] = bf16[16,256] get-tuple-element(%[[sort_11]]), index=0, metadata=
 // CHECK-NEXT:  %[[slice_13:[^ ]+]] = bf16[16,4] slice(%[[get_tuple_element_12]]), slice={[0:16], [0:4]}, metadata=
 // CHECK-NEXT:  %[[get_tuple_element_14:[^ ]+]] = s32[16,256] get-tuple-element(%[[sort_11]]), index=1, metadata=
@@ -1510,6 +1525,66 @@ func.func @main(%arg0: tensor<8x8x16xf32>, %arg1: tensor<8x16x8xf32>) -> tensor<
   >
   } : (tensor<8x8x16xf32>, tensor<8x16x8xf32>) -> tensor<8x8x8xf32>
   func.return %0 : tensor<8x8x8xf32>
+}
+// CHECK-DIRECT: stablehlo.dot_general
+
+// -----
+
+// CHECK-LABEL: HloModule main
+// CHECK:       ENTRY
+// CHECK:       dot-general(%{{[^ ]+}}, %{{[^ ]+}}, %{{[^ ]+}}, %{{[^ ]+}}), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+// CHECK-SAME:  block_scaling_config={lhs={scale_idx=2 strides=1x32 steps=1x16} rhs={scale_idx=3 strides=32x1 steps=16x1}}
+func.func @main(%lhs: tensor<64x128xbf16>, %rhs: tensor<128x64xbf16>, %lhs_scale: tensor<64x4xf8E8M0FNU>, %rhs_scale: tensor<4x64xf8E8M0FNU>) -> tensor<64x64xbf16> {
+  %0 = stablehlo.dot_general %lhs, %rhs, [%lhs_scale, %rhs_scale], contracting_dims = [1] x [0] {block_scaling_config = #stablehlo.block_scaling_config<lhs = <scale_idx = 2, strides = [1, 32], steps = [1, 16]>, rhs = <scale_idx = 3, strides = [32, 1], steps = [16, 1]>>} : (tensor<64x128xbf16>, tensor<128x64xbf16>, tensor<64x4xf8E8M0FNU>, tensor<4x64xf8E8M0FNU>) -> tensor<64x64xbf16>
+  func.return %0 : tensor<64x64xbf16>
+}
+// CHECK-DIRECT: stablehlo.dot_general
+
+// -----
+
+// CHECK-LABEL: HloModule main
+// CHECK:       ENTRY
+// CHECK:       dot-general(%{{[^ ]+}}, %{{[^ ]+}}, %{{[^ ]+}}, %{{[^ ]+}}, %{{[^ ]+}}, /*index=5*/%{{[^ ]+}}), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+// CHECK-SAME:  block_scaling_config={lhs={scale_idx=2 zero_idx=3 strides=1x32 steps=1x16} rhs={scale_idx=4 zero_idx=5 strides=32x1 steps=16x1}}
+func.func @main(%lhs: tensor<64x128xbf16>, %rhs: tensor<128x64xbf16>, %lhs_scale: tensor<64x4xf8E8M0FNU>, %lhs_zp: tensor<64x4xf8E8M0FNU>, %rhs_scale: tensor<4x64xf8E8M0FNU>, %rhs_zp: tensor<4x64xf8E8M0FNU>) -> tensor<64x64xbf16> {
+  %0 = stablehlo.dot_general %lhs, %rhs, [%lhs_scale, %lhs_zp, %rhs_scale, %rhs_zp], contracting_dims = [1] x [0] {block_scaling_config = #stablehlo.block_scaling_config<lhs = <scale_idx = 2, zero_idx = 3, strides = [1, 32], steps = [1, 16]>, rhs = <scale_idx = 4, zero_idx = 5, strides = [32, 1], steps = [16, 1]>>} : (tensor<64x128xbf16>, tensor<128x64xbf16>, tensor<64x4xf8E8M0FNU>, tensor<64x4xf8E8M0FNU>, tensor<4x64xf8E8M0FNU>, tensor<4x64xf8E8M0FNU>) -> tensor<64x64xbf16>
+  func.return %0 : tensor<64x64xbf16>
+}
+// CHECK-DIRECT: stablehlo.dot_general
+
+// -----
+
+// CHECK-LABEL: HloModule main
+// CHECK:       ENTRY
+// CHECK:       dot-general(%{{[^ ]+}}, %{{[^ ]+}}, %{{[^ ]+}}), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+// CHECK-SAME:  sparsity_config={rhs={sparsity=1x4 dimension=0 stride=1 idx=2}}
+func.func @main(%lhs: tensor<64x256xbf16>, %rhs: tensor<64x64xbf16>, %rhs_indices: tensor<64x16xi8>) -> tensor<64x64xbf16> {
+  %0 = stablehlo.dot_general %lhs, %rhs, [%rhs_indices], contracting_dims = [1] x [0] {sparsity_config = #stablehlo.sparsity_config<rhs = <num_non_zero = 1, block_size = 4, dimension = 0, stride = 1, idx = 2>>} : (tensor<64x256xbf16>, tensor<64x64xbf16>, tensor<64x16xi8>) -> tensor<64x64xbf16>
+  func.return %0 : tensor<64x64xbf16>
+}
+// CHECK-DIRECT: stablehlo.dot_general
+
+// -----
+
+// CHECK-LABEL: HloModule main
+// CHECK:       ENTRY
+// CHECK:       dot-general(%{{[^ ]+}}, %{{[^ ]+}}, %{{[^ ]+}}, %{{[^ ]+}}), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}
+// CHECK-SAME:  sparsity_config={lhs={sparsity=1x4 dimension=2 stride=1 idx=3}}, block_scaling_config={lhs={scale_idx=2 strides=1x1x32 steps=1x1x16}}
+func.func @main(%lhs: tensor<2x64x64xbf16>, %rhs: tensor<2x256x64xbf16>, %lhs_scale: tensor<2x64x2xf8E8M0FNU>, %lhs_indices: tensor<2x64x16xi8>) -> tensor<2x64x64xbf16> {
+  %0 = stablehlo.dot_general %lhs, %rhs, [%lhs_scale, %lhs_indices], batching_dims = [0] x [0], contracting_dims = [2] x [1] {block_scaling_config = #stablehlo.block_scaling_config<lhs = <scale_idx = 2, strides = [1, 1, 32], steps = [1, 1, 16]>>, sparsity_config = #stablehlo.sparsity_config<lhs = <num_non_zero = 1, block_size = 4, dimension = 2, stride = 1, idx = 3>>} : (tensor<2x64x64xbf16>, tensor<2x256x64xbf16>, tensor<2x64x2xf8E8M0FNU>, tensor<2x64x16xi8>) -> tensor<2x64x64xbf16>
+  func.return %0 : tensor<2x64x64xbf16>
+}
+// CHECK-DIRECT: stablehlo.dot_general
+
+// -----
+
+// CHECK-LABEL: HloModule main
+// CHECK:       ENTRY
+// CHECK:       dot-general(%{{[^ ]+}}, %{{[^ ]+}}, %{{[^ ]+}}), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+// CHECK-SAME:  block_scaling_config={lhs={scale_idx=2 block_sizes=1x32}}
+func.func @main(%lhs: tensor<64x96xbf16>, %rhs: tensor<96x64xbf16>, %lhs_scale: tensor<64x4xf8E8M0FNU>) -> tensor<64x64xbf16> {
+  %0 = stablehlo.dot_general %lhs, %rhs, [%lhs_scale], contracting_dims = [1] x [0] {block_scaling_config = #stablehlo.block_scaling_config<lhs = <scale_idx = 2, block_sizes = [1, 32]>>} : (tensor<64x96xbf16>, tensor<96x64xbf16>, tensor<64x4xf8E8M0FNU>) -> tensor<64x64xbf16>
+  func.return %0 : tensor<64x64xbf16>
 }
 // CHECK-DIRECT: stablehlo.dot_general
 
@@ -2135,6 +2210,26 @@ func.func @main(%arg0: memref<2xf32>) -> tensor<2xf32> {
     api_version = 4 : i32
   } : (memref<2xf32>) -> tensor<2xf32>
   func.return %0 : tensor<2xf32>
+}
+
+// -----
+
+// CHECK-LABEL: HloModule main, entry_computation_layout
+//       CHECK: ENTRY
+func.func @main(%arg0: memref<2xf32>) -> memref<2xf32> {
+  //               CHECK: custom-call({{.*}}), custom_call_target="FanOut",
+  // CHECK-SAME{LITERAL}: output_to_operand_aliasing={{0}: (0, {})}
+  //               CHECK: custom-call({{.*}}), custom_call_target="FanIn",
+  // CHECK-SAME{LITERAL}: output_to_operand_aliasing={{}: (0, {})}
+  %0:2 = "stablehlo.custom_call"(%arg0) {
+    call_target_name = "FanOut",
+    api_version = 4 : i32
+  } : (memref<2xf32>) -> (memref<2xf32>, memref<2xf32>)
+  %1 = "stablehlo.custom_call"(%0#0, %0#1) {
+    call_target_name = "FanIn",
+    api_version = 4 : i32
+  } : (memref<2xf32>, memref<2xf32>) -> memref<2xf32>
+  func.return %1 : memref<2xf32>
 }
 
 // -----

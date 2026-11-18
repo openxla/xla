@@ -1,3 +1,4 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//xla/tests:build_defs.bzl", "xla_test")
 
 package(
@@ -13,6 +14,11 @@ _GPU_TARGETS = [
     "gb300",
 ]
 
+_DISABLED_GPU_TARGETS = [
+    # TODO(b/491194726): Serialized executable compute capability 6.0 does not match sm_10.3a.
+    "gb300",
+]
+
 filegroup(
     name = "test_dummy_test_data",
     testonly = True,
@@ -20,30 +26,442 @@ filegroup(
     visibility = ["//xla/tests/aot_compatibility:__pkg__"],
 )
 
-xla_test(
-    name = "collective_ops_aot_test",
-    srcs = ["collective_ops_aot_test.cc"],
-    backends = _GPU_TARGETS,
-    data = glob(["executables/collective_ops_aot_test_2gpu_*/**/*.pbtxt"]),
-    disabled_backends = [
-        # TODO(b/491194726): Serialized executable compute capability 6.0 does not match sm_10.3a.
-        "gb300",
+cc_library(
+    name = "collective_aot_test_base",
+    testonly = True,
+    srcs = ["collective_aot_test_base.cc"],
+    hdrs = ["collective_aot_test_base.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//xla:literal",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:device_assignment",
+        "//xla/service:hlo_module_config",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
     ],
+)
+
+cc_library(
+    name = "gpu_aot_test_params",
+    testonly = True,
+    srcs = ["gpu_aot_test_params.cc"],
+    hdrs = ["gpu_aot_test_params.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//xla/tests:aot_interception_pjrt_client",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+# Multi-GPU collective targets. xla_test appends "_2gpu_<backend>" for the
+# "multi_gpu" tag, and every target's goldens live in
+# executables/<target name>/v<N>/, so the glob must match that name.
+# Coverage is split by runtime thunk family, one target per family.
+
+xla_test(
+    name = "data_movement_collectives_aot_test",
+    srcs = ["data_movement_collectives_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/data_movement_collectives_aot_test_2gpu_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
     tags = [
         "multi_gpu",
         "no_oss",
     ],
     deps = [
+        ":collective_aot_test_base",
+        ":gpu_aot_test_params",
+        "//xla:error_spec",
         "//xla:literal",
+        "//xla:types",
+        "//xla:xla_proto_cc",
         "//xla/service:hlo_module_config",
-        "//xla/tests:aot_interception_pjrt_client",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "p2p_collectives_aot_test",
+    srcs = ["p2p_collectives_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/p2p_collectives_aot_test_2gpu_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    tags = [
+        "multi_gpu",
+        "no_oss",
+    ],
+    deps = [
+        ":collective_aot_test_base",
+        ":gpu_aot_test_params",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:types",
+        "//xla:xla_proto_cc",
+        "//xla/service:device_assignment",
+        "//xla/service:hlo_module_config",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "reduction_collectives_aot_test",
+    srcs = ["reduction_collectives_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/reduction_collectives_aot_test_2gpu_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    tags = [
+        "multi_gpu",
+        "no_oss",
+    ],
+    deps = [
+        ":collective_aot_test_base",
+        ":gpu_aot_test_params",
+        "//xla:literal",
+        "//xla:types",
+        "//xla:xla_proto_cc",
+        "//xla/service:hlo_module_config",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "ragged_all_to_all_aot_test",
+    srcs = ["ragged_all_to_all_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/ragged_all_to_all_aot_test_2gpu_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    tags = [
+        "multi_gpu",
+        "no_oss",
+    ],
+    deps = [
+        ":collective_aot_test_base",
+        ":gpu_aot_test_params",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:xla_proto_cc",
+        "//xla/service:hlo_module_config",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "collective_kernels_aot_test",
+    srcs = ["collective_kernels_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/collective_kernels_aot_test_2gpu_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    tags = [
+        "multi_gpu",
+        "no_oss",
+    ],
+    deps = [
+        ":collective_aot_test_base",
+        ":gpu_aot_test_params",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:types",
+        "//xla:xla_proto_cc",
+        "//xla/service:hlo_module_config",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "async_collectives_aot_test",
+    srcs = ["async_collectives_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/async_collectives_aot_test_2gpu_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    tags = [
+        "multi_gpu",
+        "no_oss",
+    ],
+    deps = [
+        ":collective_aot_test_base",
+        ":gpu_aot_test_params",
+        "//xla:literal",
+        "//xla:xla_proto_cc",
+        "//xla/service:hlo_module_config",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+# Single-GPU targets for library and custom-call thunks, one per thunk: each
+# depends on a different library or emitter, so a change to one must not create
+# a new golden version for the others. Without the "multi_gpu" tag xla_test
+# names them "<name>_<backend>".
+
+xla_test(
+    name = "triangular_solve_aot_test",
+    srcs = ["triangular_solve_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/triangular_solve_aot_test_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    tags = ["no_oss"],
+    deps = [
+        ":gpu_aot_test_params",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "fft_aot_test",
+    srcs = ["fft_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/fft_aot_test_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    tags = ["no_oss"],
+    deps = [
+        ":gpu_aot_test_params",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:types",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "convolution_aot_test",
+    srcs = ["convolution_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/convolution_aot_test_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    tags = ["no_oss"],
+    deps = [
+        ":gpu_aot_test_params",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:hlo_module_config",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "cublas_lt_matmul_aot_test",
+    srcs = ["cublas_lt_matmul_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/cublas_lt_matmul_aot_test_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    tags = ["no_oss"],
+    deps = [
+        ":gpu_aot_test_params",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:hlo_module_config",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
         "//xla/tests/aot_compatibility:test_lib",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:path",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "ffi_custom_call_aot_test",
+    srcs = ["ffi_custom_call_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/ffi_custom_call_aot_test_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    tags = ["no_oss"],
+    deps = [
+        ":gpu_aot_test_params",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "rng_seed_aot_test",
+    srcs = ["rng_seed_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/rng_seed_aot_test_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    tags = ["no_oss"],
+    deps = [
+        ":gpu_aot_test_params",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "dynamic_slice_fusion_aot_test",
+    srcs = ["dynamic_slice_fusion_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/dynamic_slice_fusion_aot_test_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    tags = ["no_oss"],
+    deps = [
+        ":gpu_aot_test_params",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:hlo_module_config",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "host_offload_copy_aot_test",
+    srcs = ["host_offload_copy_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/host_offload_copy_aot_test_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    tags = ["no_oss"],
+    deps = [
+        ":gpu_aot_test_params",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "host_execute_aot_test",
+    srcs = ["host_execute_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/host_execute_aot_test_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    tags = ["no_oss"],
+    deps = [
+        ":gpu_aot_test_params",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "norm_aot_test",
+    srcs = ["norm_aot_test.cc"],
+    # CudnnNormRewriter only emits the cuDNN norm custom call on Ampere and
+    # Hopper, so no Blackwell executable can contain a NormThunk.
+    backends = ["h100"],
+    data = glob(["executables/norm_aot_test_*/**/*.pbtxt"]),
+    tags = ["no_oss"],
+    deps = [
+        ":gpu_aot_test_params",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+# LEGACY: the original collective target, kept only for its v1-v3 goldens from
+# older compilers. Do not add test cases to it; it is scheduled for deletion
+# (see the TODO in collective_ops_aot_test.cc).
+xla_test(
+    name = "collective_ops_aot_test",
+    srcs = ["collective_ops_aot_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/collective_ops_aot_test_2gpu_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    tags = [
+        "multi_gpu",
+        "no_oss",
+    ],
+    deps = [
+        ":collective_aot_test_base",
+        ":gpu_aot_test_params",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )

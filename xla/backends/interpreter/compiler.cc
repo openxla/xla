@@ -35,6 +35,9 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/dynamic_index_splitter.h"
 #include "xla/hlo/transforms/expanders/eigh_expander.h"
 #include "xla/hlo/transforms/expanders/qr_expander.h"
+#include "xla/hlo/transforms/layout_assignment.h"
+#include "xla/hlo/transforms/simplifiers/conditional_canonicalizer.h"
+#include "xla/hlo/transforms/topk_rewriter.h"
 #include "xla/literal.h"
 #include "xla/service/batchnorm_expander.h"
 #include "xla/service/compiler.h"
@@ -43,8 +46,6 @@ limitations under the License.
 #include "xla/service/dynamic_dimension_inference.h"
 #include "xla/service/executable.h"
 #include "xla/service/hlo_cost_analysis.h"
-#include "xla/service/layout_assignment.h"
-#include "xla/service/topk_rewriter.h"
 #include "xla/service/triangular_solve_expander.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/platform.h"
@@ -103,6 +104,9 @@ absl::Status InterpreterCompiler::RunHloOptimization(HloModule* hlo_module) {
       /*rewrite_training_op=*/true,
       /*rewrite_inference_op=*/true,
       /*rewrite_grad_op=*/true);
+  // Establishes the tuple-form invariant DynamicDimensionInference expects
+  // for conditionals, as the CPU and GPU pipelines do.
+  pipeline.AddPass<ConditionalCanonicalizer>();
   pipeline.AddPass<LayoutAssignment>(
       hlo_module->mutable_entry_computation_layout());
 

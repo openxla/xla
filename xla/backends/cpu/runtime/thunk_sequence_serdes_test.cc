@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <cstddef>
@@ -54,6 +55,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/outfeed_thunk.h"
 #include "xla/backends/cpu/runtime/reduce_scatter_thunk.h"
 #include "xla/backends/cpu/runtime/rng_seed_thunk.h"
+#include "xla/backends/cpu/runtime/rng_state_resource.h"
 #include "xla/backends/cpu/runtime/rng_state_thunk.h"
 #include "xla/backends/cpu/runtime/serdes_base.h"
 #include "xla/backends/cpu/runtime/sort_thunk.h"
@@ -365,14 +367,16 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
         });
   }
 
-  absl::StatusOr<std::unique_ptr<Thunk>> CreateCallThunk() {
+  absl::StatusOr<std::unique_ptr<Thunk>> CreateCallThunk(
+      std::shared_ptr<Resource> communicator_resource =
+          Resource::Create(Resource::Kind::kCollectiveCommunicator)) {
     ThunkSequence called_sequence;
     ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(),
-                          CreateAllGatherThunk());
+                          CreateAllGatherThunk(communicator_resource));
     ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(),
-                          CreateAllReduceThunk());
+                          CreateAllReduceThunk(communicator_resource));
     ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(),
-                          CreateAllToAllThunk());
+                          CreateAllToAllThunk(communicator_resource));
     return CallThunk::Create(Thunk::Info(),
                              /*called_sequence=*/std::move(called_sequence));
   }
@@ -423,16 +427,18 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
         /*dst_shape=*/literals_[buffer_allocations_.size() - 1].shape());
   }
 
-  absl::StatusOr<std::unique_ptr<Thunk>> CreateConditionalThunk() {
+  absl::StatusOr<std::unique_ptr<Thunk>> CreateConditionalThunk(
+      std::shared_ptr<Resource> communicator_resource =
+          Resource::Create(Resource::Kind::kCollectiveCommunicator)) {
     std::vector<ThunkSequence> branch_sequences;
     for (int i = 0; i < 2; ++i) {
       ThunkSequence called_sequence;
       ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(),
-                            CreateAllGatherThunk());
+                            CreateAllGatherThunk(communicator_resource));
       ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(),
-                            CreateAllReduceThunk());
+                            CreateAllReduceThunk(communicator_resource));
       ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(),
-                            CreateAllToAllThunk());
+                            CreateAllToAllThunk(communicator_resource));
       branch_sequences.push_back(std::move(called_sequence));
     }
 
@@ -562,14 +568,16 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
             buffer_allocations_[buffer_allocations_.size() - 1]));
   }
 
-  absl::StatusOr<std::unique_ptr<Thunk>> CreateRngGetAndUpdateStateThunk() {
+  absl::StatusOr<std::unique_ptr<Thunk>> CreateRngGetAndUpdateStateThunk(
+      int64_t delta = 0, std::shared_ptr<RngStateResource> rng_state =
+                             std::make_shared<RngStateResource>()) {
     ABSL_RETURN_IF_ERROR(AddBufferAllocations(1));
     return RngGetAndUpdateStateThunk::Create(
         Thunk::Info(),
         /*state_buffer=*/
         CreateBufferAllocationSlice(
             buffer_allocations_[buffer_allocations_.size() - 1]),
-        /*delta=*/0);
+        delta, std::move(rng_state));
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateTopKThunk() {
@@ -591,13 +599,19 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateWhileThunk(
-      std::optional<int64_t> trip_count = std::nullopt) {
+      std::optional<int64_t> trip_count = std::nullopt,
+      std::shared_ptr<Resource> communicator_resource =
+          Resource::Create(Resource::Kind::kCollectiveCommunicator)) {
     ThunkSequence cond_sequence;
-    ABSL_ASSIGN_OR_RETURN(cond_sequence.emplace_back(), CreateAllGatherThunk());
+    ABSL_ASSIGN_OR_RETURN(cond_sequence.emplace_back(),
+                          CreateAllGatherThunk(communicator_resource));
     ThunkSequence body_sequence;
-    ABSL_ASSIGN_OR_RETURN(body_sequence.emplace_back(), CreateAllGatherThunk());
-    ABSL_ASSIGN_OR_RETURN(body_sequence.emplace_back(), CreateAllReduceThunk());
-    ABSL_ASSIGN_OR_RETURN(body_sequence.emplace_back(), CreateAllToAllThunk());
+    ABSL_ASSIGN_OR_RETURN(body_sequence.emplace_back(),
+                          CreateAllGatherThunk(communicator_resource));
+    ABSL_ASSIGN_OR_RETURN(body_sequence.emplace_back(),
+                          CreateAllReduceThunk(communicator_resource));
+    ABSL_ASSIGN_OR_RETURN(body_sequence.emplace_back(),
+                          CreateAllToAllThunk(communicator_resource));
 
     ABSL_RETURN_IF_ERROR(AddPredBufferAllocation());
     return WhileThunk::Create(
@@ -1004,7 +1018,8 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
       const RngGetAndUpdateStateThunk& thunk_2) {
     return VerifySliceEquality(thunk_1.state_buffer(),
                                thunk_2.state_buffer()) &&
-           thunk_1.delta() == thunk_2.delta();
+           thunk_1.delta() == thunk_2.delta() &&
+           thunk_1.rng_state() != nullptr && thunk_2.rng_state() != nullptr;
   }
 
   bool VerifyRngSeedThunkEquality(const RngSeedThunk& thunk_1,
@@ -1387,6 +1402,104 @@ TYPED_TEST(ThunkSequenceSerdesTest, ResourceSharingRecounstruction) {
           second_collective_group_communicator);
     }
   }
+}
+
+TYPED_TEST(ThunkSequenceSerdesTest, NestedResourceSharingReconstruction) {
+  std::shared_ptr<Resource> communicator_resource =
+      Resource::Create(Resource::Kind::kCollectiveCommunicator);
+
+  ThunkSequence thunk_sequence;
+  ASSERT_OK_AND_ASSIGN(thunk_sequence.emplace_back(),
+                       this->CreateAllReduceThunk(communicator_resource));
+  ASSERT_OK_AND_ASSIGN(thunk_sequence.emplace_back(),
+                       this->CreateCallThunk(communicator_resource));
+  ASSERT_OK_AND_ASSIGN(thunk_sequence.emplace_back(),
+                       this->CreateConditionalThunk(communicator_resource));
+  ASSERT_OK_AND_ASSIGN(thunk_sequence.emplace_back(),
+                       this->CreateWhileThunk(/*trip_count=*/std::nullopt,
+                                              communicator_resource));
+
+  ASSERT_OK_AND_ASSIGN(std::string serialized, this->Serialize(thunk_sequence));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ThunkSequence> deserialized,
+                       this->Deserialize(serialized));
+  EXPECT_TRUE(this->VerifyThunkSequenceEquality(thunk_sequence, *deserialized));
+
+  const auto* top_level_collective =
+      absl::down_cast<const CollectiveThunk*>((*deserialized)[0].get());
+  ASSERT_NE(top_level_collective, nullptr);
+  const Resource* expected_resource =
+      top_level_collective->op_resources().communicator_resource.get();
+  ASSERT_NE(expected_resource, nullptr);
+
+  auto verify_sequence_resources = [&](const auto& self,
+                                       const ThunkSequence& sequence) -> void {
+    for (const std::unique_ptr<Thunk>& thunk : sequence) {
+      for (const ResourceUse& resource_use : thunk->resource_uses()) {
+        EXPECT_EQ(resource_use.resource().get(), expected_resource);
+      }
+      for (const auto& [name, nested_sequence] : thunk->nested_thunks()) {
+        self(self, *nested_sequence);
+      }
+    }
+  };
+  verify_sequence_resources(verify_sequence_resources, *deserialized);
+}
+
+TYPED_TEST(ThunkSequenceSerdesTest, NestedRngStateSharingReconstruction) {
+  auto rng_state = std::make_shared<RngStateResource>();
+
+  ThunkSequence thunk_sequence;
+  ASSERT_OK_AND_ASSIGN(
+      thunk_sequence.emplace_back(),
+      this->CreateRngGetAndUpdateStateThunk(/*delta=*/128, rng_state));
+
+  ThunkSequence call_seq;
+  ASSERT_OK_AND_ASSIGN(
+      call_seq.emplace_back(),
+      this->CreateRngGetAndUpdateStateThunk(/*delta=*/256, rng_state));
+  ASSERT_OK_AND_ASSIGN(thunk_sequence.emplace_back(),
+                       CallThunk::Create(Thunk::Info(), std::move(call_seq)));
+
+  ASSERT_OK_AND_ASSIGN(std::string serialized, this->Serialize(thunk_sequence));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ThunkSequence> deserialized,
+                       this->Deserialize(serialized));
+  EXPECT_TRUE(this->VerifyThunkSequenceEquality(thunk_sequence, *deserialized));
+
+  const auto* top_rng = absl::down_cast<const RngGetAndUpdateStateThunk*>(
+      (*deserialized)[0].get());
+  const auto* call_thunk =
+      absl::down_cast<const CallThunk*>((*deserialized)[1].get());
+  const auto* nested_rng = absl::down_cast<const RngGetAndUpdateStateThunk*>(
+      call_thunk->called_executor().thunk_sequence()[0].get());
+  ASSERT_NE(top_rng->rng_state(), nullptr);
+  EXPECT_EQ(top_rng->rng_state().get(), nested_rng->rng_state().get());
+}
+
+TYPED_TEST(ThunkSequenceSerdesTest,
+           RngGetAndUpdateStateThunkWithoutResourceFallback) {
+  if (!std::is_same_v<TypeParam, ThunkSequenceSerDesProtobuf>) {
+    GTEST_SKIP() << "This test is intended only for "
+                    "ThunkSequenceSerDesProtobuf. Skipping for "
+                 << typeid(TypeParam).name();
+  }
+
+  ThunkSequence thunk_sequence;
+  ASSERT_OK_AND_ASSIGN(thunk_sequence.emplace_back(),
+                       this->CreateRngGetAndUpdateStateThunk());
+
+  auto* proto_serdes = absl::down_cast<ThunkSequenceSerDesProtobuf*>(
+      this->thunk_sequence_serdes());
+  ASSERT_NE(proto_serdes, nullptr);
+  ASSERT_OK_AND_ASSIGN(ThunkSequenceProto proto,
+                       proto_serdes->ToProto(thunk_sequence));
+  proto.clear_thunk_resources();
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ThunkSequence> deserialized,
+                       proto_serdes->FromProto(proto));
+  ASSERT_EQ(deserialized->size(), 1);
+  const auto* rng_thunk = absl::down_cast<const RngGetAndUpdateStateThunk*>(
+      (*deserialized)[0].get());
+  EXPECT_NE(rng_thunk->rng_state(), nullptr);
 }
 
 void ForEachThunkProtoCountTestHelper(

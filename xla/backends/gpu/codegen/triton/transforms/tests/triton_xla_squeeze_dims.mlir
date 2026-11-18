@@ -28,6 +28,22 @@ func.func @push_squeeze_dims_up_through_elementwise(%arg0: tensor<4x1x8xf32>) ->
 
 // -----
 
+// CHECK-LABEL: func @side_effecting_inline_asm
+// CHECK-COUNT-1: tt.elementwise_inline_asm
+// CHECK-NOT: tt.elementwise_inline_asm
+// CHECK: return
+// FINALIZE-LABEL: func @side_effecting_inline_asm
+// FINALIZE-COUNT-1: tt.elementwise_inline_asm
+// FINALIZE-NOT: tt.elementwise_inline_asm
+// FINALIZE: return
+func.func @side_effecting_inline_asm(%arg0: tensor<4x1x8x!tt.ptr<i32>>) -> tensor<4x8xi32> {
+  %0 = "tt.elementwise_inline_asm"(%arg0) <{asm_string = "ld.volatile.global.u32 $0, [$1];", constraints = "=r,l", packed_element = 1 : i32, pure = false}> : (tensor<4x1x8x!tt.ptr<i32>>) -> tensor<4x1x8xi32>
+  %1 = triton_xla.squeeze_dims %0 <axis = 1> : tensor<4x1x8xi32> -> tensor<4x8xi32>
+  return %1 : tensor<4x8xi32>
+}
+
+// -----
+
 // CHECK-LABEL: func @push_squeeze_dims_up_through_multiple_results
 func.func @push_squeeze_dims_up_through_multiple_results(%arg0: tensor<4x1x8xf32>) -> tensor<4x8xf32> {
   // CHECK: tt.elementwise_inline_asm {{.*}} : tensor<4x8xf32> -> tensor<4x8xf32>, tensor<4x8xf32>
@@ -105,6 +121,30 @@ func.func @fold_squeeze_of_expand_swapping(%arg0: tensor<4x1x8xf32>) -> tensor<1
 
 // -----
 
+// CHECK-LABEL: func @fold_squeeze_of_expand_swapping_same_type
+func.func @fold_squeeze_of_expand_swapping_same_type(%arg0: tensor<1x8xf32>) -> tensor<1x8xf32> {
+  // CHECK: %[[SQUEEZED:.*]] = triton_xla.squeeze_dims %arg0 <axis = 0> : tensor<1x8xf32> -> tensor<8xf32>
+  // CHECK: %[[EXPANDED:.*]] = tt.expand_dims %[[SQUEEZED]] {axis = 0 : i32} : tensor<8xf32> -> tensor<1x8xf32>
+  // CHECK: return %[[EXPANDED]] : tensor<1x8xf32>
+  %0 = tt.expand_dims %arg0 {axis = 0 : i32} : tensor<1x8xf32> -> tensor<1x1x8xf32>
+  %1 = triton_xla.squeeze_dims %0 <axis = 1> : tensor<1x1x8xf32> -> tensor<1x8xf32>
+  return %1 : tensor<1x8xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func @fold_squeeze_of_expand_unit_1d
+func.func @fold_squeeze_of_expand_unit_1d(%arg0: tensor<1xf32>) -> tensor<1xf32> {
+  // CHECK-NOT: tt.expand_dims
+  // CHECK-NOT: triton_xla.squeeze_dims
+  // CHECK: return %arg0 : tensor<1xf32>
+  %0 = tt.expand_dims %arg0 {axis = 0 : i32} : tensor<1xf32> -> tensor<1x1xf32>
+  %1 = triton_xla.squeeze_dims %0 <axis = 1> : tensor<1x1xf32> -> tensor<1xf32>
+  return %1 : tensor<1xf32>
+}
+
+// -----
+
 // CHECK-LABEL: func @squeeze_reshape
 func.func @squeeze_reshape(%arg0: tensor<4x1x1xf32>) -> tensor<4xf32> {
   // CHECK: triton_xla.squeeze_dims {{.*}} <axis = 1> : tensor<4x1x1xf32> -> tensor<4x1xf32>
@@ -128,8 +168,8 @@ func.func @expand_reshape(%arg0: tensor<4xf32>) -> tensor<4x1x1xf32> {
 // CHECK-LABEL: func @skip_reshape_with_attr
 func.func @skip_reshape_with_attr(%arg0: tensor<4x1xf32>) -> tensor<4xf32> {
   // CHECK-NOT: triton_xla.squeeze_dims
-  // CHECK: tt.reshape {{.*}} allow_reorder : tensor<4x1xf32> -> tensor<4xf32>
-  %0 = tt.reshape %arg0 allow_reorder : tensor<4x1xf32> -> tensor<4xf32>
+  // CHECK: tt.reshape {{.*}} efficient_layout : tensor<4x1xf32> -> tensor<4xf32>
+  %0 = tt.reshape %arg0 efficient_layout : tensor<4x1xf32> -> tensor<4xf32>
   return %0 : tensor<4xf32>
 }
 

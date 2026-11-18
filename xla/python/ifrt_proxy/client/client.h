@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
@@ -76,7 +77,9 @@ class Client final : public RTTIExtends<Client, xla::ifrt::Client> {
       std::optional<absl::Span<const int64_t>> byte_strides,
       xla::ifrt::ShardingRef sharding, xla::ifrt::LayoutRef layout,
       HostBufferSemantics semantics,
-      std::function<void()> on_done_with_host_buffer) override;
+      std::shared_ptr<const void> host_buffer_hold) override;
+  // Expose the base class's `MakeArrayFromHostBuffer` overloads.
+  using xla::ifrt::Client::MakeArrayFromHostBuffer;
   absl::StatusOr<std::vector<xla::ifrt::ArrayRef>>
   MakeArraysFromHostBufferShards(
       absl::Span<MakeArraysFromHostBufferShardsSpec> specs,
@@ -98,6 +101,13 @@ class Client final : public RTTIExtends<Client, xla::ifrt::Client> {
       std::optional<MemoryKind> memory_kind,
       ArrayCopySemantics semantics) override;
 
+  absl::StatusOr<std::vector<ArrayRef>> CopyArraysWithDonatedDst(
+      absl::Span<ArrayRef> arrays, absl::Span<ArrayRef> donated_dst_arrays,
+      ArrayCopySemantics semantics) override {
+    return absl::UnimplementedError(
+        "CopyArraysWithDonatedDst is not supported for the IFRT proxy client.");
+  }
+
   absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> RemapArrays(
       const RemapPlan& plan, absl::Span<xla::ifrt::ArrayRef> arrays,
       ArrayCopySemantics semantics) override;
@@ -113,6 +123,21 @@ class Client final : public RTTIExtends<Client, xla::ifrt::Client> {
   absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> ReshardArrays(
       absl::Span<ArrayRef> arrays, absl::Span<const ArraySpec> specs,
       ArrayCopySemantics semantics) override;
+
+  absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> CopyArraySlices(
+      absl::Span<const xla::ifrt::ArrayRef> arrays,
+      absl::Span<const xla::ifrt::IndexDomain> index_domains) override {
+    return absl::UnimplementedError(
+        "CopyArraySlices is not supported for the IFRT proxy client.");
+  }
+
+  absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> UpdateArraySlices(
+      absl::Span<xla::ifrt::ArrayRef> arrays,
+      absl::Span<const xla::ifrt::ArrayRef> slices,
+      absl::Span<const xla::ifrt::Index> origins) override {
+    return absl::UnimplementedError(
+        "UpdateArraySlices is not supported for the IFRT proxy client.");
+  }
 
   tsl::Future<> GetReadyFuture(absl::Span<const ValueRef> values) override;
 
@@ -136,10 +161,9 @@ class Client final : public RTTIExtends<Client, xla::ifrt::Client> {
         "ConcatBundles is not supported for the IFRT proxy client.");
   }
 
-  // TODO(b/474143687) add cancellation to proxy.
   void CancelExecution(
       xla::ifrt::LoadedExecutable::CancellationHandle cancellation_handle,
-      absl::Status error) override {}
+      absl::Status error) override;
 
   absl::string_view runtime_type() const override { return runtime_type_; }
   absl::string_view platform_name() const override { return platform_name_; }
@@ -170,13 +194,14 @@ class Client final : public RTTIExtends<Client, xla::ifrt::Client> {
         "LookupAddressableDevice is not supported for the IFRT proxy client.");
   }
   absl::StatusOr<xla::ifrt::DeviceListRef> MakeDeviceList(
-      absl::Span<xla::ifrt::Device* const> devices) const override;
+      absl::Span<xla::ifrt::Device* absl_nonnull const> devices) const override;
   xla::ifrt::Compiler* GetDefaultCompiler() override {
     return &default_compiler_;
   }
   absl::StatusOr<std::vector<tsl::Future<xla::ifrt::LoadedExecutableRef>>> Load(
       absl::Span<const xla::ifrt::ExecutableRef> executables,
-      absl::Span<std::unique_ptr<xla::ifrt::LoadOptions>> options) override {
+      absl::Span<absl_nonnull std::unique_ptr<xla::ifrt::LoadOptions>> options)
+      override {
     return absl::UnimplementedError(
         "Load is not supported for the IFRT proxy client.");
   }
@@ -187,7 +212,7 @@ class Client final : public RTTIExtends<Client, xla::ifrt::Client> {
   }
   absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> GetDefaultPjRtLayout(
       xla::ifrt::DType dtype, absl::Span<const int64_t> dims,
-      xla::ifrt::Device* device,
+      xla::ifrt::Device* absl_nonnull device,
       xla::ifrt::MemoryKind memory_kind) const override;
   absl::StatusOr<xla::ifrt::CustomLayoutRef> GetDefaultLayout(
       xla::ifrt::DType dtype, const xla::ifrt::Shape& shape,
@@ -195,7 +220,7 @@ class Client final : public RTTIExtends<Client, xla::ifrt::Client> {
 
   absl::StatusOr<std::unique_ptr<xla::ifrt::DeviceAttributeSubscription>>
   SubscribeToAttributeChanges(
-      absl::Span<xla::ifrt::Device* const> devices,
+      absl::Span<xla::ifrt::Device* absl_nonnull const> devices,
       std::optional<absl::Span<const std::string>> attribute_names,
       xla::ifrt::OnDeviceAttributeChangeCallback callback) override {
     return absl::UnimplementedError(

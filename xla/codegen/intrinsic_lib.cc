@@ -124,26 +124,28 @@ class IntrinsicAdapter : public IntrinsicFunction {
 };
 
 IntrinsicFunctionLib::IntrinsicFunctionLib(const IntrinsicOptions& options)
-    : options_(options) {
-  if (options.device_type == intrinsics::DeviceType::kIntelCpu ||
-      options.device_type == intrinsics::DeviceType::kAmdCpu ||
-      options.device_type == intrinsics::DeviceType::kArmCpu) {
-    const std::string& ir_string = GetCppGenIrString(options);
-    if (!ir_string.empty()) {
-      auto eigen_lib =
-          std::make_unique<CppGenIntrinsicLibrary>(ir_string, "eigen");
-      ir_libraries_.push_back(std::move(eigen_lib));
-    }
+    : options_(options), ir_libraries_(GetCppGenLibraries(options)) {
+  if ((options.device_type == intrinsics::DeviceType::kIntelCpu ||
+       options.device_type == intrinsics::DeviceType::kAmdCpu ||
+       options.device_type == intrinsics::DeviceType::kArmCpu ||
+       options.device_type == intrinsics::DeviceType::kSystemZCpu) &&
+      AreCppGenIntrinsicsAvailable()) {
+    intrinsic_functions_.push_back(
+        std::make_unique<IntrinsicAdapter<intrinsics::YnnLog>>());
+    intrinsic_functions_.push_back(
+        std::make_unique<IntrinsicAdapter<intrinsics::YnnLog1p>>());
+  } else {
+    intrinsic_functions_.push_back(
+        std::make_unique<IntrinsicAdapter<intrinsics::Log1p>>());
   }
-
   intrinsic_functions_.push_back(
       std::make_unique<IntrinsicAdapter<intrinsics::Ldexp>>());
   intrinsic_functions_.push_back(
       std::make_unique<IntrinsicAdapter<intrinsics::Exp>>());
   intrinsic_functions_.push_back(
-      std::make_unique<IntrinsicAdapter<intrinsics::FpTrunc>>());
+      std::make_unique<IntrinsicAdapter<intrinsics::Expm1>>());
   intrinsic_functions_.push_back(
-      std::make_unique<IntrinsicAdapter<intrinsics::Log1p>>());
+      std::make_unique<IntrinsicAdapter<intrinsics::FpTrunc>>());
   intrinsic_functions_.push_back(
       std::make_unique<IntrinsicAdapter<intrinsics::Erf>>());
   intrinsic_functions_.push_back(
@@ -151,7 +153,19 @@ IntrinsicFunctionLib::IntrinsicFunctionLib(const IntrinsicOptions& options)
   intrinsic_functions_.push_back(
       std::make_unique<IntrinsicAdapter<intrinsics::Tanh>>());
   intrinsic_functions_.push_back(
-      std::make_unique<IntrinsicAdapter<intrinsics::EigenAtan>>());
+      std::make_unique<IntrinsicAdapter<intrinsics::Atan>>());
+  intrinsic_functions_.push_back(
+      std::make_unique<IntrinsicAdapter<intrinsics::Sin>>());
+  intrinsic_functions_.push_back(
+      std::make_unique<IntrinsicAdapter<intrinsics::Cos>>());
+  intrinsic_functions_.push_back(
+      std::make_unique<IntrinsicAdapter<intrinsics::Sinh>>());
+  intrinsic_functions_.push_back(
+      std::make_unique<IntrinsicAdapter<intrinsics::Cosh>>());
+  intrinsic_functions_.push_back(
+      std::make_unique<IntrinsicAdapter<intrinsics::Asin>>());
+  intrinsic_functions_.push_back(
+      std::make_unique<IntrinsicAdapter<intrinsics::Acos>>());
 }
 
 namespace {
@@ -292,7 +306,7 @@ IntrinsicFunctionLib::DefineIntrinsicFunctions(llvm::Module& module) {
         for (const auto& signature : signatures) {
           if (!ir_libraries_linked) {
             for (const auto& lib : ir_libraries_) {
-              lib->LinkIntoModule(module);
+              lib.LinkIntoModule(module);
             }
             ir_libraries_linked = true;
           }

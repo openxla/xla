@@ -54,10 +54,6 @@ class HloRunner : public HloRunnerInterface {
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
   TransferLiteralsToDefaultDevice(absl::Span<const ShapeLayout> layouts,
                                   absl::Span<const Literal* const> literals);
-  // Transfers data between the host and device, using the layout of each
-  // literal itself.
-  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
-  TransferLiteralsToDefaultDevice(absl::Span<const Literal* const> literals);
   absl::StatusOr<Literal> TransferLiteralsFromDevice(
       absl::Span<const std::unique_ptr<PjRtBuffer>> output_buffers,
       bool untuple_result);
@@ -92,6 +88,12 @@ class HloRunner : public HloRunnerInterface {
       OpaqueExecutable* executable, absl::Span<const Literal* const> arguments,
       int64_t num_repeats) override;
 
+  // Executes a given HLO module into a set of replicas, and returns a vector
+  // of size `options.num_devices` indexed by replica number, with the output
+  // Literal populated for each locally addressable device and default
+  // constructed `Literal()` (`NilShape`) for non-addressable devices. If none
+  // are addressable (an idle process in a multi-host run), every entry is a
+  // placeholder.
   absl::StatusOr<std::vector<Literal>> ExecuteReplicated(
       std::unique_ptr<HloModule> module,
       const ReplicatedExecuteOptions& options) override;

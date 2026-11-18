@@ -21,7 +21,6 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"

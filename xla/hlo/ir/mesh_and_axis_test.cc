@@ -22,7 +22,8 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
-#include "absl/log/check.h"
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
@@ -33,6 +34,9 @@ limitations under the License.
 using ::tsl::proto_testing::EqualsProto;
 
 namespace xla {
+
+using ::absl_testing::StatusIs;
+using ::testing::HasSubstr;
 
 TEST(MeshAndAxisTest, AxisRefEquality) {
   EXPECT_EQ(AxisRef(1), AxisRef(1));
@@ -192,7 +196,7 @@ TEST(MeshAndAxisTest, ValidatesAxisRef) {
 
 TEST(MeshAndAxisTest, ValidatesMeshEmptyMesh) { Mesh(); }
 
-TEST(MeshAndAxisTest, ValidatesMeshMaximalMesh) { Mesh(5); }
+TEST(MeshAndAxisTest, ValidatesMeshSingleDeviceMesh) { Mesh(5); }
 
 TEST(MeshAndAxisTest, ValidatesMesh) {
   EXPECT_DEATH(
@@ -273,8 +277,8 @@ TEST(MeshAndAxisTest, MeshToString) {
   EXPECT_EQ(mesh_ooo.ToString(),
             "mesh['ooo'=10], device_ids=(8,3,7,5,4,2,6,0,1,9)");
 
-  Mesh maximal_mesh(5);
-  EXPECT_EQ(maximal_mesh.ToString(), "maximal_mesh[device_id=5]");
+  Mesh single_device_mesh(5);
+  EXPECT_EQ(single_device_mesh.ToString(), "single_device[device_id=5]");
 
   Mesh mesh_with_special_characters({10, 12, 15},
                                     {"abc def", "xyz.pqr", "<axis> def"});
@@ -297,32 +301,45 @@ TEST(MeshAndAxisTest, AxisRefToString) {
 TEST(MeshAndAxisTest, ValidateAxisForMesh) {
   Mesh mesh({2 * 7, 3 * 11, 5 * 13}, {"fdr", "jfk", "lbj"});
 
-  EXPECT_DEATH(
-      { CHECK_OK(AxisRef(3, {1, 2}).Validate(mesh)); },
-      "Axis index must be less than number of axes.*"
-      "Axis index: 3, Number of axes: 3");
+  EXPECT_THAT(AxisRef(3, {1, 2}).Validate(mesh),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Axis index must be less than number of axes. "
+                                 "Axis index: 3, Number of axes: 3")));
 
-  EXPECT_DEATH(
-      { CHECK_OK(AxisRef(0, {5, 19}).Validate(mesh)); },
-      "Sub-axis next_pre_size must divide the full axis size.*"
-      "Next pre-size: 95, Axis size: 14");
-  EXPECT_DEATH(
-      { CHECK_OK(AxisRef(0, {2, 5}).Validate(mesh)); },
-      "Sub-axis next_pre_size must divide the full axis size.*"
-      "Next pre-size: 10, Axis size: 14");
+  EXPECT_THAT(
+      AxisRef(-1).Validate(mesh),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("Axis index must be non-negative. Axis index: -1")));
+  EXPECT_THAT(
+      AxisRef(-1, {1, 2}).Validate(mesh),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("Axis index must be non-negative. Axis index: -1")));
 
-  EXPECT_DEATH(
-      { CHECK_OK(AxisRef(1, {1, 3 * 11}).Validate(mesh)); },
-      "Sub-axis size must be strictly less than the full axis size.*"
-      "Sub-axis size: 33, Axis size: 33");
+  EXPECT_THAT(
+      AxisRef(0, {5, 19}).Validate(mesh),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("Sub-axis next_pre_size must divide the full axis "
+                         "size. Next pre-size: 95, Axis size: 14")));
+  EXPECT_THAT(
+      AxisRef(0, {2, 5}).Validate(mesh),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("Sub-axis next_pre_size must divide the full axis "
+                         "size. Next pre-size: 10, Axis size: 14")));
 
+  EXPECT_THAT(
+      AxisRef(1, {1, 3 * 11}).Validate(mesh),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("Sub-axis size must be strictly less than the full "
+                         "axis size. Sub-axis size: 33, Axis size: 33")));
+
+  // An invalid pre-size is rejected when the AxisRef is constructed, before
+  // Validate() can run.
   AxisRefProto invalid_pre_size_proto;
   invalid_pre_size_proto.set_mesh_axis_index(0);
   invalid_pre_size_proto.mutable_sub_axis_info()->set_pre_size(0);
   invalid_pre_size_proto.mutable_sub_axis_info()->set_size(2);
-  EXPECT_DEATH(
-      { CHECK_OK(AxisRef::FromProto(invalid_pre_size_proto).Validate(mesh)); },
-      "sub-axis pre-size must be >= 1");
+  EXPECT_DEATH(AxisRef::FromProto(invalid_pre_size_proto),
+               "sub-axis pre-size must be >= 1");
 }
 
 TEST(MeshAndAxisTest, AxisRefCanCoexistWithoutOverlap) {
@@ -359,32 +376,32 @@ TEST(MeshAndAxisTest, EmptyMesh) {
   EXPECT_EQ(empty_mesh, Mesh());
   EXPECT_NE(empty_mesh, Mesh(5));
   EXPECT_NE(empty_mesh, Mesh({1}, {"a"}));
-  EXPECT_FALSE(empty_mesh.IsMaximal());
+  EXPECT_FALSE(empty_mesh.IsSingleDevice());
   EXPECT_THAT(empty_mesh.ToProto(), EqualsProto(MeshProto()));
   EXPECT_EQ(empty_mesh, Mesh::FromProto(MeshProto()));
   EXPECT_EQ(empty_mesh, Mesh::FromProto(empty_mesh.ToProto()));
 }
 
-TEST(MeshAndAxisTest, MaximalMesh) {
-  Mesh maximal_mesh(5);
-  EXPECT_TRUE(maximal_mesh.IsMaximal());
-  Mesh non_maximal_mesh({2, 3}, {"a", "b"});
-  EXPECT_FALSE(non_maximal_mesh.IsMaximal());
+TEST(MeshAndAxisTest, SingleDeviceMesh) {
+  Mesh single_device_mesh(5);
+  EXPECT_TRUE(single_device_mesh.IsSingleDevice());
+  Mesh non_single_device_mesh({2, 3}, {"a", "b"});
+  EXPECT_FALSE(non_single_device_mesh.IsSingleDevice());
   Mesh mesh_single_axis({1}, {"a"});
-  EXPECT_FALSE(mesh_single_axis.IsMaximal());
+  EXPECT_FALSE(mesh_single_axis.IsSingleDevice());
 
-  EXPECT_EQ(maximal_mesh, Mesh(5));
-  EXPECT_NE(maximal_mesh, Mesh(6));
+  EXPECT_EQ(single_device_mesh, Mesh(5));
+  EXPECT_NE(single_device_mesh, Mesh(6));
 
   MeshProto expected_proto;
   expected_proto.add_device_ids(5);
-  EXPECT_THAT(maximal_mesh.ToProto(), EqualsProto(expected_proto));
+  EXPECT_THAT(single_device_mesh.ToProto(), EqualsProto(expected_proto));
 
   MeshProto from_proto;
   from_proto.add_device_ids(7);
   EXPECT_EQ(Mesh(7), Mesh::FromProto(from_proto));
 
-  EXPECT_EQ(maximal_mesh, Mesh::FromProto(maximal_mesh.ToProto()));
+  EXPECT_EQ(single_device_mesh, Mesh::FromProto(single_device_mesh.ToProto()));
 }
 
 TEST(MeshAndAxisTest, AxisRefSize) {

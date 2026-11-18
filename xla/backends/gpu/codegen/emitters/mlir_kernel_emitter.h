@@ -24,9 +24,11 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/TargetParser/Triple.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -35,13 +37,10 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Pass/PassManager.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
-#include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
-#include "xla/codegen/kernel_definition.h"
 #include "xla/codegen/llvm_kernel_source.h"
 #include "xla/codegen/mlir_kernel_source.h"
-#include "xla/future.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -85,6 +84,11 @@ class MlirKernelEmitter {
       const BufferAssignment* buffer_assignment) const;
 
   static mlir::DialectRegistry GetDialectRegistry();
+
+  // Emits `{thread_id.x, thread_id.y, thread_id.z, block_id.x, block_id.y,
+  // block_id.z}` annotated with `xla.range` from `launch_dims`.
+  static llvm::SmallVector<mlir::Value> EmitThreadAndBlockIds(
+      mlir::ImplicitLocOpBuilder& builder, const LaunchDimensions& launch_dims);
 
   // Computes an indexing map from thread to output element(s) of the **hero**.
   //
@@ -186,24 +190,19 @@ class MlirKernelFusion final : public KernelFusionInterface {
   AsyncThunkSequence Emit(IrEmitterContext& ir_emitter_context,
                           const HloFusionInstruction& fusion) const final;
 
-  // Visible for testing. `buffer_assignment` is optional for testing (assigns
-  // a different buffer to each tensor).
-  xla::Future<LlvmKernelSource> CreateLLVMModule(
-      const se::DeviceDescription& device, const HloFusionInstruction& fusion,
-      const std::string& entry_function_name,
-      const BufferAssignment* buffer_assignment,
-      KernelCompiler* kernel_compiler,
-      BorrowedMlirContext borrowed_context) const;
-
   MlirKernelEmitter* mlir_kernel_emitter() { return emitter_.get(); }
 
   static constexpr std::array<int, 3> kIndexingMapThreadIdxDims = {0, 1, 2};
   static constexpr std::array<int, 3> kIndexingMapBlockIdxDims = {3, 4, 5};
 
  private:
-  xla::Future<KernelDefinition<LlvmKernelSource>> EmitLlvmModule(
-      const HloFusionInstruction& fusion, const std::string& kernel_name,
-      IrEmitterContext& parent_context) const;
+  friend class MlirKernelFusionTestPeer;
+
+  absl::StatusOr<MlirKernelSource> EmitMlirSource(
+      const se::DeviceDescription& device, const HloFusionInstruction& fusion,
+      const std::string& entry_function_name,
+      const BufferAssignment* buffer_assignment,
+      mlir::MLIRContext& mlir_context) const;
   std::unique_ptr<MlirKernelEmitter> emitter_;
 };
 
@@ -216,10 +215,27 @@ void AddLoopTransformationPasses(mlir::OpPassManager& pm,
 // Adds passes that lower transformed loops to LLVM.
 void AddLoweringPasses(mlir::OpPassManager& pm,
                        const se::DeviceDescription& device);
+
+// Lowers an MLIR kernel module through loop transformation and LLVM-GPU
+// lowering passes, stopping at the MLIR LLVM/NVVM/ROCDL dialect level.
+absl::StatusOr<MlirKernelSource> CompileMlirToLlvmDialect(
+    const se::DeviceDescription& device, const HloModule& hlo_module,
+    absl::string_view entry_function_name, int unroll_factor,
+    mlir::MLIRContext& mlir_context, MlirKernelSource source);
+
 absl::StatusOr<LlvmKernelSource> CompileMlirToLlvm(
     const se::DeviceDescription& device, const HloModule& hlo_module,
     const std::string& entry_function_name, int unroll_factor,
     mlir::MLIRContext& mlir_context, MlirKernelSource source);
+
+// Annotates an LLVM module produced by `CompileMlirToLlvm` with thread/block ID
+// range metadata, target triple/data layout, GPU kernel calling convention, and
+// launch dimension attributes.
+absl::Status AnnotateMlirKernelLlvmModule(
+    const se::DeviceDescription& gpu_device_info,
+    const LaunchDimensions& launch_dims, absl::string_view kernel_name,
+    absl::string_view data_layout, const llvm::Triple& target_triple,
+    llvm::Module* module);
 
 std::unique_ptr<mlir::MLIRContext> CreateMlirContext();
 

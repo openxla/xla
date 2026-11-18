@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
@@ -1332,7 +1333,8 @@ PJRT_Error* PJRT_Client_CreateErrorBuffer(
     PJRT_Client_CreateErrorBuffer_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Client_CreateErrorBuffer_Args",
-      PJRT_Client_CreateErrorBuffer_Args_STRUCT_SIZE, args->struct_size));
+      PJRT_STRUCT_SIZE(PJRT_Client_CreateErrorBuffer_Args, num_payload),
+      args->struct_size));
 
   absl::Status error = absl::Status(
       pjrt::PjrtErrorCodeToStatusCode(args->error_code),
@@ -1355,12 +1357,41 @@ PJRT_Error* PJRT_Client_CreateErrorBuffer(
   PJRT_ASSIGN_OR_RETURN(
       xla::Shape shape,
       pjrt::BuildXlaShapeFromC(args->shape_element_type, args->shape_dims,
-                               args->shape_num_dims, args->shape_layout));
+                               args->shape_num_dims, /*layout=*/nullptr));
+  xla::LayoutUtil::SetToDefaultLayout(&shape);
+
+  std::optional<xla::Layout> cpp_layout;
+  const xla::Layout* device_layout = nullptr;
+  if (args->struct_size >=
+          PJRT_STRUCT_SIZE(PJRT_Client_CreateErrorBuffer_Args, device_layout) &&
+      args->device_layout != nullptr) {
+    switch (args->device_layout->type) {
+      case PJRT_Buffer_MemoryLayout_Type::PJRT_Buffer_MemoryLayout_Type_Tiled: {
+        PJRT_ASSIGN_OR_RETURN(cpp_layout,
+                              ConvertToLayout(args->device_layout->tiled));
+        break;
+      }
+      case PJRT_Buffer_MemoryLayout_Type::
+          PJRT_Buffer_MemoryLayout_Type_Strides: {
+        PJRT_RETURN_IF_ERROR(absl::InvalidArgumentError(
+            "PJRT_Buffer_MemoryLayout_Type_Strides is not supported to be "
+            "converted to a xla::Layout."));
+        break;
+      }
+      default: {
+        PJRT_RETURN_IF_ERROR(absl::InvalidArgumentError(
+            absl::StrCat("Unexpected PJRT_Buffer_MemoryLayout_Type type: ",
+                         args->device_layout->type)));
+      }
+    }
+    device_layout = &*cpp_layout;
+  }
 
   PJRT_ASSIGN_OR_RETURN(
       auto error_buffer,
       args->client->client->CreateErrorBuffer(
-          error, shape, xla::PjRtMemorySpace::FromC(args->memory)));
+          error, shape, xla::PjRtMemorySpace::FromC(args->memory),
+          device_layout));
 
   args->buffer = new PJRT_Buffer{std::move(error_buffer), args->client};
   return nullptr;
@@ -1921,10 +1952,12 @@ PJRT_Error* PJRT_LoadedExecutable_AddressableDeviceLogicalIds(
       PJRT_LoadedExecutable_AddressableDeviceLogicalIds_Args_STRUCT_SIZE,
       args->struct_size));
 
+  PJRT_RETURN_IF_ERROR(
+      args->executable->addressable_device_logical_ids.status());
   args->num_addressable_device_logical_ids =
-      args->executable->addressable_device_logical_ids.size();
+      args->executable->addressable_device_logical_ids->size();
   args->addressable_device_logical_ids =
-      args->executable->addressable_device_logical_ids.data();
+      args->executable->addressable_device_logical_ids->data();
   return nullptr;
 }
 
@@ -2298,20 +2331,40 @@ static void CHloOutputCallbacksToCpp(
   }
 }
 
-static std::vector<std::vector<xla::PjRtBuffer*>> Convert2DCBuffersToCppBuffers(
-    PJRT_Buffer* const* const* c_lists, size_t outer_size, size_t inner_size) {
-  std::vector<std::vector<xla::PjRtBuffer*>> cpp_lists;
+// Populates per-device C++ argument buffer lists in place inside an
+// InlinedVector so multi-device launches up to 8 devices avoid an outer
+// std::vector heap allocation.
+static void Populate2DCppBuffers(
+    PJRT_Buffer* const* const* c_lists, size_t outer_size, size_t inner_size,
+    absl::InlinedVector<std::vector<xla::PjRtBuffer*>, 8>& cpp_lists) {
   cpp_lists.reserve(outer_size);
-  for (int i = 0; i < outer_size; ++i) {
+  for (size_t i = 0; i < outer_size; ++i) {
     // Since this function gets called very frequently, we initialize the inner
     // vector with the correct size to avoid resizing and maximize performance.
-    cpp_lists.emplace_back(inner_size);
-    auto& inner_list = cpp_lists.back();
-    for (int j = 0; j < inner_size; ++j) {
-      inner_list[j] = c_lists[i][j]->buffer.get();
+    auto& inner_list = cpp_lists.emplace_back(inner_size);
+    if (inner_size == 0 || c_lists == nullptr) {
+      continue;
+    }
+    PJRT_Buffer* const* c_list = c_lists[i];
+    for (size_t j = 0; j < inner_size; ++j) {
+      inner_list[j] = c_list[j]->buffer.get();
     }
   }
-  return cpp_lists;
+}
+
+// Unpacks single-device C buffer pointers directly into a flat 16-element
+// InlinedVector for the execute_device path.
+static void Populate1DCppBuffers(
+    PJRT_Buffer* const* const* c_lists, size_t num_args,
+    absl::InlinedVector<xla::PjRtBuffer*, 16>& cpp_list) {
+  if (num_args == 0 || c_lists == nullptr) {
+    return;
+  }
+  cpp_list.resize(num_args);
+  PJRT_Buffer* const* c_list = c_lists[0];
+  for (size_t i = 0; i < num_args; ++i) {
+    cpp_list[i] = c_list[i]->buffer.get();
+  }
 }
 
 PJRT_Error* PJRT_LoadedExecutable_Execute(
@@ -2368,6 +2421,8 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
         args->options->use_major_to_minor_data_layout_for_callbacks;
   }
   if (args->options->num_non_donatable_input_indices > 0) {
+    options.non_donatable_input_indices.reserve(
+        args->options->num_non_donatable_input_indices);
     for (int i = 0; i < args->options->num_non_donatable_input_indices; ++i) {
       options.non_donatable_input_indices.insert(
           args->options->non_donatable_input_indices[i]);
@@ -2380,35 +2435,38 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     options.incarnations.insert({task_id, xla::IncarnationId(incarnation_id)});
   }
 
-  std::vector<std::vector<xla::PjRtBuffer*>> cpp_argument_lists =
-      Convert2DCBuffersToCppBuffers(args->argument_lists, args->num_devices,
-                                    args->num_args);
-
-  // Set send/recv callbacks in ExecuteOptions. The callbacks
-  // should call the C callbacks provided by the caller.
-  auto cpp_send_callbacks =
-      std::make_shared<std::vector<std::vector<xla::SendCallback>>>();
+  // Set send/recv/hlo_output callbacks in ExecuteOptions. The shared_ptrs are
+  // only allocated when the corresponding callbacks are present, avoiding three
+  // heap allocations per execute call in the common case without callbacks.
+  std::shared_ptr<std::vector<std::vector<xla::SendCallback>>>
+      cpp_send_callbacks = nullptr;
   if (args->options->num_send_ops > 0) {
+    cpp_send_callbacks =
+        std::make_shared<std::vector<std::vector<xla::SendCallback>>>();
     CSendCallbackListsToCpp(args->options->send_callbacks, args->num_devices,
                             args->options->num_send_ops, *cpp_send_callbacks);
     options.send_callbacks = *cpp_send_callbacks;
     CHECK_EQ(options.send_callbacks.size(), args->num_devices);
   }
 
-  auto cpp_recv_callbacks =
-      std::make_shared<std::vector<std::vector<xla::RecvCallback>>>();
+  std::shared_ptr<std::vector<std::vector<xla::RecvCallback>>>
+      cpp_recv_callbacks = nullptr;
   if (args->options->num_recv_ops > 0) {
+    cpp_recv_callbacks =
+        std::make_shared<std::vector<std::vector<xla::RecvCallback>>>();
     CRecvCallbackListsToCpp(args->options->recv_callbacks, args->num_devices,
                             args->options->num_recv_ops, *cpp_recv_callbacks);
     options.recv_callbacks = *cpp_recv_callbacks;
     CHECK_EQ(options.recv_callbacks.size(), args->num_devices);
   }
 
-  auto cpp_hlo_output_callbacks =
-      std::make_shared<std::vector<xla::HloOutputCallback>>();
+  std::shared_ptr<std::vector<xla::HloOutputCallback>>
+      cpp_hlo_output_callbacks = nullptr;
   if (args->options->struct_size >=
       PJRT_STRUCT_SIZE(PJRT_ExecuteOptions, num_hlo_output_callbacks)) {
     if (args->options->num_hlo_output_callbacks > 0) {
+      cpp_hlo_output_callbacks =
+          std::make_shared<std::vector<xla::HloOutputCallback>>();
       CHloOutputCallbacksToCpp(args->options->hlo_output_callbacks,
                                args->options->num_hlo_output_callbacks,
                                *cpp_hlo_output_callbacks);
@@ -2417,10 +2475,13 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
   }
 
   if (args->execute_device == nullptr) {
+    absl::InlinedVector<std::vector<xla::PjRtBuffer*>, 8> cpp_argument_lists;
+    Populate2DCppBuffers(args->argument_lists, args->num_devices,
+                         args->num_args, cpp_argument_lists);
     std::vector<std::vector<std::unique_ptr<xla::PjRtBuffer>>> cpp_buffer_lists;
     if (args->device_complete_events != nullptr ||
-        !cpp_send_callbacks->empty() || !cpp_recv_callbacks->empty() ||
-        !cpp_hlo_output_callbacks->empty() || execute_context) {
+        cpp_send_callbacks != nullptr || cpp_recv_callbacks != nullptr ||
+        cpp_hlo_output_callbacks != nullptr || execute_context != nullptr) {
       std::optional<std::vector<xla::Future<>>> returned_futures;
       returned_futures.emplace();
       PJRT_ASSIGN_OR_RETURN(cpp_buffer_lists,
@@ -2431,8 +2492,8 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
       // We assume that these OnReady callbacks will fire even if
       // returned_futures is destroyed first. This is true for the
       // AsyncValue-based implementation of Future.
-      if (!cpp_send_callbacks->empty() || !cpp_recv_callbacks->empty() ||
-          !cpp_hlo_output_callbacks->empty() || options.context) {
+      if (cpp_send_callbacks != nullptr || cpp_recv_callbacks != nullptr ||
+          cpp_hlo_output_callbacks != nullptr || options.context != nullptr) {
         for (int i = 0; i < returned_futures->size(); ++i) {
           (*returned_futures)[i].OnReady(
               [cpp_send_callbacks, cpp_recv_callbacks, cpp_hlo_output_callbacks,
@@ -2470,36 +2531,47 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
           "num_devices=%i",
           args->num_devices));
     }
-    if (!cpp_send_callbacks->empty() || !cpp_recv_callbacks->empty()) {
+    if (cpp_send_callbacks != nullptr || cpp_recv_callbacks != nullptr) {
       return StatusToPjRtError(xla::Unimplemented(
           "PJRT_Executable_Execute doesn't support using send/recv callbacks "
           "with `execute_device`."));
     }
 
+    absl::InlinedVector<xla::PjRtBuffer*, 16> cpp_argument_list;
+    Populate1DCppBuffers(args->argument_lists, args->num_args,
+                         cpp_argument_list);
+
     std::vector<std::unique_ptr<xla::PjRtBuffer>> cpp_buffer_list;
     std::optional<xla::Future<>> returned_future;
-    bool fill_future = args->device_complete_events != nullptr;
+    bool fill_future = args->device_complete_events != nullptr ||
+                       cpp_hlo_output_callbacks != nullptr ||
+                       execute_context != nullptr;
     PJRT_ASSIGN_OR_RETURN(
         xla::CompileOptions compile_options,
         args->executable->get()->GetExecutable()->GetCompileOptions());
     if (compile_options.compile_portable_executable) {
-      PJRT_ASSIGN_OR_RETURN(
-          cpp_buffer_list,
-          args->executable->get()->ExecutePortable(
-              cpp_argument_lists[0], args->execute_device->device, options,
-              returned_future, fill_future));
+      PJRT_ASSIGN_OR_RETURN(cpp_buffer_list,
+                            args->executable->get()->ExecutePortable(
+                                cpp_argument_list, args->execute_device->device,
+                                options, returned_future, fill_future));
     } else {
-      PJRT_ASSIGN_OR_RETURN(
-          cpp_buffer_list,
-          args->executable->get()->ExecuteSharded(
-              cpp_argument_lists[0], args->execute_device->device, options,
-              returned_future, fill_future));
+      PJRT_ASSIGN_OR_RETURN(cpp_buffer_list,
+                            args->executable->get()->ExecuteSharded(
+                                cpp_argument_list, args->execute_device->device,
+                                options, returned_future, fill_future));
     }
     for (int i = 0; i < cpp_buffer_list.size(); ++i) {
       args->output_lists[0][i] = new PJRT_Buffer{std::move(cpp_buffer_list[i]),
                                                  args->executable->client};
     }
-    if (fill_future) {
+    if (cpp_hlo_output_callbacks != nullptr || execute_context != nullptr) {
+      returned_future->OnReady(
+          [cpp_hlo_output_callbacks, execute_context](absl::Status status) {
+            // Keep C++ callbacks and execute context alive until execution
+            // completes on the device.
+          });
+    }
+    if (args->device_complete_events != nullptr) {
       args->device_complete_events[0] =
           new PJRT_Event{std::move((*returned_future))};
     }
@@ -2991,6 +3063,7 @@ PJRT_Error* PJRT_Buffer_IncreaseExternalReferenceCount(
   PJRT_ASSIGN_OR_RETURN(
       std::unique_ptr<xla::PjRtBuffer::ExternalReference> external_reference,
       args->buffer->buffer->AcquireExternalReference());
+  absl::MutexLock lock(args->buffer->mu);
   args->buffer->external_references.push_back(std::move(external_reference));
   return nullptr;
 }
@@ -3002,14 +3075,21 @@ PJRT_Error* PJRT_Buffer_DecreaseExternalReferenceCount(
       PJRT_Buffer_DecreaseExternalReferenceCount_Args_STRUCT_SIZE,
       args->struct_size));
 
-  if (!args->buffer->external_references.empty()) {
+  // Destroy external_reference outside args->buffer->mu to avoid holding it
+  // while acquiring the underlying buffer lock.
+  std::unique_ptr<xla::PjRtBuffer::ExternalReference> external_reference;
+  {
+    absl::MutexLock lock(args->buffer->mu);
+    if (args->buffer->external_references.empty()) {
+      absl::Status status = xla::InvalidArgument(
+          "Attempting to decrease reference on a buffer with zero reference "
+          "count.");
+      return StatusToPjRtError(std::move(status));
+    }
+    external_reference = std::move(args->buffer->external_references.back());
     args->buffer->external_references.pop_back();
-    return nullptr;
   }
-  absl::Status status = xla::InvalidArgument(
-      "Attempting to decrease reference on a buffer with zero reference "
-      "count.");
-  return StatusToPjRtError(std::move(status));
+  return nullptr;
 }
 
 PJRT_Error* PJRT_Buffer_OpaqueDeviceMemoryDataPointer(
@@ -3290,10 +3370,10 @@ PJRT_Error* PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace(
       PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args_STRUCT_SIZE,  // NOLINT (whitespace/line_length)
       args->struct_size));
 
-  xla::PrimitiveType element_type =
-      pjrt::ConvertFromPjRtBufferType(args->element_type);
-  xla::Shape input_shape =
-      xla::ShapeUtil::MakeShape(element_type, {args->dims, args->num_dims});
+  PJRT_ASSIGN_OR_RETURN(
+      xla::Shape input_shape,
+      pjrt::BuildXlaShapeFromC(args->element_type, args->dims, args->num_dims,
+                               /*layout=*/nullptr));
 
   const xla::Layout* layout_ptr = nullptr;
   xla::Layout layout;
@@ -3756,15 +3836,19 @@ PJRT_Executable::PJRT_Executable(xla::PjRtExecutable* unowned_executable)
 static void PopulatePjrtExecutableAddressableDeviceLogicalIds(
     PJRT_LoadedExecutable* executable) {
   CHECK(executable->client != nullptr) << ": client was null";
-  absl::Span<const xla::PjRtLoadedExecutable::LogicalDeviceIds> cpp_ids =
-      executable->get()->addressable_device_logical_ids();
+  absl::StatusOr<absl::Span<const xla::PjRtLoadedExecutable::LogicalDeviceIds>>
+      cpp_ids = executable->get()->addressable_device_logical_ids();
+  if (!cpp_ids.ok()) {
+    executable->addressable_device_logical_ids = cpp_ids.status();
+    return;
+  }
 
-  std::vector<PJRT_LogicalDeviceIds>& exec_ids =
-      executable->addressable_device_logical_ids;
-  exec_ids.reserve(cpp_ids.size());
-  for (const auto& id : cpp_ids) {
+  std::vector<PJRT_LogicalDeviceIds> exec_ids;
+  exec_ids.reserve(cpp_ids->size());
+  for (const auto& id : *cpp_ids) {
     exec_ids.push_back(PJRT_LogicalDeviceIds{id.replica, id.partition});
   }
+  executable->addressable_device_logical_ids = std::move(exec_ids);
 }
 
 PJRT_LoadedExecutable::PJRT_LoadedExecutable(

@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "tsl/platform/platform.h"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
+#include "xla/backends/cpu/runtime/rng_state_resource.h"
 #include "xla/backends/cpu/runtime/thread_pool_task_runner.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk_testlib.h"
@@ -203,21 +204,12 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> AddI32Thunk::Execute(
   if (params.intra_op_threadpool) {
     auto event = tsl::MakeConstructedAsyncValueRef<ExecuteEvent>();
 
-    // Collective communicator resource creates only a scheduling edge,
-    // incrementing the shared resource value from the intra-op thread pool
-    // might lead to data races. ThunkExecutor will only guarantee that calls
-    // to Execute() are properly synchronized.
-    if (shared_resource_ &&
-        *shared_resource_ == Resource::kCollectiveCommunicator) {
-      shared_resource++;
-    }
-
     params.intra_op_threadpool->getPool()->Schedule([&, event, execute] {
-      // Token creates an execution edge, and it means that dependent thunks
-      // will wait for the completion of execution of all dependencies, and we
-      // verify that we don't have data races by mutating shared resource from a
-      // task that runs on a thread pool.
-      if (shared_resource_ && *shared_resource_ == Resource::kToken) {
+      // Resource uses create an execution edge, and it means that dependent
+      // thunks will wait for the completion of execution of all dependencies,
+      // and we verify that we don't have data races by mutating shared
+      // resource from a task that runs on a thread pool.
+      if (shared_resource_) {
         shared_resource++;
       }
 
@@ -266,6 +258,9 @@ AddI32Thunk::ResourceUses AddI32Thunk::resource_uses() const {
       new std::shared_ptr<Resource>(
           Resource::Create(Resource::kCollectiveCommunicator));
 
+  static std::shared_ptr<Resource>* rng_resource =
+      new std::shared_ptr<Resource>(std::make_shared<RngStateResource>());
+
   if (!shared_resource_) {
     return ResourceUses{};
   }
@@ -275,6 +270,8 @@ AddI32Thunk::ResourceUses AddI32Thunk::resource_uses() const {
       return ResourceUses{ResourceUse::Write(*token_resource)};
     case Resource::kCollectiveCommunicator:
       return ResourceUses{ResourceUse::Write(*comm_resource)};
+    case Resource::kRngState:
+      return ResourceUses{ResourceUse::Write(*rng_resource)};
   }
 }
 
@@ -786,7 +783,6 @@ auto NumTestThunks() {
 
 // Create aliases for all possible combinations of shared resource use.
 static constexpr auto kToken = Resource::Kind::kToken;
-static constexpr auto kComm = Resource::Kind::kCollectiveCommunicator;
 static constexpr auto kNoResource = SharedResourceUse::Kind::kNo;
 static constexpr auto kAllResource = SharedResourceUse::Kind::kAll;
 static constexpr auto kRandomResource = SharedResourceUse::Kind::kRandom;
@@ -800,10 +796,7 @@ INSTANTIATE_TEST_SUITE_P(
         /*shared_resource_use=*/
         testing::Values(SharedResourceUse{kNoResource, kToken},
                         SharedResourceUse{kAllResource, kToken},
-                        SharedResourceUse{kRandomResource, kToken},
-                        SharedResourceUse{kNoResource, kComm},
-                        SharedResourceUse{kAllResource, kComm},
-                        SharedResourceUse{kRandomResource, kComm}),
+                        SharedResourceUse{kRandomResource, kToken}),
         /*inject_errors=*/testing::Bool(),
         /*use_priority_ready_queue=*/testing::Bool()));
 

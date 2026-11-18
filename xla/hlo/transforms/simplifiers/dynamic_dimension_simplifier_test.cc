@@ -17,6 +17,9 @@ limitations under the License.
 
 #include <memory>
 
+#include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -27,6 +30,7 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/test.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/service/hlo_creation_utils.h"
@@ -41,6 +45,7 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::absl_testing::IsOkAndHolds;
 namespace m = match;
 
 class DynamicDimensionSimplifierTest : public HloHardwareIndependentTestBase {};
@@ -190,6 +195,108 @@ TEST_F(DynamicDimensionSimplifierTest, IdConvertRemoving) {
   ASSERT_TRUE(simplifier.Run(m.get()).value());
   EXPECT_THAT(m->entry_computation()->root_instruction(),
               GmockMatch(m::Parameter(0)));
+}
+
+TEST_F(DynamicDimensionSimplifierTest, DoNotForwardConcatSliceDynamicOperand) {
+  const char* kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = s32[<=2] parameter(0)
+      p1 = s32[1] parameter(1)
+      p2 = s32[1] parameter(2)
+      concat = s32[<=4] concatenate(p0, p1, p2), dimensions={0}
+      ROOT slice = s32[1] slice(concat), slice={[2:3]}
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  DynamicDimensionSimplifier simplifier;
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, simplifier.Run(m.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(DynamicDimensionSimplifierTest,
+       ForwardConcatSliceStaticPrefixBeforeDynamicOperand) {
+  const char* kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = s32[1] parameter(0)
+      p1 = s32[<=2] parameter(1)
+      concat = s32[<=3] concatenate(p0, p1), dimensions={0}
+      ROOT slice = s32[1] slice(concat), slice={[0:1]}
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  DynamicDimensionSimplifier simplifier;
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, simplifier.Run(m.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Parameter(0)));
+}
+
+TEST_F(DynamicDimensionSimplifierTest, IdentityReshapeRemovingIgnoresLayout) {
+  constexpr absl::string_view kModuleStr = R"hlo(
+    HloModule m
+    ENTRY test {
+      p0 = s32[<=8]{0:M(1024)} parameter(0)
+      r = s32[<=8]{0} reshape(p0)
+      ROOT t = (s32[<=8]{0}) tuple(r)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+  DynamicDimensionSimplifier simplifier;
+  EXPECT_THAT(simplifier.Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Tuple(m::Parameter(0))));
+}
+
+TEST_F(DynamicDimensionSimplifierTest, DoNotRemoveReshapeDynamicMismatch) {
+  constexpr absl::string_view kModuleStr = R"hlo(
+    HloModule m
+    ENTRY test {
+      p0 = s32[<=8]{0} parameter(0)
+      ROOT r = s32[8]{0} reshape(p0)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+  DynamicDimensionSimplifier simplifier;
+  EXPECT_THAT(simplifier.Run(module.get()), IsOkAndHolds(false));
+}
+
+TEST_F(DynamicDimensionSimplifierTest, IdentityConvertRemovingIgnoresLayout) {
+  constexpr absl::string_view kModuleStr = R"hlo(
+    HloModule m
+    ENTRY test {
+      p0 = s32[<=8]{0:M(1024)} parameter(0)
+      c = s32[<=8]{0} convert(p0)
+      ROOT t = (s32[<=8]{0}) tuple(c)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+  DynamicDimensionSimplifier simplifier;
+  EXPECT_THAT(simplifier.Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Tuple(m::Parameter(0))));
+}
+
+TEST_F(DynamicDimensionSimplifierTest, ReshapeReshapeForwardingIgnoresLayout) {
+  constexpr absl::string_view kModuleStr = R"hlo(
+    HloModule m
+    ENTRY test {
+      p0 = s32[<=8]{0:M(1024)} parameter(0)
+      r1 = s32[1,<=8]{1,0} reshape(p0)
+      r2 = s32[<=8]{0} reshape(r1)
+      ROOT t = (s32[<=8]{0}) tuple(r2)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+  DynamicDimensionSimplifier simplifier;
+  EXPECT_THAT(simplifier.Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Tuple(m::Parameter(0))));
 }
 
 }  // namespace

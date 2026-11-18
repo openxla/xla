@@ -32,11 +32,24 @@ limitations under the License.
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/pjrt_ifrt/xla_sharding.h"
 #include "xla/python/pjrt_ifrt/xla_sharding.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace ifrt {
 
 namespace {
+
+bool ContainsNamedSharding(const xla::OpSharding& op_sharding) {
+  if (op_sharding.has_named_sharding()) {
+    return true;
+  }
+  for (const xla::OpSharding& element : op_sharding.tuple_shardings()) {
+    if (ContainsNamedSharding(element)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // Serialization/deserialization for `HloSharding`.
 class HloShardingSerDes : public RTTIExtends<HloSharding, SerDes> {
@@ -100,10 +113,18 @@ class HloShardingSerDes : public RTTIExtends<HloSharding, SerDes> {
     if (proto.has_memory_kind()) {
       memory_kind = MemoryKind(proto.memory_kind());
     }
+    if (ContainsNamedSharding(proto.xla_op_sharding())) {
+      return absl::InvalidArgumentError(
+          "HloSharding with XLA HloShardingV3 format is not supported for "
+          "deserialization");
+    }
     ABSL_ASSIGN_OR_RETURN(auto xla_hlo_sharding,
                           xla::HloSharding::FromProto(proto.xla_op_sharding()));
-    return HloSharding::Create(std::move(devices), memory_kind,
-                               std::move(xla_hlo_sharding));
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<HloSharding> sharding,
+        HloSharding::CreateIfValid(std::move(devices), memory_kind,
+                                   std::move(xla_hlo_sharding)));
+    return sharding;
   }
 
   static char ID;  // NOLINT

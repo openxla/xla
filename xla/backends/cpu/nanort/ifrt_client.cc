@@ -32,6 +32,7 @@ limitations under the License.
 
 #include "absl/base/call_once.h"
 #include "absl/base/dynamic_annotations.h"
+#include "absl/base/nullability.h"
 #include "absl/base/optimization.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/inlined_vector.h"
@@ -55,6 +56,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
+#include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_layout.h"
@@ -164,7 +166,7 @@ class NanoValue : public xla::ifrt::RTTIExtends<Self, Base> {
 class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
  public:
   // An owning pointer to the underlying buffer (can be allocated for NanoArray,
-  // or "owned" via the `on_done_with_host_buffer` callback passed by the user).
+  // or "owned" via `host_buffer_hold` passed by the user).
   //
   // We use a shared_ptr because for some operations (like disassembly) we can
   // just alias the memory, but we still need to support deletion of the
@@ -212,7 +214,7 @@ class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
       NanoIfrtClient* client, void* data, ifrt::DType dtype,
       const ifrt::Shape& shape, ifrt::ShardingRef sharding,
       std::optional<absl::Span<const int64_t>> byte_strides, bool make_copy,
-      std::function<void()> on_done_with_host_buffer) {
+      std::shared_ptr<const void> host_buffer_hold) {
     bool layout_compatible = LayoutCompatible(dtype, shape, byte_strides);
     bool aligned = reinterpret_cast<uintptr_t>(data) % MinAlign() == 0;
 
@@ -239,21 +241,17 @@ class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
       }
       // We're done with the input buffer, so we can allow the caller to clean
       // it up.
-      if (on_done_with_host_buffer) {
-        on_done_with_host_buffer();
-      }
+      host_buffer_hold.reset();
 
       return tsl::TakeRef(new NanoArray(
           client, dtype, shape, std::move(owned_data), std::move(sharding)));
     }
 
     // We can create a view into the user's buffer, but we must take ownership
-    // of it via the provided callback.
-    if (ABSL_PREDICT_FALSE(on_done_with_host_buffer)) {
+    // of it via the provided hold.
+    if (ABSL_PREDICT_FALSE(host_buffer_hold != nullptr)) {
       return tsl::TakeRef(new NanoArray(
-          client, dtype, shape,
-          OwnedDataPtr(data, [done = std::move(on_done_with_host_buffer)](
-                                 void* ptr) { done(); }),
+          client, dtype, shape, OwnedDataPtr(std::move(host_buffer_hold), data),
           std::move(sharding)));
     }
 
@@ -916,7 +914,8 @@ class NanoExecutable final
     XlaComputation computation;
     ABSL_RETURN_IF_ERROR(MlirToXlaComputation(
         xla_program->mlir_module(), computation, /*use_tuple_args=*/false,
-        /*return_tuple=*/true, /*exec_build_options=*/nullptr));
+        /*return_tuple=*/true, /*exec_build_options=*/nullptr,
+        mlir::mhlo::getCpuChloToHighLevelMhloOptions()));
     ABSL_ASSIGN_OR_RETURN(auto nano_executable,
                           client->nano_client()->Compile(computation));
 
@@ -952,6 +951,11 @@ class NanoExecutable final
   absl::StatusOr<ExecuteResult> Execute(
       absl::Span<ifrt::ArrayRef> args, const ExecuteOptions& options,
       std::optional<ifrt::DeviceListRef> devices) override {
+    if (devices.has_value() &&
+        (*devices == nullptr || **devices != *devices_)) {
+      return InvalidArgument(
+          "Cannot execute with devices that differ from the bound devices");
+    }
     if (ABSL_PREDICT_FALSE(args.size() != input_shardings_.size())) {
       return InvalidArgument(
           "Number of arguments %d is not what executable expects %d",
@@ -1343,7 +1347,8 @@ class NanoExecutable final
 class NanoCompiler final
     : public xla::ifrt::RTTIExtends<NanoCompiler, ifrt::Compiler> {
  public:
-  explicit NanoCompiler(NanoIfrtClient* client) : client_(client) {}
+  explicit NanoCompiler(NanoIfrtClient* absl_nonnull client)
+      : client_(client) {}
 
   using ifrt::Compiler::Compile;
 
@@ -1367,14 +1372,15 @@ class NanoCompiler final
 
   tsl::Future<ifrt::LoadedExecutableRef> DeserializeLoadedExecutable(
       const absl::Cord& serialized,
-      std::unique_ptr<ifrt::DeserializeExecutableOptions> options) override {
+      absl_nullable std::unique_ptr<ifrt::DeserializeExecutableOptions> options)
+      override {
     return absl::UnimplementedError(
         "DeserializeLoadedExecutable is not implemented.");
   }
   static char ID;  // NOLINT
 
  private:
-  NanoIfrtClient* client_;
+  NanoIfrtClient* absl_nonnull client_;
 };
 
 [[maybe_unused]] char NanoCompiler::ID = 'C';  // NOLINT
@@ -1480,7 +1486,7 @@ absl::StatusOr<ifrt::ArrayRef> NanoIfrtClient::MakeArrayFromHostBuffer(
     std::optional<absl::Span<const int64_t>> byte_strides,
     ifrt::ShardingRef sharding, ifrt::LayoutRef layout,
     HostBufferSemantics semantics,
-    std::function<void()> on_done_with_host_buffer) {
+    std::shared_ptr<const void> host_buffer_hold) {
   if (layout != nullptr) {
     return absl::InvalidArgumentError(absl::StrFormat(
         "NanoIfrtClient does not support custom layouts, but got layout: %v",
@@ -1499,7 +1505,7 @@ absl::StatusOr<ifrt::ArrayRef> NanoIfrtClient::MakeArrayFromHostBuffer(
   }
   return NanoArray::FromBuffer(this, const_cast<void*>(data), dtype, shape,
                                std::move(sharding), byte_strides, make_copy,
-                               std::move(on_done_with_host_buffer));
+                               std::move(host_buffer_hold));
 }
 
 absl::StatusOr<std::vector<ifrt::ArrayRef>>
@@ -1583,6 +1589,15 @@ absl::StatusOr<std::vector<ifrt::ArrayRef>> NanoIfrtClient::CopyArrays(
   return result;
 }
 
+absl::StatusOr<std::vector<ifrt::ArrayRef>>
+NanoIfrtClient::CopyArraysWithDonatedDst(
+    absl::Span<ifrt::ArrayRef> arrays,
+    absl::Span<ifrt::ArrayRef> donated_dst_arrays,
+    ifrt::ArrayCopySemantics semantics) {
+  return absl::UnimplementedError(
+      "CopyArraysWithDonatedDst is not implemented.");
+}
+
 absl::StatusOr<std::vector<ifrt::ArrayRef>> NanoIfrtClient::RemapArrays(
     const ifrt::RemapPlan& plan, absl::Span<ifrt::ArrayRef> arrays,
     ifrt::ArrayCopySemantics semantics) {
@@ -1606,6 +1621,20 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> NanoIfrtClient::ReshardArrays(
     absl::Span<const xla::ifrt::ArraySpec> specs,
     xla::ifrt::ArrayCopySemantics semantics) {
   return absl::UnimplementedError("ReshardArrays is not implemented.");
+}
+
+absl::StatusOr<std::vector<xla::ifrt::ArrayRef>>
+NanoIfrtClient::CopyArraySlices(
+    absl::Span<const xla::ifrt::ArrayRef> arrays,
+    absl::Span<const xla::ifrt::IndexDomain> index_domains) {
+  return absl::UnimplementedError("CopyArraySlices is not implemented.");
+}
+
+absl::StatusOr<std::vector<xla::ifrt::ArrayRef>>
+NanoIfrtClient::UpdateArraySlices(absl::Span<xla::ifrt::ArrayRef> arrays,
+                                  absl::Span<const xla::ifrt::ArrayRef> slices,
+                                  absl::Span<const xla::ifrt::Index> origins) {
+  return absl::UnimplementedError("UpdateArraySlices is not implemented.");
 }
 
 tsl::Future<> NanoIfrtClient::GetReadyFuture(
@@ -1708,7 +1737,7 @@ absl::StatusOr<ifrt::Device*> NanoIfrtClient::LookupAddressableDevice(
 }
 
 absl::StatusOr<ifrt::DeviceListRef> NanoIfrtClient::MakeDeviceList(
-    absl::Span<ifrt::Device* const> devices) const {
+    absl::Span<ifrt::Device* absl_nonnull const> devices) const {
   if (ABSL_PREDICT_TRUE(devices.size() == 1)) {
     return single_device_lists_[devices[0]->Id().value()];
   }
@@ -1718,8 +1747,9 @@ absl::StatusOr<ifrt::DeviceListRef> NanoIfrtClient::MakeDeviceList(
 ifrt::Compiler* NanoIfrtClient::GetDefaultCompiler() { return compiler_.get(); }
 
 absl::StatusOr<std::vector<tsl::Future<ifrt::LoadedExecutableRef>>>
-NanoIfrtClient::Load(absl::Span<const ifrt::ExecutableRef> executables,
-                     absl::Span<std::unique_ptr<ifrt::LoadOptions>> options) {
+NanoIfrtClient::Load(
+    absl::Span<const ifrt::ExecutableRef> executables,
+    absl::Span<absl_nonnull std::unique_ptr<ifrt::LoadOptions>> options) {
   return absl::UnimplementedError("Load is not implemented.");
 }
 
@@ -1732,7 +1762,7 @@ NanoIfrtClient::GetTopologyForDevices(
 absl::StatusOr<std::shared_ptr<const PjRtLayout>>
 NanoIfrtClient::GetDefaultPjRtLayout(ifrt::DType dtype,
                                      absl::Span<const int64_t> dims,
-                                     ifrt::Device* device,
+                                     ifrt::Device* absl_nonnull device,
                                      ifrt::MemoryKind memory_kind) const {
   return std::make_shared<PjRtLayout>(
       LayoutUtil::MakeDescendingLayout(dims.size()));

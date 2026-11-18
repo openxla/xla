@@ -43,15 +43,15 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/transforms/call_inliner.h"
+#include "xla/hlo/transforms/simplifiers/hlo_cse.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
-#include "xla/service/call_inliner.h"
 #include "xla/service/compiler.h"
 #include "xla/service/dump.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_cost_analysis.h"
-#include "xla/service/hlo_cse.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/stream_executor/device_address_allocator.h"
@@ -267,8 +267,8 @@ absl::Status TritonFusionNumericsVerifier::VerifyTritonFusion(
           /*disable_triton=*/true, stream_executor_, allocator_, alias_info_,
           mlir_context_));
 
-  auto status = profiler.CheckOutputBuffer(
-      triton_result, emitters_result, debug_opts.xla_gpu_autotune_gemm_rtol());
+  auto status = profiler.CheckOutputBuffer(triton_result, emitters_result,
+                                           debug_opts.xla_autotune_rtol());
   VLOG(2) << "CompareBuffers result: " << status;
   if (!status.ok()) {
     LOG(ERROR) << "Triton numerics verification failed with: "

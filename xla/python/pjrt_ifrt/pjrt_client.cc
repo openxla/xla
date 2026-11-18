@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -29,8 +30,10 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/base/no_destructor.h"
+#include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -49,6 +52,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
+#include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/pjrt/distributed/coordination/coordination_service_agent.h"
@@ -59,6 +63,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
+#include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/array_spec.h"
@@ -73,6 +78,8 @@ limitations under the License.
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/host_callback.h"
+#include "xla/python/ifrt/index.h"
 #include "xla/python/ifrt/index_domain.h"
 #include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/memory.h"
@@ -89,13 +96,17 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_buffer_hash_util.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
+#include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/pjrt_layout.h"
 #include "xla/python/pjrt_ifrt/pjrt_memory.h"
 #include "xla/python/pjrt_ifrt/pjrt_remap.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/python/pjrt_ifrt/pjrt_tuple.h"
+#include "xla/python/pjrt_ifrt/xla_client.h"
+#include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/pjrt_ifrt/xla_sharding.h"
 #include "xla/runtime/device_id.h"
+#include "xla/service/device_assignment.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -105,7 +116,6 @@ limitations under the License.
 #include "xla/tsl/distributed_runtime/call_options.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -594,7 +604,7 @@ absl::StatusOr<ArrayRef> MakeStringArrayFromHostBuffer(
     Client* client, const void* data, DType dtype, Shape shape,
     std::optional<absl::Span<const int64_t>> byte_strides, ShardingRef sharding,
     Client::HostBufferSemantics semantics,
-    std::function<void()> on_done_with_host_buffer) {
+    std::shared_ptr<const void> host_buffer_hold) {
   auto param_validation = [&]() -> absl::Status {
     if (byte_strides.has_value()) {
       return absl::InvalidArgumentError(
@@ -627,16 +637,15 @@ absl::StatusOr<ArrayRef> MakeStringArrayFromHostBuffer(
   for (int i = 0; i < num_elements; ++i, ++element) {
     strings->push_back(*element);
   }
-  std::move(on_done_with_host_buffer)();
+  host_buffer_hold.reset();
 
   BasicStringArray::Buffers buffers;
   buffers.push_back(*strings);
-  auto buffer_releaser = [strings = std::move(strings)]() {};
 
   return BasicStringArray::Create(
       client, std::move(shape), std::move(sharding),
       tsl::Future<BasicStringArray::Buffers>(std::move(buffers)),
-      std::move(buffer_releaser));
+      std::move(strings));
 }
 
 absl::StatusOr<ArrayRef> AssembleStringArrayFromSingleDeviceStringArrays(
@@ -670,7 +679,7 @@ absl::StatusOr<ArrayRef> AssembleStringArrayFromSingleDeviceStringArrays(
   };
   auto buffer_backing_store =
       std::make_shared<BufferBackingStore>(sharding->devices()->size());
-  auto on_done_with_buffer = [buffer_holder = buffer_backing_store]() {};
+  BasicStringArray::OnDoneWithBuffer on_done_with_buffer = buffer_backing_store;
 
   struct BufferCopyingState {
     BufferCopyingState(int num_buffers_to_copy,
@@ -993,7 +1002,6 @@ absl::StatusOr<xla::GlobalDeviceId> PjRtClient::GetGlobalDeviceId(
 }
 
 absl::StatusOr<Device*> PjRtClient::LookupDevice(DeviceId device_id) const {
-  DCHECK(this);
   auto it = device_id_map_.find(device_id);
   if (it != device_id_map_.end()) {
     return it->second;
@@ -1004,7 +1012,6 @@ absl::StatusOr<Device*> PjRtClient::LookupDevice(DeviceId device_id) const {
 
 absl::StatusOr<Device*> PjRtClient::LookupAddressableDevice(
     int local_hardware_id) const {
-  DCHECK(this);
   ABSL_ASSIGN_OR_RETURN(xla::PjRtDevice * pjrt_device,
                         pjrt_client_->LookupAddressableDevice(
                             xla::LocalDeviceId(local_hardware_id)));
@@ -1012,7 +1019,7 @@ absl::StatusOr<Device*> PjRtClient::LookupAddressableDevice(
 }
 
 absl::StatusOr<DeviceListRef> PjRtClient::MakeDeviceList(
-    absl::Span<Device* const> devices) const {
+    absl::Span<Device* absl_nonnull const> devices) const {
   return xla::ifrt::BasicDeviceList::Create(devices);
 }
 
@@ -1041,8 +1048,7 @@ absl::StatusOr<ArrayRef> PjRtClient::MakeArrayFromHostBuffer(
     const void* data, DType dtype, Shape shape,
     std::optional<absl::Span<const int64_t>> byte_strides, ShardingRef sharding,
     LayoutRef layout, Client::HostBufferSemantics semantics,
-    std::function<void()> on_done_with_host_buffer) {
-  DCHECK(this);
+    std::shared_ptr<const void> host_buffer_hold) {
   if (dtype.kind() == DType::kString) {
     if (layout != nullptr) {
       return InvalidArgument(
@@ -1050,7 +1056,7 @@ absl::StatusOr<ArrayRef> PjRtClient::MakeArrayFromHostBuffer(
     }
     return MakeStringArrayFromHostBuffer(this, data, dtype, shape, byte_strides,
                                          sharding, semantics,
-                                         on_done_with_host_buffer);
+                                         std::move(host_buffer_hold));
   }
   if (!isa<const SingleDeviceSharding>(sharding.get()) &&
       !sharding->IsFullyReplicated()) {
@@ -1077,22 +1083,20 @@ absl::StatusOr<ArrayRef> PjRtClient::MakeArrayFromHostBuffer(
                           ToPjRtLayout(dtype, shard_shape, layout));
     xla_layout = &pjrt_layout->xla_layout();
   }
-  std::function<void()> on_done_with_host_buffer_per_device;
-  if (on_done_with_host_buffer) {
-    auto shared_on_done = std::shared_ptr<void>(
-        nullptr,
-        [on_done = std::move(on_done_with_host_buffer)](void*) { on_done(); });
-    on_done_with_host_buffer_per_device =
-        [shared_on_done = std::move(shared_on_done)]() mutable {
-          shared_on_done.reset();
-        };
-  } else {
-    on_done_with_host_buffer_per_device = []() {};
-  }
 
   PjRtArray::PjRtBuffers buffers;
   buffers.reserve(ifrt_addressable_devices.size());
-  for (xla::ifrt::Device* const device : ifrt_addressable_devices) {
+  for (int64_t i = 0; i < ifrt_addressable_devices.size(); ++i) {
+    xla::ifrt::Device* const device = ifrt_addressable_devices[i];
+    absl::AnyInvocable<void() &&> on_done_with_host_buffer_per_device;
+    if (host_buffer_hold != nullptr) {
+      std::shared_ptr<const void> per_device_hold =
+          (i + 1 == ifrt_addressable_devices.size())
+              ? std::move(host_buffer_hold)
+              : host_buffer_hold;
+      on_done_with_host_buffer_per_device =
+          [hold = std::move(per_device_hold)]() mutable { hold.reset(); };
+    }
     std::unique_ptr<PjRtBuffer> buffer;
     // If the sharding has memory_kind specified, use a version of
     // `PjRtClient::BufferFromHostBuffer` that accepts `PjRtMemorySpace`.
@@ -1121,7 +1125,7 @@ absl::StatusOr<ArrayRef> PjRtClient::MakeArrayFromHostBuffer(
           buffer,
           pjrt_client_->BufferFromHostBuffer(
               data, primitive_type, shape.dims(), byte_strides, semantics,
-              on_done_with_host_buffer_per_device,
+              std::move(on_done_with_host_buffer_per_device),
               absl::down_cast<PjRtMemory*>(memory)->pjrt_memory(), xla_layout));
     } else {
       ABSL_ASSIGN_OR_RETURN(xla::PjRtMemorySpace * memory_space,
@@ -1129,10 +1133,10 @@ absl::StatusOr<ArrayRef> PjRtClient::MakeArrayFromHostBuffer(
                                 ->pjrt_device()
                                 ->default_memory_space());
       ABSL_ASSIGN_OR_RETURN(
-          buffer,
-          pjrt_client_->BufferFromHostBuffer(
-              data, primitive_type, shape.dims(), byte_strides, semantics,
-              on_done_with_host_buffer_per_device, memory_space, xla_layout));
+          buffer, pjrt_client_->BufferFromHostBuffer(
+                      data, primitive_type, shape.dims(), byte_strides,
+                      semantics, std::move(on_done_with_host_buffer_per_device),
+                      memory_space, xla_layout));
     }
     buffers.push_back(std::move(buffer));
   }
@@ -1152,7 +1156,6 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::MakeErrorArrays(
   if (error.ok()) {
     return absl::InvalidArgumentError("Error status must not be OK");
   }
-  DCHECK(this);
   std::vector<ArrayRef> arrays;
   arrays.reserve(array_specs.size());
   for (const auto& array_spec : array_specs) {
@@ -1161,7 +1164,7 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::MakeErrorArrays(
                             BasicStringArray::Create(
                                 this, array_spec.shape, array_spec.sharding,
                                 tsl::Future<BasicStringArray::Buffers>(error),
-                                /*on_done_with_buffer=*/[]() {}));
+                                /*on_done_with_buffer=*/nullptr));
       continue;
     }
 
@@ -1172,10 +1175,14 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::MakeErrorArrays(
     ABSL_ASSIGN_OR_RETURN(Shape shard_shape,
                           array_spec.sharding->GetShardShape(array_spec.shape));
     xla::Shape xla_shape;
+    const xla::Layout* layout = nullptr;
     if (primitive_type == xla::TOKEN) {
       xla_shape = xla::ShapeUtil::MakeTokenShape();
     } else {
       xla_shape = xla::ShapeUtil::MakeShape(primitive_type, shard_shape.dims());
+      if (array_spec.layout != nullptr) {
+        layout = &array_spec.layout->xla_layout();
+      }
     }
 
     PjRtArray::PjRtBuffers buffers;
@@ -1204,11 +1211,11 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::MakeErrorArrays(
           buffers.emplace_back(),
           pjrt_client_->CreateErrorBuffer(
               error, xla_shape,
-              absl::down_cast<PjRtMemory*>(memory)->pjrt_memory()));
+              absl::down_cast<PjRtMemory*>(memory)->pjrt_memory(), layout));
     }
     ABSL_ASSIGN_OR_RETURN(
         arrays.emplace_back(),
-        PjRtArray::Create(this, array_spec.dtype, std::move(shard_shape),
+        PjRtArray::Create(this, array_spec.dtype, array_spec.shape,
                           array_spec.sharding, std::move(buffers),
                           array_spec.layout));
   }
@@ -1226,7 +1233,6 @@ absl::StatusOr<ArrayRef> PjRtClient::AssembleArrayFromSingleDeviceArrays(
     DType dtype, Shape shape, ShardingRef sharding, absl::Span<ArrayRef> arrays,
     ArrayCopySemantics array_copy_semantics,
     SingleDeviceShardSemantics single_device_shard_semantics) {
-  DCHECK(this);
   if (!arrays.empty() && isa<const SingleDeviceSharding>(sharding.get())) {
     // Assemble with SingleDeviceSharding is No-op.
     if (arrays.size() != 1) {
@@ -1235,10 +1241,15 @@ absl::StatusOr<ArrayRef> PjRtClient::AssembleArrayFromSingleDeviceArrays(
           "must be one, but the actual size is %d",
           arrays.size());
     }
+    if (arrays[0]->IsDeleted()) {
+      return InvalidArgument(
+          "Input array 0 has already been deleted or donated");
+    }
     return arrays[0];
-  } else if (!isa<const SingleDeviceSharding, const OpaqueSharding,
-                  const ConcreteSharding, const ConcreteEvenSharding,
-                  const HloSharding>(sharding.get())) {
+  }
+  if (!isa<const SingleDeviceSharding, const OpaqueSharding,
+           const ConcreteSharding, const ConcreteEvenSharding,
+           const HloSharding>(sharding.get())) {
     return InvalidArgument(
         "Only SingleDeviceSharding, OpaqueSharding, ConcreteSharding, "
         "ConcreteEvenSharding, and HloSharding are supported: sharding=%v",
@@ -1271,6 +1282,10 @@ absl::StatusOr<ArrayRef> PjRtClient::AssembleArrayFromSingleDeviceArrays(
           arrays[i]->DebugString());
     }
     auto* array = static_cast<PjRtCompatibleArray*>(arrays[i].get());
+    if (array->IsDeleted()) {
+      return InvalidArgument(
+          "Input array %d has already been deleted or donated", i);
+    }
     if (array->dtype() != dtype) {
       return InvalidArgument(
           "Every input must have the same dtype: %v (shard 0) vs. %v (shard "
@@ -1309,17 +1324,80 @@ absl::StatusOr<ArrayRef> PjRtClient::AssembleArrayFromSingleDeviceArrays(
 absl::StatusOr<std::vector<ArrayRef>> PjRtClient::CopyArrays(
     absl::Span<ArrayRef> arrays, std::optional<DeviceListRef> devices,
     std::optional<MemoryKind> memory_kind, ArrayCopySemantics semantics) {
+  return CopyArraysImpl(arrays, std::move(devices), memory_kind,
+                        /*donated_dst_arrays=*/{}, semantics);
+}
+
+absl::StatusOr<std::vector<ArrayRef>> PjRtClient::CopyArraysWithDonatedDst(
+    absl::Span<ArrayRef> arrays, absl::Span<ArrayRef> donated_dst_arrays,
+    ArrayCopySemantics semantics) {
+  if (arrays.size() != donated_dst_arrays.size()) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "CopyArraysWithDonatedDst requires arrays and donated_dst_arrays to "
+        "have the same size, got %d vs %d",
+        arrays.size(), donated_dst_arrays.size()));
+  }
+  if (semantics == ArrayCopySemantics::kReuseInput) {
+    return absl::InvalidArgumentError(
+        "CopyArraysWithDonatedDst does not support kReuseInput semantics");
+  }
+  if (arrays.empty()) {
+    return std::vector<ArrayRef>();
+  }
+
+  absl::flat_hash_set<const Array*> seen_donated;
+  for (size_t i = 0; i < arrays.size(); ++i) {
+    if (!seen_donated.insert(donated_dst_arrays[i].get()).second) {
+      return absl::InvalidArgumentError(
+          "Passing duplicate arrays in donated_dst_arrays is not allowed");
+    }
+    if (donated_dst_arrays[i]->IsDeleted()) {
+      return absl::FailedPreconditionError(
+          absl::StrFormat("CopyArraysWithDonatedDst donated_dst_arrays[%d] is "
+                          "already deleted",
+                          i));
+    }
+    if (i > 0) {
+      const auto& dst_sharding = donated_dst_arrays[i]->sharding();
+      if (*dst_sharding.devices() !=
+              *donated_dst_arrays[0]->sharding().devices() ||
+          dst_sharding.memory_kind() !=
+              donated_dst_arrays[0]->sharding().memory_kind()) {
+        return absl::InvalidArgumentError(
+            "CopyArraysWithDonatedDst only supports destination arrays with "
+            "the same device list and memory kind");
+      }
+    }
+  }
+  for (const ArrayRef& arr : arrays) {
+    if (seen_donated.contains(arr.get())) {
+      return absl::InvalidArgumentError(
+          "Passing the same array in both arrays and donated_dst_arrays is not "
+          "allowed");
+    }
+  }
+
+  return CopyArraysImpl(arrays, donated_dst_arrays[0]->sharding().devices(),
+                        donated_dst_arrays[0]->sharding().memory_kind(),
+                        donated_dst_arrays, semantics);
+}
+
+absl::StatusOr<std::vector<ArrayRef>> PjRtClient::CopyArraysImpl(
+    absl::Span<ArrayRef> arrays, std::optional<DeviceListRef> devices,
+    std::optional<MemoryKind> memory_kind,
+    absl::Span<ArrayRef> donated_dst_arrays, ArrayCopySemantics semantics) {
   if (arrays.empty()) {
     return std::vector<ArrayRef>();
   }
 
   for (int i = 1; i < arrays.size(); ++i) {
     const auto& sharding = arrays[i]->sharding();
-    if (*sharding.devices() != *arrays[0]->sharding().devices() ||
+    if ((devices.has_value() &&
+         *sharding.devices() != *arrays[0]->sharding().devices()) ||
         sharding.memory_kind() != arrays[0]->sharding().memory_kind()) {
       return absl::InvalidArgumentError(
           "CopyArrays only supports arrays with the same device list and "
-          "memory kind");
+          "memory kind when `devices` is specified");
     }
   }
 
@@ -1333,8 +1411,8 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::CopyArrays(
           "CopyArrays only supports destination device list of the same size "
           "as the array device lists.");
     };
-    if (src_devices->size() > 0 && (src_devices->devices()[0]->client() ==
-                                    dst_devices->devices()[0]->client())) {
+    if (!src_devices->empty() && (src_devices->devices()[0]->client() ==
+                                  dst_devices->devices()[0]->client())) {
       for (int i = 0; i < dst_devices->size(); ++i) {
         if (dst_devices->devices()[i]->ProcessIndex() !=
             src_devices->devices()[i]->ProcessIndex()) {
@@ -1348,11 +1426,19 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::CopyArrays(
   if (all_host_local_transfers) {
     std::vector<ArrayRef> new_arrays;
     new_arrays.reserve(arrays.size());
-    for (const ArrayRef& array : arrays) {
+    for (size_t i = 0; i < arrays.size(); ++i) {
+      const ArrayRef& array = arrays[i];
       if (auto* const pjrt_array = dyn_cast<PjRtArray>(array.get())) {
-        ABSL_ASSIGN_OR_RETURN(
-            new_arrays.emplace_back(),
-            pjrt_array->Copy(devices, memory_kind, semantics));
+        if (!donated_dst_arrays.empty()) {
+          ABSL_ASSIGN_OR_RETURN(
+              new_arrays.emplace_back(),
+              pjrt_array->CopyWithDonatedDst(
+                  cast<PjRtArray>(donated_dst_arrays[i].get()), semantics));
+        } else {
+          ABSL_ASSIGN_OR_RETURN(
+              new_arrays.emplace_back(),
+              pjrt_array->Copy(devices, memory_kind, semantics));
+        }
       } else if (auto* const string_array =
                      dyn_cast<BasicStringArray>(array.get())) {
         ABSL_ASSIGN_OR_RETURN(
@@ -1385,6 +1471,12 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
                                    DeviceListRef dst_devices,
                                    std::optional<MemoryKind> memory_kind,
                                    ArrayCopySemantics semantics) {
+  for (size_t i = 0; i < arrays.size(); ++i) {
+    if (arrays[i]->IsDeleted()) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "CopyArrays input array %d has already been deleted or donated", i));
+    }
+  }
   std::vector<ArrayRef> new_arrays;
   new_arrays.reserve(arrays.size());
   std::vector<std::vector<std::shared_ptr<PjRtBuffer>>> recv_buffers;
@@ -1399,6 +1491,20 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
       LOG(ERROR) << "Cross-host receive buffer failed: " << status;
     }
   };
+  // Same snapshot execute uses. A missing cache keeps the historical key
+  // instead of failing the copy. Both hosts must pass this map; one side
+  // alone would make the clique keys diverge.
+  absl::flat_hash_map<TaskId, IncarnationId> incarnations;
+  absl::StatusOr<absl::flat_hash_map<int, IncarnationId>> incarnations_or =
+      Incarnations();
+  if (incarnations_or.ok()) {
+    incarnations.reserve(incarnations_or->size());
+    for (const auto& [task_id, incarnation_id] : *incarnations_or) {
+      incarnations.emplace(TaskId(task_id), incarnation_id);
+    }
+  } else {
+    VLOG(3) << "Unable to get incarnations: " << incarnations_or.status();
+  }
   int j = 0;  // Counter for the addressable buffers.
   for (int i = 0; i < dst_devices->size(); ++i) {
     // TODO(emilyaf): Extend CreateNewTransferKey to take N and return N keys
@@ -1445,8 +1551,9 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
         // plugin's `CopyToRemoteDevice` API, getting the buffer descriptors
         // from the KV store.
         absl::StatusOr<std::vector<Future<>>> send_futures =
-            pjrt_client_->CrossHostSendBuffers(
-                send_buffers, std::move(dst_global_device_ids), transfer_keys);
+            pjrt_client_->CrossHostSendBuffers(send_buffers,
+                                               std::move(dst_global_device_ids),
+                                               transfer_keys, incarnations);
         if (send_futures.ok()) {
           for (Future<>& send_future : *send_futures) {
             send_future.OnReady(on_send_done);
@@ -1500,7 +1607,7 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
       absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
           received_buffers = pjrt_client_->CrossHostReceiveBuffers(
               pjrt_device, recv_shapes, std::move(src_global_device_ids),
-              transfer_keys);
+              transfer_keys, incarnations);
       if (absl::IsUnimplemented(received_buffers.status())) {
         ABSL_ASSIGN_OR_RETURN(received_buffers, CrossHostReceiveBuffers(
                                                     recv_shapes, pjrt_device,
@@ -1792,6 +1899,10 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PjRtClient::BitcastArrays(
       return absl::InvalidArgumentError(
           absl::StrFormat("Array %d is not a PjRtArray", i));
     }
+    if (pjrt_array->IsDeleted()) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Array %d has already been deleted or donated", i));
+    }
 
     absl::Span<const std::shared_ptr<PjRtBuffer>> buffers =
         pjrt_array->pjrt_buffers();
@@ -1838,6 +1949,10 @@ tsl::Future<std::vector<uint64_t>> PjRtClient::HashValues(
     if (pjrt_array == nullptr) {
       return absl::UnimplementedError(
           "PjRtClient::HashValues requires PjRtCompatibleArray");
+    }
+    if (pjrt_array->IsDeleted()) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Value %d has already been deleted or donated", i));
     }
     if (!pjrt_array->sharding().devices()->IsFullyAddressable()) {
       return absl::UnimplementedError(
@@ -1934,6 +2049,19 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PjRtClient::ReshardArrays(
   return Unimplemented("ReshardArrays not available with pjrt-ifrt client.");
 }
 
+absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PjRtClient::CopyArraySlices(
+    absl::Span<const ArrayRef> arrays,
+    absl::Span<const IndexDomain> index_domains) {
+  return Unimplemented("CopyArraySlices not available with pjrt-ifrt client.");
+}
+
+absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PjRtClient::UpdateArraySlices(
+    absl::Span<ArrayRef> arrays, absl::Span<const ArrayRef> slices,
+    absl::Span<const Index> origins) {
+  return Unimplemented(
+      "UpdateArraySlices not available with pjrt-ifrt client.");
+}
+
 tsl::Future<> PjRtClient::GetReadyFuture(absl::Span<const ValueRef> values) {
   absl::InlinedVector<tsl::Future<>, 1> futures;
   futures.reserve(values.size());
@@ -1969,8 +2097,116 @@ absl::StatusOr<BundleRef> PjRtClient::ConcatBundles(
 
 absl::StatusOr<std::vector<tsl::Future<LoadedExecutableRef>>> PjRtClient::Load(
     absl::Span<const ExecutableRef> executables,
-    absl::Span<std::unique_ptr<LoadOptions>> options) {
-  return absl::UnimplementedError("Load is not implemented in PjRtClient.");
+    absl::Span<absl_nonnull std::unique_ptr<LoadOptions>> options) {
+  if (executables.size() != options.size()) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("executables and options must have the same size, got ",
+                     executables.size(), " and ", options.size()));
+  }
+
+  std::vector<tsl::Future<LoadedExecutableRef>> loaded_executables;
+  loaded_executables.reserve(executables.size());
+
+  absl::flat_hash_map<xla::GlobalDeviceId, DeviceId>
+      pjrt_global_device_id_to_ifrt_device_id;
+  pjrt_global_device_id_to_ifrt_device_id.reserve(
+      ifrt_device_id_to_pjrt_global_device_id_.size());
+  for (const auto& [ifrt_device_id, pjrt_global_device_id] :
+       ifrt_device_id_to_pjrt_global_device_id_) {
+    pjrt_global_device_id_to_ifrt_device_id.insert(
+        {pjrt_global_device_id, ifrt_device_id});
+  }
+
+  for (size_t i = 0; i < executables.size(); ++i) {
+    auto* pjrt_executable =
+        dyn_cast_or_null<PjRtExecutable>(executables[i].get());
+    if (pjrt_executable == nullptr) {
+      return absl::InvalidArgumentError(
+          "PjRtClient::Load requires PjRtExecutable");
+    }
+    if (options[i] == nullptr) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("LoadOptions at index ", i, " must not be null"));
+    }
+    if (options[i]->devices != nullptr && options[i]->devices->empty()) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "LoadOptions::devices at index ", i, " must be non-empty"));
+    }
+
+    DeviceListRef device_list = std::move(options[i]->devices);
+    if (pjrt_executable->common_metadata().is_portable &&
+        device_list != nullptr && device_list->size() != 1) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Only single-shard portable execution is supported, got ",
+          device_list->size(), " devices at index ", i));
+    }
+    std::optional<std::vector<int>> outputs_bundle_slice_sizes =
+        std::move(options[i]->outputs_bundle_slice_sizes);
+    std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks;
+    if (auto* xla_load_options = dyn_cast<XlaLoadOptions>(options[i].get());
+        xla_load_options != nullptr) {
+      loaded_host_callbacks =
+          std::move(xla_load_options->loaded_host_callbacks);
+    }
+
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
+        pjrt_client_->Load(pjrt_executable->shared_ptr_pjrt_executable(),
+                           xla::LoadOptions()));
+
+    if (!pjrt_executable->common_metadata().is_portable) {
+      xla::DeviceAssignment device_assignment =
+          pjrt_loaded_executable->device_assignment();
+      absl::Status result;
+      device_assignment.Each(
+          [&](int64_t replica, int64_t computation, int64_t* device_id) {
+            if (!result.ok()) {
+              return;
+            }
+            auto it = pjrt_global_device_id_to_ifrt_device_id.find(
+                xla::GlobalDeviceId(*device_id));
+            if (it != pjrt_global_device_id_to_ifrt_device_id.end()) {
+              *device_id = it->second.value();
+            } else {
+              result.Update(absl::InvalidArgumentError(absl::StrCat(
+                  "Unknown IFRT device ID for PjRt global device ID ",
+                  *device_id)));
+            }
+          });
+      ABSL_RETURN_IF_ERROR(result);
+      ABSL_ASSIGN_OR_RETURN(
+          DeviceListRef compiled_device_list,
+          GetDeviceListFromDeviceAssignment(this, device_assignment));
+      if (device_list == nullptr) {
+        device_list = std::move(compiled_device_list);
+      } else if (*device_list != *compiled_device_list) {
+        return absl::InvalidArgumentError(absl::StrCat(
+            "LoadOptions::devices at index ", i,
+            " does not match the executable's compiled device assignment: ",
+            *device_list, " vs. ", *compiled_device_list));
+      }
+    }
+
+    PjRtExecutable::CommonMetadata common_metadata =
+        pjrt_executable->common_metadata();
+    if (outputs_bundle_slice_sizes.has_value()) {
+      common_metadata.outputs_bundle_slice_sizes =
+          std::move(outputs_bundle_slice_sizes);
+    }
+
+    ABSL_ASSIGN_OR_RETURN(
+        LoadedExecutableRef loaded_executable,
+        PjRtLoadedExecutable::Create(this,
+                                     std::shared_ptr<xla::PjRtLoadedExecutable>(
+                                         std::move(pjrt_loaded_executable)),
+                                     std::move(loaded_host_callbacks),
+                                     std::move(device_list),
+                                     std::move(common_metadata)));
+    loaded_executables.push_back(
+        tsl::Future<LoadedExecutableRef>(std::move(loaded_executable)));
+  }
+
+  return loaded_executables;
 }
 
 absl::StatusOr<std::shared_ptr<Topology>> PjRtClient::GetTopologyForDevices(
@@ -1985,7 +2221,8 @@ absl::StatusOr<std::shared_ptr<Topology>> PjRtClient::GetTopologyForDevices(
 
 absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>>
 PjRtClient::GetDefaultPjRtLayout(DType dtype, absl::Span<const int64_t> dims,
-                                 Device* device, MemoryKind memory_kind) const {
+                                 Device* absl_nonnull device,
+                                 MemoryKind memory_kind) const {
   // PjRt-IFRT devices are currently homogeneous. The cache key omits device
   // information.
   // TODO(hyeontaek): Add device-specific information (e.g., `device->Kind()`)

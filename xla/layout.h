@@ -21,6 +21,7 @@ limitations under the License.
 #include <memory>
 #include <ostream>
 #include <string>
+#include <vector>
 
 #include "absl/base/attributes.h"
 #include "absl/base/macros.h"
@@ -52,7 +53,8 @@ class Tile {
     Tile tile;
     tile.dimensions_.reserve(tile_proto.dimensions_size());
     for (int64_t dimension : tile_proto.dimensions()) {
-      TF_RET_CHECK(dimension >= 0 || dimension == kCombineDimension);
+      TF_RET_CHECK(dimension >= 0 || dimension == kCombineDimension ||
+                   dimension == kMatchDimension);
       tile.add_dimensions(dimension);
     }
     return tile;
@@ -74,7 +76,8 @@ class Tile {
   // For example, (*,*,2,*,8) means that the tile has 2 dimensions, and the
   // dimension sizes are 2 and 8. '*' means the corresponding dimension in
   // the shape should be combined with the next more minor dimension before
-  // tiling.
+  // tiling. 'd' means the tile dimension size matches the corresponding
+  // dimension in the shape.
   void Print(Printer* printer) const;
   std::string ToString() const;
 
@@ -95,12 +98,14 @@ class Tile {
   }
 
   // This dimension size means the corresponding dimension in the shape is
-  // combined with the next minor dimension before tiling is applied. In a top
-  // level tile T(*, N), it indicates an unpadded dynamic dimension whose
-  // extent equals the logical dimension rounded up to the subtile packing
-  // factor.
+  // combined with the next minor dimension before tiling is applied.
   static constexpr int64_t kCombineDimension =
       std::numeric_limits<int64_t>::min();
+
+  // This dimension size means the tile dimension size matches the corresponding
+  // dimension in the shape.
+  static constexpr int64_t kMatchDimension =
+      std::numeric_limits<int64_t>::min() + 1;
 
   template <typename H>
   friend H AbslHashValue(H h, const Tile& t) {
@@ -112,7 +117,7 @@ class Tile {
   absl::InlinedVector<int64_t, 2> dimensions_;
 };
 
-using TileVector = absl::InlinedVector<Tile, 3>;
+using TileVector = absl::InlinedVector<Tile, 2>;
 
 // Describes how data is split between different memories. Each SplitConfig
 // object represents a split in one dimension. Each SplitConfig is associated
@@ -494,7 +499,7 @@ class Layout {
 
   // The split configurations of the shape, which describes how the storage of
   // the tensor is split between different physical memories.
-  absl::InlinedVector<SplitConfig, 1> split_configs_;
+  std::vector<SplitConfig> split_configs_;
 
   // The shape is padded at the end to a multiple of, in terms of number of
   // elements, this value. This is useful when tiling does not bring the shape

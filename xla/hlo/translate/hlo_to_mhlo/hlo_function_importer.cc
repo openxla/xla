@@ -71,7 +71,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_sharding.h"
-#include "xla/hlo/ir/hlo_sharding_metadata.h"
 #include "xla/hlo/translate/hlo_to_mhlo/async_importer.h"
 #include "xla/hlo/translate/hlo_to_mhlo/attribute_importer.h"
 #include "xla/hlo/translate/hlo_to_mhlo/custom_call_importer.h"
@@ -120,6 +119,10 @@ std::string SanitizeFunctionName(llvm::StringRef name) {
 // Default operations have lhs_contracting dimension is 1 (or zero for vector)
 // and the rhs_contracting dimension is zero, and there are no batch dimensions.
 bool DotIsDefault(const HloInstruction* instruction) {
+  if (instruction->opcode() != HloOpcode::kDot ||
+      instruction->operand_count() > 2) {
+    return false;
+  }
   // If LHS/RHS has rank greater than 2, not default dot
   const auto& operands = instruction->operands();
   if (operands[0]->shape().dimensions().size() > 2 ||
@@ -949,10 +952,17 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
         return CreateTupleFromOpResults(func_builder, loc, op, result_type);
       }
 
-    case HloOpcode::kDot: {
+    case HloOpcode::kDot:
+    case HloOpcode::kDotGeneral: {
+      // HLO pads the precision config to one entry per operand; StableHLO only
+      // models lhs and rhs.
+      PrecisionConfig precision_config = instruction->precision_config();
+      if (precision_config.operand_precision_size() > 2) {
+        precision_config.mutable_operand_precision()->Truncate(2);
+      }
       attributes.push_back(builder_->getNamedAttr(
-          "precision_config", stablehlo::ConvertPrecisionConfig(
-                                  &instruction->precision_config(), builder_)));
+          "precision_config",
+          stablehlo::ConvertPrecisionConfig(&precision_config, builder_)));
       if (instruction->precision_config().algorithm() !=
           PrecisionConfig::ALG_UNSET) {
         attributes.push_back(builder_->getNamedAttr(
@@ -971,6 +981,36 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
           "dot_dimension_numbers",
           stablehlo::ConvertDotDimensionNumbers(
               instruction->dot_dimension_numbers(), builder_)));
+      const BlockScalingConfig& bs = instruction->block_scaling_config();
+      if (bs.has_lhs() || bs.has_rhs()) {
+        auto convert_side =
+            [&](const BlockScalingConfig::TensorBlockScalingConfig& s) {
+              std::optional<int64_t> zero_idx =
+                  s.has_zero_idx() ? std::optional<int64_t>(s.zero_idx())
+                                   : std::nullopt;
+              return mlir::stablehlo::TensorBlockScalingConfigAttr::get(
+                  context_, s.scale_idx(), zero_idx, s.strides(), s.steps(),
+                  s.block_sizes());
+            };
+        attributes.push_back(builder_->getNamedAttr(
+            "block_scaling_config",
+            mlir::stablehlo::BlockScalingConfigAttr::get(
+                context_, bs.has_lhs() ? convert_side(bs.lhs()) : nullptr,
+                bs.has_rhs() ? convert_side(bs.rhs()) : nullptr)));
+      }
+      const SparsityConfig& sp = instruction->sparsity_config();
+      if (sp.has_lhs() || sp.has_rhs()) {
+        auto convert_side = [&](const SparsityConfig::TensorSparsityConfig& s) {
+          return mlir::stablehlo::TensorSparsityConfigAttr::get(
+              context_, s.num_non_zero(), s.block_size(), s.dimension(),
+              s.stride(), s.idx());
+        };
+        attributes.push_back(builder_->getNamedAttr(
+            "sparsity_config",
+            mlir::stablehlo::SparsityConfigAttr::get(
+                context_, sp.has_lhs() ? convert_side(sp.lhs()) : nullptr,
+                sp.has_rhs() ? convert_side(sp.rhs()) : nullptr)));
+      }
       return mlir::stablehlo::DotGeneralOp::create(
                  *func_builder, loc, result_type, operands, attributes)
           .getOperation();
@@ -1285,7 +1325,9 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
         // we don't want to expose this implementation detail to MHLO/StableHLO
         // users.
         if (!custom_call->IsCustomCall(kPinCustomCallTarget) &&
-            !custom_call->IsCustomCall(kUnpinCustomCallTarget)) {
+            !custom_call->IsCustomCall(kUnpinCustomCallTarget) &&
+            !custom_call->IsCustomCall(kFanOutCustomCallTarget) &&
+            !custom_call->IsCustomCall(kFanInCustomCallTarget)) {
           attributes.push_back(builder_->getNamedAttr(
               "output_operand_aliases",
               ConvertOutputOperandAliasing(
@@ -1305,7 +1347,9 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
           "api_version", mlir::stablehlo::CustomCallApiVersionAttr::get(
                              builder_->getContext(), mlir_api_version)));
       if (!custom_call->IsCustomCall(kPinCustomCallTarget) &&
-          !custom_call->IsCustomCall(kUnpinCustomCallTarget)) {
+          !custom_call->IsCustomCall(kUnpinCustomCallTarget) &&
+          !custom_call->IsCustomCall(kFanOutCustomCallTarget) &&
+          !custom_call->IsCustomCall(kFanInCustomCallTarget)) {
         attributes.push_back(builder_->getNamedAttr(
             "output_operand_aliases",
             stablehlo::ConvertOutputOperandAliasing(
@@ -1333,6 +1377,11 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
           builder_->getBoolAttr(instruction->cholesky_options().lower())));
       return mlir::stablehlo::CholeskyOp::create(
                  *func_builder, loc, result_type, operands, attributes)
+          .getOperation();
+    }
+    case HloOpcode::kFma: {
+      return mlir::stablehlo::FmaOp::create(*func_builder, loc, result_type,
+                                            operands, attributes)
           .getOperation();
     }
     case HloOpcode::kGather: {
@@ -2297,40 +2346,6 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       return CreateTupleFromOpResults(func_builder, loc, op.getOperation(),
                                       operands[0].getType());
     }
-    case HloOpcode::kDomain: {
-      auto domain_kind = mlir::mhlo::symbolizeDomainKind(
-          ToStringRef(instruction->user_side_metadata().Kind()));
-      if (!domain_kind || *domain_kind != mlir::mhlo::DomainKind::sharding) {
-        return InvalidArgument(
-            "Invalid domain kind in hlo -> mhlo import. Only 'sharding' is "
-            "supported");
-      }
-      attributes.push_back(builder_->getNamedAttr(
-          "kind", mlir::mhlo::DomainKindAttr::get(func_builder->getContext(),
-                                                  *domain_kind)));
-
-      // In XLA, DomainMetadata is open-world, but in the proto, it is
-      // hardcoded to be ShardingMetadata. Thankfully, the only other
-      // implementation of DomainMetadata is OpName, which is generally used
-      // for debugging and never for compiling production models.
-      //
-      // Since this is hardcoded as such in the proto, we must follow suit.
-      auto exit_metadata = ShardingMetadata::ToShardingMetadata(
-          &instruction->operand_side_metadata());
-      auto entry_metadata = ShardingMetadata::ToShardingMetadata(
-          &instruction->user_side_metadata());
-      attributes.push_back(builder_->getNamedAttr(
-          "exit_metadata",
-          ConvertSharding(*(*exit_metadata)->sharding(), builder_)));
-      attributes.push_back(builder_->getNamedAttr(
-          "entry_metadata",
-          ConvertSharding(*(*entry_metadata)->sharding(), builder_)));
-
-      // XLA Feature -- MHLO Only
-      return mlir::mhlo::DomainOp::create(*func_builder, loc, result_type,
-                                          operands, attributes)
-          .getOperation();
-    }
 
 #define NO_ATTRIBUTE_CASE(hlo_op_code, mlir_op)                              \
   case HloOpcode::hlo_op_code: {                                             \
@@ -2433,6 +2448,7 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       NO_ATTRIBUTE_CASE_MHLO(kCosh, CoshOp);
       NO_ATTRIBUTE_CASE_MHLO(kCopy, CopyOp);
       NO_ATTRIBUTE_CASE_MHLO(kErf, ErfOp);
+      NO_ATTRIBUTE_CASE_MHLO(kMulhi, MulhiOp);
       NO_ATTRIBUTE_CASE_MHLO(kSinh, SinhOp);
       NO_ATTRIBUTE_CASE_MHLO(kStochasticConvert, StochasticConvertOp);
 
@@ -2453,9 +2469,11 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       RESULT_ACCURACY_CASE(kCbrt, CbrtOp);
       RESULT_ACCURACY_CASE(kCos, CosineOp);
       RESULT_ACCURACY_CASE(kExp, ExpOp);
+      RESULT_ACCURACY_CASE(kExp2, Exp2Op);
       RESULT_ACCURACY_CASE(kExpm1, Expm1Op);
       RESULT_ACCURACY_CASE(kLog, LogOp);
       RESULT_ACCURACY_CASE(kLog1p, Log1pOp);
+      RESULT_ACCURACY_CASE(kLog2, Log2Op);
       RESULT_ACCURACY_CASE(kLogistic, LogisticOp);
       RESULT_ACCURACY_CASE(kRsqrt, RsqrtOp);
       RESULT_ACCURACY_CASE(kSin, SineOp);

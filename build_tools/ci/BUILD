@@ -68,10 +68,25 @@ py_test(
 )
 
 pytype_strict_library(
+    name = "bep_annotations",
+    srcs = ["bep_annotations.py"],
+)
+
+py_test(
+    name = "bep_annotations_test",
+    srcs = ["bep_annotations_test.py"],
+    deps = [
+        ":bep_annotations",
+        "@absl_py//absl/testing:absltest",
+    ],
+)
+
+pytype_strict_library(
     name = "build_lib",
     srcs = ["build.py"],
     deps = [
         ":bazel_diff",
+        ":bep_annotations",
         ":change_detector",
     ],
 )
@@ -81,6 +96,7 @@ pytype_strict_binary(
     srcs = ["build.py"],
     deps = [
         ":bazel_diff",
+        ":bep_annotations",
         ":change_detector",
     ],
 )
@@ -89,6 +105,7 @@ py_test(
     name = "build_test",
     srcs = ["build_test.py"],
     deps = [
+        ":bep_annotations",
         ":build_lib",
         "@absl_py//absl/testing:absltest",
         "@absl_py//absl/testing:parameterized",
@@ -197,4 +214,24 @@ sh_binary(
 sh_binary(
     name = "run_clang_tidy",
     srcs = ["run_clang_tidy.sh"],
+)
+
+sh_binary(
+    name = "asan_wrapper",
+    srcs = ["asan_wrapper.sh"],
+    data = if_oss([
+        "@{}//:bin/llvm-symbolizer".format(_LLVM_REPO_NAME),  # buildifier: disable=platform-specific-binaries
+        "@{}//:distro_libs".format(_LLVM_REPO_NAME),  # buildifier: disable=platform-specific-binaries
+        "@{}//:rt_asan".format(_LLVM_REPO_NAME),  # buildifier: disable=platform-specific-binaries
+    ]),
+    tags = [
+        "manual",
+        "notap",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "run_asan",
+    srcs = ["run_asan.sh"],
 )

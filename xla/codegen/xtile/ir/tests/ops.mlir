@@ -43,18 +43,75 @@ xtile.entry_func @too_many_tile_ids(%input: memref<1024xf32>, %id0: index, %id1:
 
 // -----
 
-xtile.entry_func @correct_opaque_args(
-  %input: memref<1024xf32>, %opaque0: index, %opaque1: index, %id1: index)
-  attributes {num_opaque_args = 2 : i32}  {
+xtile.entry_func @collective_signal_and_rank_only(
+  %input: memref<1024xf32>, %output: memref<2xi64>, %signal: memref<2xi64>,
+  %rank: index, %tile_id: index)
+  attributes {has_rank, has_signal_buffer} {
   xtile.return
 }
 
 // -----
 
-// expected-error@+1 {{entry function arguments should be of the form (arg: memref..., tile_id: index)}}
-xtile.entry_func @wrong_opaque_args(
-  %input: memref<1024xf32>, %opaque0: index, %opaque1: index, %id1: index)
-  attributes {num_opaque_args = 1 : i32}  {
+xtile.entry_func @collective_scratch_signal_and_rank(
+  %input: memref<1024xf32>, %output: memref<1024xf32>,
+  %scratch: memref<2xi64>, %signal: memref<2xi64>,
+  %rank: index, %tile_id: index)
+  attributes {has_rank, has_signal_buffer, num_scratch_buffers = 1 : i32} {
+  xtile.return
+}
+
+// -----
+
+// expected-error@+1 {{signal buffer and rank must either both be present or both be absent}}
+xtile.entry_func @signal_without_rank(
+  %input: memref<1024xf32>, %signal: memref<2xi64>, %tile_id: index)
+  attributes {has_signal_buffer} {
+  xtile.return
+}
+
+// -----
+
+// expected-error@+1 {{signal buffer and rank must either both be present or both be absent}}
+xtile.entry_func @rank_without_signal(
+  %input: memref<1024xf32>, %rank: index, %tile_id: index)
+  attributes {has_rank} {
+  xtile.return
+}
+
+// -----
+
+// expected-error@+1 {{signal buffer and rank must either both be present or both be absent}}
+xtile.entry_func @scratch_with_only_rank(
+  %input: memref<1024xf32>, %scratch: memref<2xi64>, %rank: index, %tile_id: index)
+  attributes {has_rank, num_scratch_buffers = 1 : i32} {
+  xtile.return
+}
+
+// -----
+
+// expected-error@+1 {{scratch buffers require signal buffer and rank}}
+xtile.entry_func @scratch_without_signal_and_rank(
+  %input: memref<1024xf32>, %scratch: memref<2xi64>, %tile_id: index)
+  attributes {num_scratch_buffers = 1 : i32} {
+  xtile.return
+}
+
+// -----
+
+// expected-error@+1 {{signal buffer must be a static contiguous 1D i64 memref}}
+xtile.entry_func @invalid_signal_buffer_type(
+  %input: memref<1024xf32>, %signal: memref<2xf32>, %rank: index, %tile_id: index)
+  attributes {has_rank, has_signal_buffer} {
+  xtile.return
+}
+
+// -----
+
+// expected-error@+1 {{scratch buffer must be a static contiguous 1D i64 memref matching signal buffer size}}
+xtile.entry_func @scratch_signal_world_size_mismatch(
+  %input: memref<1024xf32>, %scratch: memref<4xi64>, %signal: memref<2xi64>,
+  %rank: index, %tile_id: index)
+  attributes {has_rank, has_signal_buffer, num_scratch_buffers = 1 : i32} {
   xtile.return
 }
 
@@ -271,6 +328,77 @@ func.func @scan_op_carry_type_mismatch(%input: tensor<10x20x30xf32>, %init: tens
 
 // -----
 
+func.func @reduce_scatter_op(%input0: tensor<2x64xf32>, %input1: tensor<2x8xf32>) -> (tensor<1x64xf32>, tensor<1x8xf32>) {
+  %out0, %out1 = xtile.reduce_scatter(%input0, %input1) scatter_dimension = 0 <replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>> : (tensor<2x64xf32>, tensor<2x8xf32>) -> (tensor<1x64xf32>, tensor<1x8xf32>) {
+  ^bb0(%arg0: tensor<f32>, %arg1: tensor<f32>):
+    %add = stablehlo.add %arg0, %arg1 : tensor<f32>
+    stablehlo.return %add : tensor<f32>
+  }
+  return %out0, %out1 : tensor<1x64xf32>, tensor<1x8xf32>
+}
+
+// -----
+
+func.func @reduce_scatter_op_output_count_mismatch(%input0: tensor<2x64xf32>, %input1: tensor<2x8xf32>) -> tensor<1x64xf32> {
+  // expected-error @+1 {{expects one output per input, but got 2 inputs and 1 outputs}}
+  %out0 = xtile.reduce_scatter(%input0, %input1) scatter_dimension = 0 <replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>> : (tensor<2x64xf32>, tensor<2x8xf32>) -> (tensor<1x64xf32>) {
+  ^bb0(%arg0: tensor<f32>, %arg1: tensor<f32>):
+    %add = stablehlo.add %arg0, %arg1 : tensor<f32>
+    stablehlo.return %add : tensor<f32>
+  }
+  return %out0 : tensor<1x64xf32>
+}
+
+// -----
+
+func.func @reduce_scatter_op_element_type_mismatch(%input0: tensor<2x64xf32>, %input1: tensor<2x8xbf16>) -> (tensor<1x64xf32>, tensor<1x8xbf16>) {
+  // expected-error @+1 {{input #1 element type 'bf16' does not match the element type of input #0 'f32'}}
+  %out0, %out1 = xtile.reduce_scatter(%input0, %input1) scatter_dimension = 0 <replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>> : (tensor<2x64xf32>, tensor<2x8xbf16>) -> (tensor<1x64xf32>, tensor<1x8xbf16>) {
+  ^bb0(%arg0: tensor<f32>, %arg1: tensor<f32>):
+    %add = stablehlo.add %arg0, %arg1 : tensor<f32>
+    stablehlo.return %add : tensor<f32>
+  }
+  return %out0, %out1 : tensor<1x64xf32>, tensor<1x8xbf16>
+}
+
+// -----
+
+func.func @reduce_scatter_op_scatter_dimension_out_of_range(%input: tensor<2x64xf32>) -> tensor<1x64xf32> {
+  // expected-error @+1 {{scatter dimension 2 is out of range for input #0 of rank 2}}
+  %out = xtile.reduce_scatter(%input) scatter_dimension = 2 <replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>> : (tensor<2x64xf32>) -> (tensor<1x64xf32>) {
+  ^bb0(%arg0: tensor<f32>, %arg1: tensor<f32>):
+    %add = stablehlo.add %arg0, %arg1 : tensor<f32>
+    stablehlo.return %add : tensor<f32>
+  }
+  return %out : tensor<1x64xf32>
+}
+
+// -----
+
+func.func @reduce_scatter_op_non_scatter_dimension_mismatch(%input: tensor<2x64xf32>) -> tensor<1x32xf32> {
+  // expected-error @+1 {{output #0 type 'tensor<1x32xf32>' differs from input type 'tensor<2x64xf32>' in non-scatter dimension 1}}
+  %out = xtile.reduce_scatter(%input) scatter_dimension = 0 <replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>> : (tensor<2x64xf32>) -> (tensor<1x32xf32>) {
+  ^bb0(%arg0: tensor<f32>, %arg1: tensor<f32>):
+    %add = stablehlo.add %arg0, %arg1 : tensor<f32>
+    stablehlo.return %add : tensor<f32>
+  }
+  return %out : tensor<1x32xf32>
+}
+
+// -----
+
+func.func @reduce_scatter_op_non_scalar_reducer(%input: tensor<2x64xf32>) -> tensor<1x64xf32> {
+  // expected-error @+1 {{expects reduction computation arguments of type 'tensor<f32>', but got 'tensor<1xf32>'}}
+  %out = xtile.reduce_scatter(%input) scatter_dimension = 0 <replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>> : (tensor<2x64xf32>) -> (tensor<1x64xf32>) {
+  ^bb0(%arg0: tensor<1xf32>, %arg1: tensor<1xf32>):
+    %add = stablehlo.add %arg0, %arg1 : tensor<1xf32>
+    stablehlo.return %add : tensor<1xf32>
+  }
+  return %out : tensor<1x64xf32>
+}
+
+// -----
+
 // expected-error @+1 {{layout has 0 dimensions, but shape has 1}}
 func.func @memref_layout_shape_size_mismatch(%arg0: memref<1024xf32, #xtile.layout<[]>>) {
   return
@@ -314,4 +442,52 @@ func.func @memref_bitcast_width_mismatch(%arg0: memref<16xbf16>) -> memref<16xi3
   // expected-error@+1 {{element bit widths differ: 'bf16' vs 'i32'}}
   %0 = xtile.memref_bitcast %arg0 : memref<16xbf16> -> memref<16xi32>
   return %0 : memref<16xi32>
+}
+
+// -----
+
+func.func @select_buffer_roundtrip(%src: memref<4xi64>, %r: index, %off: index) -> (memref<128xf32>, memref<128xf32>) {
+  %0 = xtile.select_buffer %src[%r] : memref<4xi64> -> memref<128xf32>
+  %1 = xtile.select_buffer %src[%r] offset %off : memref<4xi64> -> memref<128xf32>
+  return %0, %1 : memref<128xf32>, memref<128xf32>
+}
+
+// -----
+
+func.func @select_buffer_2d_source(%src: memref<2x2xi64>, %r: index) -> memref<128xf32> {
+  // expected-error@+1 {{expected source to be a static contiguous 1D i64 memref}}
+  %0 = xtile.select_buffer %src[%r] : memref<2x2xi64> -> memref<128xf32>
+  return %0 : memref<128xf32>
+}
+
+// -----
+
+func.func @select_buffer_non_i64_source(%src: memref<4xf32>, %r: index) -> memref<128xf32> {
+  // expected-error@+1 {{expected source to be a static contiguous 1D i64 memref}}
+  %0 = xtile.select_buffer %src[%r] : memref<4xf32> -> memref<128xf32>
+  return %0 : memref<128xf32>
+}
+
+// -----
+
+func.func @select_buffer_strided_source(%src: memref<4xi64, strided<[2], offset: 1>>, %r: index) -> memref<128xf32> {
+  // expected-error@+1 {{expected source to be a static contiguous 1D i64 memref}}
+  %0 = xtile.select_buffer %src[%r] : memref<4xi64, strided<[2], offset: 1>> -> memref<128xf32>
+  return %0 : memref<128xf32>
+}
+
+// -----
+
+func.func @select_buffer_zero_sized_source(%src: memref<0xi64>, %r: index) -> memref<128xf32> {
+  // expected-error@+1 {{expected source to be a static contiguous 1D i64 memref}}
+  %0 = xtile.select_buffer %src[%r] : memref<0xi64> -> memref<128xf32>
+  return %0 : memref<128xf32>
+}
+
+// -----
+
+func.func @select_buffer_nonzero_result_offset(%src: memref<4xi64>, %r: index) -> memref<128xf32, strided<[1], offset: 4>> {
+  // expected-error@+1 {{expected result memref to have zero offset}}
+  %0 = xtile.select_buffer %src[%r] : memref<4xi64> -> memref<128xf32, strided<[1], offset: 4>>
+  return %0 : memref<128xf32, strided<[1], offset: 4>>
 }

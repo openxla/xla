@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <new>
 #include <utility>
 
@@ -60,12 +61,32 @@ absl::StatusOr<int64_t> PjRtGetOnDeviceBytesCount(const xla::Shape& shape,
   return static_cast<int64_t>(requirements.size);
 }
 
+namespace {
+
+bool CanOmitPaddingForTransfer(const xla::Shape& shape) {
+  if (!shape.is_static() || !shape.IsArray()) {
+    return false;
+  }
+  if (xla::ShapeUtil::ElementHasBitWidth(shape, 32) &&
+      shape.dimensions().size() == 1) {
+    return true;
+  }
+  return shape.has_layout() && !shape.layout().tiles().empty() &&
+         shape.layout().tiles(0).dimensions() == absl::Span<const int64_t>({1});
+}
+
+}  // namespace
+
 PjRtShapeAndMetadataTransferRequirements
 PjRtShapeAndMetadataTransferRequirements::Get(const xla::Shape& shape,
                                               PjRtDynamicShapeKind kind) {
   PjRtShapeAndMetadataTransferRequirements requirements;
   int64_t array_size = shape.IsToken() ? 0 : xla::ShapeUtil::ArraySize(shape);
+  int64_t unpadded_array_size = CanOmitPaddingForTransfer(shape)
+                                    ? xla::ShapeUtil::ByteSizeOfElements(shape)
+                                    : array_size;
   requirements.size = array_size;
+  requirements.unpadded_size = unpadded_array_size;
   requirements.metadata_alignment = sizeof(int32_t);
   requirements.array_offset = 0;
   requirements.array_size = array_size;
@@ -81,6 +102,7 @@ PjRtShapeAndMetadataTransferRequirements::Get(const xla::Shape& shape,
         metadata_size = shape.layout().dynamic_shape_metadata_prefix_bytes();
       }
       requirements.size = array_size + metadata_size;
+      requirements.unpadded_size = unpadded_array_size + metadata_size;
       requirements.metadata_alignment = sizeof(int32_t);
       requirements.metadata_offset = 0;
       requirements.metadata_size = metadata_size;
@@ -92,6 +114,7 @@ PjRtShapeAndMetadataTransferRequirements::Get(const xla::Shape& shape,
         metadata_size = sizeof(int32_t) * shape.dimensions().size();
       }
       requirements.size = array_size + metadata_size;
+      requirements.unpadded_size = unpadded_array_size + metadata_size;
       requirements.metadata_offset = array_size;
       requirements.metadata_size = metadata_size;
       requirements.array_offset = 0;
@@ -116,22 +139,29 @@ absl::StatusOr<xla::Shape> ReadDynamicShapeMetadata(
         "Metadata does not contain sufficient dimension bytes.");
   }
 
-  const int32_t* runtime_sizes =
-      reinterpret_cast<const int32_t*>(metadata.data());
   xla::Shape output_shape = shape;
 
+  // Metadata slot i is only meaningful if dimension i is dynamic. Producers
+  // (e.g. the SparseCore) do not necessarily write slots for static
+  // dimensions, so static dimensions keep their static extent.
   for (int i = 0; i < shape.dimensions().size(); ++i) {
-    output_shape.set_dimensions(i, runtime_sizes[i]);
+    if (shape.is_dynamic_dimension(i)) {
+      int32_t runtime_size = 0;
+      std::memcpy(&runtime_size, metadata.data() + i * sizeof(int32_t),
+                  sizeof(runtime_size));
+      output_shape.set_dimensions(i, runtime_size);
+    }
   }
 
-  output_shape.clear_dynamic_dimensions();
-
+  // Check the bounds while `output_shape` still carries the dynamic bits;
+  // DynamicShapeIsCompatible skips the check for static shapes.
   if (!xla::ShapeUtil::DynamicShapeIsCompatible(output_shape, shape)) {
     return absl::InvalidArgumentError(absl::StrFormat(
         "Output dynamic shape (%s) incompatible with original shape (%s)",
         output_shape.ToString(true), shape.ToString(true)));
   }
 
+  output_shape.clear_dynamic_dimensions();
   return output_shape;
 }
 

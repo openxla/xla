@@ -54,7 +54,6 @@ limitations under the License.
 #include "xla/hlo/ir/backend_config.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
-#include "xla/hlo/ir/hlo_domain_metadata.h"
 #include "xla/hlo/ir/hlo_module_metadata.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
@@ -500,6 +499,15 @@ class HloInstruction {
       const PrecisionConfig& precision_config,
       const SparsityConfig& sparsity_config = {},
       const BlockScalingConfig& block_scaling_config = {});
+
+  // Creates a dot-general op. `operands` holds lhs, rhs, then the sparsity
+  // indices, scales and zero points referenced by index from the configs.
+  static std::unique_ptr<HloInstruction> CreateDotGeneral(
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
+      const DotDimensionNumbers& dimension_numbers,
+      const PrecisionConfig& precision_config,
+      const SparsityConfig& sparsity_config,
+      const BlockScalingConfig& block_scaling_config);
 
   // Creates a ragged dot op with operands 'lhs', 'rhs', and 'group_sizes', with
   // contracting, batch, ragged, and group dimensions specified in
@@ -1127,13 +1135,6 @@ class HloInstruction {
       const ScatterDimensionNumbers& scatter_dim_numbers,
       bool indices_are_sorted, bool unique_indices);
 
-  // Creates a kDomain instruction which delimits an HLO domain which have
-  // the provided user and operand side metadata.
-  static std::unique_ptr<HloInstruction> CreateDomain(
-      const Shape& shape, HloInstruction* operand,
-      std::unique_ptr<DomainMetadata> operand_side_metadata,
-      std::unique_ptr<DomainMetadata> user_side_metadata);
-
   // Creates a fusion instruction. A fusion instruction contains one or more
   // fused instructions forming an expression with a single root
   // "fused_root". Additional instructions can be added to the fusion
@@ -1279,7 +1280,7 @@ class HloInstruction {
 
   // Returns the result shape of this instruction.
   const Shape& shape() const {
-    DCHECK(shape_) << "Instruction shape must be set";
+    DCHECK(shape_ != nullptr) << "Instruction shape must be set";
     return *shape_;
   }
 
@@ -1288,8 +1289,8 @@ class HloInstruction {
 
   // Canonicalize instruction shape using the given shape pool.
   bool Canonicalize(ShapePool* shape_pool) {
-    DCHECK(shape_) << "Instruction shape must be set";
-    if (shape_pool) {
+    DCHECK(shape_ != nullptr) << "Instruction shape must be set";
+    if (shape_pool != nullptr) {
       std::shared_ptr<Shape> canonical = shape_pool->GetCanonicalShape(shape_);
       shape_is_canonicalized_ = true;
       if (canonical != shape_) {
@@ -1452,7 +1453,7 @@ class HloInstruction {
   }
 
   // Allow subclasses to contribute additional attributes to the hash.
-  virtual void HashAdditionalAttributes(absl::HashState h) const {};
+  virtual void HashAdditionalAttributes(absl::HashState h) const {}
 
   // Generates a hash value of an HLO instruction. Hash considers
   // information on opcode, shape, number of operands, and other relevant
@@ -1586,9 +1587,9 @@ class HloInstruction {
       const;
 
   std::pair<HloInstruction*, ShapeIndex> LatestNonGteAncestorAndIndex() {
-    auto rv =
+    std::pair<const HloInstruction*, ShapeIndex> rv =
         const_cast<const HloInstruction*>(this)->LatestNonGteAncestorAndIndex();
-    return {const_cast<HloInstruction*>(rv.first), rv.second};
+    return {const_cast<HloInstruction*>(rv.first), std::move(rv.second)};
   }
 
   // Same as LatestNonGteAncestorAndIndex, but just returns the HloInstruction.
@@ -1762,7 +1763,7 @@ class HloInstruction {
 
   // Returns the sharding applied to this operator, or default_ if none exists.
   const HloSharding& sharding_or_default(const HloSharding& default_) const {
-    return sharding_ ? *sharding_ : default_;
+    return sharding_ != nullptr ? *sharding_ : default_;
   }
   // Returns the sharding unique device, if any.
   std::optional<int64_t> sharding_unique_device() const {
@@ -1797,7 +1798,7 @@ class HloInstruction {
     if (!has_sharding()) {
       return !other->has_sharding();
     }
-    return other->has_sharding() ? sharding() == other->sharding() : false;
+    return other->has_sharding() && sharding() == other->sharding();
   }
 
   // When creating a new instruction which either replaces, or shifts up (kCopy
@@ -1984,36 +1985,51 @@ class HloInstruction {
     backend_config_ = other->backend_config_;
   }
 
-  // Replaces the frontend attributes with the provided argument.
-  void set_frontend_attributes(FrontendAttributes frontend_attributes);
+  // Frontend attributes are string key/value pairs attached to an
+  // instruction. Storage is allocated lazily: an instruction without
+  // attributes behaves as if it had an empty map. Callers never need to
+  // create or initialize the map first; the single-key methods below can be
+  // used directly on any instruction.
 
-  // Adds attributes only if they not already present in the HloInstruction.
-  // Skips all atributes already present in the HloInstruction.
-  void add_frontend_attributes(FrontendAttributes frontend_attributes);
+  // Returns all frontend attributes. Empty if the instruction has none.
+  // Prefer the single-key accessors below to looking up keys in the map.
+  const FrontendAttributes& frontend_attributes() const;
 
-  // Adds a single attribute only if it not already present in the
-  // HloInstruction. Returns false if the attribute was already present.
-  bool add_frontend_attribute(absl::string_view key, absl::string_view value);
+  // Returns true if the instruction has at least one frontend attribute.
+  bool has_frontend_attributes() const;
 
-  size_t erase_frontend_attribute(absl::string_view key) {
-    return mutable_rare()->frontend_attributes.mutable_map()->erase(key);
-  }
+  // Returns true if the instruction has the frontend attribute `key`.
+  bool has_frontend_attribute(absl::string_view key) const;
 
-  // Adds or overrides a single attribute in the HloInstruction.
-  void set_frontend_attribute(absl::string_view key, absl::string_view value) {
-    (*mutable_rare()->frontend_attributes.mutable_map())[key] = value;
-  }
+  // Returns true if the instruction has any of the frontend attributes `keys`.
+  bool has_any_frontend_attribute(
+      absl::Span<const absl::string_view> keys) const;
 
-  bool has_frontend_attributes() const {
-    return has_rare() && !rare()->frontend_attributes.map().empty();
-  }
-
-  const FrontendAttributes& frontend_attributes() const {
-    return rare()->frontend_attributes;
-  }
-
+  // Returns the value of the frontend attribute `key`, or std::nullopt if the
+  // instruction does not have it.
   std::optional<std::string> get_frontend_attribute(
       absl::string_view key) const;
+
+  // Replaces all frontend attributes with `frontend_attributes`.
+  void set_frontend_attributes(FrontendAttributes frontend_attributes);
+
+  // Sets the frontend attribute `key` to `value`, overwriting any existing
+  // value.
+  void set_frontend_attribute(absl::string_view key, absl::string_view value);
+
+  // Adds the entries of `frontend_attributes` whose keys are not yet present.
+  // Existing attributes keep their values. Returns the number of attributes
+  // added.
+  size_t add_frontend_attributes(FrontendAttributes frontend_attributes);
+
+  // Adds the frontend attribute `key` with `value` only if `key` is not yet
+  // present. Returns true if the attribute was added, false if it already
+  // existed (its value is left unchanged).
+  bool add_frontend_attribute(absl::string_view key, absl::string_view value);
+
+  // Removes the frontend attribute `key`. Returns true if the attribute was
+  // removed, false if it was not present.
+  bool erase_frontend_attribute(absl::string_view key);
 
   void set_is_composite(bool is_composite) {
     if (!has_rare() && !is_composite) {
@@ -2035,17 +2051,7 @@ class HloInstruction {
                           result_accuracy().mode() != ResultAccuracy::DEFAULT);
   }
 
-  bool equal_result_accuracy(const HloInstruction* other) const {
-    return result_accuracy().has_tolerance() ==
-               other->result_accuracy().has_tolerance() &&
-           result_accuracy().tolerance().atol() ==
-               other->result_accuracy().tolerance().atol() &&
-           result_accuracy().tolerance().rtol() ==
-               other->result_accuracy().tolerance().rtol() &&
-           result_accuracy().tolerance().ulps() ==
-               other->result_accuracy().tolerance().ulps() &&
-           result_accuracy().mode() == other->result_accuracy().mode();
-  }
+  bool equal_result_accuracy(const HloInstruction* other) const;
 
   void add_single_statistic(Statistic statistic) {
     *mutable_rare()->statistics_viz.add_statistics() = std::move(statistic);
@@ -2485,12 +2491,6 @@ class HloInstruction {
 
   // Delegates to HloRaggedDotInstruction::ragged_dot_dimension_numbers().
   const RaggedDotDimensionNumbers& ragged_dot_dimension_numbers() const;
-
-  // Delegates to HloDomainInstruction::operand_side_metadata().
-  const DomainMetadata& operand_side_metadata() const;
-
-  // Delegates to HloDomainInstruction::user_side_metadata().
-  const DomainMetadata& user_side_metadata() const;
 
   // Delegates to HloConvolutionInstruction::sparsity_config.
   const SparsityConfig& sparsity_config() const;

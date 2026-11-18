@@ -21,14 +21,15 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/transforms/call_inliner.h"
 #include "xla/permutation_util.h"
-#include "xla/service/call_inliner.h"
 #include "xla/service/gather_scatter_utils.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/shape.h"

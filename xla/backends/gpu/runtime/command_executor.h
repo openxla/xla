@@ -23,7 +23,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/base/macros.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/node_hash_map.h"
 #include "absl/functional/function_ref.h"
@@ -31,6 +30,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_buffer_requests.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/runtime/buffer_use.h"
@@ -159,10 +159,13 @@ class CommandExecutor {
     return requires_update_on_initialize_;
   }
 
-  bool requires_warmup() const {
+  bool requires_warmup(
+      const CommandBufferRequests& command_buffer_requests) const {
     bool requires_warmup = false;
     commands_.Walk([&](const Command* command) {
-      requires_warmup |= command->requires_warmup();
+      requires_warmup |=
+          command_buffer_requests.requires_warmup(command).value_or(
+              command->requires_warmup());
     });
     return requires_warmup;
   }
@@ -271,8 +274,6 @@ class CommandExecutor {
   // RenderExecutionGraph() can reproduce the same dependency graph.
   std::vector<Command::ResourceUses> extra_resources_;
 };
-
-using CommandBufferCmdExecutor ABSL_DEPRECATE_AND_INLINE() = CommandExecutor;
 
 }  // namespace xla::gpu
 

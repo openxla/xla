@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/hlo/transforms/hlo_module_splitter.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -34,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/transforms/hlo_module_stitcher.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/name_uniquer.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/shape_tree.h"
@@ -82,12 +84,10 @@ bool HloModuleSplitter::ShouldSplitCall(const HloInstruction* inst) {
     }
   }
 
-  const auto& map = inst->frontend_attributes().map();
-  auto inlineable_it = map.find("inlineable");
-  if (inlineable_it != map.end() && inlineable_it->second == "xla_late") {
+  if (inst->get_frontend_attribute("inlineable") == "xla_late") {
     return true;
   }
-  return map.contains("compilation_unit");
+  return inst->has_frontend_attribute("compilation_unit");
 }
 
 absl::StatusOr<bool> HloModuleSplitter::RunImpl(
@@ -112,11 +112,11 @@ absl::StatusOr<bool> HloModuleSplitter::RunImpl(
         auto [map_it, inserted] =
             extracted_modules.try_emplace(callee, nullptr);
         if (inserted) {
-          auto it = inst->frontend_attributes().map().find("compilation_unit");
+          std::optional<std::string> compilation_unit =
+              inst->get_frontend_attribute("compilation_unit");
           std::string base_name =
-              (it != inst->frontend_attributes().map().end() &&
-               !it->second.empty())
-                  ? it->second
+              (compilation_unit.has_value() && !compilation_unit->empty())
+                  ? *std::move(compilation_unit)
                   : std::string(callee->name());
           std::string name = name_uniquer.GetUniqueName(base_name);
 
@@ -125,6 +125,9 @@ absl::StatusOr<bool> HloModuleSplitter::RunImpl(
           HloComputation* cloned_callee =
               sub_module->DeepCloneComputation(callee, &context);
           sub_module->ReplaceEntryComputation(cloned_callee);
+          // Populate the submodule's stack frames for any instructions cloned
+          // with non-zero stack_frame_id metadata.
+          sub_module->CanonicalizeStackFrameIds(module->stack_frames().proto());
           map_it->second = sub_module.get();
           submodules_.push_back(std::move(sub_module));
         }
@@ -148,6 +151,7 @@ absl::StatusOr<bool> HloModuleSplitter::RunImpl(
           custom_call->set_custom_call_has_side_effect(true);
         }
         custom_call->set_frontend_attributes(inst->frontend_attributes());
+        custom_call->set_metadata(inst->metadata());
 
         ABSL_RETURN_IF_ERROR(comp->ReplaceInstruction(inst, custom_call));
         changed = true;

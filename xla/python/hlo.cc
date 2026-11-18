@@ -61,6 +61,7 @@ limitations under the License.
 #include "xla/python/nb_absl_span.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/types.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/spmd/shardy/stablehlo_round_trip/stablehlo_import.h"
@@ -794,10 +795,7 @@ NB_MODULE(_hlo, m) {
       return inst_->get_frontend_attribute(key);
     }
     void set_frontend_attribute(std::string key, std::string value) {
-      xla::FrontendAttributes proto = inst_->frontend_attributes();
-      (*proto.mutable_map())[std::move(key)] = std::move(value);
-      const_cast<HloInstruction*>(inst_)->set_frontend_attributes(
-          std::move(proto));
+      const_cast<HloInstruction*>(inst_)->set_frontend_attribute(key, value);
     }
     void set_core_assignment(std::vector<int64_t> core_ids) {
       xla::ThrowIfError(
@@ -882,6 +880,12 @@ NB_MODULE(_hlo, m) {
   nb::class_<ComputationWrapper> hlo_computation_class(m, "HloComputation");
   hlo_computation_class.def_prop_ro("name", &ComputationWrapper::name)
       .def("render_html", &ComputationWrapper::render_html)
+      .def("root_instruction",
+           [](const std::shared_ptr<ComputationWrapper> c)
+               -> std::shared_ptr<InstructionWrapper> {
+             return std::make_shared<InstructionWrapper>(
+                 c->comp()->root_instruction(), c->module());
+           })
       .def("instructions",
            [](const std::shared_ptr<ComputationWrapper> c)
                -> std::vector<std::shared_ptr<InstructionWrapper>> {

@@ -47,7 +47,10 @@ TEST_F(GpuAtomicTest, TestStore) {
     }
 )";
 
-  ASSERT_OK(CompileAndVerifyIr(hlo_string, R"(
+  ASSERT_OK(CompileAndVerifyIr(hlo_string, IsBuiltWithRocm() ? R"(
+CHECK: store atomic{{.*}}syncscope("agent-one-as") monotonic, align 4
+)"
+                                                             : R"(
 CHECK: store atomic{{.*}}unordered, align 4
 )"));
 }
@@ -75,7 +78,7 @@ TEST_F(GpuAtomicTest, TestStoreNoAtomic) {
 )";
 
   ASSERT_OK(CompileAndVerifyIr(hlo_string, R"(
-CHECK-NOT: store atomic{{.*}}unordered, align 4
+CHECK-NOT: store atomic
 )"));
 }
 
@@ -103,16 +106,91 @@ TEST_F(GpuAtomicTest, TestAddAtomicF32) {
 )";
 
   ASSERT_OK(CompileAndVerifyIr(hlo_string, IsBuiltWithRocm() ? R"(
-CHECK: atomicrmw fadd ptr %[[ADDR:.*]], float %[[VALUE:.*]] syncscope("agent-one-as") monotonic
+CHECK: atomicrmw fadd ptr %[[ADDR:.*]], float %[[VALUE:.*]] syncscope("agent-one-as") monotonic{{.*}}!atomic.ignore.denormal.mode
 )"
                                                              : R"(
-CHECK: atomicrmw fadd ptr %[[ADDR:.*]], float %[[VALUE:.*]] monotonic
+CHECK: atomicrmw fadd ptr %[[ADDR:.*]], float %[[VALUE:.*]] monotonic{{.*}}!atomic.ignore.denormal.mode
+)"));
+}
+
+TEST_F(GpuAtomicTest, TestAddAtomicF16) {
+  if (!IsBuiltWithRocm() &&
+      !device_description().cuda_compute_capability().SupportsAllFeaturesOf(
+          stream_executor::CudaComputeCapability::Volta())) {
+    return;
+  }
+  const char* hlo_string = R"(
+    HloModule TensorFlowScatterV1
+
+    update_f16 (lhs: f16[], rhs: f16[]) -> f16[] {
+      lhs = f16[] parameter(0)
+      rhs = f16[] parameter(1)
+      ROOT add = f16[] add(lhs, rhs)
+    }
+
+    ENTRY main {
+      operand = f16[3,3] parameter(0)
+      indices = s32[2] parameter(1)
+      updates = f16[2,3] parameter(2)
+      ROOT scatter = f16[3,3] scatter(operand, indices, updates),
+          to_apply=update_f16,
+          update_window_dims={1},
+          inserted_window_dims={0},
+          scatter_dims_to_operand_dims={0},
+          index_vector_dim=1, unique_indices=false
+    }
+)";
+
+  // ROCm GPUs with packed fp16 atomics add a <2 x half> to a global pointer.
+  ASSERT_OK(CompileAndVerifyIr(hlo_string, IsBuiltWithRocm() ? R"(
+CHECK: atomicrmw fadd ptr {{.*}}, {{(<2 x half>|half)}} %[[VALUE:.*]] syncscope("agent-one-as") monotonic{{.*}}!atomic.ignore.denormal.mode
+)"
+                                                             : R"(
+CHECK: atomicrmw fadd ptr %[[ADDR:.*]], half %[[VALUE:.*]] monotonic{{.*}}!atomic.ignore.denormal.mode
+)"));
+}
+
+TEST_F(GpuAtomicTest, TestAddAtomicBF16) {
+  if (!IsBuiltWithRocm() &&
+      !device_description().cuda_compute_capability().SupportsAllFeaturesOf(
+          stream_executor::CudaComputeCapability::Hopper())) {
+    return;
+  }
+  const char* hlo_string = R"(
+    HloModule TensorFlowScatterV1
+
+    update_bf16 (lhs: bf16[], rhs: bf16[]) -> bf16[] {
+      lhs = bf16[] parameter(0)
+      rhs = bf16[] parameter(1)
+      ROOT add = bf16[] add(lhs, rhs)
+    }
+
+    ENTRY main {
+      operand = bf16[3,3] parameter(0)
+      indices = s32[2] parameter(1)
+      updates = bf16[2,3] parameter(2)
+      ROOT scatter = bf16[3,3] scatter(operand, indices, updates),
+          to_apply=update_bf16,
+          update_window_dims={1},
+          inserted_window_dims={0},
+          scatter_dims_to_operand_dims={0},
+          index_vector_dim=1, unique_indices=false
+    }
+)";
+
+  // ROCm GPUs with packed bf16 atomics add a <2 x bfloat> to a global pointer.
+  ASSERT_OK(CompileAndVerifyIr(hlo_string, IsBuiltWithRocm() ? R"(
+CHECK: atomicrmw fadd ptr {{.*}}, {{(<2 x bfloat>|bfloat)}} %[[VALUE:.*]] syncscope("agent-one-as") monotonic{{.*}}!atomic.ignore.denormal.mode
+)"
+                                                             : R"(
+CHECK: atomicrmw fadd ptr %[[ADDR:.*]], bfloat %[[VALUE:.*]] monotonic{{.*}}!atomic.ignore.denormal.mode
 )"));
 }
 
 TEST_F(GpuAtomicTest, TestAddAtomicF64) {
   // Atomic add required sm_60 or above.
-  if (device_description().cuda_compute_capability().SupportsAllFeaturesOf(
+  if (!IsBuiltWithRocm() &&
+      !device_description().cuda_compute_capability().SupportsAllFeaturesOf(
           stream_executor::CudaComputeCapability::Pascal())) {
     return;
   }
@@ -139,8 +217,71 @@ TEST_F(GpuAtomicTest, TestAddAtomicF64) {
     }
 )";
 
+  ASSERT_OK(CompileAndVerifyIr(hlo_string, IsBuiltWithRocm() ? R"(
+CHECK: atomicrmw fadd ptr %[[ADDR:.*]], double %[[VALUE:.*]] syncscope("agent-one-as") monotonic{{.*}}!atomic.ignore.denormal.mode
+)"
+                                                             : R"(
+CHECK: atomicrmw fadd ptr %[[ADDR:.*]], double %[[VALUE:.*]] monotonic{{.*}}!atomic.ignore.denormal.mode
+)"));
+}
+
+// complex<f32> only has the ABI alignment of f32, so the 64 bit atomic word
+// relies on the alignment of the kernel argument that holds the operand.
+TEST_F(GpuAtomicTest, TestStoreC64) {
+  const char* hlo_string = R"(
+    HloModule TensorFlowScatterV1
+
+    update_c64 (lhs: c64[], rhs: c64[]) -> c64[] {
+      lhs = c64[] parameter(0)
+      ROOT rhs = c64[] parameter(1)
+    }
+
+    ENTRY main {
+      operand = c64[3,3] parameter(0)
+      indices = s32[2] parameter(1)
+      updates = c64[2,3] parameter(2)
+      ROOT scatter = c64[3,3] scatter(operand, indices, updates),
+          to_apply=update_c64,
+          update_window_dims={1},
+          inserted_window_dims={0},
+          scatter_dims_to_operand_dims={0},
+          index_vector_dim=1, unique_indices=false
+    }
+)";
+
+  ASSERT_OK(CompileAndVerifyIr(hlo_string, IsBuiltWithRocm() ? R"(
+CHECK: store atomic i64 {{.*}}syncscope("agent-one-as") monotonic, align 8
+)"
+                                                             : R"(
+CHECK: store atomic i64 {{.*}}unordered, align 8
+)"));
+}
+
+TEST_F(GpuAtomicTest, TestAddAtomicC64) {
+  const char* hlo_string = R"(
+    HloModule TensorFlowScatterV1
+
+    update_c64 (lhs: c64[], rhs: c64[]) -> c64[] {
+      lhs = c64[] parameter(0)
+      rhs = c64[] parameter(1)
+      ROOT add = c64[] add(lhs, rhs)
+    }
+
+    ENTRY main {
+      operand = c64[3,3] parameter(0)
+      indices = s32[2] parameter(1)
+      updates = c64[2,3] parameter(2)
+      ROOT scatter = c64[3,3] scatter(operand, indices, updates),
+          to_apply=update_c64,
+          update_window_dims={1},
+          inserted_window_dims={0},
+          scatter_dims_to_operand_dims={0},
+          index_vector_dim=1, unique_indices=false
+    }
+)";
+
   ASSERT_OK(CompileAndVerifyIr(hlo_string, R"(
-CHECK: atomicrmw fadd ptr %[[ADDR:.*]], double %[[VALUE:.*]] monotonic
+CHECK: cmpxchg ptr %[[ADDR:.*]], i64 %[[OLD:.*]], i64 %[[NEW:.*]] monotonic monotonic
 )"));
 }
 

@@ -25,22 +25,28 @@ limitations under the License.
 #include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "llvm/IR/Module.h"
 #include "xla/autotune_results.pb.h"
+#include "xla/backends/gpu/transforms/compiled_cudnn_graph_cache.h"
 #include "xla/hlo/analysis/alias_info.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/compilation_stats.h"
+#include "xla/service/decision.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/stream_executor/cuda/assemble_compilation_provider.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/compilation_provider_options.h"
 #include "xla/stream_executor/device_description.h"
@@ -58,7 +64,13 @@ void WarnIfBadDriverJITVersion();
 // NVPTXCompiler generates efficient GPU executables for NVPTX target.
 class NVPTXCompiler : public GpuCompiler {
  public:
-  explicit NVPTXCompiler();
+  using CompilationProviderFactory = absl::AnyInvocable<
+      absl::StatusOr<std::unique_ptr<se::cuda::CompilationProvider>>(
+          const se::cuda::CompilationProviderOptions&)>;
+
+  explicit NVPTXCompiler(
+      CompilationProviderFactory compilation_provider_factory =
+          se::cuda::AssembleCompilationProvider);
 
   absl::Status OptimizeHloConvolutionCanonicalization(
       HloModule* hlo_module, const se::GpuComputeCapability& gpu_version,
@@ -66,13 +78,9 @@ class NVPTXCompiler : public GpuCompiler {
       const se::SemanticVersion& toolkit_version,
       CompilationStats* compilation_stats) override;
 
-  void AddPaddingForGpublasGemms(
-      HloPassPipeline& pipeline, const DebugOptions& debug_options,
-      const se::GpuComputeCapability& gpu_version) override;
-
-  bool IsScaledDotSupportedByBackend(
-      const HloInstruction* instr,
-      const GpuTargetConfig& gpu_target_config) const override;
+  Decision IsRaggedDotSupportedByCuDnn(
+      const HloInstruction* instr, const GpuTargetConfig& gpu_target_config,
+      se::StreamExecutor* absl_nullable stream_exec) const override;
 
   absl::Status OptimizeHloPostLayoutAssignment(
       HloModule* hlo_module, se::StreamExecutor* stream_exec,
@@ -105,19 +113,26 @@ class NVPTXCompiler : public GpuCompiler {
       bool relocatable, const HloModule* debug_module,
       std::optional<int> shard_number) override;
 
+  absl::StatusOr<absl::string_view> AsmFileExtension() const override;
+
   absl::StatusOr<bool> CanUseLinkModules(
       const HloModuleConfig& module_config,
       const stream_executor::DeviceDescription& device_description,
       se::StreamExecutor* absl_nullable stream_exec) override;
 
- private:
   absl::StatusOr<std::vector<uint8_t>> LinkModules(
       const stream_executor::DeviceDescription& device_description,
       std::vector<std::vector<uint8_t>> modules,
       const DebugOptions& debug_options,
       se::StreamExecutor* absl_nullable stream_exec) override;
 
+ private:
+  CompilationProviderFactory compilation_provider_factory_;
   absl::Mutex compilation_providers_mutex_;
+  // cuDNN graphs built by this compiler. Shared between the compilations of
+  // single fusions during autotuning (which run on this compiler) and the
+  // final compilation of a module, and between compilations of modules.
+  CompiledCudnnGraphCache cudnn_graph_cache_;
   absl::flat_hash_map<se::cuda::CompilationProviderOptions,
                       std::unique_ptr<se::cuda::CompilationProvider>>
       compilation_providers_ ABSL_GUARDED_BY(compilation_providers_mutex_);

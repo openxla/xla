@@ -24,6 +24,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/base/nullability.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -37,6 +38,8 @@ limitations under the License.
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/index.h"
+#include "xla/python/ifrt/index_domain.h"
 #include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/remap_plan.h"
@@ -131,10 +134,10 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
                          std::optional<absl::Span<const int64_t>> byte_strides,
                          ShardingRef sharding, LayoutRef layout,
                          HostBufferSemantics semantics,
-                         std::function<void()> on_done_with_host_buffer) {
+                         std::shared_ptr<const void> host_buffer_hold) {
         return delegated_->MakeArrayFromHostBuffer(
             data, dtype, std::move(shape), byte_strides, std::move(sharding),
-            std::move(layout), semantics, std::move(on_done_with_host_buffer));
+            std::move(layout), semantics, std::move(host_buffer_hold));
       });
   ON_CALL(*this, MakeArraysFromHostBufferShards)
       .WillByDefault(
@@ -170,6 +173,13 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
         return delegated_->CopyArrays(arrays, std::move(devices), memory_kind,
                                       semantics);
       });
+  ON_CALL(*this, CopyArraysWithDonatedDst)
+      .WillByDefault([this](absl::Span<ArrayRef> arrays,
+                            absl::Span<ArrayRef> donated_dst_arrays,
+                            ArrayCopySemantics semantics) {
+        return delegated_->CopyArraysWithDonatedDst(arrays, donated_dst_arrays,
+                                                    semantics);
+      });
   ON_CALL(*this, RemapArrays)
       .WillByDefault([this](const RemapPlan& plan, absl::Span<ArrayRef> arrays,
                             ArrayCopySemantics semantics) {
@@ -190,6 +200,17 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
                             absl::Span<const ArraySpec> specs,
                             ArrayCopySemantics semantics) {
         return delegated_->ReshardArrays(arrays, specs, semantics);
+      });
+  ON_CALL(*this, CopyArraySlices)
+      .WillByDefault([this](absl::Span<const ArrayRef> arrays,
+                            absl::Span<const IndexDomain> index_domains) {
+        return delegated_->CopyArraySlices(arrays, index_domains);
+      });
+  ON_CALL(*this, UpdateArraySlices)
+      .WillByDefault([this](absl::Span<ArrayRef> arrays,
+                            absl::Span<const ArrayRef> slices,
+                            absl::Span<const Index> origins) {
+        return delegated_->UpdateArraySlices(arrays, slices, origins);
       });
   ON_CALL(*this, GetReadyFuture)
       .WillByDefault([this](absl::Span<const ValueRef> values) {
@@ -266,17 +287,20 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
         return delegated_->LookupAddressableDevice(local_hardware_id);
       });
   ON_CALL(*this, MakeDeviceList)
-      .WillByDefault([this](absl::Span<xla::ifrt::Device* const> devices) {
-        return delegated_->MakeDeviceList(devices);
-      });
+      .WillByDefault(
+          [this](absl::Span<xla::ifrt::Device* absl_nonnull const> devices) {
+            return delegated_->MakeDeviceList(devices);
+          });
   ON_CALL(*this, GetDefaultCompiler).WillByDefault([this]() {
     return delegated_->GetDefaultCompiler();
   });
   ON_CALL(*this, Load)
-      .WillByDefault([this](absl::Span<const ExecutableRef> executables,
-                            absl::Span<std::unique_ptr<LoadOptions>> options) {
-        return delegated_->Load(executables, options);
-      });
+      .WillByDefault(
+          [this](
+              absl::Span<const ExecutableRef> executables,
+              absl::Span<absl_nonnull std::unique_ptr<LoadOptions>> options) {
+            return delegated_->Load(executables, options);
+          });
   ON_CALL(*this, GetTopologyForDevices)
       .WillByDefault([this](const DeviceListRef& devices) {
         return delegated_->GetTopologyForDevices(devices);
@@ -284,7 +308,8 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
   ON_CALL(*this, GetDefaultPjRtLayout)
       .WillByDefault(
           [this](xla::ifrt::DType dtype, absl::Span<const int64_t> dims,
-                 xla::ifrt::Device* device, xla::ifrt::MemoryKind memory_kind)
+                 xla::ifrt::Device* absl_nonnull device,
+                 xla::ifrt::MemoryKind memory_kind)
               -> absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> {
             return delegated_->GetDefaultPjRtLayout(dtype, dims, device,
                                                     memory_kind);
@@ -301,7 +326,7 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
   });
   ON_CALL(*this, SubscribeToAttributeChanges)
       .WillByDefault(
-          [this](absl::Span<xla::ifrt::Device* const> devices,
+          [this](absl::Span<xla::ifrt::Device* absl_nonnull const> devices,
                  std::optional<absl::Span<const std::string>> attribute_names,
                  xla::ifrt::OnDeviceAttributeChangeCallback callback) {
             return delegated_->SubscribeToAttributeChanges(

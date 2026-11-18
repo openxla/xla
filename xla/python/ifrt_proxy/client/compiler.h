@@ -20,8 +20,10 @@
 #include <memory>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/cord.h"
 #include "absl/strings/string_view.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/compiler.h"
@@ -45,7 +47,8 @@ class Compiler final : public RTTIExtends<Compiler, xla::ifrt::Compiler> {
  public:
   using xla::ifrt::Compiler::Compile;
 
-  Compiler(xla::ifrt::Client* client, std::shared_ptr<RpcHelper> rpc_helper);
+  Compiler(xla::ifrt::Client* absl_nonnull client,
+           absl_nonnull std::shared_ptr<RpcHelper> rpc_helper);
 
   tsl::Future<xla::ifrt::LoadedExecutableRef> CompileAndLoad(
       std::unique_ptr<xla::ifrt::Program> program,
@@ -63,8 +66,8 @@ class Compiler final : public RTTIExtends<Compiler, xla::ifrt::Compiler> {
 
   tsl::Future<xla::ifrt::LoadedExecutableRef> DeserializeLoadedExecutable(
       const absl::Cord& serialized,
-      std::unique_ptr<xla::ifrt::DeserializeExecutableOptions> options)
-      override;
+      absl_nullable std::unique_ptr<xla::ifrt::DeserializeExecutableOptions>
+          options) override;
 
   static char ID;  // NOLINT
 
@@ -75,8 +78,8 @@ class Compiler final : public RTTIExtends<Compiler, xla::ifrt::Compiler> {
       xla::ifrt::UserContextRef user_context,
       std::shared_ptr<CompileResponse> response);
 
-  xla::ifrt::Client* client_;
-  std::shared_ptr<RpcHelper> rpc_helper_;
+  xla::ifrt::Client* absl_nonnull client_;
+  absl_nonnull std::shared_ptr<RpcHelper> rpc_helper_;
 };
 
 }  // namespace proxy

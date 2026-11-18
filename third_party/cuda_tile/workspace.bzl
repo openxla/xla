@@ -5,8 +5,8 @@ load("//third_party:repo.bzl", "tf_mirror_urls")
 
 def repo():
     """Imports CUDA Tile IR."""
-    CUDA_TILE_COMMIT = "7e8e2e68fa219716103824c01f7303367cf7df8d"
-    CUDA_TILE_SHA256 = "2398f88dd0dbcda3732934c8527485c3941d3a6453c98b6c249461e6309ea44c"
+    CUDA_TILE_COMMIT = "25732e3308abd43c0aa9007a7b3b012598bbcf15"
+    CUDA_TILE_SHA256 = "aec27b90ca5b83a654175c9a95470e3bcacd512fea271892dbe76e920d8f98e4"
 
     quilt_http_archive(
         name = "cuda_tile",

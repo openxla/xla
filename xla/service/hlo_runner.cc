@@ -164,6 +164,9 @@ ExecuteOptions UpdateOrCreateDefaultExecuteOptions(
     out_options.hlo_output_callbacks =
         replicated_execute_options.hlo_output_callbacks;
   }
+
+  // Always enable strict shape checking.
+  out_options.strict_shape_checking = true;
   return out_options;
 }
 
@@ -217,7 +220,7 @@ absl::StatusOr<PjRtMemorySpace* absl_nonnull> GetMemorySpaceFromLayout(
   }
   TF_RET_CHECK(memory_space != nullptr)
       << "Memory space " << layout.memory_space()
-      << " does not exist on device " << device->id();
+      << " does not exist on device " << device->global_device_id();
   return memory_space;
 }
 
@@ -389,17 +392,6 @@ HloRunner::TransferLiteralsToDefaultDevice(
   return TransferLiteralsToDevice(layouts, literals, device);
 }
 
-absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
-HloRunner::TransferLiteralsToDefaultDevice(
-    absl::Span<const Literal* const> literals) {
-  std::vector<ShapeLayout> layouts;
-  layouts.reserve(literals.size());
-  for (const Literal* literal : literals) {
-    layouts.push_back(ShapeLayout(literal->shape()));
-  }
-  return TransferLiteralsToDefaultDevice(layouts, literals);
-}
-
 absl::StatusOr<Literal> HloRunner::TransferLiteralsFromDevice(
     absl::Span<const std::unique_ptr<PjRtBuffer>> output_buffers,
     const bool untuple_result) {
@@ -447,13 +439,11 @@ HloRunner::ExecuteWithDeviceBuffers(
                         HloRunnerExecutable::TryUnwrap(*this, executable));
 
   HloRunnerInterface::ReplicatedExecuteOptions replicated_execute_options;
-  ExecuteOptions new_execute_options = UpdateOrCreateDefaultExecuteOptions(
-      replicated_execute_options, execute_options != nullptr
-                                      ? std::make_optional(*execute_options)
-                                      : std::nullopt);
-  if (execute_options == nullptr) {
-    new_execute_options.strict_shape_checking = true;
-  }
+  const ExecuteOptions new_execute_options =
+      UpdateOrCreateDefaultExecuteOptions(
+          replicated_execute_options, execute_options != nullptr
+                                          ? std::make_optional(*execute_options)
+                                          : std::nullopt);
 
   ABSL_ASSIGN_OR_RETURN(
       PjRtLoadedExecutable * pjrt_executable,
@@ -490,7 +480,6 @@ HloRunner::ExecuteWithExecutable(OpaqueExecutable* executable,
   HloRunnerInterface::ReplicatedExecuteOptions replicated_execute_options;
   ExecuteOptions execute_options =
       UpdateOrCreateDefaultExecuteOptions(replicated_execute_options);
-  execute_options.strict_shape_checking = true;
 
   std::vector<absl::StatusOr<Literal>> results;
   results.reserve(num_repeats);
@@ -643,6 +632,10 @@ absl::StatusOr<std::vector<Literal>> HloRunner::ExecuteReplicated(
           tsl::thread::ThreadPool pool(tsl::Env::Default(), "replicas",
                                        options.num_devices);
           for (int64_t i = 0; i < options.num_devices; ++i) {
+            if (!id_to_device_ptr[i]->IsAddressable()) {
+              per_replica_results[i].emplace();
+              continue;
+            }
             for (const PjRtBuffer* const buffer : argument_buffer_slices[i]) {
               TF_RET_CHECK(buffer != nullptr);
             }
@@ -710,15 +703,20 @@ absl::StatusOr<std::vector<Literal>> HloRunner::ExecuteReplicatedImpl(
   TF_RET_CHECK(device_assignment != nullptr);
 
   std::vector<PjRtDevice*> id_to_device_ptr(options.num_devices, nullptr);
-  std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> argument_buffer_slices;
-  argument_buffer_slices.reserve(options.num_devices);
+  std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> argument_buffer_slices(
+      options.num_devices);
   std::vector<bool> is_tuple_result(options.num_devices, false);
+  bool has_addressable_device = false;
   for (int64_t i = 0; i < options.num_devices; ++i) {
     // Amortize device lookup.
     ABSL_ASSIGN_OR_RETURN(PjRtDevice* const device_ptr,
                           pjrt_client_->LookupDevice(
                               DeviceIdForInvocation(*device_assignment, i)));
     id_to_device_ptr[i] = device_ptr;
+    if (!device_ptr->IsAddressable()) {
+      continue;
+    }
+    has_addressable_device = true;
 
     // Get the entry layout.
     OpaqueExecutable* const wrapped_executable = executable_provider(i);
@@ -735,10 +733,14 @@ absl::StatusOr<std::vector<Literal>> HloRunner::ExecuteReplicatedImpl(
       replica_argument_ptrs.push_back(argument_provider(i, arg_index));
     }
     ABSL_ASSIGN_OR_RETURN(
-        std::vector<std::unique_ptr<PjRtBuffer>> replica_buffers,
+        argument_buffer_slices[i],
         TransferLiteralsToDevice(ecl.parameter_layouts(), replica_argument_ptrs,
                                  device_ptr));
-    argument_buffer_slices.push_back(std::move(replica_buffers));
+  }
+  if (!has_addressable_device) {
+    LOG(WARNING) << "None of the " << options.num_devices
+                 << " replicas in the device assignment are addressable by "
+                    "this process; returning placeholder results.";
   }
 
   // Handle infeed and outfeed.
@@ -756,6 +758,9 @@ absl::StatusOr<std::vector<Literal>> HloRunner::ExecuteReplicatedImpl(
   }
   if (has_infeed) {
     for (int64_t i = 0; i < options.num_devices; ++i) {
+      if (!id_to_device_ptr[i]->IsAddressable()) {
+        continue;
+      }
       pool->Schedule(
           [device = id_to_device_ptr[i],
            &infeed_literal = *ABSL_DIE_IF_NULL(options.infeed_values[i]),
@@ -780,6 +785,9 @@ absl::StatusOr<std::vector<Literal>> HloRunner::ExecuteReplicatedImpl(
       options.outfeed_values->resize(options.num_devices);
     }
     for (int64_t i = 0; i < options.num_devices; ++i) {
+      if (!id_to_device_ptr[i]->IsAddressable()) {
+        continue;
+      }
       pool->Schedule([i, device = id_to_device_ptr[i],
                       outfeed_values = options.outfeed_values,
                       outfeed_shape = options.outfeed_shape,
@@ -815,14 +823,14 @@ absl::StatusOr<std::vector<Literal>> HloRunner::ExecuteReplicatedImpl(
                        execute_options));
   VLOG(1) << "Replicated execution terminated";
 
-  // Get the result from execution.
-  std::vector<Literal> result_literals;
-  result_literals.reserve(options.num_devices);
+  // Get the result from execution for locally addressable devices.
+  std::vector<Literal> result_literals(options.num_devices);
   for (int64_t i = 0; i < options.num_devices; ++i) {
-    ABSL_ASSIGN_OR_RETURN(
-        Literal literal,
-        TransferLiteralsFromDevice(result_buffers[i], is_tuple_result[i]));
-    result_literals.push_back(std::move(literal));
+    if (id_to_device_ptr[i]->IsAddressable()) {
+      ABSL_ASSIGN_OR_RETURN(
+          result_literals[i],
+          TransferLiteralsFromDevice(result_buffers[i], is_tuple_result[i]));
+    }
   }
 
   // Join infeed and outfeed threads, if they exist. The thread pool's threads

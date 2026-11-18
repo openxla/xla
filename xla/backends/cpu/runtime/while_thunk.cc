@@ -50,10 +50,17 @@ namespace xla::cpu {
 absl::StatusOr<std::unique_ptr<WhileThunk>> WhileThunk::Create(
     Info info, BufferAllocation::Slice cond_buffer, ThunkSequence cond_sequence,
     ThunkSequence body_sequence, std::optional<int64_t> trip_count) {
-  ABSL_ASSIGN_OR_RETURN(ThunkExecutor cond_executor,
-                        ThunkExecutor::Create(std::move(cond_sequence)));
-  ABSL_ASSIGN_OR_RETURN(ThunkExecutor body_executor,
-                        ThunkExecutor::Create(std::move(body_sequence)));
+  ThunkExecutor::Options executor_options;
+  // Concurrency overheads across while loop iterations (ExecuteState
+  // allocation, ready queue synchronization, thread pool work stealing)
+  // dominate execution time unless buffer sizes are large.
+  executor_options.execute_sequential_buffer_threshold = 64 * 1024;
+  ABSL_ASSIGN_OR_RETURN(
+      ThunkExecutor cond_executor,
+      ThunkExecutor::Create(std::move(cond_sequence), executor_options));
+  ABSL_ASSIGN_OR_RETURN(
+      ThunkExecutor body_executor,
+      ThunkExecutor::Create(std::move(body_sequence), executor_options));
 
   if (cond_buffer.size() != sizeof(bool)) {
     return Internal("Unsupported cond buffer size %d", cond_buffer.size());
@@ -286,7 +293,7 @@ tsl::AsyncValueRef<WhileThunk::ExecuteEvent> WhileThunk::ExecuteAsyncWhileLoop(
 }
 
 WhileThunk::BufferUses WhileThunk::buffer_uses() const {
-  BufferUses buffer_uses = {BufferUse::Write(cond_buffer_, cond_buffer_shape_)};
+  BufferUses buffer_uses = {BufferUse::Read(cond_buffer_, cond_buffer_shape_)};
 
   BufferUses cond_uses = cond_executor_.buffer_uses();
   buffer_uses.insert(buffer_uses.end(), cond_uses.begin(), cond_uses.end());

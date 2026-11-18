@@ -18,6 +18,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -26,17 +27,28 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/log_severity.h"
+#include "absl/cleanup/cleanup.h"
+#include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/blocking_counter.h"
+#include "absl/synchronization/mutex.h"
+#include "absl/synchronization/notification.h"
+#include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "riegeli/bytes/cfile_reader.h"
 #include "riegeli/bytes/string_reader.h"
 #include "tsl/platform/path.h"
 #include "xla/backends/cpu/target_machine_options.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/loopback_collectives.h"
+#include "xla/backends/gpu/runtime/async_thunk.h"
+#include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
@@ -51,6 +63,7 @@ limitations under the License.
 #include "xla/client/executable_build_options.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/debug_options_flags.h"
+#include "xla/executable_run_options.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
@@ -59,11 +72,17 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/literal_util.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
+#include "xla/runtime/device_id.h"
+#include "xla/runtime/hang_watchdog.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
+#include "xla/service/device_assignment.h"
+#include "xla/service/executable.h"
 #include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/gpu/dense_data_intermediate.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/service/gpu/gpu_executable_buffer_allocator.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/gpu/gpu_module_globals.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu_topology.h"
@@ -79,12 +98,19 @@ limitations under the License.
 #include "xla/stream_executor/abi/executable_abi_version.pb.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/mock_stream.h"
 #include "xla/stream_executor/mock_stream_executor.h"
+#include "xla/stream_executor/module_spec.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform_manager.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/stream_executor/semantic_version.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/sycl/oneapi_compute_capability.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
@@ -142,12 +168,99 @@ TEST(GpuModuleGlobalsTest, EmptyBinarySkipsModuleLoading) {
   GpuModuleGlobals module_globals(binary, constants);
 
   EXPECT_CALL(stream, parent()).WillOnce(Return(&executor));
+  EXPECT_CALL(executor, device_ordinal()).WillRepeatedly(Return(0));
   EXPECT_CALL(executor, GetPlatform()).Times(0);
   EXPECT_CALL(executor, LoadModule(::testing::_)).Times(0);
 
   ASSERT_OK_AND_ASSIGN(const auto* resolved, module_globals.Resolve(&stream));
 
   EXPECT_TRUE(resolved->empty());
+}
+
+TEST(GpuModuleGlobalsTest, ConcurrentResolveAcrossDevices) {
+  constexpr int kNumDevices = 8;
+  constexpr int kThreadsPerDevice = 4;
+
+  std::vector<uint8_t> binary = {1, 2, 3, 4};
+  std::vector<GpuModuleGlobals::ConstantInfo> constants = {
+      GpuModuleGlobals::ConstantInfo{
+          /*symbol_name=*/"const_0",
+          /*content=*/DenseDataIntermediate::Own({10, 20, 30, 40}),
+          /*allocation_index=*/0}};
+
+  std::vector<std::unique_ptr<se::MockStreamExecutor>> executors;
+  std::vector<std::unique_ptr<se::MockStream>> streams;
+  for (int d = 0; d < kNumDevices; ++d) {
+    auto executor = std::make_unique<se::MockStreamExecutor>();
+    auto stream = std::make_unique<se::MockStream>();
+    const void* handle_id =
+        reinterpret_cast<const void*>(static_cast<uintptr_t>(0x1000 + d));
+    se::ModuleHandle module_handle(handle_id);
+    se::DeviceAddressBase symbol_addr(
+        reinterpret_cast<void*>(static_cast<uintptr_t>(0x2000 + d * 16)), 4);
+
+    EXPECT_CALL(*stream, parent()).WillRepeatedly(Return(executor.get()));
+    EXPECT_CALL(*executor, device_ordinal()).WillRepeatedly(Return(d));
+    EXPECT_CALL(*executor, LoadModule(::testing::_))
+        .Times(1)
+        .WillOnce(Return(module_handle));
+    EXPECT_CALL(*executor, GetSymbol("const_0", module_handle))
+        .Times(1)
+        .WillOnce(Return(symbol_addr));
+    EXPECT_CALL(*stream, Memcpy(::testing::A<se::DeviceAddressBase*>(),
+                                ::testing::A<const void*>(), 4))
+        .Times(1)
+        .WillOnce(Return(absl::OkStatus()));
+    EXPECT_CALL(*stream, BlockHostUntilDone())
+        .Times(1)
+        .WillOnce(Return(absl::OkStatus()));
+    EXPECT_CALL(*executor, UnloadModule(module_handle))
+        .Times(1)
+        .WillOnce(Return(true));
+
+    executors.push_back(std::move(executor));
+    streams.push_back(std::move(stream));
+  }
+
+  GpuModuleGlobals module_globals(binary, constants,
+                                  /*devices_per_host=*/kNumDevices);
+
+  tsl::thread::ThreadPool pool(tsl::Env::Default(), "resolve_test",
+                               kNumDevices * kThreadsPerDevice);
+  absl::BlockingCounter ready(kNumDevices * kThreadsPerDevice);
+  absl::Notification go;
+  absl::BlockingCounter done(kNumDevices * kThreadsPerDevice);
+
+  std::vector<const GpuModuleGlobals::BufferAllocToDeviceMemoryMap*> results(
+      kNumDevices * kThreadsPerDevice, nullptr);
+
+  for (int d = 0; d < kNumDevices; ++d) {
+    for (int t = 0; t < kThreadsPerDevice; ++t) {
+      int idx = d * kThreadsPerDevice + t;
+      pool.Schedule([&, d, idx]() {
+        ready.DecrementCount();
+        go.WaitForNotification();
+        ASSERT_OK_AND_ASSIGN(results[idx],
+                             module_globals.Resolve(streams[d].get()));
+        done.DecrementCount();
+      });
+    }
+  }
+
+  ready.Wait();
+  go.Notify();
+  done.Wait();
+
+  for (int d = 0; d < kNumDevices; ++d) {
+    const auto* base = results[d * kThreadsPerDevice];
+    ASSERT_NE(base, nullptr);
+    ASSERT_TRUE(base->contains(0));
+    EXPECT_EQ(base->at(0).opaque(),
+              reinterpret_cast<void*>(static_cast<uintptr_t>(0x2000 + d * 16)));
+    for (int t = 1; t < kThreadsPerDevice; ++t) {
+      EXPECT_EQ(results[d * kThreadsPerDevice + t], base);
+    }
+  }
 }
 
 TEST_F(GpuExecutableTest, ExecuteWithWatchdogs) {
@@ -166,6 +279,25 @@ TEST_F(GpuExecutableTest, ExecuteWithWatchdogs) {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo, config));
   EXPECT_TRUE(Run(std::move(module), /*run_hlo_passes=*/true));
+}
+
+TEST(GpuExecutableRuntimeTest,
+     LocalityDomainStreamsAreExcludedFromGenericStreamCounts) {
+  ThunkSequence thunks;
+  auto start = std::make_unique<AsyncStartThunk>(
+      ThunkInfoWithId(1), LocalityDomainStreamId(0), ThunkSequence{},
+      /*devices_per_host=*/1);
+  std::shared_ptr<AsyncExecution> async_execution = start->async_execution();
+  thunks.push_back(std::move(start));
+  thunks.Emplace<AsyncDoneThunk>(ThunkInfoWithId(2),
+                                 std::move(async_execution));
+
+  GpuExecutable::Params params;
+  params.module_name = "locality_domain_stream_count_test";
+  params.executable = std::make_unique<ThunkExecutor>(std::move(thunks));
+  SetDummyBufferAssignment(params);
+
+  EXPECT_OK(GpuExecutable::Create(std::move(params)));
 }
 
 TEST_F(GpuExecutableTest, OutputInfoToAndFromProto) {
@@ -348,7 +480,8 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
     debug_options.set_xla_gpu_command_buffer_update_mode(update_mode);
     std::unique_ptr<GpuExecutableBufferAllocator> buffer_allocator =
         GpuExecutableBufferAllocator::Create("test", allocation_ptrs, shape,
-                                             &debug_options, &thunk_executor);
+                                             &debug_options, &thunk_executor,
+                                             /*num_devices=*/1);
     ServiceExecutableRunOptions run_options;
     ABSL_ASSIGN_OR_RETURN(
         std::unique_ptr<GpuExecutableBufferAllocator::ExecutionScope>
@@ -361,7 +494,7 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
                                          /*memory_allocator=*/nullptr);
     std::optional<std::vector<BufferAllocation::Index>> persistent_indices;
     ABSL_RETURN_IF_ERROR(allocation_scope->ExecuteWithBufferAllocations(
-        buffer_allocations, /*device_ordinal=*/0,
+        buffer_allocations,
         [&](const BufferAllocations&,
             std::optional<absl::Span<const BufferAllocation::Index>> indices) {
           if (indices.has_value()) {
@@ -394,6 +527,82 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
   EXPECT_EQ(skip_profiled_policy.command_buffer_allocation_count, 2);
   EXPECT_THAT(skip_profiled_policy.persistent_alloc_indices,
               Optional(ElementsAre(1)));
+}
+
+TEST_F(GpuExecutableTest, CommandBufferAllocationPolicyIncludesPersistent) {
+  std::vector<BufferAllocation> allocations;
+  allocations.reserve(2);
+  allocations.emplace_back(0, 16, 0);
+  allocations.back().set_persistent(true);
+  allocations.emplace_back(1, 4, 0);
+  allocations.back().set_maybe_live_out(true);
+
+  Shape shape = ShapeUtil::MakeShape(U64, {2});
+  BufferAllocation::Slice persistent_slice(&allocations[0], 0, 16);
+  BufferAllocation::Slice live_out_slice(&allocations[1], 0, 4);
+
+  emitters::KernelArgument persistent_arg(shape, persistent_slice);
+  persistent_arg.set_written(true);
+  persistent_arg.set_invariant(false);
+  emitters::KernelArgument live_out_arg(ShapeUtil::MakeShape(S32, {}),
+                                        live_out_slice);
+
+  ThunkSequence command_thunks = ThunkSequence::Of<KernelThunk>(
+      ThunkInfoWithId(124),
+      /*kernel_name=*/"test_persistent_kernel",
+      /*kernel_arguments=*/
+      emitters::KernelArguments(
+          std::vector<emitters::KernelArgument>{persistent_arg, live_out_arg}),
+      /*launch_dimensions=*/LaunchDimensions(),
+      /*cluster_dim=*/std::nullopt,
+      /*shmem_bytes=*/0,
+      /*tma_metadata=*/se::gpu::TmaMetadata(),
+      /*devices_per_host=*/1);
+
+  ASSERT_OK_AND_ASSIGN(
+      CommandExecutor commands,
+      ConvertToCommands(command_thunks, ConvertToCommandsOptions{}));
+  auto sequential_thunk = std::make_unique<SequentialThunk>(
+      Thunk::ThunkInfo(), std::move(command_thunks));
+  ThunkSequence thunk_sequence = ThunkSequence::Of<CommandBufferThunk>(
+      std::move(commands), Thunk::ThunkInfo(), /*devices_in_process=*/1,
+      std::move(sequential_thunk));
+  ThunkExecutor thunk_executor(std::move(thunk_sequence));
+
+  std::vector<const BufferAllocation*> allocation_ptrs = {&allocations[0],
+                                                          &allocations[1]};
+  for (DebugOptions::CommandBufferUpdateMode mode :
+       {DebugOptions::ALWAYS_UPDATE, DebugOptions::SKIP_TEMP,
+        DebugOptions::SKIP_PROFILED}) {
+    DebugOptions debug_options;
+    debug_options.set_xla_gpu_command_buffer_update_mode(mode);
+    std::unique_ptr<GpuExecutableBufferAllocator> buffer_allocator =
+        GpuExecutableBufferAllocator::Create("test", allocation_ptrs, shape,
+                                             &debug_options, &thunk_executor,
+                                             /*num_devices=*/1);
+    EXPECT_EQ(buffer_allocator->command_buffer_allocation_count(), 1);
+    ServiceExecutableRunOptions run_options;
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<GpuExecutableBufferAllocator::ExecutionScope>
+            allocation_scope,
+        buffer_allocator->CreateExecutionScope(
+            &run_options, /*memory_allocator=*/nullptr, /*device_ordinal=*/0));
+
+    std::vector<se::DeviceAddressBase> buffers;
+    BufferAllocations buffer_allocations(buffers, /*device_ordinal=*/0,
+                                         /*memory_allocator=*/nullptr);
+    std::optional<std::vector<BufferAllocation::Index>> persistent_indices;
+    ASSERT_OK(allocation_scope->ExecuteWithBufferAllocations(
+        buffer_allocations,
+        [&](const BufferAllocations&,
+            std::optional<absl::Span<const BufferAllocation::Index>> indices) {
+          if (indices.has_value()) {
+            persistent_indices.emplace(indices->begin(), indices->end());
+          }
+          return absl::OkStatus();
+        }));
+    EXPECT_THAT(persistent_indices, Optional(ElementsAre(0)));
+  }
 }
 
 TEST_F(GpuExecutableTest, ComputeComputationLayout) {
@@ -574,6 +783,52 @@ TEST_F(GpuExecutableTest, ThunkChecksumPassAddsAllocation) {
             allocations_without_pass + 1);
 }
 
+TEST(GpuExecutableTupleOutputTest, DebugPassesAcceptTupleModuleOutputs) {
+  // GetOutputInfo records the tuple index and each array leaf. The debug
+  // passes reject tuple slices, so GetModuleOutputSlices must pass only the
+  // leaves through.
+  Shape leaf = ShapeUtil::MakeShape(F32, {4});
+  GpuExecutable::Params params;
+  params.module_name = "tuple_result";
+  params.executable = std::make_unique<ThunkExecutor>(ThunkSequence{});
+  HloComputation::Builder builder("tuple_result");
+  HloInstruction* left = builder.AddInstruction(HloInstruction::CreateConstant(
+      LiteralUtil::CreateR1<float>({1, 2, 3, 4})));
+  HloInstruction* right = builder.AddInstruction(HloInstruction::CreateConstant(
+      LiteralUtil::CreateR1<float>({5, 6, 7, 8})));
+  HloInstruction* root =
+      builder.AddInstruction(HloInstruction::CreateTuple({left, right}));
+  params.debug_module =
+      std::make_unique<HloModule>("tuple_result", HloModuleConfig());
+  params.debug_module->AddEntryComputation(builder.Build(root));
+  *params.program_shape.mutable_result() =
+      ShapeUtil::MakeTupleShape({leaf, leaf});
+  params.allocations = {
+      BufferAllocation(/*index=*/0, /*size=*/16, /*color=*/0),
+      BufferAllocation(/*index=*/1, /*size=*/16, /*color=*/0)};
+  params.output_info[ShapeIndex{}] =
+      GpuExecutable::OutputInfo{/*allocation_index=*/0};
+  params.output_info[ShapeIndex{0}] =
+      GpuExecutable::OutputInfo{/*allocation_index=*/0};
+  params.output_info[ShapeIndex{1}] =
+      GpuExecutable::OutputInfo{/*allocation_index=*/1};
+  params.debug_options.set_xla_gpu_detect_nan(
+      DebugOptions::DETECTION_MODE_WARNING);
+  params.debug_options.set_xla_gpu_detect_inf(
+      DebugOptions::DETECTION_MODE_WARNING);
+  params.debug_options.set_xla_gpu_log_minmax(true);
+  params.debug_options
+      .set_xla_gpu_experimental_enable_checksum_tracing_on_thunks(true);
+  params.debug_options.set_xla_gpu_experimental_enable_buffer_saver_on_thunks(
+      true);
+  params.debug_options
+      .set_xla_gpu_experimental_thunk_buffer_debug_module_outputs(true);
+  params.debug_options.set_xla_dump_to("/tmp");
+  SetDummyBufferAssignment(params);
+
+  EXPECT_THAT(GpuExecutable::Create(std::move(params)), absl_testing::IsOk());
+}
+
 TEST_F(GpuExecutableTest, DumpsMetadataListProto) {
   ASSERT_OK_AND_ASSIGN(
       tsl::testing::TemporaryDirectory dump_dir,
@@ -741,6 +996,246 @@ TEST_F(GpuExecutableTest, FromProtoWithoutGpuTopology) {
       GpuExecutable::FromProto(proto, device_description, "TEST_PLATFORM",
                                GetDebugOptionsFromFlags()));
   EXPECT_FALSE(reconstructed_executable->gpu_topology().has_value());
+}
+
+TEST_F(GpuExecutableTest, ToProtoAndFromProtoPreservesPersistentAllocation) {
+  se::DeviceDescription device_description;
+  device_description.set_gpu_compute_capability(
+      se::GpuComputeCapability{se::CudaComputeCapability::Volta()});
+  device_description.set_driver_version({12, 3, 0});
+  device_description.set_runtime_version({12, 3, 0});
+
+  GpuExecutable::Params params;
+  params.executable = std::make_unique<ThunkExecutor>(ThunkSequence{});
+  params.device_description = device_description;
+  params.module_name = "test_module";
+  params.enable_debug_info_manager = false;
+  SetDummyBufferAssignment(params);
+  BufferAllocation persistent(/*index=*/0, /*size=*/16, /*color=*/0);
+  persistent.set_persistent(true);
+  persistent.set_initial_data(
+      {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16});
+  params.allocations = {std::move(persistent)};
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> executable,
+                       GpuExecutable::Create(std::move(params)));
+  EXPECT_EQ(executable->SizeOfGeneratedCodeInBytes(), 16);
+
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto, executable->ToProto());
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> loaded,
+      GpuExecutable::FromProto(proto, device_description, "TEST_PLATFORM",
+                               GetDebugOptionsFromFlags()));
+  ASSERT_EQ(loaded->GetAllocations().size(), 1);
+  const BufferAllocation* loaded_alloc = loaded->GetAllocations()[0];
+  EXPECT_TRUE(loaded_alloc->is_persistent());
+  EXPECT_EQ(loaded_alloc->size(), 16);
+  EXPECT_THAT(
+      loaded_alloc->initial_data(),
+      ElementsAre(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16));
+  EXPECT_EQ(loaded->SizeOfGeneratedCodeInBytes(), 16);
+}
+
+// Returns a module with a single constant and the given config.
+std::unique_ptr<HloModule> MakeModuleWithConfig(const HloModuleConfig& config) {
+  HloComputation::Builder builder("test_computation");
+  HloInstruction* root = builder.AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0(1)));
+  // The name needs sanitizing, so that the tests check that the executable
+  // uses the module's (sanitized) name.
+  auto hlo_module = std::make_unique<HloModule>("my module-1", config);
+  hlo_module->AddEntryComputation(builder.Build(/*root_instruction=*/root));
+  return hlo_module;
+}
+
+// Returns a module config with non-default runtime metadata.
+HloModuleConfig MakeConfigWithRuntimeMetadata() {
+  HloModuleConfig config;
+  DebugOptions compile_time_options = GetDebugOptionsFromFlags();
+  compile_time_options.set_xla_gpu_nccl_collective_max_nchannels(7);
+  config.set_debug_options(compile_time_options);
+  DeviceAssignment device_assignment(/*replica_count=*/1,
+                                     /*computation_count=*/2);
+  device_assignment(0, 0) = 1;
+  device_assignment(0, 1) = 0;
+  config.set_static_device_assignment(device_assignment);
+  return config;
+}
+
+se::DeviceDescription MakeVoltaDeviceDescription() {
+  se::DeviceDescription device_description;
+  device_description.set_gpu_compute_capability(
+      se::GpuComputeCapability{se::CudaComputeCapability::Volta()});
+  device_description.set_driver_version({12, 3, 0});
+  device_description.set_runtime_version({12, 3, 0});
+  return device_description;
+}
+
+GpuExecutable::Params MakeParamsWithModule(const HloModuleConfig& config) {
+  GpuExecutable::Params params;
+  params.executable = std::make_unique<ThunkExecutor>(ThunkSequence{});
+  params.device_description = MakeVoltaDeviceDescription();
+  params.enable_debug_info_manager = false;
+  params.debug_module = MakeModuleWithConfig(config);
+  params.module_name = params.debug_module->name();
+  // Load-time options that differ from the compile-time options.
+  params.debug_options = GetDebugOptionsFromFlags();
+  params.gpu_topology =
+      GpuTopology("test_platform", /*num_partitions=*/1,
+                  /*num_hosts_per_partition=*/1, /*num_devices_per_host=*/4);
+  SetDummyBufferAssignment(params);
+  return params;
+}
+
+TEST_F(GpuExecutableTest, RuntimeMetadataFromModuleConfig) {
+  HloModuleConfig config = MakeConfigWithRuntimeMetadata();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> executable,
+                       GpuExecutable::Create(MakeParamsWithModule(config)));
+  ASSERT_TRUE(executable->has_module());
+
+  EXPECT_THAT(executable->runtime_debug_options(),
+              EqualsProto(executable->module_config().debug_options()));
+  EXPECT_EQ(executable->runtime_debug_options()
+                .xla_gpu_nccl_collective_max_nchannels(),
+            7);
+  ASSERT_TRUE(executable->static_device_assignment().has_value());
+  EXPECT_EQ(executable->static_device_assignment()->ToString(),
+            config.static_device_assignment().ToString());
+  EXPECT_EQ(executable->name(), executable->module().name());
+  EXPECT_EQ(executable->name(), "my_module-1");
+}
+
+TEST_F(GpuExecutableTest, RuntimeMetadataWithoutModuleUsesGivenOptions) {
+  GpuExecutable::Params params =
+      MakeParamsWithModule(MakeConfigWithRuntimeMetadata());
+  // This is what `GpuCompiler` does with `embed_hlo_module=false`: it passes
+  // the compile-time options but no module.
+  params.debug_module = nullptr;
+  params.debug_options.set_xla_gpu_nccl_collective_max_nchannels(5);
+  DebugOptions compile_time_options = params.debug_options;
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> executable,
+                       GpuExecutable::Create(std::move(params)));
+  ASSERT_FALSE(executable->has_module());
+
+  EXPECT_THAT(executable->runtime_debug_options(),
+              EqualsProto(compile_time_options));
+  EXPECT_FALSE(executable->static_device_assignment().has_value());
+}
+
+TEST_F(GpuExecutableTest, RuntimeMetadataSurvivesProtoRoundTrip) {
+  ASSERT_OK_AND_ASSIGN(
+      tsl::testing::TemporaryDirectory dump_dir,
+      tsl::testing::TemporaryDirectory::CreateForCurrentTestcase());
+  HloModuleConfig config = MakeConfigWithRuntimeMetadata();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> reference_executable,
+                       GpuExecutable::Create(MakeParamsWithModule(config)));
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto,
+                       reference_executable->ToProto());
+
+  DebugOptions load_time_options = GetDebugOptionsFromFlags();
+  load_time_options.set_xla_dump_to(dump_dir.path());
+  load_time_options.set_xla_gpu_experimental_nccl_window_symmetric(true);
+  load_time_options.set_xla_gpu_nccl_collective_max_nchannels(3);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> loaded_executable,
+      GpuExecutable::FromProto(proto, MakeVoltaDeviceDescription(),
+                               "TEST_PLATFORM", load_time_options));
+  ASSERT_TRUE(loaded_executable->has_module());
+
+  // The stored metadata matches what the deserialized module says.
+  EXPECT_THAT(loaded_executable->runtime_debug_options(),
+              EqualsProto(loaded_executable->module_config().debug_options()));
+  ASSERT_TRUE(loaded_executable->static_device_assignment().has_value());
+  EXPECT_EQ(
+      loaded_executable->static_device_assignment()->ToString(),
+      loaded_executable->module_config().static_device_assignment().ToString());
+
+  // Compile-time options with the load-time overrides applied.
+  const DebugOptions& runtime_options =
+      loaded_executable->runtime_debug_options();
+  EXPECT_EQ(runtime_options.xla_gpu_nccl_collective_max_nchannels(), 7);
+  EXPECT_EQ(runtime_options.xla_dump_to(), dump_dir.path());
+  EXPECT_TRUE(runtime_options.xla_gpu_experimental_nccl_window_symmetric());
+  EXPECT_EQ(loaded_executable->static_device_assignment()->ToString(),
+            config.static_device_assignment().ToString());
+
+  EXPECT_EQ(loaded_executable->name(), reference_executable->name());
+  EXPECT_EQ(loaded_executable->name(), loaded_executable->module().name());
+  EXPECT_EQ(loaded_executable->name(), "my_module-1");
+}
+
+TEST_F(GpuExecutableTest, RuntimeMetadataFromProtoUsesHloModuleProtoFallbacks) {
+  HloModuleConfig config = MakeConfigWithRuntimeMetadata();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> reference_executable,
+                       GpuExecutable::Create(MakeParamsWithModule(config)));
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto,
+                       reference_executable->ToProto());
+
+  // Move the device assignment from the config to the module proto and drop
+  // the debug options from the config.
+  HloModuleProtoWithConfig& module_with_config =
+      *proto.mutable_hlo_module_with_config();
+  ASSERT_TRUE(module_with_config.config().has_static_device_assignment());
+  *module_with_config.mutable_hlo_module()->mutable_device_assignment() =
+      module_with_config.config().static_device_assignment();
+  module_with_config.mutable_config()->clear_static_device_assignment();
+  module_with_config.mutable_config()->clear_debug_options();
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> loaded_executable,
+      GpuExecutable::FromProto(proto, MakeVoltaDeviceDescription(),
+                               "TEST_PLATFORM", GetDebugOptionsFromFlags()));
+  ASSERT_TRUE(loaded_executable->has_module());
+
+  EXPECT_THAT(loaded_executable->runtime_debug_options(),
+              EqualsProto(loaded_executable->module_config().debug_options()));
+  EXPECT_EQ(loaded_executable->runtime_debug_options()
+                .xla_gpu_nccl_collective_max_nchannels(),
+            DefaultDebugOptionsIgnoringFlags()
+                .xla_gpu_nccl_collective_max_nchannels());
+  ASSERT_TRUE(loaded_executable->static_device_assignment().has_value());
+  EXPECT_EQ(
+      loaded_executable->static_device_assignment()->ToString(),
+      loaded_executable->module_config().static_device_assignment().ToString());
+  EXPECT_EQ(loaded_executable->static_device_assignment()->ToString(),
+            config.static_device_assignment().ToString());
+}
+
+TEST_F(GpuExecutableTest, RuntimeMetadataFromProtoWithoutModuleConfig) {
+  // This is what an executable compiled with `embed_hlo_module=false`
+  // serializes to: a proto without `hlo_module_with_config`.
+  GpuExecutable::Params params =
+      MakeParamsWithModule(MakeConfigWithRuntimeMetadata());
+  params.debug_module = nullptr;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> reference_executable,
+                       GpuExecutable::Create(std::move(params)));
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto,
+                       reference_executable->ToProto());
+  ASSERT_FALSE(proto.has_hlo_module_with_config());
+
+  DebugOptions load_time_options = GetDebugOptionsFromFlags();
+  load_time_options.set_xla_gpu_nccl_collective_max_nchannels(3);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> loaded_executable,
+      GpuExecutable::FromProto(proto, MakeVoltaDeviceDescription(),
+                               "TEST_PLATFORM", load_time_options));
+  ASSERT_FALSE(loaded_executable->has_module());
+
+  // Without a module config the compile-time options are unknown, so the
+  // executable runs with the load-time options.
+  EXPECT_THAT(loaded_executable->runtime_debug_options(),
+              EqualsProto(load_time_options));
+  EXPECT_FALSE(loaded_executable->static_device_assignment().has_value());
+
+  // Module-less executables used to run without any debug options, which
+  // disabled highest-priority communication streams. Now they get the default.
+  ASSERT_TRUE(DefaultDebugOptionsIgnoringFlags()
+                  .xla_gpu_enable_highest_priority_async_stream());
+  EXPECT_TRUE(loaded_executable->runtime_debug_options()
+                  .xla_gpu_enable_highest_priority_async_stream());
 }
 
 TEST_F(GpuExecutableTest, ToProtoFailsWithoutGpuTopology) {
@@ -1120,6 +1615,7 @@ TEST_F(GpuExecutableTest, FromProtoRegistersHloModuleWithDebugInfoManager) {
 
   DebugOptions debug_options = GetDebugOptionsFromFlags();
   debug_options.set_xla_gpu_executable_embed_debug_info(true);
+  debug_options.set_xla_gpu_experimental_nccl_window_symmetric(true);
 
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<GpuExecutable> executable,
@@ -1127,6 +1623,9 @@ TEST_F(GpuExecutableTest, FromProtoRegistersHloModuleWithDebugInfoManager) {
                                debug_options));
   ASSERT_TRUE(executable->has_module());
   EXPECT_EQ(executable->constants().size(), 1);
+  EXPECT_TRUE(executable->module_config()
+                  .debug_options()
+                  .xla_gpu_experimental_nccl_window_symmetric());
 
   EXPECT_TRUE(XlaDebugInfoManager::Get()->TracksModule(
       executable->module().unique_id()));
@@ -1249,6 +1748,882 @@ TEST_F(GpuExecutableTest, ExecutableAbiVersion) {
   ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto, executable->ToProto());
   EXPECT_THAT(proto.executable_abi_version(),
               EqualsProto(executable_abi_version_proto));
+}
+
+class FakeDeviceAddressAllocator : public se::DeviceAddressAllocator {
+ public:
+  explicit FakeDeviceAddressAllocator(const se::Platform* platform)
+      : se::DeviceAddressAllocator(platform) {}
+  absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> Allocate(
+      int device_ordinal, uint64_t size, bool retry_on_failure,
+      int64_t memory_space) override {
+    return se::ScopedDeviceAddress<uint8_t>();
+  }
+  absl::Status Deallocate(int device_ordinal,
+                          se::DeviceAddressBase mem) override {
+    return absl::OkStatus();
+  }
+  bool AllowsAsynchronousDeallocation() const override { return true; }
+  absl::StatusOr<se::Stream*> GetStream(int device_ordinal) override {
+    return nullptr;
+  }
+};
+
+// Mimics Exec 1's CommandBufferThunk::ExecuteOnStream:
+// - Device 0 (slow) evicts its command buffer cache and calls BeginCapture
+//   (acquiring `driver_mutex`) before submitting the collective to the stream.
+// - Device 1 (fast) hits its cache and submits the collective immediately.
+class Exec1CollectiveThunk : public Thunk {
+ public:
+  Exec1CollectiveThunk(ThunkInfo thunk_info, absl::Mutex* driver_mutex,
+                       absl::Notification* d1_finished_exec1_thunk,
+                       absl::Notification* d1_entered_exec2,
+                       absl::BlockingCounter* exec1_collective_submitted,
+                       absl::Notification* exec1_collective_done)
+      : Thunk(Kind::kCommandBuffer, std::move(thunk_info)),
+        driver_mutex_(driver_mutex),
+        d1_finished_exec1_thunk_(d1_finished_exec1_thunk),
+        d1_entered_exec2_(d1_entered_exec2),
+        exec1_collective_submitted_(exec1_collective_submitted),
+        exec1_collective_done_(exec1_collective_done) {}
+
+  absl::Status Prepare(const PrepareParams& params) override {
+    return params.collective_clique_requests->RequestClique(
+        GpuCliqueKey({GlobalDeviceId(0), GlobalDeviceId(1)},
+                     /*num_local_participants=*/2),
+        /*device_groups=*/{{GlobalDeviceId(0), GlobalDeviceId(1)}});
+  }
+
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
+    if (params.stream->parent()->device_ordinal() == 0) {
+      d1_finished_exec1_thunk_->WaitForNotification();
+      // Give device 1 a window to race into exec2 if exec1 does not
+      // rendezvous after ExecuteOnStream.
+      d1_entered_exec2_->WaitForNotificationWithTimeout(absl::Milliseconds(50));
+      // Mimic cudaStreamBeginCapture acquiring libcuda's global lock before
+      // submitting the command buffer containing the collective.
+      absl::MutexLock lock(*driver_mutex_);
+      if (exec1_collective_submitted_->DecrementCount()) {
+        exec1_collective_done_->Notify();
+      }
+    } else {
+      if (exec1_collective_submitted_->DecrementCount()) {
+        exec1_collective_done_->Notify();
+      }
+      d1_finished_exec1_thunk_->Notify();
+    }
+    return absl::OkStatus();
+  }
+
+  BufferUses buffer_uses() const override { return {}; }
+
+  absl::StatusOr<ThunkProto> ToProto() const override { return ThunkProto(); }
+
+ private:
+  absl::Mutex* driver_mutex_;
+  absl::Notification* d1_finished_exec1_thunk_;
+  absl::Notification* d1_entered_exec2_;
+  absl::BlockingCounter* exec1_collective_submitted_;
+  absl::Notification* exec1_collective_done_;
+};
+
+TEST_F(GpuExecutableTest, LogsErrorForNonIotaStaticDeviceAssignment) {
+  ASSERT_OK_AND_ASSIGN(
+      se::Platform * platform,
+      se::PlatformManager::PlatformWithId(stream_executor_platform_id()));
+  const se::GpuComputeCapability& compute_capability =
+      device_description().gpu_compute_capability();
+
+  // Runs `executable` until it fails to load its (fake) binary, which happens
+  // right after the static device assignment check.
+  auto run_until_module_loading = [&](GpuExecutable& executable) {
+    se::MockStreamExecutor executor;
+    se::MockStream stream;
+    EXPECT_CALL(executor, GetPlatform()).WillRepeatedly(Return(platform));
+    EXPECT_CALL(executor, device_ordinal()).WillRepeatedly(Return(0));
+    EXPECT_CALL(executor, Activate()).WillRepeatedly([]() { return nullptr; });
+    EXPECT_CALL(executor, LoadModule(::testing::_))
+        .WillOnce(Return(absl::InternalError("No module loading in tests")));
+    EXPECT_CALL(stream, parent()).WillRepeatedly(Return(&executor));
+    if (const se::CudaComputeCapability* cuda_cc =
+            compute_capability.cuda_compute_capability()) {
+      EXPECT_CALL(stream, GetCudaComputeCapability())
+          .WillRepeatedly(Return(*cuda_cc));
+    }
+    if (const se::RocmComputeCapability* rocm_cc =
+            compute_capability.rocm_compute_capability()) {
+      EXPECT_CALL(stream, GetRocmComputeCapability())
+          .WillRepeatedly(Return(*rocm_cc));
+    }
+
+    FakeDeviceAddressAllocator allocator(platform);
+    ExecutableRunOptions exec_run_options;
+    exec_run_options.set_stream(&stream);
+    exec_run_options.set_allocator(&allocator);
+    ServiceExecutableRunOptions run_options(exec_run_options);
+    EXPECT_THAT(executable.ExecuteAsyncOnStream(&run_options,
+                                                std::vector<ExecutionInput>{}),
+                absl_testing::StatusIs(absl::StatusCode::kInternal));
+  };
+
+  auto make_executable = [&](const HloModuleConfig& config) {
+    GpuExecutable::Params params = MakeParamsWithModule(config);
+    params.device_description = device_description();
+    params.binary = {1, 2, 3, 4};
+    return GpuExecutable::Create(std::move(params));
+  };
+
+  // `MakeConfigWithRuntimeMetadata` has a non-iota device assignment.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> non_iota_executable,
+                       make_executable(MakeConfigWithRuntimeMetadata()));
+  {
+    absl::ScopedMockLog log(absl::MockLogDefault::kIgnoreUnexpected);
+    EXPECT_CALL(log, Log(absl::LogSeverity::kError, ::testing::_,
+                         ::testing::HasSubstr(
+                             "XLA:GPU only supports iota device assignment")))
+        .Times(1);
+    log.StartCapturingLogs();
+    run_until_module_loading(*non_iota_executable);
+  }
+
+  HloModuleConfig iota_config = MakeConfigWithRuntimeMetadata();
+  DeviceAssignment iota_device_assignment(/*replica_count=*/1,
+                                          /*computation_count=*/2);
+  iota_device_assignment.FillIota(0);
+  iota_config.set_static_device_assignment(iota_device_assignment);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> iota_executable,
+                       make_executable(iota_config));
+  {
+    absl::ScopedMockLog log(absl::MockLogDefault::kIgnoreUnexpected);
+    EXPECT_CALL(log, Log(absl::LogSeverity::kError, ::testing::_,
+                         ::testing::HasSubstr(
+                             "XLA:GPU only supports iota device assignment")))
+        .Times(0);
+    log.StartCapturingLogs();
+    run_until_module_loading(*iota_executable);
+  }
+}
+
+TEST_F(GpuExecutableTest,
+       RendezvousAfterExecutionPreventsDriverLockDeadlockAcrossExecutables) {
+  ASSERT_OK_AND_ASSIGN(
+      se::Platform * platform,
+      se::PlatformManager::PlatformWithId(stream_executor_platform_id()));
+
+  constexpr int kNumDevices = 2;
+  absl::Mutex driver_mutex;
+  absl::Notification d1_finished_exec1_thunk;
+  absl::Notification d1_entered_exec2;
+  absl::BlockingCounter exec1_collective_submitted(kNumDevices);
+  absl::Notification exec1_collective_done;
+  std::atomic<int> d1_activate_calls{0};
+
+  se::MockStreamExecutor executors[kNumDevices];
+  se::MockStream streams[kNumDevices];
+  const se::GpuComputeCapability& compute_capability =
+      device_description().gpu_compute_capability();
+
+  ThunkSequence thunks1;
+  thunks1.push_back(std::make_unique<Exec1CollectiveThunk>(
+      ThunkInfoWithId(1), &driver_mutex, &d1_finished_exec1_thunk,
+      &d1_entered_exec2, &exec1_collective_submitted, &exec1_collective_done));
+
+  GpuExecutable::Params params1;
+  params1.module_name = "exec1";
+  params1.executable = std::make_unique<ThunkExecutor>(std::move(thunks1));
+  params1.device_description = device_description();
+  // Without a module the executable runs with these options, and the
+  // rendezvous timeouts must not be 0.
+  params1.debug_options = GetDebugOptionsFromFlags();
+  params1.enable_debug_info_manager = false;
+  SetDummyBufferAssignment(params1);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> exec1,
+                       GpuExecutable::Create(std::move(params1)));
+
+  // exec2 has a non-empty binary so ResolveConstantGlobals calls
+  // executor->LoadModule.
+  GpuExecutable::Params params2;
+  params2.module_name = "exec2";
+  params2.binary = {1, 2, 3, 4};
+  params2.executable = std::make_unique<ThunkExecutor>(ThunkSequence{});
+  params2.device_description = device_description();
+  params2.debug_options = GetDebugOptionsFromFlags();
+  params2.enable_debug_info_manager = false;
+  SetDummyBufferAssignment(params2);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> exec2,
+                       GpuExecutable::Create(std::move(params2)));
+
+  DeviceAssignment device_assn(/*replica_count=*/kNumDevices,
+                               /*computation_count=*/1);
+  device_assn.FillIota(0);
+  LoopbackCollectives loopback_collectives;
+  GpuExecutableRunOptions gpu_opts;
+  gpu_opts.set_collectives(&loopback_collectives);
+  FakeDeviceAddressAllocator allocator(platform);
+
+  tsl::thread::ThreadPool pool(tsl::Env::Default(), "driver_lock_deadlock_test",
+                               kNumDevices);
+  absl::BlockingCounter done(kNumDevices);
+  for (int d = 0; d < kNumDevices; ++d) {
+    EXPECT_CALL(executors[d], GetPlatform()).WillRepeatedly(Return(platform));
+    EXPECT_CALL(executors[d], device_ordinal()).WillRepeatedly(Return(d));
+    EXPECT_CALL(executors[d], SynchronizeAllActivity())
+        .WillRepeatedly(Return(true));
+    EXPECT_CALL(executors[d], EnablePeerAccessTo(::testing::_))
+        .WillRepeatedly(Return(absl::OkStatus()));
+    EXPECT_CALL(executors[d], Activate()).WillRepeatedly([&, d]() {
+      // Device 1's second Activate() call is its entry into exec2.
+      if (d == 1 && d1_activate_calls.fetch_add(1) == 1) {
+        d1_entered_exec2.Notify();
+      }
+      return nullptr;
+    });
+    // Mimic cuModuleLoadData in exec2's ResolveConstantGlobals holding
+    // `driver_mutex` while waiting for in-flight GPU work (exec1's collective)
+    // to finish on the device.
+    EXPECT_CALL(executors[d], LoadModule(::testing::_))
+        .WillRepeatedly([&](const se::MultiModuleLoaderSpec&) {
+          absl::MutexLock lock(driver_mutex);
+          exec1_collective_done.WaitForNotification();
+          return se::ModuleHandle(reinterpret_cast<void*>(0x1));
+        });
+    EXPECT_CALL(executors[d], UnloadModule(::testing::_))
+        .WillRepeatedly(Return(true));
+    EXPECT_CALL(streams[d], parent()).WillRepeatedly(Return(&executors[d]));
+    if (const se::CudaComputeCapability* cuda_cc =
+            compute_capability.cuda_compute_capability()) {
+      EXPECT_CALL(streams[d], GetCudaComputeCapability())
+          .WillRepeatedly(Return(*cuda_cc));
+    }
+    if (const se::RocmComputeCapability* rocm_cc =
+            compute_capability.rocm_compute_capability()) {
+      EXPECT_CALL(streams[d], GetRocmComputeCapability())
+          .WillRepeatedly(Return(*rocm_cc));
+    }
+    if (const se::OneAPIComputeCapability* oneapi_cc =
+            compute_capability.oneapi_compute_capability()) {
+      EXPECT_CALL(streams[d], GetOneAPIComputeCapability())
+          .WillRepeatedly(Return(*oneapi_cc));
+    }
+
+    pool.Schedule([&, d]() {
+      auto run = [&](GpuExecutable& exec, int run_id) {
+        ExecutableRunOptions exec_run_options;
+        exec_run_options.set_stream(&streams[d]);
+        exec_run_options.set_allocator(&allocator);
+        exec_run_options.set_device_assignment(&device_assn);
+        exec_run_options.set_gpu_executable_run_options(&gpu_opts);
+        exec_run_options.set_run_id(RunId(run_id));
+        ServiceExecutableRunOptions run_opts(exec_run_options);
+        EXPECT_OK(exec.ExecuteAsyncOnStream(&run_opts,
+                                            std::vector<ExecutionInput>{}));
+      };
+
+      run(*exec1, 100);
+      run(*exec2, 101);
+      done.DecrementCount();
+    });
+  }
+  done.Wait();
+}
+
+class RecordCollectiveParamsThunk : public Thunk {
+ public:
+  RecordCollectiveParamsThunk(ThunkInfo thunk_info,
+                              std::optional<LocalDeviceId>* local_device_id,
+                              std::optional<GlobalDeviceId>* global_device_id)
+      : Thunk(Kind::kKernel, std::move(thunk_info)),
+        local_device_id_(local_device_id),
+        global_device_id_(global_device_id) {}
+
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
+    *local_device_id_ = params.collective_params->local_device_id;
+    *global_device_id_ = params.collective_params->global_device_id;
+    return absl::OkStatus();
+  }
+
+  BufferUses buffer_uses() const override { return {}; }
+
+  absl::StatusOr<ThunkProto> ToProto() const override { return ThunkProto(); }
+
+ private:
+  std::optional<LocalDeviceId>* local_device_id_;
+  std::optional<GlobalDeviceId>* global_device_id_;
+};
+
+TEST_F(GpuExecutableTest, CollectiveParamsUsesRunOptionsDeviceOrdinal) {
+  ASSERT_OK_AND_ASSIGN(
+      se::Platform * platform,
+      se::PlatformManager::PlatformWithId(stream_executor_platform_id()));
+
+  std::optional<LocalDeviceId> recorded_local_device_id;
+  std::optional<GlobalDeviceId> recorded_global_device_id;
+
+  ThunkSequence thunks;
+  thunks.push_back(std::make_unique<RecordCollectiveParamsThunk>(
+      ThunkInfoWithId(1), &recorded_local_device_id,
+      &recorded_global_device_id));
+
+  GpuExecutable::Params params;
+  params.module_name = "collective_params_device_ordinal_test";
+  params.executable = std::make_unique<ThunkExecutor>(std::move(thunks));
+  params.device_description = device_description();
+  params.enable_debug_info_manager = false;
+  SetDummyBufferAssignment(params);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> exec,
+                       GpuExecutable::Create(std::move(params)));
+
+  se::MockStreamExecutor executor;
+  se::MockStream stream;
+  const se::GpuComputeCapability& compute_capability =
+      device_description().gpu_compute_capability();
+
+  EXPECT_CALL(executor, GetPlatform()).WillRepeatedly(Return(platform));
+  EXPECT_CALL(executor, device_ordinal()).WillRepeatedly(Return(0));
+  EXPECT_CALL(executor, SynchronizeAllActivity()).WillRepeatedly(Return(true));
+  EXPECT_CALL(executor, Activate()).WillRepeatedly([]() { return nullptr; });
+  EXPECT_CALL(stream, parent()).WillRepeatedly(Return(&executor));
+  if (const se::CudaComputeCapability* cuda_cc =
+          compute_capability.cuda_compute_capability()) {
+    EXPECT_CALL(stream, GetCudaComputeCapability())
+        .WillRepeatedly(Return(*cuda_cc));
+  }
+  if (const se::RocmComputeCapability* rocm_cc =
+          compute_capability.rocm_compute_capability()) {
+    EXPECT_CALL(stream, GetRocmComputeCapability())
+        .WillRepeatedly(Return(*rocm_cc));
+  }
+  if (const se::OneAPIComputeCapability* oneapi_cc =
+          compute_capability.oneapi_compute_capability()) {
+    EXPECT_CALL(stream, GetOneAPIComputeCapability())
+        .WillRepeatedly(Return(*oneapi_cc));
+  }
+
+  DeviceAssignment device_assn(/*replica_count=*/1, /*computation_count=*/1);
+  device_assn(0, 0) = 42;
+  LoopbackCollectives loopback_collectives;
+  GpuExecutableRunOptions gpu_opts;
+  gpu_opts.set_collectives(&loopback_collectives);
+  gpu_opts.set_gpu_global_device_ids(GpuExecutableRunOptions::DeviceIdMap{
+      {LocalDeviceId(3), GlobalDeviceId(42)},
+      {LocalDeviceId(0), GlobalDeviceId(7)},
+  });
+  FakeDeviceAddressAllocator allocator(platform);
+
+  // When `run_options.device_ordinal()` is set (e.g., virtual GPU 3 sharing
+  // physical executor 0), `CollectiveParams` should use `LocalDeviceId(3)`.
+  {
+    ExecutableRunOptions exec_run_options;
+    exec_run_options.set_stream(&stream);
+    exec_run_options.set_allocator(&allocator);
+    exec_run_options.set_device_assignment(&device_assn);
+    exec_run_options.set_gpu_executable_run_options(&gpu_opts);
+    exec_run_options.set_run_id(RunId(1));
+    exec_run_options.set_device_ordinal(3);
+    exec_run_options.set_physical_device_ordinal(0);
+    ServiceExecutableRunOptions run_opts(exec_run_options);
+    ASSERT_OK(
+        exec->ExecuteAsyncOnStream(&run_opts, std::vector<ExecutionInput>{}));
+    EXPECT_THAT(recorded_local_device_id, Optional(LocalDeviceId(3)));
+    EXPECT_THAT(recorded_global_device_id, Optional(GlobalDeviceId(42)));
+  }
+
+  // When `run_options.device_ordinal()` is unset (-1), `CollectiveParams`
+  // should fall back to `stream->parent()->device_ordinal()` (0).
+  {
+    recorded_local_device_id.reset();
+    recorded_global_device_id.reset();
+    device_assn(0, 0) = 7;
+    ExecutableRunOptions exec_run_options;
+    exec_run_options.set_stream(&stream);
+    exec_run_options.set_allocator(&allocator);
+    exec_run_options.set_device_assignment(&device_assn);
+    exec_run_options.set_gpu_executable_run_options(&gpu_opts);
+    exec_run_options.set_run_id(RunId(2));
+    ServiceExecutableRunOptions run_opts(exec_run_options);
+    ASSERT_OK(
+        exec->ExecuteAsyncOnStream(&run_opts, std::vector<ExecutionInput>{}));
+    EXPECT_THAT(recorded_local_device_id, Optional(LocalDeviceId(0)));
+    EXPECT_THAT(recorded_global_device_id, Optional(GlobalDeviceId(7)));
+  }
+}
+
+constexpr absl::Duration kTestTimeout = absl::Seconds(10);
+
+class DummyThunk : public Thunk {
+ public:
+  DummyThunk(Kind kind, ThunkInfo thunk_info,
+             absl::Notification* block_host = nullptr)
+      : Thunk(kind, std::move(thunk_info)), block_host_(block_host) {}
+
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
+    if (block_host_ != nullptr) {
+      ABSL_RETURN_IF_ERROR(params.stream->BlockHostUntilDone());
+      if (!block_host_->WaitForNotificationWithTimeout(kTestTimeout)) {
+        return absl::DeadlineExceededError(
+            "Timed out waiting for host unblock notification");
+      }
+    }
+    return absl::OkStatus();
+  }
+
+  BufferUses buffer_uses() const override { return {}; }
+  absl::StatusOr<ThunkProto> ToProto() const override { return ThunkProto(); }
+
+ private:
+  absl::Notification* block_host_;
+};
+
+class BlockingDeviceCommandBufferThunk : public Thunk {
+ public:
+  BlockingDeviceCommandBufferThunk(
+      ThunkInfo thunk_info, std::unique_ptr<SequentialThunk> thunks,
+      std::shared_ptr<absl::Notification> unblock_device)
+      : Thunk(Kind::kCommandBuffer, std::move(thunk_info)),
+        thunks_(std::move(thunks)),
+        unblock_device_(std::move(unblock_device)) {}
+
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
+    ABSL_RETURN_IF_ERROR(params.stream->BlockHostUntilDone());
+    return params.stream->DoHostCallback([unblock = unblock_device_] {
+      (void)unblock->WaitForNotificationWithTimeout(kTestTimeout);
+    });
+  }
+
+  BufferUses buffer_uses() const override { return {}; }
+
+  absl::Status WalkNested(Walker pre_order, Walker post_order) override {
+    if (thunks_ != nullptr) {
+      return thunks_->Walk(pre_order, post_order);
+    }
+    return absl::OkStatus();
+  }
+
+  absl::StatusOr<ThunkProto> ToProto() const override { return ThunkProto(); }
+
+ private:
+  std::unique_ptr<SequentialThunk> thunks_;
+  std::shared_ptr<absl::Notification> unblock_device_;
+};
+
+TEST_F(GpuExecutableTest,
+       DeviceExecutionTimeoutLogsProgressAndNestedCommandBufferThunks) {
+  using ::testing::_;
+  using ::testing::HasSubstr;
+  using ::testing::StartsWith;
+
+  ASSERT_OK_AND_ASSIGN(
+      se::Platform * platform,
+      se::PlatformManager::PlatformWithId(stream_executor_platform_id()));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                       executor->CreateStream());
+
+  auto unblock_device = std::make_shared<absl::Notification>();
+  absl::Cleanup notify_unblock = [&] {
+    if (!unblock_device->HasBeenNotified()) {
+      unblock_device->Notify();
+    }
+  };
+
+  auto make_info = [](int id, absl::string_view name) {
+    Thunk::ThunkInfo info = ThunkInfoWithId(id);
+    info.profile_annotation = std::string(name);
+    return info;
+  };
+
+  ThunkSequence inner_thunks;
+  inner_thunks.push_back(std::make_unique<DummyThunk>(
+      Thunk::kKernel, make_info(2, "fusion_op_0")));
+  inner_thunks.push_back(std::make_unique<DummyThunk>(
+      Thunk::kCustomCall, make_info(3, "custom_call_op_1")));
+
+  ThunkSequence thunks;
+  thunks.push_back(std::make_unique<DummyThunk>(
+      Thunk::kKernel, make_info(1, "completed_kernel")));
+  thunks.push_back(std::make_unique<BlockingDeviceCommandBufferThunk>(
+      make_info(4, "command_buffer_42"),
+      std::make_unique<SequentialThunk>(Thunk::ThunkInfo(),
+                                        std::move(inner_thunks)),
+      unblock_device));
+
+  GpuExecutable::Params params;
+  params.module_name = "device_timeout_progress_test";
+  params.executable = std::make_unique<ThunkExecutor>(std::move(thunks));
+  params.device_description = device_description();
+  params.debug_options = GetDebugOptionsFromFlags();
+  params.debug_options.set_xla_gpu_execution_progress_tracking(5);
+  params.debug_options.set_xla_gpu_device_execution_warn_stuck_timeout("10ms");
+  params.enable_debug_info_manager = false;
+  SetDummyBufferAssignment(params);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> exec,
+                       GpuExecutable::Create(std::move(params)));
+
+  absl::Notification warn_dump_finished;
+  absl::ScopedMockLog log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, _, _)).Times(0);
+  EXPECT_CALL(log, Log(_, _, HasSubstr("[0] Progress tracking for"))).Times(0);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kWarning, _,
+                       HasSubstr("[0] XLA GPU device execution "
+                                 "`device_timeout_progress_test` (run_id=7) "
+                                 "has not finished in 10ms (warn stuck "
+                                 "timeout)")))
+      .Times(1);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kWarning, _,
+                       StartsWith("Progress tracking for [0] XLA GPU device "
+                                  "execution `device_timeout_progress_test` "
+                                  "(run_id=7):")))
+      .Times(1);
+  EXPECT_CALL(log,
+              Log(absl::LogSeverity::kWarning, _,
+                  HasSubstr("[0] Completed thunks: 1/2 (unique thunks: 5)")))
+      .Times(1);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kWarning, _,
+                       HasSubstr("[0] Pending thunks: 1/2 (unique thunks: 5)")))
+      .Times(1);
+  EXPECT_CALL(log, Log(_, _, HasSubstr("Last pending thunks"))).Times(0);
+  EXPECT_CALL(
+      log,
+      Log(absl::LogSeverity::kWarning, _,
+          HasSubstr("[0]   - exec[0] thunk[0/5] kKernel: completed_kernel")))
+      .Times(1);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kWarning, _,
+                       HasSubstr("[0]   - exec[1] thunk[1/5] kCommandBuffer: "
+                                 "command_buffer_42")))
+      .Times(1);
+  EXPECT_CALL(
+      log, Log(absl::LogSeverity::kWarning, _,
+               HasSubstr("[0]       nested thunk[3/5] kKernel: fusion_op_0")))
+      .Times(1);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kWarning, _,
+                       HasSubstr("[0]       nested thunk[4/5] kCustomCall: "
+                                 "custom_call_op_1")))
+      .WillOnce([&] { warn_dump_finished.Notify(); });
+  log.StartCapturingLogs();
+
+  FakeDeviceAddressAllocator allocator(platform);
+  DeviceAssignment device_assn(/*replica_count=*/1, /*computation_count=*/1);
+  device_assn(0, 0) = 0;
+  ExecutableRunOptions exec_run_options;
+  exec_run_options.set_stream(stream.get());
+  exec_run_options.set_allocator(&allocator);
+  exec_run_options.set_device_assignment(&device_assn);
+  exec_run_options.set_run_id(RunId(7));
+  ServiceExecutableRunOptions run_opts(exec_run_options);
+
+  // Host dispatch returns immediately while `command_buffer_42` remains
+  // blocked on `stream`.
+  ASSERT_OK(
+      exec->ExecuteAsyncOnStream(&run_opts, std::vector<ExecutionInput>{}));
+
+  EXPECT_TRUE(warn_dump_finished.WaitForNotificationWithTimeout(kTestTimeout));
+  unblock_device->Notify();
+  ASSERT_OK(stream->BlockHostUntilDone());
+}
+
+TEST_F(GpuExecutableTest,
+       DeviceExecutionTimeoutLogsProgressAfterExecutableDestroy) {
+  using ::testing::_;
+  using ::testing::HasSubstr;
+
+  ASSERT_OK_AND_ASSIGN(
+      se::Platform * platform,
+      se::PlatformManager::PlatformWithId(stream_executor_platform_id()));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                       executor->CreateStream());
+
+  auto unblock_device = std::make_shared<absl::Notification>();
+  absl::Cleanup notify_unblock = [&] {
+    if (!unblock_device->HasBeenNotified()) {
+      unblock_device->Notify();
+    }
+  };
+
+  auto make_info = [](int id, absl::string_view name) {
+    Thunk::ThunkInfo info = ThunkInfoWithId(id);
+    info.profile_annotation = std::string(name);
+    return info;
+  };
+
+  ThunkSequence inner_thunks;
+  inner_thunks.push_back(std::make_unique<DummyThunk>(
+      Thunk::kKernel, make_info(2, "fusion_op_0")));
+
+  ThunkSequence thunks;
+  thunks.push_back(std::make_unique<BlockingDeviceCommandBufferThunk>(
+      make_info(4, "command_buffer_42"),
+      std::make_unique<SequentialThunk>(Thunk::ThunkInfo(),
+                                        std::move(inner_thunks)),
+      unblock_device));
+
+  GpuExecutable::Params params;
+  params.module_name = "device_timeout_uaf_test";
+  params.executable = std::make_unique<ThunkExecutor>(std::move(thunks));
+  params.device_description = device_description();
+  params.debug_options = GetDebugOptionsFromFlags();
+  params.debug_options.set_xla_gpu_execution_progress_tracking(5);
+  params.debug_options.set_xla_gpu_device_execution_warn_stuck_timeout("10ms");
+  params.enable_debug_info_manager = false;
+  SetDummyBufferAssignment(params);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> exec,
+                       GpuExecutable::Create(std::move(params)));
+
+  absl::Notification warn_dump_finished;
+  absl::ScopedMockLog log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, _, _)).Times(0);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kWarning, _,
+                       HasSubstr("[0]   - exec[0] thunk[0/3] kCommandBuffer: "
+                                 "command_buffer_42")))
+      .Times(1);
+  EXPECT_CALL(
+      log, Log(absl::LogSeverity::kWarning, _,
+               HasSubstr("[0]       nested thunk[2/3] kKernel: fusion_op_0")))
+      .WillOnce([&] { warn_dump_finished.Notify(); });
+  log.StartCapturingLogs();
+
+  FakeDeviceAddressAllocator allocator(platform);
+  DeviceAssignment device_assn(/*replica_count=*/1, /*computation_count=*/1);
+  device_assn(0, 0) = 0;
+  ExecutableRunOptions exec_run_options;
+  exec_run_options.set_stream(stream.get());
+  exec_run_options.set_allocator(&allocator);
+  exec_run_options.set_device_assignment(&device_assn);
+  exec_run_options.set_run_id(RunId(9));
+  ServiceExecutableRunOptions run_opts(exec_run_options);
+
+  // Hold both HangWatchdog worker threads until `exec.reset()` completes so the
+  // device watchdog callback cannot fire before `GpuExecutable` is destroyed.
+  auto exec_destroyed = std::make_shared<absl::Notification>();
+  absl::Cleanup notify_exec_destroyed = [&] {
+    if (!exec_destroyed->HasBeenNotified()) {
+      exec_destroyed->Notify();
+    }
+  };
+  auto gate1 = HangWatchdog::Global().Watch(
+      "gate1", absl::ZeroDuration(), [exec_destroyed] {
+        (void)exec_destroyed->WaitForNotificationWithTimeout(kTestTimeout);
+      });
+  auto gate2 = HangWatchdog::Global().Watch(
+      "gate2", absl::ZeroDuration(), [exec_destroyed] {
+        (void)exec_destroyed->WaitForNotificationWithTimeout(kTestTimeout);
+      });
+
+  ASSERT_OK(
+      exec->ExecuteAsyncOnStream(&run_opts, std::vector<ExecutionInput>{}));
+  // Destroy GpuExecutable before enqueued device work finishes.
+  exec.reset();
+  exec_destroyed->Notify();
+
+  EXPECT_TRUE(warn_dump_finished.WaitForNotificationWithTimeout(kTestTimeout));
+  unblock_device->Notify();
+  ASSERT_OK(stream->BlockHostUntilDone());
+}
+
+TEST_F(GpuExecutableTest, ExecutionTimeoutHandlerLogsProgress) {
+  using ::testing::_;
+  using ::testing::HasSubstr;
+
+  ASSERT_OK_AND_ASSIGN(
+      se::Platform * platform,
+      se::PlatformManager::PlatformWithId(stream_executor_platform_id()));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                       executor->CreateStream());
+
+  auto unblock_device = std::make_shared<absl::Notification>();
+  absl::Cleanup notify_unblock = [&] {
+    if (!unblock_device->HasBeenNotified()) {
+      unblock_device->Notify();
+    }
+  };
+
+  auto make_info = [](int id, absl::string_view name) {
+    Thunk::ThunkInfo info = ThunkInfoWithId(id);
+    info.profile_annotation = std::string(name);
+    return info;
+  };
+
+  ThunkSequence thunks;
+  thunks.push_back(std::make_unique<BlockingDeviceCommandBufferThunk>(
+      make_info(1, "stalled_device_thunk"), /*thunks=*/nullptr,
+      unblock_device));
+  thunks.push_back(std::make_unique<DummyThunk>(
+      Thunk::kKernel, make_info(2, "trailing_pending_thunk")));
+
+  GpuExecutable::Params params;
+  params.module_name = "timeout_handler_progress_test";
+  params.executable = std::make_unique<ThunkExecutor>(std::move(thunks));
+  params.device_description = device_description();
+  params.debug_options = GetDebugOptionsFromFlags();
+  // With 2 pending thunks and max_thunks_to_log=1, both "First pending thunks"
+  // and "Last pending thunks" should be logged.
+  params.debug_options.set_xla_gpu_execution_progress_tracking(1);
+  params.enable_debug_info_manager = false;
+  SetDummyBufferAssignment(params);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> exec,
+                       GpuExecutable::Create(std::move(params)));
+
+  absl::ScopedMockLog log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, _,
+                       HasSubstr("[0] First pending thunks: size=1")))
+      .Times(1);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, _,
+                       HasSubstr("[0]   - exec[0] thunk[0/2] kCommandBuffer: "
+                                 "stalled_device_thunk")))
+      .Times(1);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, _,
+                       HasSubstr("[0] Last pending thunks: size=1")))
+      .Times(1);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, _,
+                       HasSubstr("[0]   - exec[1] thunk[1/2] kKernel: "
+                                 "trailing_pending_thunk")))
+      .Times(1);
+  log.StartCapturingLogs();
+
+  auto handler_called = std::make_shared<absl::Notification>();
+  GpuExecutableRunOptions gpu_opts;
+  gpu_opts.set_execution_timeout_handlers([handler_called] {
+    std::vector<ExecutionTimeoutHandler> handlers;
+    handlers.push_back(ExecutionTimeoutHandler{
+        ExecutionTimeoutHandler::Scope::kDevice, absl::Milliseconds(10),
+        [handler_called](absl::string_view, absl::Duration) {
+          handler_called->Notify();
+        }});
+    return handlers;
+  });
+
+  FakeDeviceAddressAllocator allocator(platform);
+  DeviceAssignment device_assn(/*replica_count=*/1, /*computation_count=*/1);
+  device_assn(0, 0) = 0;
+  ExecutableRunOptions exec_run_options;
+  exec_run_options.set_stream(stream.get());
+  exec_run_options.set_allocator(&allocator);
+  exec_run_options.set_device_assignment(&device_assn);
+  exec_run_options.set_gpu_executable_run_options(&gpu_opts);
+  exec_run_options.set_run_id(RunId(10));
+  ServiceExecutableRunOptions run_opts(exec_run_options);
+
+  ASSERT_OK(
+      exec->ExecuteAsyncOnStream(&run_opts, std::vector<ExecutionInput>{}));
+
+  EXPECT_TRUE(handler_called->WaitForNotificationWithTimeout(kTestTimeout));
+  unblock_device->Notify();
+  ASSERT_OK(stream->BlockHostUntilDone());
+}
+
+TEST_F(GpuExecutableTest, HostExecutionWarnStuckTimeoutLogsProgress) {
+  using ::testing::_;
+  using ::testing::HasSubstr;
+
+  ASSERT_OK_AND_ASSIGN(
+      se::Platform * platform,
+      se::PlatformManager::PlatformWithId(stream_executor_platform_id()));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+
+  absl::Notification unblock_host;
+  absl::Cleanup notify_unblock = [&] {
+    if (!unblock_host.HasBeenNotified()) {
+      unblock_host.Notify();
+    }
+  };
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                       executor->CreateStream());
+
+  auto make_info = [](int id, absl::string_view name) {
+    Thunk::ThunkInfo info = ThunkInfoWithId(id);
+    info.profile_annotation = std::string(name);
+    return info;
+  };
+
+  ThunkSequence thunks;
+  thunks.push_back(std::make_unique<DummyThunk>(Thunk::kKernel,
+                                                make_info(1, "first_thunk")));
+  thunks.push_back(std::make_unique<DummyThunk>(
+      Thunk::kKernel, make_info(2, "stalled_host_thunk"), &unblock_host));
+
+  GpuExecutable::Params params;
+  params.module_name = "host_timeout_progress_test";
+  params.executable = std::make_unique<ThunkExecutor>(std::move(thunks));
+  params.device_description = device_description();
+  params.debug_options = GetDebugOptionsFromFlags();
+  params.debug_options.set_xla_gpu_execution_progress_tracking(5);
+  params.debug_options.set_xla_gpu_execution_warn_stuck_timeout("10ms");
+  params.enable_debug_info_manager = false;
+  SetDummyBufferAssignment(params);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> exec,
+                       GpuExecutable::Create(std::move(params)));
+
+  absl::ScopedMockLog log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, _, _)).Times(0);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kWarning, _,
+                       HasSubstr("[0] XLA GPU host execution "
+                                 "`host_timeout_progress_test` (run_id=8) has "
+                                 "not finished in 10ms (warn stuck timeout)")))
+      .Times(1);
+  EXPECT_CALL(log,
+              Log(absl::LogSeverity::kWarning, _,
+                  HasSubstr("[0]   - exec[0] thunk[0/2] kKernel: first_thunk")))
+      .Times(1);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kWarning, _,
+                       HasSubstr("[0] First pending thunks: size=0")))
+      .WillOnce([&] { unblock_host.Notify(); });
+  log.StartCapturingLogs();
+
+  FakeDeviceAddressAllocator allocator(platform);
+  DeviceAssignment device_assn(/*replica_count=*/1, /*computation_count=*/1);
+  device_assn(0, 0) = 0;
+  ExecutableRunOptions exec_run_options;
+  exec_run_options.set_stream(stream.get());
+  exec_run_options.set_allocator(&allocator);
+  exec_run_options.set_device_assignment(&device_assn);
+  exec_run_options.set_run_id(RunId(8));
+  ServiceExecutableRunOptions run_opts(exec_run_options);
+
+  ASSERT_OK(
+      exec->ExecuteAsyncOnStream(&run_opts, std::vector<ExecutionInput>{}));
+  ASSERT_OK(stream->BlockHostUntilDone());
+}
+
+TEST_F(GpuExecutableTest, RejectsNegativeExecutionTimeoutInDebugOptions) {
+  ASSERT_OK_AND_ASSIGN(
+      se::Platform * platform,
+      se::PlatformManager::PlatformWithId(stream_executor_platform_id()));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                       executor->CreateStream());
+
+  FakeDeviceAddressAllocator allocator(platform);
+  DeviceAssignment device_assn(/*replica_count=*/1, /*computation_count=*/1);
+  device_assn(0, 0) = 0;
+  ExecutableRunOptions exec_run_options;
+  exec_run_options.set_stream(stream.get());
+  exec_run_options.set_allocator(&allocator);
+  exec_run_options.set_device_assignment(&device_assn);
+  ServiceExecutableRunOptions run_opts(exec_run_options);
+
+  for (absl::string_view invalid_timeout : {"-5s", "-inf"}) {
+    GpuExecutable::Params params;
+    params.module_name = "negative_timeout_test";
+    params.executable = std::make_unique<ThunkExecutor>(ThunkSequence{});
+    params.device_description = device_description();
+    params.debug_options = GetDebugOptionsFromFlags();
+    params.debug_options.set_xla_gpu_execution_warn_stuck_timeout(
+        invalid_timeout);
+    params.enable_debug_info_manager = false;
+    SetDummyBufferAssignment(params);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> exec,
+                         GpuExecutable::Create(std::move(params)));
+
+    EXPECT_THAT(
+        exec->ExecuteAsyncOnStream(&run_opts, std::vector<ExecutionInput>{}),
+        absl_testing::StatusIs(absl::StatusCode::kInternal));
+  }
 }
 
 int64_t BufferSizeBytes(const BufferValue& buffer) {

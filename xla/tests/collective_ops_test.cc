@@ -20,10 +20,16 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/status/status_matchers.h"
 #include "absl/strings/str_replace.h"
 #include "absl/types/span.h"
 #include "ml_dtypes/include/float8.h"
 #include "tsl/platform/blocking_counter.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/transforms/collectives/all_reduce_simplifier.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
@@ -224,6 +230,51 @@ TEST_F(CollectiveOpsTest, AllReduceSingleOutput_float32) {
       "add",
       /*input_value=*/LiteralUtil::CreateR1<float>({1}),
       /*expected_value=*/LiteralUtil::CreateR1<float>({2}));
+}
+
+TEST_F(CollectiveOpsTest, AllReduceReplicatedProduct) {
+  constexpr char kModuleStr[] = R"hlo(
+HloModule m, replica_count=2
+
+product {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT result = f32[] multiply(lhs, rhs)
+}
+
+ENTRY main {
+  p0 = f32[6] parameter(0), parameter_replication={true}
+  ROOT ar = f32[6] all-reduce(p0), replica_groups={{0,1}}, to_apply=product
+}
+)hlo";
+  HloModuleConfig config = GetModuleConfigForTest(/*replica_count=*/2);
+  // Keep the collective in the reference module on backends that run this pass.
+  config.mutable_debug_options().add_xla_disable_hlo_passes(
+      "all-reduce-simplifier");
+  ASSERT_OK_AND_ASSIGN(auto original,
+                       ParseAndReturnVerifiedModule(kModuleStr, config));
+  ASSERT_OK_AND_ASSIGN(auto simplified,
+                       ParseAndReturnVerifiedModule(kModuleStr, config));
+  EXPECT_THAT(AllReduceSimplifier().Run(simplified.get()),
+              absl_testing::IsOkAndHolds(true));
+  ASSERT_EQ(simplified->entry_computation()->root_instruction()->opcode(),
+            HloOpcode::kMultiply);
+
+  Literal input = LiteralUtil::CreateR1<float>({-3, -1.5, -0.0, 0, 0.5, 2});
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> original_results,
+      ExecuteReplicated(std::move(original), {&input}, /*num_devices=*/2,
+                        /*use_threads=*/true, /*run_hlo_passes=*/true));
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> simplified_results,
+      ExecuteReplicated(std::move(simplified), {&input}, /*num_devices=*/2,
+                        /*use_threads=*/true, /*run_hlo_passes=*/true));
+  for (int replica = 0; replica < 2; ++replica) {
+    EXPECT_TRUE(LiteralTestUtil::Equal(original_results[replica],
+                                       simplified_results[replica]));
+    LiteralTestUtil::ExpectR1Equal<float>({9, 2.25, 0, 0, 0.25, 4},
+                                          simplified_results[replica]);
+  }
 }
 
 TEST_F(CollectiveOpsTest, AllReduceTwoReplicasOneOperand_float8_e4m3b11fnuz) {
@@ -1203,6 +1254,36 @@ TEST_F(CollectiveOpsTest, AllToAll_SplitDimension) {
                                            results[2]);
   LiteralTestUtil::ExpectR1Equal<uint32_t>({40, 45, 41, 46, 42, 47, 43, 48},
                                            results[3]);
+}
+
+// b/574079642: decomposed all-to-all operands may differ in layout before
+// layout assignment.
+TEST_F(CollectiveOpsTest, AllToAll_OperandLayoutsDifferBeforeLayoutAssignment) {
+  const char* const kModuleStr = R"(
+  HloModule test
+  ENTRY test_computation {
+    t = f32[2,2]{0,1} constant({{1, 2}, {3, 4}})
+    u = f32[1,2]{1,0} constant({{9, 9}})
+    zero = s32[] constant(0)
+    dus = f32[2,2]{0,1} dynamic-update-slice(t, u, zero, zero)
+    ROOT a2a = f32[2,2]{0,1} all-to-all(dus), replica_groups={{0,1}},
+      dimensions={0}
+  }
+  )";
+  const int64_t kNumReplicas = 2;
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kModuleStr, config));
+
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      ExecuteReplicated(std::move(module), absl::Span<Literal* const>{},
+                        kNumReplicas,
+                        /*use_threads=*/true, /*run_hlo_passes=*/true));
+  ASSERT_EQ(results.size(), kNumReplicas);
+  LiteralTestUtil::ExpectR2Equal<float>({{9, 9}, {9, 9}}, results[0]);
+  LiteralTestUtil::ExpectR2Equal<float>({{3, 4}, {3, 4}}, results[1]);
 }
 
 TEST_F(CollectiveOpsTest, AllGather_Dim0) {

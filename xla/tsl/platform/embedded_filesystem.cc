@@ -22,6 +22,7 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
@@ -113,6 +114,17 @@ absl::Status EmbedFileSystem::GetMatchingPaths(
     if (Match(file, pattern)) {
       results->push_back(std::string(file));
     }
+  }
+  // `fs_` is unordered, so sort the matches.
+  absl::c_sort(*results);
+
+  return absl::OkStatus();
+}
+
+absl::Status EmbedFileSystem::DeleteFile(const std::string& fname) {
+  absl::MutexLock ml(fs_lock_);
+  if (fs_.erase(fname) == 0) {
+    return absl::NotFoundError(absl::StrCat(fname, " does not exist."));
   }
 
   return absl::OkStatus();

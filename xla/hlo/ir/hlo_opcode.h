@@ -99,8 +99,8 @@ namespace xla {
   V(kCosh, "cosh", 1)                                                          \
   V(kCustomCall, "custom-call", kHloOpcodeIsVariadic)                          \
   V(kDivide, "divide", 2)                                                      \
-  V(kDomain, "domain", 1)                                                      \
   V(kDot, "dot", kHloOpcodeIsVariadic)                                         \
+  V(kDotGeneral, "dot-general", kHloOpcodeIsVariadic)                          \
   V(kDynamicReshape, "dynamic-reshape", kHloOpcodeIsVariadic)                  \
   V(kDynamicSlice, "dynamic-slice", kHloOpcodeIsVariadic)                      \
   V(kDynamicUpdateSlice, "dynamic-update-slice", kHloOpcodeIsVariadic)         \
@@ -110,6 +110,7 @@ namespace xla {
   V(kExpm1, "exponential-minus-one", 1)                                        \
   V(kFft, "fft", 1)                                                            \
   V(kFloor, "floor", 1)                                                        \
+  V(kFma, "fma", 3)                                                            \
   V(kFusion, "fusion", kHloOpcodeIsVariadic)                                   \
   V(kGather, "gather", 2)                                                      \
   V(kGetDimensionSize, "get-dimension-size", 1)                                \

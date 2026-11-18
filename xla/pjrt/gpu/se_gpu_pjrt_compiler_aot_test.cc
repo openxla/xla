@@ -98,8 +98,9 @@ void ValidateResult(
 }
 
 xla::LocalClient* GetLocalClient(PjRtClient* client) {
-  return absl::down_cast<PjRtStreamExecutorRawClient*>(
-             absl::down_cast<CommonPjRtClient*>(client)->raw_client())
+  return absl::down_cast<CommonPjRtClient*>(client)
+      ->raw_client()
+      ->down_cast<PjRtStreamExecutorRawClient>()
       ->client();
 }
 

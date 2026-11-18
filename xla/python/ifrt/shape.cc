@@ -20,12 +20,14 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/types/span.h"
 #include "xla/python/ifrt/serdes_version.h"
 #include "xla/python/ifrt/shape.pb.h"
 
@@ -55,21 +57,12 @@ absl::StatusOr<Shape> Shape::FromProto(const ShapeProto& proto) {
 
   Shape::Dimensions dims;
   dims.reserve(proto.dims_size());
-  int64_t num_elements = 1;
-  bool overflow = false;
   for (int64_t dim : proto.dims()) {
-    if (dim < 0) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "Shape expects non-negative dimension sizes, but got %d", dim));
-    }
-    overflow |= __builtin_mul_overflow(num_elements, dim, &num_elements);
     dims.push_back(dim);
   }
-  if (overflow) {
-    return absl::InvalidArgumentError(
-        "Too large number of elements in a shape");
-  }
-  return Shape(std::move(dims));
+  Shape shape(std::move(dims));
+  ABSL_RETURN_IF_ERROR(shape.NumElements().status());
+  return shape;
 }
 
 void Shape::ToProto(ShapeProto& proto, SerDesVersion version) const {
@@ -89,12 +82,51 @@ void Shape::ToProto(ShapeProto& proto, SerDesVersion version) const {
 }
 
 int64_t Shape::num_elements() const {
+  absl::StatusOr<int64_t> count = NumElements();
+  CHECK_OK(count);
+  return *count;
+}
+
+absl::StatusOr<int64_t> Shape::NumElements() const {
   int64_t count = 1;
+  bool overflow = false;
   for (int64_t d : *dims_) {
-    count *= d;
+    if (d < 0) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Shape expects non-negative dimension sizes, but got %d", d));
+    }
+    if (d == 0) {
+      count = 0;
+      overflow = false;
+    } else if (count != 0) {
+      overflow |= __builtin_mul_overflow(count, d, &count);
+    }
+  }
+  if (overflow) {
+    return absl::InvalidArgumentError(
+        "Too large number of elements in a shape");
   }
   return count;
 }
+
+absl::StatusOr<BoundedDynamicShapeTag> BoundedDynamicShapeTag::Create(
+    absl::Span<const bool> dynamic_dims) {
+  if (!absl::c_any_of(dynamic_dims, [](bool b) { return b; })) {
+    return absl::InvalidArgumentError(
+        "At least one dimension needs to be dynamically sized");
+  }
+  return BoundedDynamicShapeTag(
+      UncheckedTag{},
+      DynamicDimensions(dynamic_dims.begin(), dynamic_dims.end()));
+}
+
+BoundedDynamicShapeTag::BoundedDynamicShapeTag(
+    absl::Span<const bool> dynamic_dims)
+    : BoundedDynamicShapeTag([](absl::Span<const bool> dims) {
+        absl::StatusOr<BoundedDynamicShapeTag> tag = Create(dims);
+        CHECK_OK(tag);
+        return *std::move(tag);
+      }(dynamic_dims)) {}
 
 absl::StatusOr<BoundedDynamicShapeTag> BoundedDynamicShapeTag::FromProto(
     const BoundedDynamicShapeTagProto& proto) {
@@ -104,13 +136,7 @@ absl::StatusOr<BoundedDynamicShapeTag> BoundedDynamicShapeTag::FromProto(
         absl::StrCat("Unsupported ", version_number,
                      " for BoundedDynamicShapeTag deserialization"));
   }
-
-  BoundedDynamicShapeTag::DynamicDimensions dynamic_dims;
-  dynamic_dims.reserve(proto.is_dynamic_dims_size());
-  for (bool dynamic_dim : proto.is_dynamic_dims()) {
-    dynamic_dims.push_back(dynamic_dim);
-  }
-  return BoundedDynamicShapeTag(std::move(dynamic_dims));
+  return Create(proto.is_dynamic_dims());
 }
 
 void BoundedDynamicShapeTag::ToProto(BoundedDynamicShapeTagProto& proto,

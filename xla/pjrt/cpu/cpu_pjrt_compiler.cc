@@ -55,7 +55,7 @@ PjRtCpuRawClient* GetRawClient(PjRtClient* client) {
   if (!common_client) {
     return nullptr;
   }
-  return dynamic_cast<PjRtCpuRawClient*>(common_client->raw_client());
+  return common_client->raw_client()->down_cast<PjRtCpuRawClient>();
 }
 
 }  // namespace
@@ -107,7 +107,8 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>>
 CpuPjRtCompiler::DeserializeExecutable(
     const PjRtTopologyDescription& topology,
     riegeli::Any<riegeli::Reader*> reader,
-    std::optional<CompileOptions>&& options) {
+    std::optional<CompileOptions>&& options,
+    const DeserializeExecutableOptions& deserialize_options) {
   ABSL_ASSIGN_OR_RETURN(auto* cpu_topology, GetCpuTopology(topology));
   return PjRtCpuExecutable::Deserialize(std::move(reader), *cpu_topology,
                                         std::move(options));

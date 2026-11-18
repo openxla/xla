@@ -42,8 +42,8 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
-#include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/hlo_interpreter_reference_mixin.h"
+#include "xla/tests/hlo_test_base.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
 
@@ -99,7 +99,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 class SortingTest : public HloInterpreterReferenceMixin<HloTestBase> {
  protected:
-  SortingTest() {}
+  SortingTest() = default;
 };
 
 TEST_F(SortingTest, Regression1) {
@@ -209,6 +209,172 @@ TEST_F(SortingTest, SortFusionWithIotaOperandTinySortDim) {
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, ErrorSpec{1e-5, 1e-5}));
 }
 
+// A sort dimension of size 1 needs no comparisons, but the iota operand still
+// has to be written to its output buffer.
+TEST_F(SortingTest, SortFusionWithIotaOperandSortDimOfSizeOne) {
+  const char* hlo_text = R"(
+    HloModule module
+
+    compare {
+      p.0.lhs = f32[] parameter(0)
+      p.0.rhs = f32[] parameter(1)
+      p.1.lhs = s32[] parameter(2)
+      p.1.rhs = s32[] parameter(3)
+      ROOT lt = pred[] compare(p.0.lhs, p.0.rhs), direction=LT
+    }
+
+    sort_fusion {
+      p0 = f32[3,1]{1,0} parameter(0)
+      iota = s32[3,1]{1,0} iota(), iota_dimension=0
+      ROOT sort = (f32[3,1]{1,0}, s32[3,1]{1,0}) sort(p0, iota),
+          dimensions={1}, to_apply=compare
+    }
+
+    ENTRY main {
+      p = f32[3,1]{1,0} parameter(0)
+      ROOT fusion = (f32[3,1]{1,0}, s32[3,1]{1,0}) fusion(p), kind=kCustom,
+          calls=sort_fusion
+    }
+  )";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, ErrorSpec{0, 0}));
+}
+
+TEST_F(SortingTest, MultiStageNonDefaultLayout) {
+  const char* hlo_text = R"(
+    HloModule module
+
+    compare {
+      p.0.lhs = s64[] parameter(0)
+      p.0.rhs = s64[] parameter(1)
+      p.1.lhs = s64[] parameter(2)
+      p.1.rhs = s64[] parameter(3)
+      p.2.lhs = s64[] parameter(4)
+      p.2.rhs = s64[] parameter(5)
+      p.3.lhs = s64[] parameter(6)
+      p.3.rhs = s64[] parameter(7)
+      lt_key = pred[] compare(p.0.lhs, p.0.rhs), direction=LT
+      eq_key = pred[] compare(p.0.lhs, p.0.rhs), direction=EQ
+      lt_idx = pred[] compare(p.1.lhs, p.1.rhs), direction=LT
+      ROOT res = pred[] select(eq_key, lt_idx, lt_key)
+    }
+
+    sort_fusion {
+      p0 = s64[2, 2048]{0, 1} parameter(0)
+      iota = s64[2, 2048]{0, 1} iota(), iota_dimension=1
+      ROOT sort = (s64[2, 2048]{0, 1}, s64[2, 2048]{0, 1},
+                   s64[2, 2048]{0, 1}, s64[2, 2048]{0, 1})
+          sort(p0, iota, iota, iota), dimensions={1}, is_stable=true,
+          to_apply=compare
+    }
+
+    ENTRY main {
+      p0 = s64[2, 2048]{0, 1} parameter(0)
+      ROOT fusion = (s64[2, 2048]{0, 1}, s64[2, 2048]{0, 1},
+                     s64[2, 2048]{0, 1}, s64[2, 2048]{0, 1})
+          fusion(p0), kind=kCustom, calls=sort_fusion
+    }
+  )";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, ErrorSpec{0, 0}));
+}
+
+// The sort dimension is larger than the tile size (at most 4096 elements) and
+// not a multiple of it, so the tiled kernels have blocks that sort a full tile
+// as well as blocks that sort the partial last tile.
+TEST_F(SortingTest, SortFusionWithPartialLastTile) {
+  const char* hlo_text = R"(
+    HloModule module
+
+    compare {
+      p.0.lhs = s32[] parameter(0)
+      p.0.rhs = s32[] parameter(1)
+      p.1.lhs = s32[] parameter(2)
+      p.1.rhs = s32[] parameter(3)
+      lt_key = pred[] compare(p.0.lhs, p.0.rhs), direction=LT
+      eq_key = pred[] compare(p.0.lhs, p.0.rhs), direction=EQ
+      lt_idx = pred[] compare(p.1.lhs, p.1.rhs), direction=LT
+      ROOT res = pred[] select(eq_key, lt_idx, lt_key)
+    }
+
+    sort_fusion {
+      p0 = s32[3,5000]{1,0} parameter(0)
+      iota = s32[3,5000]{1,0} iota(), iota_dimension=1
+      ROOT sort = (s32[3,5000]{1,0}, s32[3,5000]{1,0}) sort(p0, iota),
+          dimensions={1}, is_stable=true, to_apply=compare
+    }
+
+    ENTRY main {
+      p0 = s32[3,5000]{1,0} parameter(0)
+      ROOT fusion = (s32[3,5000]{1,0}, s32[3,5000]{1,0}) fusion(p0),
+          kind=kCustom, calls=sort_fusion
+    }
+  )";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, ErrorSpec{0, 0}));
+}
+
+// Tests multi-tile bitonic sort when the sort dimension has full tiles and a
+// partial trailing tile across multiple outer stages with iota operands.
+TEST_F(SortingTest, SortFusionWithMultipleTilesAndPartialTile) {
+  const char* hlo_text = R"(
+    HloModule module
+
+    compare {
+      p.0.lhs = s64[] parameter(0)
+      p.0.rhs = s64[] parameter(1)
+      p.1.lhs = s64[] parameter(2)
+      p.1.rhs = s64[] parameter(3)
+      p.2.lhs = s64[] parameter(4)
+      p.2.rhs = s64[] parameter(5)
+      p.3.lhs = s64[] parameter(6)
+      p.3.rhs = s64[] parameter(7)
+      lt_key = pred[] compare(p.0.lhs, p.0.rhs), direction=LT
+      eq_key = pred[] compare(p.0.lhs, p.0.rhs), direction=EQ
+      lt_idx = pred[] compare(p.1.lhs, p.1.rhs), direction=LT
+      ROOT res = pred[] select(eq_key, lt_idx, lt_key)
+    }
+
+    sort_fusion {
+      p0 = s64[2, 2500]{1, 0} parameter(0)
+      iota = s64[2, 2500]{1, 0} iota(), iota_dimension=1
+      ROOT sort = (s64[2, 2500]{1, 0}, s64[2, 2500]{1, 0},
+                   s64[2, 2500]{1, 0}, s64[2, 2500]{1, 0})
+          sort(p0, iota, iota, iota), dimensions={1}, is_stable=true,
+          to_apply=compare
+    }
+
+    ENTRY main {
+      p0 = s64[2, 2500]{1, 0} parameter(0)
+      ROOT fusion = (s64[2, 2500]{1, 0}, s64[2, 2500]{1, 0},
+                     s64[2, 2500]{1, 0}, s64[2, 2500]{1, 0})
+          fusion(p0), kind=kCustom, calls=sort_fusion
+    }
+  )";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, ErrorSpec{0, 0}));
+}
+
+TEST_F(SortingTest, SortFusionMultiStageWithPartialTile) {
+  const char* hlo_text = R"(
+    HloModule module
+
+    compare {
+      p.0.lhs = f32[] parameter(0)
+      p.0.rhs = f32[] parameter(1)
+      ROOT lt = pred[] compare(p.0.lhs, p.0.rhs), direction=LT
+    }
+
+    sort_fusion {
+      p0 = f32[2, 10000]{1, 0} parameter(0)
+      ROOT sort = f32[2, 10000]{1, 0} sort(p0), dimensions={1}, to_apply=compare
+    }
+
+    ENTRY main {
+      p0 = f32[2, 10000]{1, 0} parameter(0)
+      ROOT fusion = f32[2, 10000]{1, 0} fusion(p0),
+          kind=kCustom, calls=sort_fusion
+    }
+  )";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, ErrorSpec{0, 0}));
+}
+
 // Test that verifies the IgnoreMemorySpace option works correctly
 TEST_F(SortingTest, LayoutsInShapesEqualWithIgnoreMemorySpace) {
   const char* hlo_text = R"(
@@ -275,10 +441,9 @@ bool CompareAdjacentValues(const Literal& literal, int index, bool ascending) {
   if (primitive_util::IsFloatingPointType(literal.shape().element_type())) {
     return CheckOrder(*literal.GetAsDouble({index - 1}),
                       *literal.GetAsDouble({index}), ascending, index);
-  } else {
-    return CheckOrder(*literal.GetIntegralAsS64({index - 1}),
-                      *literal.GetIntegralAsS64({index}), ascending, index);
   }
+  return CheckOrder(*literal.GetIntegralAsS64({index - 1}),
+                    *literal.GetIntegralAsS64({index}), ascending, index);
 }
 
 std::string GetTypeName(PrimitiveType type) {

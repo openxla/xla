@@ -45,9 +45,12 @@ class SerDesVersion {
   //                XlaCompileOptions and IfrtIRCompileOptions.
   // 5: 2026-08-04, Added support for AbstractArraySpec.
   // 6: 2026-09-07, Removed mappings from RemapPlan.
+  // 7: 2026-11-15, Added support for empty output bundle slice sizes in
+  //                XlaCompileOptions, IfrtIRCompileOptions, and
+  //                CustomCallCompileOptions.
   // Returns the current version.
   static SerDesVersion current() {
-    return SerDesVersion(SerDesVersionNumber(6));
+    return SerDesVersion(SerDesVersionNumber(7));
   }
 
   SerDesVersion(const SerDesVersion& other) = default;
@@ -70,7 +73,7 @@ class SerDesVersion {
 
   // Returns the minimum supported version.
   static SerDesVersion minimum() {
-    return SerDesVersion(SerDesVersionNumber(2));
+    return SerDesVersion(SerDesVersionNumber(3));
   }
 
   // Returns a version that was introduced at least 4 weeks ago.
