@@ -424,6 +424,37 @@ bool ChainEndsWithAutoLayout(const HloInstruction* instruction,
   }
 }
 
+// Activation row bounds within which mixed-type dots (e.g. BF16 activations x
+// dequantized integer weights) on Blackwell (`tcgen05`) benefit from laying out
+// AUTO-layout weights with contracting dimensions minor. See the detailed note
+// in `GpuLayoutAssignment::AddDotBackendConstraints`.
+constexpr int64_t kMinRowsForMinorContractingWeights = 32;
+constexpr int64_t kMaxRowsForMinorContractingWeights = 128;
+
+// Returns true if `operand` dequantizes weights that the compiler is free to
+// lay out: a chain of unary elementwise instructions, transposes and reshapes
+// that converts an integer parameter of the entry computation with AUTO layout
+// to a floating point type.
+bool IsDequantizedAutoLayoutParameter(const HloInstruction* operand,
+                                      ComputationLayout& computation_layout) {
+  if (!operand->parent()->IsEntryComputation() ||
+      !primitive_util::IsFloatingPointType(operand->shape().element_type())) {
+    return false;
+  }
+  const HloInstruction* instruction = operand;
+  while ((instruction->IsElementwise() && instruction->operand_count() == 1) ||
+         instruction->opcode() == HloOpcode::kTranspose ||
+         instruction->opcode() == HloOpcode::kReshape) {
+    instruction = instruction->operand(0);
+  }
+  if (instruction->opcode() != HloOpcode::kParameter ||
+      !primitive_util::IsIntegralType(instruction->shape().element_type())) {
+    return false;
+  }
+  return !computation_layout.parameter_layout(instruction->parameter_number())
+              .AnyLayoutIsSet();
+}
+
 const HloInstruction* TraceToParameter(const HloInstruction* instr,
                                        ShapeIndex& shape_index) {
   std::vector<int64_t> reverse_index;
@@ -528,9 +559,48 @@ absl::Status GpuLayoutAssignment::AddDotBackendConstraints(
   const bool both_operands_require_minor_contraction_dims =
       DotRequiresMinorContractingDims(*instruction, gpu_version_);
 
-  for (const Side& side : {lhs, rhs}) {
+  // Overall Blackwell (`tcgen05`) narrow-M mixed-type GEMM strategy:
+  // When an unbatched dot multiplies a small activation matrix (`32 <= rows <=
+  // 128`) with integer weights dequantized on the fly inside the Triton GEMM
+  // fusion, execution is dominated by streaming the weight matrix from HBM:
+  //   1. `GemmFusionSwapOperands` places the larger weight tensor on the LHS
+  //      (`block_m` tiles output channels, `block_n` tiles activation rows).
+  //   2. On Blackwell, Triton's TMA lowering and search space only enable
+  //      multi-stage TMA descriptor loads for those weights when their
+  //      contracting (`K`) dimensions are physically minor (`[N, K]`); K-major
+  //      weights fall back to plain global loads without TMA pipelining.
+  //   3. Paired with 4-stage TMA configs in `b200.txtpb`, K-minor weights let
+  //      unsplit and split-K Triton GEMMs overlap weight HBM loads with
+  //      dequantization and `tcgen05` MMA.
+  // Below 32 rows (`block_n <= 16`) weight layout is neutral; above 128 rows
+  // GEMMs shift to larger tiles or compute-bound regimes where forcing K-minor
+  // does not help; and pre-Blackwell architectures (`wgmma`) already use TMA on
+  // K-major weights and regress if forced to K-minor.
+  const se::CudaComputeCapability* cuda_cc =
+      gpu_version_.cuda_compute_capability();
+  const bool has_tcgen05 = cuda_cc != nullptr && cuda_cc->HasTcgen05();
+  auto prefers_minor_contracting_weights = [&](const Side& weights,
+                                               const Side& activations) {
+    if (!has_tcgen05 || !weights.batch_dims.empty()) {
+      return false;
+    }
+    int64_t rows = 1;
+    for (int64_t dim : activations.non_contracting_dims) {
+      rows *= activations.operand->shape().dimensions(dim);
+    }
+    return rows >= kMinRowsForMinorContractingWeights &&
+           rows <= kMaxRowsForMinorContractingWeights &&
+           IsDequantizedAutoLayoutParameter(weights.operand,
+                                            saved_entry_computation_layout());
+  };
+
+  const Side* const sides[] = {&lhs, &rhs};
+  for (int i = 0; i < 2; ++i) {
+    const Side& side = *sides[i];
+    const Side& other_side = *sides[1 - i];
     if ((IsPackedInstruction(side.operand) && pack_along_contracting_dims) ||
-        both_operands_require_minor_contraction_dims) {
+        both_operands_require_minor_contraction_dims ||
+        prefers_minor_contracting_weights(side, other_side)) {
       ABSL_RETURN_IF_ERROR(SetDotOperandLayoutToMinorContracting(
           instruction, side.operand_no, side.batch_dims, side.contracting_dims,
           side.non_contracting_dims));
