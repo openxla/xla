@@ -116,10 +116,10 @@ TEST_F(RaggedDotRewriterTest, RewriteIfNoCudnnSupportCallback) {
       .mutable_debug_options()
       .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
   // Without a support callback nothing vouches for cuDNN, so expand.
-  ASSERT_OK_AND_ASSIGN(bool changed,
-                       RaggedDotRewriter(GetCudaComputeCapability(),
-                                         gpu::kMinCudnnVersionForRaggedDotFusion)
-                           .Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RaggedDotRewriter(GetCudaComputeCapability(),
+                                      gpu::kMinCudnnVersionForRaggedDotFusion)
+                        .Run(module.get()));
   EXPECT_TRUE(changed);
 }
 

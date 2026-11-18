@@ -924,13 +924,13 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
   absl::Status HandleRaggedDot(HloInstruction* instr) override {
     HloRaggedDotInstruction* ragged_dot = Cast<HloRaggedDotInstruction>(instr);
-    absl::InlinedVector<RaggedDotBackend, 3> backends =
-        SelectRaggedDotBackends(*ragged_dot, gpu_version_, cudnn_version_,
-                                toolkit_version_,
-                                instr->GetModule()->config().debug_options());
+    absl::InlinedVector<RaggedDotBackend, 3> backends = SelectRaggedDotBackends(
+        *ragged_dot, gpu_version_, cudnn_version_, toolkit_version_,
+        instr->GetModule()->config().debug_options());
     // Only probe cuDNN when a lower-priority backend could take over: with
-    // kCuDnn alone there is nothing to rewrite either way, and RaggedDotRewriter
-    // has already expanded the ragged-dot if cuDNN refused it.
+    // kCuDnn alone there is nothing to rewrite either way, and
+    // RaggedDotRewriter has already expanded the ragged-dot if cuDNN refused
+    // it.
     if (backends.size() > 1 && backends.front() == RaggedDotBackend::kCuDnn &&
         (is_supported_by_cudnn_fusion_ == nullptr ||
          !is_supported_by_cudnn_fusion_(ragged_dot).IsAllowed())) {
