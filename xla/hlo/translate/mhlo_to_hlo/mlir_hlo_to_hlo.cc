@@ -5212,13 +5212,8 @@ LogicalResult ConvertToHloModule::LowerStablehloCompositeCall(
   // Use GetTupleElement for multiple outputs
   unsigned num_results = composite_op.getNumResults();
   if (num_results > 1) {
-    // Result GTEs must not inherit the op's frontend attributes.
-    xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
-        builder, xla::FrontendAttributes());
-    for (unsigned i = 0; i != num_results; ++i) {
-      value_map[composite_op.getResult(i)] =
-          xla::GetTupleElement(composite_call, i);
-    }
+    BuildGetTupleElementsForTupleResults(composite_op, composite_call, builder,
+                                         value_map);
   } else if (num_results == 1) {
     value_map[composite_op.getResult(0)] = composite_call;
   }
@@ -5281,13 +5276,8 @@ LogicalResult ConvertToHloModule::LowerCompositeCall(
   // Use GetTupleElement for multiple outputs
   unsigned num_results = composite_op.getNumResults();
   if (num_results > 1) {
-    // Result GTEs must not inherit the op's frontend attributes.
-    xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
-        builder, xla::FrontendAttributes());
-    for (unsigned i = 0; i != num_results; ++i) {
-      value_map[composite_op.getResult(i)] =
-          xla::GetTupleElement(composite_call, i);
-    }
+    BuildGetTupleElementsForTupleResults(composite_op, composite_call, builder,
+                                         value_map);
   } else if (num_results == 1) {
     value_map[composite_op.getResult(0)] = composite_call;
   }
