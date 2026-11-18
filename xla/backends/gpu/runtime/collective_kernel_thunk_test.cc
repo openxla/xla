@@ -30,6 +30,7 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/base/no_destructor.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/memory/memory.h"
@@ -63,6 +64,7 @@ limitations under the License.
 #include "xla/core/collectives/clique_key.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/communicator.h"
+#include "xla/core/collectives/symmetric_memory.h"
 #include "xla/future.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/device_id.h"
@@ -316,6 +318,11 @@ struct CollectiveKernelThunkMetadata {
   // If set, the output slice lives in this second allocation (index 1), which
   // is backed by the same device buffer as `buffer_allocation` (index 0).
   std::optional<BufferAllocation> aliased_output_allocation;
+  // When non-empty (sized to `num_devices`), Run 1 populates each entry from
+  // `AcquireCollectiveMemory` for allocation 0 and subsequent runs reuse the
+  // exact same `SymmetricMemory` window directly (even when `device_buffers[d]`
+  // is shifted to a different byte offset inside that window).
+  std::vector<std::shared_ptr<SymmetricMemory>> io_symmetric_memories;
 };
 
 CollectiveKernelSpec CreateCollectiveKernelSpec(
@@ -545,9 +552,29 @@ absl::StatusOr<se::DeviceAddressBase> RunCollectiveKernelThunk(
                                thunk_params.collective_clique_requests()));
   ABSL_ASSIGN_OR_RETURN(
       CollectiveMemory collective_memory,
-      AcquireCollectiveMemory(collective_params, collective_cliques,
-                              thunk_params.collective_memory_requests(),
-                              *metadata.collective_memory_cache));
+      ([&]() -> absl::StatusOr<CollectiveMemory> {
+        if (!metadata.io_symmetric_memories.empty() &&
+            metadata.io_symmetric_memories[device_ordinal] != nullptr) {
+          return CollectiveMemory(
+              buffer_allocations,
+              absl::flat_hash_map<CollectiveMemory::Key,
+                                  std::shared_ptr<SymmetricMemory>>{
+                  {{clique_key, 0},
+                   metadata.io_symmetric_memories[device_ordinal]}},
+              absl::flat_hash_map<CollectiveMemory::Key,
+                                  CollectiveMemory::PeerMemory>{});
+        }
+        ABSL_ASSIGN_OR_RETURN(
+            CollectiveMemory acquired,
+            AcquireCollectiveMemory(collective_params, collective_cliques,
+                                    thunk_params.collective_memory_requests(),
+                                    *metadata.collective_memory_cache));
+        if (!metadata.io_symmetric_memories.empty()) {
+          metadata.io_symmetric_memories[device_ordinal] =
+              acquired.FindWeakSymmetricMemory(clique_key, 0).first.lock();
+        }
+        return acquired;
+      }()));
 
   GpuExecutableRunOptions::DeviceIdMap global_device_id_map = {
       {LocalDeviceId(0), GlobalDeviceId(0)}};
@@ -1333,6 +1360,52 @@ TEST(CollectiveKernelThunkTest, MaxBlocksPerGridFitOnDevice) {
   EXPECT_LE(kAllReduceMaxBlocksPerGrid, max_parallel_blocks);
   EXPECT_LE(kAllToAllMaxBlocksPerGrid, max_parallel_blocks);
   EXPECT_LE(kReduceScatterMaxBlocksPerGrid, max_parallel_blocks);
+}
+
+TEST(CollectiveKernelThunkTest,
+     RebuildsPeerTableWhenOffsetChangesInSameWindow) {
+  static constexpr int kDevicesCount = 2;
+
+  auto [input_data1, expected_output_data1] =
+      MakeSequentialInputAndExpectedOutput(/*base_value=*/0);
+  auto [input_data2, expected_output_data2] =
+      MakeSequentialInputAndExpectedOutput(/*base_value=*/1000);
+
+  CollectiveKernelThunkMetadata metadata = CreateCollectiveKernelThunk(
+      /*num_devices=*/kDevicesCount, /*num_elements=*/kNumElements,
+      /*is_multimem_enabled=*/false, /*use_ptx=*/true,
+      /*scratch_memory_type=*/SymmetricMemoryType::kLoadStoreAccessible,
+      /*output_memory_type=*/SymmetricMemoryType::kLoadStoreAccessible);
+  metadata.io_symmetric_memories.resize(kDevicesCount);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<se::DeviceAddressBase> result_buffers1,
+      RunCollectiveKernelThunkOnDevices(
+          metadata, /*emulate_multiprocess=*/false, input_data1));
+  VerifyDeviceOutputs(result_buffers1, metadata.input_data_size_bytes,
+                      expected_output_data1);
+
+  // Move allocation 0 to a different byte offset inside the same device arena
+  // while keeping the exact same `SymmetricMemory` window.
+  for (int d = 0; d < kDevicesCount; ++d) {
+    ASSERT_NE(metadata.io_symmetric_memories[d], nullptr);
+    ASSERT_GE(metadata.device_buffers[d].size(),
+              2 * metadata.total_buffer_size);
+    metadata.device_buffers[d] = metadata.device_buffers[d].GetByteSlice(
+        metadata.total_buffer_size, metadata.total_buffer_size);
+  }
+
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<se::DeviceAddressBase> result_buffers2,
+      RunCollectiveKernelThunkOnDevices(
+          metadata, /*emulate_multiprocess=*/false, input_data2));
+  for (int d = 0; d < kDevicesCount; ++d) {
+    ASSERT_NE(result_buffers1[d].opaque(), result_buffers2[d].opaque());
+  }
+  VerifyDeviceOutputs(result_buffers1, metadata.input_data_size_bytes,
+                      expected_output_data1);
+  VerifyDeviceOutputs(result_buffers2, metadata.input_data_size_bytes,
+                      expected_output_data2);
 }
 
 }  // namespace
