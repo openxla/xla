@@ -176,12 +176,13 @@ TritonDotFusionSearchSpace::GenerateAndOptimizeConfigs(
   if (hints.empty()) {
     return gemm_configs;
   }
-  return OptimizeConfigSet(gemm_configs, hints);
+  return OptimizeConfigSet(gemm_configs, hints, autotune_warp_specialization);
 }
 
 std::vector<TritonGemmConfig> TritonDotFusionSearchSpace::OptimizeConfigSet(
     absl::Span<const TritonGemmConfig> configs,
-    absl::Span<const TritonGemmConfig> hints) const {
+    absl::Span<const TritonGemmConfig> hints,
+    bool autotune_warp_specialization) const {
   if (hints.empty() || configs.empty()) {
     return std::vector<TritonGemmConfig>(configs.begin(), configs.end());
   }
@@ -202,6 +203,14 @@ std::vector<TritonGemmConfig> TritonDotFusionSearchSpace::OptimizeConfigSet(
 
     VLOG(10) << "Adding config to hint filter: " << config.ToString();
     filter.insert(config);
+    // Mirror `AddWarpSpecializationParameter`, so hints also keep the
+    // warp-specialized variant of each config when it is being autotuned.
+    if (autotune_warp_specialization &&
+        IsWarpSpecializationCompatible(config)) {
+      TritonGemmConfig ws_config = config;
+      ws_config.is_warp_specialization_allowed = true;
+      filter.insert(ws_config);
+    }
   }
 
   std::vector<TritonGemmConfig> result_configs;
@@ -610,6 +619,16 @@ void TritonDotFusionSearchSpace::AddWarpSpecializationParameter(
   new_config.config.is_warp_specialization_allowed = false;
   updated_configs.push_back(new_config);
 
+  if (IsWarpSpecializationCompatible(config.config)) {
+    new_config.config.is_warp_specialization_allowed = true;
+    VLOG(10) << "Adding warp specialization parameter: config = "
+             << new_config.ToString();
+    updated_configs.push_back(new_config);
+  }
+}
+
+bool TritonDotFusionSearchSpace::IsWarpSpecializationCompatible(
+    const TritonGemmConfig& config) const {
   // Warp specialization probably only makes sense if TMA is enabled. Other
   // restrictions are required for compatibility with Triton, including:
   // - num_warps must be a multiple of 4.
@@ -627,14 +646,8 @@ void TritonDotFusionSearchSpace::AddWarpSpecializationParameter(
   // - No concatenate operation in the module due to b/483385760. A
   // CUDA_ERROR_ILLEGAL_ADDRESS error occurs due to a bug in Triton for this
   // category of GEMMs.
-  if (!has_concatenate_ && config.config.is_tma_allowed &&
-      config.config.num_warps <= 16 && config.config.num_warps % 4 == 0 &&
-      config.config.num_stages != 2) {
-    new_config.config.is_warp_specialization_allowed = true;
-    VLOG(10) << "Adding warp specialization parameter: config = "
-             << new_config.ToString();
-    updated_configs.push_back(new_config);
-  }
+  return !has_concatenate_ && config.is_tma_allowed && config.num_warps <= 16 &&
+         config.num_warps % 4 == 0 && config.num_stages != 2;
 }
 
 void TritonDotFusionSearchSpace::EliminateLowOccupancyConfigs(
