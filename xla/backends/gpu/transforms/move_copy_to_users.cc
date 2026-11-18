@@ -311,8 +311,8 @@ constexpr int64_t kMaxSliceBytesPerCopiedElementByte = 2;
 
 // Adds the uses of `reader` to `uses` and returns the total size of the
 // results of the uses, or nullopt if `reader` is used by anything but a slice
-// or dynamic-slice of it. The use as operand `passed_on_as` of `passed_on_to` is
-// skipped.
+// or dynamic-slice of it. The use as operand `passed_on_as` of `passed_on_to`
+// is skipped.
 std::optional<int64_t> CollectSliceUses(HloInstruction* reader,
                                         const HloInstruction* passed_on_to,
                                         int64_t passed_on_as,
