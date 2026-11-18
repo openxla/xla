@@ -126,6 +126,14 @@ RawSEDeviceMemory::CreateDelayedMemory() {
   return tsl::MakeUnconstructedAsyncValueRef<AllocatedRawSEDeviceMemory>();
 }
 
+/*static*/ void RawSEDeviceMemory::AbandonDelayed(
+    const tsl::AsyncValueRef<RawSEDeviceMemory>& buf) {
+  if (buf.Isa<AllocatedRawSEDeviceMemory>() && buf.IsUnconstructed()) {
+    buf.SetError(absl::InternalError(
+        "Delayed device memory was dropped before it was constructed."));
+  }
+}
+
 class SlicedRawSEDeviceMemory : public RawSEDeviceMemory {
  public:
   SlicedRawSEDeviceMemory(se::DeviceAddressBase value,
