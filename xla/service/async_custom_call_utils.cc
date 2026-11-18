@@ -15,11 +15,15 @@ limitations under the License.
 
 #include "xla/service/async_custom_call_utils.h"
 
+#include <memory>
 #include <optional>
 #include <string>
 
+#include "absl/container/flat_hash_set.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
@@ -27,6 +31,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instruction_utils.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/call_graph.h"
+#include "xla/service/call_inliner.h"
 
 namespace xla {
 
@@ -36,6 +44,80 @@ std::optional<std::string> MatchingStartTarget(absl::string_view done_target) {
     return std::nullopt;
   }
   return absl::StrCat(base, "-start");
+}
+
+absl::flat_hash_set<const HloInstruction*> FindCallsAlongAsyncPaths(
+    const HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads,
+    absl::FunctionRef<bool(const HloInstruction*)> is_done) {
+  absl::flat_hash_set<const HloInstruction*> calls_to_inline;
+  CallInliner default_inliner;
+  std::unique_ptr<CallGraph> call_graph;
+  auto can_traverse_call = [&](const HloInstruction* call) {
+    if (call->opcode() != HloOpcode::kCall ||
+        call->called_computations().size() != 1) {
+      return false;
+    }
+    if (!HloInstruction::IsThreadIncluded(call->parent()->execution_thread(),
+                                          execution_threads) ||
+        !HloInstruction::IsThreadIncluded(call->to_apply()->execution_thread(),
+                                          execution_threads)) {
+      return false;
+    }
+    if (call_graph == nullptr) {
+      call_graph = CallGraph::Build(module, execution_threads);
+    }
+    return default_inliner.ShouldInline(*call_graph,
+                                        const_cast<HloInstruction*>(call));
+  };
+
+  hlo_instruction_utils::async::AsyncTraceOptions options;
+  options.traverse_while = false;
+  options.can_traverse_call = can_traverse_call;
+  options.matched_calls = &calls_to_inline;
+
+  for (const HloComputation* computation :
+       module->MakeNonfusionComputations(execution_threads)) {
+    for (const HloInstruction* instr :
+         computation->MakeInstructionPostOrder()) {
+      if (!is_done(instr) || instr->operand_count() == 0) {
+        continue;
+      }
+      std::optional<std::string> expected_start =
+          MatchingStartTarget(instr->custom_call_target());
+      if (!expected_start.has_value()) {
+        continue;
+      }
+      hlo_instruction_utils::async::TraceAsyncDataflow(
+          instr->operand(0),
+          [&](const HloInstruction* candidate) {
+            return candidate->IsCustomCall(*expected_start);
+          },
+          /*backward_steps=*/nullptr, options);
+    }
+  }
+  return calls_to_inline;
+}
+
+absl::StatusOr<bool> InlineCallsAlongAsyncPaths(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads,
+    absl::FunctionRef<bool(const HloInstruction*)> is_done) {
+  absl::flat_hash_set<const HloInstruction*> calls_to_inline =
+      FindCallsAlongAsyncPaths(module, execution_threads, is_done);
+  if (calls_to_inline.empty()) {
+    return false;
+  }
+  CallInliner inliner(
+      /*single_call_site=*/false,
+      /*composites_to_preserve=*/{},
+      /*override_policy=*/
+      [&calls_to_inline](const CallGraph&, const HloInstruction* instruction) {
+        return calls_to_inline.contains(instruction)
+                   ? CallInliner::InlineOverridePolicy::kAllowInline
+                   : CallInliner::InlineOverridePolicy::kProhibitInline;
+      });
+  return inliner.Run(module, execution_threads);
 }
 
 absl::Status FinishRewrite(
