@@ -15,11 +15,15 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_TRANSFORMS_GEMM_REWRITER_H_
 #define XLA_BACKENDS_GPU_TRANSFORMS_GEMM_REWRITER_H_
 
+#include <functional>
+
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/service/decision.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -77,13 +81,18 @@ struct GemmRewriterOptions {
 
 class GemmRewriter : public HloModulePass {
  public:
-  // `cudnn_version` is only used to decide whether a ragged-dot is left for
-  // RaggedDotFusionRewriter; the default stands for "no cuDNN support", which
-  // is what pipelines that do not run RaggedDotFusionRewriter want.
+  // `cudnn_version` and `is_supported_by_cudnn_fusion` are only used to decide
+  // whether a ragged-dot is left for RaggedDotFusionRewriter; the defaults
+  // stand for "no cuDNN support", which is what pipelines that do not run
+  // RaggedDotFusionRewriter want.  A pipeline that passes a real
+  // `cudnn_version` must pass the same `is_supported_by_cudnn_fusion` as its
+  // RaggedDotRewriter, or the two disagree about which ragged-dots cuDNN owns.
   GemmRewriter(se::GpuComputeCapability gpu_version,
                se::SemanticVersion toolkit_version,
                GemmRewriterOptions options = {},
-               se::dnn::VersionInfo cudnn_version = se::dnn::VersionInfo());
+               se::dnn::VersionInfo cudnn_version = se::dnn::VersionInfo(),
+               std::function<Decision(const HloInstruction*)>
+                   is_supported_by_cudnn_fusion = nullptr);
   absl::string_view name() const override { return "cublas-gemm-rewriter"; }
 
  protected:
@@ -96,6 +105,7 @@ class GemmRewriter : public HloModulePass {
   se::SemanticVersion toolkit_version_;
   GemmRewriterOptions options_;
   se::dnn::VersionInfo cudnn_version_;
+  std::function<Decision(const HloInstruction*)> is_supported_by_cudnn_fusion_;
 };
 
 }  // namespace gpu

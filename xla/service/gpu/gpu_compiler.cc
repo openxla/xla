@@ -1976,11 +1976,13 @@ absl::Status GpuCompiler::RunPreSchedulingCopyInsertion(
 }
 
 namespace {
-void AddGemmRewriterPasses(HloPassPipeline& pipeline,
-                           const DebugOptions& debug_options,
-                           const se::GpuComputeCapability gpu_version,
-                           const se::SemanticVersion& toolkit_version,
-                           const se::dnn::VersionInfo& cudnn_version) {
+void AddGemmRewriterPasses(
+    HloPassPipeline& pipeline, const DebugOptions& debug_options,
+    const se::GpuComputeCapability gpu_version,
+    const se::SemanticVersion& toolkit_version,
+    const se::dnn::VersionInfo& cudnn_version,
+    std::function<Decision(const HloInstruction*)>
+        is_supported_by_cudnn_fusion) {
   // Adding bias to GEMMs is helpful for skipping kernel launches for `add`
   // operations. However, the bias term can add dependencies between the GEMMs
   // that could otherwise be parallelized. Because of this, we disable bias
@@ -1999,7 +2001,7 @@ void AddGemmRewriterPasses(HloPassPipeline& pipeline,
   GemmRewriterOptions fp8_options{GemmRewriterOptions::DType::kFp8Only,
                                   bias_mode};
   pipeline.AddPass<GemmRewriter>(gpu_version, toolkit_version, fp8_options,
-                                 cudnn_version);
+                                 cudnn_version, is_supported_by_cudnn_fusion);
 
   // Rewrite dots with the algorithms that cannot be handled by cublas directly.
   // I.e. transform single dot into a chain of dots with the default algorithm
@@ -2017,7 +2019,7 @@ void AddGemmRewriterPasses(HloPassPipeline& pipeline,
   pipeline.AddPass<GemmRewriter>(
       gpu_version, toolkit_version,
       GemmRewriterOptions{GemmRewriterOptions::DType::kNonFp8Only, bias_mode},
-      cudnn_version);
+      cudnn_version, std::move(is_supported_by_cudnn_fusion));
 }
 }  // namespace
 
@@ -2116,7 +2118,10 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
         pipeline, debug_options, gpu_version,
         gpu_target_config.device_description.runtime_version(),
         se::dnn::VersionInfo(
-            gpu_target_config.device_description.dnn_version()));
+            gpu_target_config.device_description.dnn_version()),
+        [this, &gpu_target_config, stream_exec](const HloInstruction* r) {
+          return IsRaggedDotSupportedByCuDnn(r, gpu_target_config, stream_exec);
+        });
 
     // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
     pipeline.AddPass<GemmBroadcastFoldingRewriter>();

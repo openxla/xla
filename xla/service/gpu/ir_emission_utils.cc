@@ -317,28 +317,29 @@ bool IsCudnnSupportedRaggedDot(
   return rhs_rank == 3;
 }
 
-RaggedDotBackend SelectRaggedDotBackend(
+absl::InlinedVector<RaggedDotBackend, 3> SelectRaggedDotBackends(
     const HloInstruction& ragged_dot,
     const se::GpuComputeCapability& gpu_compute_capability,
     se::dnn::VersionInfo cudnn_version, se::SemanticVersion toolkit_version,
     const DebugOptions& debug_options) {
+  absl::InlinedVector<RaggedDotBackend, 3> backends;
   if (debug_options.xla_gpu_experimental_use_ragged_dot_fusion() &&
       !debug_options.xla_gpu_experimental_disable_binary_libraries() &&
       IsCudnnSupportedRaggedDot(gpu_compute_capability, cudnn_version,
                                 toolkit_version, ragged_dot)) {
-    return RaggedDotBackend::kCuDnn;
+    backends.push_back(RaggedDotBackend::kCuDnn);
   }
   if (debug_options.xla_gpu_experimental_use_ragged_dot_grouped_gemm() &&
       // NOLINTNEXTLINE(clang-diagnostic-deprecated-declarations)
       debug_options.xla_gpu_enable_cublaslt() &&
       IsGpublasLtSupportedGroupedMatMul(gpu_compute_capability, ragged_dot)) {
-    return RaggedDotBackend::kGpuBlasLt;
+    backends.push_back(RaggedDotBackend::kGpuBlasLt);
   }
   if (debug_options.xla_gpu_experimental_triton_ragged_dot() &&
       IsTritonSupportedRaggedDot(gpu_compute_capability, ragged_dot)) {
-    return RaggedDotBackend::kTriton;
+    backends.push_back(RaggedDotBackend::kTriton);
   }
-  return RaggedDotBackend::kDefault;
+  return backends;
 }
 
 bool IsRaggedDotTritonFusion(const HloInstruction& instr) {

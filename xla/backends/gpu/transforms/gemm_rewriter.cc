@@ -23,6 +23,7 @@ limitations under the License.
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <initializer_list>
 #include <limits>
 #include <memory>
@@ -35,6 +36,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -57,6 +59,7 @@ limitations under the License.
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
+#include "xla/service/decision.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/gpu_fusible.h"
@@ -788,14 +791,17 @@ xtile::Tile BuildRaggedDotOutputTile(const DotDimensionNumbers& dot_dims,
 // when the output of the GEMM is requested in FP8 format.
 class GemmRewriterVisitor : public DfsHloRewriteVisitor {
  public:
-  explicit GemmRewriterVisitor(const se::GpuComputeCapability& gpu_version,
-                               se::SemanticVersion toolkit_version,
-                               const GemmRewriterOptions options,
-                               se::dnn::VersionInfo cudnn_version)
+  explicit GemmRewriterVisitor(
+      const se::GpuComputeCapability& gpu_version,
+      se::SemanticVersion toolkit_version, const GemmRewriterOptions options,
+      se::dnn::VersionInfo cudnn_version,
+      const std::function<Decision(const HloInstruction*)>&
+          is_supported_by_cudnn_fusion)
       : gpu_version_(gpu_version),
         toolkit_version_(toolkit_version),
         options_(options),
-        cudnn_version_(cudnn_version) {}
+        cudnn_version_(cudnn_version),
+        is_supported_by_cudnn_fusion_(is_supported_by_cudnn_fusion) {}
 
   absl::Status HandleDot(HloInstruction* instr) override {
     ABSL_ASSIGN_OR_RETURN(
@@ -918,18 +924,30 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
   absl::Status HandleRaggedDot(HloInstruction* instr) override {
     HloRaggedDotInstruction* ragged_dot = Cast<HloRaggedDotInstruction>(instr);
-    switch (SelectRaggedDotBackend(
-        *ragged_dot, gpu_version_, cudnn_version_, toolkit_version_,
-        instr->GetModule()->config().debug_options())) {
+    absl::InlinedVector<RaggedDotBackend, 3> backends =
+        SelectRaggedDotBackends(*ragged_dot, gpu_version_, cudnn_version_,
+                                toolkit_version_,
+                                instr->GetModule()->config().debug_options());
+    // Only probe cuDNN when a lower-priority backend could take over: with
+    // kCuDnn alone there is nothing to rewrite either way, and RaggedDotRewriter
+    // has already expanded the ragged-dot if cuDNN refused it.
+    if (backends.size() > 1 && backends.front() == RaggedDotBackend::kCuDnn &&
+        (is_supported_by_cudnn_fusion_ == nullptr ||
+         !is_supported_by_cudnn_fusion_(ragged_dot).IsAllowed())) {
+      backends.erase(backends.begin());
+    }
+    if (backends.empty()) {
+      // Expanded into a regular dot by RaggedDotRewriter, which runs earlier.
+      return absl::OkStatus();
+    }
+    switch (backends.front()) {
       case RaggedDotBackend::kGpuBlasLt:
         return RewriteRaggedDotAsGroupedGemmCustomCall(ragged_dot);
       case RaggedDotBackend::kTriton:
         return RewriteRaggedDotAsTritonFusion(ragged_dot);
       case RaggedDotBackend::kCuDnn:
-      case RaggedDotBackend::kDefault:
-        // kCuDnn is rewritten by RaggedDotFusionRewriter, which runs later in
-        // the fusion pipeline; kDefault was expanded into a regular dot by
-        // RaggedDotRewriter, which runs earlier.  Leave both alone.
+        // Rewritten by RaggedDotFusionRewriter, which runs later in the fusion
+        // pipeline.  Leave it alone.
         break;
     }
     return absl::OkStatus();
@@ -2666,6 +2684,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   stream_executor::SemanticVersion toolkit_version_;
   GemmRewriterOptions options_;
   se::dnn::VersionInfo cudnn_version_;
+  const std::function<Decision(const HloInstruction*)>&
+      is_supported_by_cudnn_fusion_;
 
   // Choose cublas or cublasLt for the target of the custom call that instr will
   // be rewritten into.
@@ -3239,13 +3259,14 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
   se::GpuComputeCapability gpu_version_;
 };
 
-absl::StatusOr<bool> RunOnComputation(HloComputation* computation,
-                                      se::GpuComputeCapability gpu_version,
-                                      se::SemanticVersion toolkit_version,
-                                      GemmRewriterOptions options,
-                                      se::dnn::VersionInfo cudnn_version) {
+absl::StatusOr<bool> RunOnComputation(
+    HloComputation* computation, se::GpuComputeCapability gpu_version,
+    se::SemanticVersion toolkit_version, GemmRewriterOptions options,
+    se::dnn::VersionInfo cudnn_version,
+    const std::function<Decision(const HloInstruction*)>&
+        is_supported_by_cudnn_fusion) {
   GemmRewriterVisitor visitor(gpu_version, toolkit_version, options,
-                              cudnn_version);
+                              cudnn_version, is_supported_by_cudnn_fusion);
   ABSL_RETURN_IF_ERROR(computation->Accept(&visitor));
   GemmWorkspaceRewriteVisitor workspace_visitor(gpu_version);
   ABSL_RETURN_IF_ERROR(computation->Accept(&workspace_visitor));
@@ -3254,14 +3275,15 @@ absl::StatusOr<bool> RunOnComputation(HloComputation* computation,
 
 }  // anonymous namespace
 
-GemmRewriter::GemmRewriter(se::GpuComputeCapability gpu_version,
-                           se::SemanticVersion toolkit_version,
-                           GemmRewriterOptions options,
-                           se::dnn::VersionInfo cudnn_version)
+GemmRewriter::GemmRewriter(
+    se::GpuComputeCapability gpu_version, se::SemanticVersion toolkit_version,
+    GemmRewriterOptions options, se::dnn::VersionInfo cudnn_version,
+    std::function<Decision(const HloInstruction*)> is_supported_by_cudnn_fusion)
     : gpu_version_(gpu_version),
       toolkit_version_(toolkit_version),
       options_(options),
-      cudnn_version_(cudnn_version) {}
+      cudnn_version_(cudnn_version),
+      is_supported_by_cudnn_fusion_(std::move(is_supported_by_cudnn_fusion)) {}
 
 absl::StatusOr<bool> GemmRewriter::RunImpl(
     HloModule* module,
@@ -3272,7 +3294,7 @@ absl::StatusOr<bool> GemmRewriter::RunImpl(
     ABSL_ASSIGN_OR_RETURN(
         bool result,
         RunOnComputation(computation, gpu_version_, toolkit_version_, options_,
-                         cudnn_version_));
+                         cudnn_version_, is_supported_by_cudnn_fusion_));
     changed |= result;
   }
   return changed;

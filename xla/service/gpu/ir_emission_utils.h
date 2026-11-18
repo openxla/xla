@@ -130,7 +130,7 @@ bool IsCudnnSupportedRaggedDot(
     se::dnn::VersionInfo cudnn_version, se::SemanticVersion toolkit_version,
     const HloInstruction& ragged_dot);
 
-// The backend that lowers a ragged-dot, in priority order.
+// A backend that can lower a ragged-dot.
 enum class RaggedDotBackend {
   // Rewritten by RaggedDotFusionRewriter, later in the fusion pipeline.
   kCuDnn,
@@ -138,14 +138,14 @@ enum class RaggedDotBackend {
   kGpuBlasLt,
   // Rewritten by GemmRewriter into a Triton XTile fusion.
   kTriton,
-  // Expanded into a regular dot by RaggedDotRewriter.
-  kDefault,
 };
 
-// Picks the backend for `ragged_dot`.  RaggedDotRewriter and GemmRewriter must
-// agree on the choice: the former expands the ragged-dots that select
-// kDefault, the latter rewrites the rest, so both call this.
-RaggedDotBackend SelectRaggedDotBackend(
+// Returns the backends that can lower `ragged_dot`, most preferred first; an
+// empty result means RaggedDotRewriter expands it into a regular dot.  kCuDnn
+// is only statically eligible here: callers probe cuDNN for an execution plan
+// and drop the leading kCuDnn when there is none.  RaggedDotRewriter and
+// GemmRewriter must agree on the head of the list, so both call this.
+absl::InlinedVector<RaggedDotBackend, 3> SelectRaggedDotBackends(
     const HloInstruction& ragged_dot,
     const se::GpuComputeCapability& gpu_compute_capability,
     se::dnn::VersionInfo cudnn_version, se::SemanticVersion toolkit_version,

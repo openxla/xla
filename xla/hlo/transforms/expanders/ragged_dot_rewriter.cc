@@ -24,6 +24,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -426,9 +427,9 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> RaggedToGeneral(
 absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  // Gather the ragged-dots that no other backend claims; see
-  // SelectRaggedDotBackend for the priority order.  The ones left behind are
-  // rewritten later by GemmRewriter or RaggedDotFusionRewriter.
+  // Gather the ragged-dots that no backend claims; see SelectRaggedDotBackends
+  // for the priority order.  The ones left behind are rewritten later by
+  // GemmRewriter or RaggedDotFusionRewriter.
   const DebugOptions& debug_options = module->config().debug_options();
   std::vector<HloRaggedDotInstruction*> ragged_dots;
   for (auto* computation :
@@ -437,23 +438,25 @@ absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
       if (instruction->opcode() != HloOpcode::kRaggedDot) {
         continue;
       }
-      gpu::RaggedDotBackend backend = gpu::SelectRaggedDotBackend(
-          *instruction, gpu_compute_capability_, cudnn_version_,
-          toolkit_version_, debug_options);
-      if (backend == gpu::RaggedDotBackend::kCuDnn) {
+      absl::InlinedVector<gpu::RaggedDotBackend, 3> backends =
+          gpu::SelectRaggedDotBackends(*instruction, gpu_compute_capability_,
+                                       cudnn_version_, toolkit_version_,
+                                       debug_options);
+      if (!backends.empty() &&
+          backends.front() == gpu::RaggedDotBackend::kCuDnn) {
         Decision decision =
             is_supported_by_cudnn_fusion_ == nullptr
                 ? Decision::Forbid("no cuDNN ragged-dot support callback")
                 : is_supported_by_cudnn_fusion_(instruction);
-        if (decision.IsAllowed()) {
-          continue;
+        if (!decision.IsAllowed()) {
+          VLOG(3) << "Not using cuDNN fusion for " << instruction->name()
+                  << ": " << decision.Explain();
+          backends.erase(backends.begin());
         }
-        VLOG(3) << "Expanding " << instruction->name()
-                << " instead of using cuDNN fusion: " << decision.Explain();
-      } else if (backend != gpu::RaggedDotBackend::kDefault) {
-        continue;
       }
-      ragged_dots.push_back(Cast<HloRaggedDotInstruction>(instruction));
+      if (backends.empty()) {
+        ragged_dots.push_back(Cast<HloRaggedDotInstruction>(instruction));
+      }
     }
   }
 
