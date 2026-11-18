@@ -408,8 +408,8 @@ std::optional<CopyIntoWhileBody> MatchCopyIntoWhileBody(
     }
     total_slice_bytes += *slice_bytes;
   }
-  const int64_t max_slice_bytes = kMaxSliceBytesPerCopiedElementByte *
-                                  ShapeUtil::ByteSizeOf(copy->shape());
+  const int64_t max_slice_bytes =
+      kMaxSliceBytesPerCopiedElementByte * ShapeUtil::ByteSizeOf(copy->shape());
   if (slice_bytes_per_iteration > 0) {
     std::optional<int64_t> trip_count = TripCount(while_op);
     // The trip count is checked on its own first, so that the size of the
