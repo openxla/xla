@@ -20,12 +20,14 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "rocm/include/hip/hip_runtime.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_address_vmm_allocator.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -34,6 +36,7 @@ limitations under the License.
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/rocm/rocm_device_address_vmm_allocator.h"
 #include "xla/stream_executor/rocm/rocm_raw_memory_allocation.h"
+#include "xla/stream_executor/rocm/rocm_status.h"
 #include "xla/stream_executor/rocm/rocm_vmm_allocator.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream.h"
@@ -44,35 +47,40 @@ limitations under the License.
 namespace stream_executor::gpu {
 namespace {
 
+using ::absl_testing::IsOk;
+using ::absl_testing::IsOkAndHolds;
+using ::testing::Not;
+
 // Exports `handle` as a POSIX file descriptor and immediately closes it.
-hipError_t TryExportAsPosixFd(hipMemGenericAllocationHandle_t handle) {
+absl::Status TryExportAsPosixFd(hipMemGenericAllocationHandle_t handle) {
   int fd = -1;
-  hipError_t result = hipMemExportToShareableHandle(
-      &fd, handle, hipMemHandleTypePosixFileDescriptor, 0ULL);
-  if (result != hipSuccess) {
-    return result;
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(hipMemExportToShareableHandle(
+                   &fd, handle, hipMemHandleTypePosixFileDescriptor, 0ULL),
+               "hipMemExportToShareableHandle"));
+  if (fd < 0) {
+    return absl::InternalError(
+        "Export succeeded but produced an invalid descriptor.");
   }
-  EXPECT_GE(fd, 0) << "Export succeeded but produced an invalid descriptor.";
-  if (fd >= 0) {
-    close(fd);
-  }
-  return hipSuccess;
+  close(fd);
+  return absl::OkStatus();
 }
 
-class RocmVmmExportableHandlesTest : public ::testing::Test {
+class RocmVmmExportableHandlesTest : public testing::Test {
  protected:
   void SetUp() override {
-    auto platform_or = PlatformManager::PlatformWithName("ROCM");
-    if (!platform_or.ok()) {
+    absl::StatusOr<Platform*> platform =
+        PlatformManager::PlatformWithName("ROCM");
+    if (!platform.ok()) {
       GTEST_SKIP() << "ROCM platform not available";
     }
-    platform_ = platform_or.value();
+    platform_ = *platform;
 
-    auto executor_or = platform_->ExecutorForDevice(0);
-    if (!executor_or.ok()) {
-      GTEST_SKIP() << "ROCM executor not available: " << executor_or.status();
+    absl::StatusOr<StreamExecutor*> executor = platform_->ExecutorForDevice(0);
+    if (!executor.ok()) {
+      GTEST_SKIP() << "ROCM executor not available: " << executor.status();
     }
-    executor_ = executor_or.value();
+    executor_ = *executor;
   }
 
   absl::StatusOr<hipMemAllocationHandleType> RequestedHandleType(
@@ -160,14 +168,13 @@ TEST_F(RocmVmmExportableHandlesTest, RejectedExportableCreateIsReported) {
   params.prop.location.id = device_count;  // One past the last device.
 
   EXPECT_THAT(CreateRocmVmmPhysicalAllocation(params.prop, params.granularity),
-              ::testing::Not(absl_testing::IsOk()));
+              Not(IsOk()));
 }
 
 // A caller that does not ask for exportable handles never gets them.
 TEST_F(RocmVmmExportableHandlesTest, NonExportableOptionIsHonored) {
-  ASSERT_OK_AND_ASSIGN(hipMemAllocationHandleType handle_type,
-                       RequestedHandleType(kNonExportable));
-  EXPECT_EQ(handle_type, hipMemHandleTypeNone);
+  EXPECT_THAT(RequestedHandleType(kNonExportable),
+              IsOkAndHolds(hipMemHandleTypeNone));
 }
 
 TEST_F(RocmVmmExportableHandlesTest, ParamsDescribePinnedDeviceAllocation) {
@@ -205,7 +212,7 @@ TEST_F(RocmVmmExportableHandlesTest, NonExportableAllocationCannotBeExported) {
                            executor_, /*size=*/1024 * 1024, kNonExportable));
 
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
-  EXPECT_NE(TryExportAsPosixFd(allocation->GetHandle()), hipSuccess);
+  EXPECT_THAT(TryExportAsPosixFd(allocation->GetHandle()), Not(IsOk()));
 }
 
 // RocmDeviceAddressVmmAllocator creates its physical memory through
@@ -221,7 +228,7 @@ TEST_F(RocmVmmExportableHandlesTest, RawMemoryAllocationHandleIsExportable) {
   ASSERT_NE(allocation->GetHandle(), nullptr);
 
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
-  EXPECT_EQ(TryExportAsPosixFd(allocation->GetHandle()), hipSuccess)
+  EXPECT_THAT(TryExportAsPosixFd(allocation->GetHandle()), IsOk())
       << "VMM allocation handle cannot be exported as a POSIX file "
          "descriptor.";
 }
@@ -274,7 +281,7 @@ TEST_F(RocmVmmExportableHandlesTest, VmmAllocatorMemoryIsExportable) {
       hipMemRetainAllocationHandle(&handle, allocation->address().opaque()),
       hipSuccess);
 
-  EXPECT_EQ(TryExportAsPosixFd(handle), hipSuccess);
+  EXPECT_THAT(TryExportAsPosixFd(handle), IsOk());
   EXPECT_EQ(hipMemRelease(handle), hipSuccess);
 }
 
@@ -291,7 +298,7 @@ TEST_F(RocmVmmExportableHandlesTest, NonExportableVmmAllocatorMemory) {
       hipMemRetainAllocationHandle(&handle, allocation->address().opaque()),
       hipSuccess);
 
-  EXPECT_NE(TryExportAsPosixFd(handle), hipSuccess);
+  EXPECT_THAT(TryExportAsPosixFd(handle), Not(IsOk()));
   EXPECT_EQ(hipMemRelease(handle), hipSuccess);
 }
 
@@ -310,7 +317,7 @@ TEST_F(RocmVmmExportableHandlesTest, CollectiveAllocationIsExportable) {
       RocmDeviceAddressVmmAllocator::Create(executor_, stream.get()));
 
   ASSERT_OK_AND_ASSIGN(
-      auto scoped_address,
+      ScopedDeviceAddress<uint8_t> scoped_address,
       allocator->Allocate(executor_->device_ordinal(), /*size=*/393216,
                           /*retry_on_failure=*/true,
                           static_cast<int64_t>(MemorySpace::kCollective)));
@@ -321,7 +328,7 @@ TEST_F(RocmVmmExportableHandlesTest, CollectiveAllocationIsExportable) {
   ASSERT_EQ(hipMemRetainAllocationHandle(&handle, scoped_address->opaque()),
             hipSuccess);
 
-  EXPECT_EQ(TryExportAsPosixFd(handle), hipSuccess)
+  EXPECT_THAT(TryExportAsPosixFd(handle), IsOk())
       << "Collective-space VMM buffer cannot be exported as a POSIX file "
          "descriptor.";
   EXPECT_EQ(hipMemRelease(handle), hipSuccess);
