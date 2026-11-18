@@ -42,7 +42,8 @@ constexpr HloCallBoundaryOptions kFusionBoundaryOptions(
 
 }  // namespace
 
-bool MemorySpacePropagation::RunOnComputation(HloComputation* computation) {
+bool MemorySpacePropagation::RunOnComputation(HloComputation* computation,
+                                              const Shape* output_shape) {
   CHECK(dataflow_analysis_ != nullptr);
   bool modified = false;
   // Propagate the parameter subshapes.
@@ -59,7 +60,8 @@ bool MemorySpacePropagation::RunOnComputation(HloComputation* computation) {
   }
   // Propagate output subshapes.
   ShapeUtil::ForEachLeafShape(
-      computation->root_instruction()->shape(),
+      output_shape != nullptr ? *output_shape
+                              : computation->root_instruction()->shape(),
       [&](const Shape& sub_shape, const ShapeIndex& index) {
         absl::flat_hash_set<const HloValue*> visited;
         modified |= Propagate(index, computation->root_instruction(), sub_shape,
