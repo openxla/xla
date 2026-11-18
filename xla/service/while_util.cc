@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/layout_util.h"
 #include "xla/literal_util.h"
+#include "xla/primitive_util.h"
 #include "xla/service/call_inliner.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/pattern_matcher.h"
@@ -637,15 +638,28 @@ absl::Status WhileUtil::IncrementWhileLoopTripCount(
     }
   }
 
-  // Decrementing the induction var is equivalent to incrementing the
-  // trip count.
-  HloInstruction* trip_count_increment = while_conditional->AddInstruction(
-      HloInstruction::CreateConstant(LiteralUtil::CreateR0(
-          induction_var->shape().element_type(), -increment)));
-  HloInstruction* decremented_induction_var = while_conditional->AddInstruction(
-      HloInstruction::CreateBinary(induction_var->shape(), HloOpcode::kAdd,
-                                   induction_var, trip_count_increment));
-  return induction_var->ReplaceAllUsesWith(decremented_induction_var);
+  // Saturate the shifted induction variable so i - increment cannot wrap
+  // modulo 2^bits, and normalize compare strictness for exact boundary checks.
+  const PrimitiveType t = induction_var->shape().element_type();
+  const Comparison c(compare->comparison_direction(), t);
+  if (!c.IsIntegralPrimitiveType()) {
+    return absl::InvalidArgumentError("Induction variable must be integral");
+  }
+  auto *i = induction_var, *n = compare->mutable_operand(c.IsLt() || c.IsLe());
+  const bool lt = increment < 0 || (!increment && !c.IsReflexive());
+  const uint64_t m = ~uint64_t{0} >> (64 - primitive_util::BitWidth(t));
+  const uint64_t hi = m >> primitive_util::IsSignedIntegralType(t);
+  const uint64_t u =
+      increment < 0 ? -static_cast<uint64_t>(increment) : increment;
+  const uint64_t s = std::min(u - (lt == c.IsReflexive()), m);
+  i = i->AddInstruction(HloInstruction::CreateBinary(
+      i->shape(), lt ? HloOpcode::kMinimum : HloOpcode::kMaximum, i,
+      MakeScalarLike(i, lt ? hi - s : (hi == m ? 0 : ~hi) + s)));
+  i = i->AddInstruction(HloInstruction::CreateBinary(
+      i->shape(), HloOpcode::kAdd, i, MakeScalarLike(i, lt ? s : -s)));
+  const auto d = lt ? ComparisonDirection::kLt : ComparisonDirection::kLe;
+  return while_conditional->ReplaceWithNewInstruction(
+      compare, HloInstruction::CreateCompare(compare->shape(), i, n, d));
 }
 
 void AppendToWhileLoopOriginalValue(
