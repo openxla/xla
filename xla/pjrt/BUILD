@@ -198,6 +198,7 @@ xla_cc_test(
     srcs = ["dynamic_shapes_test.cc"],
     deps = [
         ":dynamic_shapes",
+        "//third_party/gloop/util/gtl:c_memcpy",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/status",
@@ -245,6 +246,7 @@ cc_library(
         ":tiled_linearizer",
         ":transpose",
         ":utils",
+        "//third_party/gloop/util/gtl:c_memcpy",
         "//xla:executable_run_options",
         "//xla:future",
         "//xla:literal",
@@ -1285,6 +1287,8 @@ cc_library(
     deps = [
         ":tiled_linearizer_highway",
         ":transpose",
+        "//third_party/gloop/util/gtl:c_memcpy",
+        "//third_party/gloop/util/gtl:c_memset",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status_macros",

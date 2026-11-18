@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/types/span.h"
+#include "third_party/gloop/util/gtl/c_memcpy.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
@@ -38,7 +39,7 @@ using ::absl_testing::StatusIs;
 // Serializes one int32 metadata slot per entry of `sizes`.
 std::vector<uint8_t> MakeMetadata(absl::Span<const int32_t> sizes) {
   std::vector<uint8_t> bytes(sizes.size() * sizeof(int32_t));
-  std::memcpy(bytes.data(), sizes.data(), bytes.size());
+  gtl::c_memcpy(bytes, sizes, bytes.size());
   return bytes;
 }
 
