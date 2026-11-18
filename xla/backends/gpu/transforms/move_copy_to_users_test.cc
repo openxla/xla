@@ -368,6 +368,17 @@ std::string WithUnknownInitialInductionVariable(absl::string_view hlo) {
                                     "zero = s32[] parameter(2)\n  init"}});
 }
 
+// Returns `hlo`, a module from WhileLoopOverCopiedStack, with the loop
+// annotated with `trip_count` as its known trip count.
+std::string WithKnownTripCount(absl::string_view hlo,
+                               absl::string_view trip_count) {
+  return absl::StrReplaceAll(
+      hlo, {{"condition=condition, body=body",
+             absl::StrCat("condition=condition, body=body, "
+                          "backend_config={\"known_trip_count\":{\"n\":\"",
+                          trip_count, "\"}}")}});
+}
+
 constexpr absl::string_view kDynamicSliceOfStack =
     "layer = f32[1,16,32]{1,0,2} dynamic-slice(stack, i, zero, zero), "
     "dynamic_slice_sizes={1,16,32}";
@@ -526,12 +537,9 @@ TEST_F(MoveCopyToUsersTest, UnknownTripCountNoChange) {
 TEST_F(MoveCopyToUsersTest, TripCountFromBackendConfig) {
   // The trip count can not be computed, but the loop is annotated with it.
   CheckMoveCopyToUsers(
-      absl::StrReplaceAll(
-          WithUnknownInitialInductionVariable(
-              WhileLoopOverCopiedStack(kDynamicSliceOfStack)),
-          {{"condition=condition, body=body",
-            "condition=condition, body=body, "
-            "backend_config={\"known_trip_count\":{\"n\":\"8\"}}"}}),
+      WithKnownTripCount(WithUnknownInitialInductionVariable(
+                             WhileLoopOverCopiedStack(kDynamicSliceOfStack)),
+                         "8"),
       R"(
 // CHECK:       body
 // CHECK:         [[stack:%[^ ]+]] = f32[8,16,32]{2,1,0} get-tuple-element({{.*}}), index=1
@@ -540,6 +548,40 @@ TEST_F(MoveCopyToUsersTest, TripCountFromBackendConfig) {
 // CHECK:       ENTRY
 // CHECK-NOT:     copy(
 )");
+}
+
+TEST_F(MoveCopyToUsersTest, LargeTripCountNoChange) {
+  // The size of the slices of all 2^62 iterations does not fit into 64 bits.
+  CheckMoveCopyToUsers(
+      WithKnownTripCount(WithUnknownInitialInductionVariable(
+                             WhileLoopOverCopiedStack(kDynamicSliceOfStack)),
+                         "4611686018427387904"),
+      std::nullopt);
+}
+
+TEST_F(MoveCopyToUsersTest, WhileConditionReadsArrayNoChange) {
+  CheckMoveCopyToUsers(
+      absl::StrReplaceAll(
+          WhileLoopOverCopiedStack(kDynamicSliceOfStack),
+          {{"  limit = s32[] constant(",
+            "  stack = f32[8,16,32]{1,0,2} get-tuple-element(p), index=1\n"
+            "  first = f32[1,16,32]{1,0,2} slice(stack), "
+            "slice={[0:1], [0:16], [0:32]}\n"
+            "  limit = s32[] constant("}}),
+      std::nullopt);
+}
+
+TEST_F(MoveCopyToUsersTest, WhileBodyCalledByTwoLoopsNoChange) {
+  // The layout of the stack can not be changed in a body and a condition that
+  // are shared with another loop.
+  CheckMoveCopyToUsers(
+      WhileLoopOverCopiedStack(
+          kDynamicSliceOfStack, "stack", /*trip_count=*/8,
+          "init2 = (s32[], f32[8,16,32]{1,0,2}, f32[1,16,32]{1,0,2}) "
+          "tuple(zero, copy, acc)\n"
+          "loop2 = (s32[], f32[8,16,32]{1,0,2}, f32[1,16,32]{1,0,2}) "
+          "while(init2), condition=condition, body=body"),
+      std::nullopt);
 }
 
 TEST_F(MoveCopyToUsersTest, WhileBodyReadsReturnedStateNoChange) {

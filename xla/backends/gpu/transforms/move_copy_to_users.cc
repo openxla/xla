@@ -284,7 +284,8 @@ bool IsUnused(const HloInstruction* instruction) {
 }
 
 std::optional<int64_t> TripCount(const HloInstruction* while_op) {
-  auto config = while_op->backend_config<WhileLoopBackendConfig>();
+  absl::StatusOr<WhileLoopBackendConfig> config =
+      while_op->backend_config<WhileLoopBackendConfig>();
   if (config.ok() && config->has_known_trip_count()) {
     return config->known_trip_count().n();
   }
@@ -407,15 +408,19 @@ std::optional<CopyIntoWhileBody> MatchCopyIntoWhileBody(
     }
     total_slice_bytes += *slice_bytes;
   }
+  const int64_t max_slice_bytes = kMaxSliceBytesPerCopiedElementByte *
+                                  ShapeUtil::ByteSizeOf(copy->shape());
   if (slice_bytes_per_iteration > 0) {
     std::optional<int64_t> trip_count = TripCount(while_op);
-    if (!trip_count.has_value()) {
+    // The trip count is checked on its own first, so that the size of the
+    // slices of all iterations does not overflow for a large trip count.
+    if (!trip_count.has_value() ||
+        *trip_count > max_slice_bytes / slice_bytes_per_iteration) {
       return std::nullopt;
     }
     total_slice_bytes += *trip_count * slice_bytes_per_iteration;
   }
-  if (total_slice_bytes > kMaxSliceBytesPerCopiedElementByte *
-                              ShapeUtil::ByteSizeOf(copy->shape())) {
+  if (total_slice_bytes > max_slice_bytes) {
     return std::nullopt;
   }
   return result;
