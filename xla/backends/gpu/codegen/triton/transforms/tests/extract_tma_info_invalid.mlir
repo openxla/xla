@@ -23,3 +23,22 @@ tt.func @extract_tma_info_no_tma_descriptor(
   {tt.nv_tma_desc = 1 : i32}) {
   tt.return
 }
+
+// -----
+
+// The cluster tile's M extent (129) is not divisible by the 2-CTA split of the
+// shared layout, so no per-CTA TMA box shape exists.
+#shared = #ttg.nvmma_shared<{swizzlingByteWidth = 128, transposed = false, elementBitWidth = 16, CGALayout = [[1, 0]]}>
+module attributes {"ttg.num-ctas" = 2 : i32} {
+  tt.func @extract_tma_info_two_ctas_indivisible_tile(
+  // expected-error @+1 {{Unable to split the TMA tile shape across CTAs}}
+    %arg0: !tt.tensordesc<256x64xbf16, #shared>
+    {tt.nv_tma_desc = 1 : i32,
+     tt.tma_descriptor = #triton_xla.tma_descriptor<global_shape = [1024, 512],
+                                                    tile_shape = [129, 64],
+                                                    tile_strides = [1, 1],
+                                                    layout = [1, 0],
+                                                    element_byte_size = 2>}) {
+    tt.return
+  }
+}
