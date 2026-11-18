@@ -96,6 +96,7 @@ limitations under the License.
 #include "xla/pjrt/se/stream_executor_executable.h"
 #include "xla/pjrt/strided_gather.h"
 #include "xla/runtime/device_id.h"
+#include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu_topology.h"
@@ -389,6 +390,16 @@ TEST(StreamExecutorGpuClientTest, MemorySpacesUniqueIds) {
                             << "' and '" << debug_string << "'";
     }
   }
+}
+
+TEST(StreamExecutorGpuClientTest, DeviceAddressAlignment) {
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
+  EXPECT_THAT(
+      absl::down_cast<CommonPjRtClient*>(client.get())
+          ->raw_client()
+          ->GetDeviceAddressAlignment(),
+      IsOkAndHolds(static_cast<size_t>(gpu::kXlaAllocatedBufferAlignBytes)));
 }
 
 TEST(StreamExecutorGpuClientTest, NumaNode) {
@@ -4848,6 +4859,30 @@ TEST(StreamExecutorGpuClientTest, InvalidMemoryFractionPolicyFlagIsReported) {
   EXPECT_THAT(ResolveBfcMemFraction(config),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("--xla_gpu_memory_fraction_policy")));
+}
+
+TEST(StreamExecutorGpuClientTest, ExecuteWithOutputArenaIsUnimplemented) {
+  constexpr absl::string_view kProgram = R"(
+    HloModule output_arena
+    ENTRY main {
+      x = f32[3] parameter(0)
+      sum = f32[3] add(x, x)
+      product = f32[3] multiply(x, x)
+      ROOT result = (f32[3], f32[3]) tuple(sum, product)
+    })";
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
+  ASSERT_OK_AND_ASSIGN(auto executable, CompileExecutable(kProgram, *client));
+  Literal input = LiteralUtil::CreateR1<float>({1.0f, 2.0f, 3.0f});
+  ASSERT_OK_AND_ASSIGN(
+      auto input_buffer,
+      client->BufferFromHostLiteral(input, client->memory_spaces()[0]));
+
+  ExecuteOptions options;
+  options.use_output_arena = true;
+  EXPECT_THAT(executable->Execute({{input_buffer.get()}}, options),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("use_output_arena is not supported")));
 }
 
 }  // namespace

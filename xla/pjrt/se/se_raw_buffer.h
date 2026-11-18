@@ -79,6 +79,13 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBufferImpl {
         device_buffer_(device_buffer),
         buffer_size_(buffer_size) {}
 
+  // An execution constructs the memory of its output buffers through the
+  // buffers themselves. Once such a buffer is gone, its memory can never be
+  // constructed.
+  ~PjRtStreamExecutorRawBuffer() override {
+    RawSEDeviceMemory::AbandonDelayed(device_buffer_);
+  }
+
   PJRT_Memory* c_memory_space() const override { return memory_space_; }
 
   LocalDeviceState* local_device() const { return local_device_; }

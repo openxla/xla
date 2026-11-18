@@ -78,6 +78,11 @@ class RawSEDeviceMemory {
                                se::DeviceAddressBase value,
                                LocalDeviceState* local_device,
                                se::DeviceAddressAllocator* allocator);
+  // Sets an error on `buf` if it was created by CreateDelayedMemory() and has
+  // not been constructed, so that everything that waits for it is released.
+  // Does nothing for any other memory. Call this when `buf` can no longer be
+  // constructed.
+  static void AbandonDelayed(const tsl::AsyncValueRef<RawSEDeviceMemory>& buf);
   static tsl::AsyncValueRef<RawSEDeviceMemory> CreateForeign(
       se::DeviceAddressBase value,
       absl::AnyInvocable<void() &&> on_delete_callback);
