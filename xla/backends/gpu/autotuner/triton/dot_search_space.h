@@ -67,9 +67,13 @@ class TritonDotFusionSearchSpace {
   // hints are unlikely to be performant (e.g., if the RHS side of a config in
   // hints list is larger than the problem's RHS side, it might restrict that
   // config to the problem's RHS size).
+  //
+  // If `autotune_warp_specialization` is true, the warp-specialized variant of
+  // each compatible hint is kept as well.
   std::vector<TritonGemmConfig> OptimizeConfigSet(
       absl::Span<const TritonGemmConfig> configs,
-      absl::Span<const TritonGemmConfig> hints) const;
+      absl::Span<const TritonGemmConfig> hints,
+      bool autotune_warp_specialization = false) const;
 
   // Serializes the search space to a human-readable string.
   std::string ToString() const;
@@ -224,6 +228,10 @@ class TritonDotFusionSearchSpace {
       const ConfigWithNotes& config,
       std::vector<ConfigWithNotes>& updated_configs) const;
 
+  // Returns true if `config` may be compiled with Triton's automatic warp
+  // specialization.
+  bool IsWarpSpecializationCompatible(const TritonGemmConfig& config) const;
+
   // Extend the passed configs with waves_per_eu values.
   void AddWavesPerEuParameter(
       const ConfigWithNotes& config,
@@ -242,6 +250,10 @@ class TritonDotFusionSearchSpace {
   int64_t lhs_parallel_size_;
   int64_t rhs_parallel_size_;
   int operand_bitwidth_;
+  // Bits staged in shared memory per element of each operand tile; see
+  // `GetOperandStorageBitwidth` in the .cc file.
+  int lhs_storage_bitwidth_;
+  int rhs_storage_bitwidth_;
   int compute_bitwidth_;
   PrimitiveType operand_type_;
   PrimitiveType compute_type_;

@@ -187,7 +187,8 @@ TritonBackend::GetSupportedConfigsForDot(const HloInstruction* instr) {
     std::vector<TritonGemmConfig> all_configs =
         search_space.GenerateConfigs(autotune_warp_specialization);
     std::vector<TritonGemmConfig> candidate_configs =
-        search_space.OptimizeConfigSet(all_configs, default_configs);
+        search_space.OptimizeConfigSet(all_configs, default_configs,
+                                       autotune_warp_specialization);
     ABSL_ASSIGN_OR_RETURN(MlirContextPool::BorrowedObject mlir_context,
                           mlir_context_pool_->GetOrCreate());
     return OptimizeConfigsWithCostModel(dot, all_configs, candidate_configs,
