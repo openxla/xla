@@ -22,6 +22,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -359,6 +360,14 @@ ENTRY main {
                           body_instructions, passed_on, trip_count, after_loop);
 }
 
+// Returns `hlo`, a module from WhileLoopOverCopiedStack, with the initial value
+// of the induction variable of the loop replaced by a parameter, so that the
+// trip count of the loop can not be computed.
+std::string WithUnknownInitialInductionVariable(absl::string_view hlo) {
+  return absl::StrReplaceAll(hlo, {{"zero = s32[] constant(0)\n  init",
+                                    "zero = s32[] parameter(2)\n  init"}});
+}
+
 constexpr absl::string_view kDynamicSliceOfStack =
     "layer = f32[1,16,32]{1,0,2} dynamic-slice(stack, i, zero, zero), "
     "dynamic_slice_sizes={1,16,32}";
@@ -485,6 +494,44 @@ TEST_F(MoveCopyToUsersTest, WhileBodyUpdatesArrayNoChange) {
                        "updated = f32[8,16,32]{1,0,2} dynamic-update-slice("
                        "stack, layer, i, zero, zero)"),
           "updated"),
+      std::nullopt);
+}
+
+TEST_F(MoveCopyToUsersTest, UnknownTripCountNoChange) {
+  // The number of layers the body copies is not known.
+  CheckMoveCopyToUsers(WithUnknownInitialInductionVariable(
+                           WhileLoopOverCopiedStack(kDynamicSliceOfStack)),
+                       std::nullopt);
+}
+
+TEST_F(MoveCopyToUsersTest, TripCountFromBackendConfig) {
+  // The trip count can not be computed, but the loop is annotated with it.
+  CheckMoveCopyToUsers(
+      absl::StrReplaceAll(
+          WithUnknownInitialInductionVariable(
+              WhileLoopOverCopiedStack(kDynamicSliceOfStack)),
+          {{"condition=condition, body=body",
+            "condition=condition, body=body, "
+            "backend_config={\"known_trip_count\":{\"n\":\"8\"}}"}}),
+      R"(
+// CHECK:       body
+// CHECK:         [[stack:%[^ ]+]] = f32[8,16,32]{2,1,0} get-tuple-element({{.*}}), index=1
+// CHECK:         [[slice:%[^ ]+]] = f32[1,16,32]{2,1,0} dynamic-slice([[stack]], {{.*}}), dynamic_slice_sizes={1,16,32}
+// CHECK:         f32[1,16,32]{1,0,2} copy([[slice]])
+// CHECK:       ENTRY
+// CHECK-NOT:     copy(
+)");
+}
+
+TEST_F(MoveCopyToUsersTest, WhileBodyReadsReturnedStateNoChange) {
+  // The state the body returns is read in the body.
+  CheckMoveCopyToUsers(
+      absl::StrReplaceAll(
+          WhileLoopOverCopiedStack(kDynamicSliceOfStack),
+          {{"tuple(next, stack, layer)\n",
+            "tuple(next, stack, layer)\n"
+            "  returned = f32[8,16,32]{1,0,2} get-tuple-element(result), "
+            "index=1\n"}}),
       std::nullopt);
 }
 

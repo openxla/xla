@@ -372,9 +372,12 @@ std::optional<CopyIntoWhileBody> MatchCopyIntoWhileBody(
     return std::nullopt;
   }
 
-  // The body must pass the element on unchanged.
+  // The body must pass the element on unchanged. Nothing in the body may read
+  // the state the body returns, as such a reader would see the element in a
+  // different layout.
   const HloInstruction* body_root = body->root_instruction();
-  if (HloPredicateIsNotOp<HloOpcode::kTuple>(body_root)) {
+  if (HloPredicateIsNotOp<HloOpcode::kTuple>(body_root) ||
+      body_root->user_count() != 0) {
     return std::nullopt;
   }
   const HloInstruction* passed_on = body_root->operand(index);
