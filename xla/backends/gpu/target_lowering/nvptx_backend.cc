@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/llvm_gpu_backend/nvptx_backend.h"
+#include "xla/backends/gpu/target_lowering/nvptx_backend.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -64,9 +64,9 @@ limitations under the License.
 #include "llvm/Transforms/Scalar.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
-#include "xla/service/gpu/llvm_gpu_backend/load_ir_module.h"
-#include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
+#include "xla/backends/gpu/target_lowering/gpu_backend_lib.h"
+#include "xla/backends/gpu/target_lowering/load_ir_module.h"
+#include "xla/backends/gpu/target_lowering/nvptx_libdevice_path.h"
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"

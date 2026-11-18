@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
+#include "xla/backends/gpu/target_lowering/gpu_backend_lib.h"
 
 #include <functional>
 #include <memory>
@@ -62,11 +62,11 @@ limitations under the License.
 #include "llvm/Transforms/Scalar.h"
 #include "tsl/platform/path.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
+#include "xla/backends/gpu/target_lowering/load_ir_module.h"
+#include "xla/backends/gpu/target_lowering/utils.h"
 #include "xla/codegen/intrinsic/intrinsic.h"
 #include "xla/codegen/intrinsic/intrinsic_compiler_lib.h"
 #include "xla/codegen/intrinsic_lib.h"
-#include "xla/service/gpu/llvm_gpu_backend/load_ir_module.h"
-#include "xla/service/gpu/llvm_gpu_backend/utils.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/service/llvm_ir/llvm_type_conversion_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"

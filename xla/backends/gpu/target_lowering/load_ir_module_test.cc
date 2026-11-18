@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/llvm_gpu_backend/load_ir_module.h"
+#include "xla/backends/gpu/target_lowering/load_ir_module.h"
 
 #include <memory>
 #include <string>
@@ -22,13 +22,14 @@ limitations under the License.
 #include "llvm/IR/Module.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/test.h"
+#include "xla/tsl/platform/test.h"
 
 namespace xla::gpu {
 namespace {
 
 std::string SaxpyIRFile() {
-  return tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), "service", "gpu",
-                           "llvm_gpu_backend", "tests_data", "saxpy.ll");
+  return tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), "backends", "gpu",
+                           "target_lowering", "tests_data", "saxpy.ll");
 }
 
 TEST(LoadIrModuleTest, TestLoadIRModule) {

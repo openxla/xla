@@ -22,7 +22,7 @@ limitations under the License.
 #include "tsl/platform/env.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/path.h"
-#include "xla/service/gpu/llvm_gpu_backend/nvptx_utils.h"
+#include "xla/backends/gpu/target_lowering/nvptx_utils.h"
 
 namespace xla::gpu::nvptx {
 namespace {
