@@ -21,6 +21,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/semantic_version.h"
 
 namespace xla {
@@ -76,9 +77,13 @@ struct GemmRewriterOptions {
 
 class GemmRewriter : public HloModulePass {
  public:
+  // `cudnn_version` is only used to decide whether a ragged-dot is left for
+  // RaggedDotFusionRewriter; the default stands for "no cuDNN support", which
+  // is what pipelines that do not run RaggedDotFusionRewriter want.
   GemmRewriter(se::GpuComputeCapability gpu_version,
                se::SemanticVersion toolkit_version,
-               GemmRewriterOptions options = {});
+               GemmRewriterOptions options = {},
+               se::dnn::VersionInfo cudnn_version = se::dnn::VersionInfo());
   absl::string_view name() const override { return "cublas-gemm-rewriter"; }
 
  protected:
@@ -90,6 +95,7 @@ class GemmRewriter : public HloModulePass {
   se::GpuComputeCapability gpu_version_;
   se::SemanticVersion toolkit_version_;
   GemmRewriterOptions options_;
+  se::dnn::VersionInfo cudnn_version_;
 };
 
 }  // namespace gpu
