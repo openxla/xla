@@ -17,9 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
-#include <fstream>
 #include <memory>
-#include <string>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -175,25 +173,30 @@ TEST_P(CudaDeviceAllocatorTest, DeallocateDuringStreamCapture) {
   EXPECT_NE(cmd_buf, nullptr);
 }
 
-// Exercise the 4 GiB exportable-allocation failure on affected WSL drivers.
-// The extra byte also exercises a short final backing chunk.
-TEST(CudaDeviceAllocatorWslTest, DISABLED_LargeExportableAllocation) {
-  std::ifstream kernel_release_file("/proc/sys/kernel/osrelease");
-  std::string kernel_release;
-  if (!std::getline(kernel_release_file, kernel_release) ||
-      (kernel_release.find("microsoft") == std::string::npos &&
-       kernel_release.find("Microsoft") == std::string::npos)) {
-    GTEST_SKIP() << "Test requires WSL";
-  }
-
+// Regress the 4 GiB exportable-allocation failure found on WSL. Run on all CUDA
+// platforms to catch similar failures in other configurations, using POSIX-FD
+// handles where supported. These handles allow sharing allocations between
+// processes. Requesting them exercises the allocation mode that triggered the
+// bug; disabling them could hide it and remove interprocess sharing support.
+// Verify that each backing allocation preserves exportability after fallback.
+// The extra byte covers a short final chunk when the fallback runs.
+TEST(CudaDeviceAllocatorVmmTest, LargeAllocation) {
   ASSERT_OK_AND_ASSIGN(Platform * platform,
                        PlatformManager::PlatformWithName("CUDA"));
   ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
                        platform->ExecutorForDevice(0));
   std::unique_ptr<ActivateContext> activation = executor->Activate();
-  ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<CudaDeviceAllocator> allocator,
-      CudaDeviceAllocator::Create(executor, MakeTestOptions(false)));
+  CUdevice device;
+  ASSERT_OK(cuda::ToStatus(cuDeviceGet(&device, executor->device_ordinal())));
+  int posix_fd_supported = 0;
+  ASSERT_OK(cuda::ToStatus(cuDeviceGetAttribute(
+      &posix_fd_supported,
+      CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR_SUPPORTED,
+      device)));
+  CudaDeviceAllocator::Options options = MakeTestOptions(false);
+  options.enable_posix_fd_handle = posix_fd_supported != 0;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CudaDeviceAllocator> allocator,
+                       CudaDeviceAllocator::Create(executor, options));
   constexpr uint64_t kGiB = uint64_t{1} << 30;
   constexpr uint64_t kRequestedSize = 4 * kGiB + 1;
   constexpr uint32_t kPattern = 0x5a17c3e9;
@@ -235,9 +238,9 @@ TEST(CudaDeviceAllocatorWslTest, DISABLED_LargeExportableAllocation) {
         cuMemGetAllocationPropertiesFromHandle(&properties, handle);
     EXPECT_OK(cuda::ToStatus(cuMemRelease(handle)));
     ASSERT_OK(cuda::ToStatus(result));
-    EXPECT_NE(properties.requestedHandleTypes &
-                  CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR,
-              0);
+    EXPECT_EQ((properties.requestedHandleTypes &
+               CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) != 0,
+              options.enable_posix_fd_handle);
   }
 }
 
