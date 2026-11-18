@@ -6795,6 +6795,107 @@ LogicalResult WhileOp::fold(FoldAdaptor /*adaptor*/,
   return success(!results.empty());
 }
 
+// Counts the number of leaf elements in `type` (1 for non-tuple types, or the
+// sum of leaf counts of element types for tuple types).
+static size_t countTupleLeaves(Type type) {
+  if (auto tupleType = dyn_cast<TupleType>(type)) {
+    size_t count = 0;
+    for (Type elemType : tupleType.getTypes()) {
+      count += countTupleLeaves(elemType);
+    }
+    return count;
+  }
+  return 1;
+}
+
+// Updates a tuple `mhlo.sharding` attribute on `newWhileOp` when
+// loop-invariant results specified by `removedBitVector` are erased from
+// `whileOp`.
+static void updateWhileShardingAttr(Operation* whileOp, Operation* newWhileOp,
+                                    const BitVector& removedBitVector) {
+  auto shardingAttr = whileOp->getAttrOfType<StringAttr>("mhlo.sharding");
+  if (!shardingAttr) return;
+
+  StringRef trimmed = shardingAttr.getValue().trim();
+  if (!trimmed.starts_with("{") || !trimmed.ends_with("}")) return;
+  StringRef inner = trimmed.drop_front().drop_back().trim();
+  if (!inner.starts_with("{")) {
+    if (newWhileOp->getNumResults() == 0) {
+      newWhileOp->removeAttr("mhlo.sharding");
+    }
+    return;
+  }
+
+  SmallVector<StringRef> elements;
+  int depth = 0;
+  bool inQuotes = false;
+  size_t elemStart = 0;
+  for (size_t i = 0; i < inner.size(); ++i) {
+    char c = inner[i];
+    if (inQuotes) {
+      if (c == '\\' && i + 1 < inner.size()) {
+        ++i;
+      } else if (c == '"') {
+        inQuotes = false;
+      }
+      continue;
+    }
+    if (c == '"') {
+      inQuotes = true;
+    } else if (c == '{') {
+      if (depth == 0) elemStart = i;
+      ++depth;
+    } else if (c == '}') {
+      --depth;
+      if (depth < 0) return;
+      if (depth == 0) {
+        elements.push_back(inner.slice(elemStart, i + 1));
+      }
+    }
+  }
+  if (depth != 0 || inQuotes) return;
+
+  SmallVector<size_t> resultLeafCounts;
+  resultLeafCounts.reserve(whileOp->getNumResults());
+  size_t totalLeaves = 0;
+  for (Type resultType : whileOp->getResultTypes()) {
+    size_t leaves = countTupleLeaves(resultType);
+    resultLeafCounts.push_back(leaves);
+    totalLeaves += leaves;
+  }
+  if (totalLeaves != elements.size() ||
+      removedBitVector.size() != whileOp->getNumResults()) {
+    return;
+  }
+
+  SmallVector<StringRef> keptElements;
+  size_t leafOffset = 0;
+  for (size_t i = 0; i < resultLeafCounts.size(); ++i) {
+    size_t leaves = resultLeafCounts[i];
+    if (!removedBitVector[i]) {
+      keptElements.append(elements.begin() + leafOffset,
+                          elements.begin() + leafOffset + leaves);
+    }
+    leafOffset += leaves;
+  }
+
+  if (keptElements.empty()) {
+    newWhileOp->removeAttr("mhlo.sharding");
+    return;
+  }
+  if (newWhileOp->getNumResults() == 1 &&
+      !isa<TupleType>(newWhileOp->getResult(0).getType()) &&
+      keptElements.size() == 1) {
+    newWhileOp->setAttr("mhlo.sharding", StringAttr::get(whileOp->getContext(),
+                                                         keptElements.front()));
+    return;
+  }
+
+  std::string newSharding = "{" + llvm::join(keptElements, ", ") + "}";
+  newWhileOp->setAttr("mhlo.sharding",
+                      StringAttr::get(whileOp->getContext(), newSharding));
+}
+
 static LogicalResult whileCanonicalization(WhileOp whileOp,
                                            PatternRewriter& rewriter) {
   // Turn loop invariant values into implicit capture.
@@ -6850,6 +6951,7 @@ static LogicalResult whileCanonicalization(WhileOp whileOp,
   newWhileOp.getBodyRegion(1).takeBody(whileOp.getBodyRegion(1));
   for (auto results : llvm::zip(resultsToReplace, newWhileOp->getResults()))
     std::get<0>(results).replaceAllUsesWith(std::get<1>(results));
+  updateWhileShardingAttr(whileOp, newWhileOp, invariantArgIdxBitVector);
   rewriter.eraseOp(whileOp);
   return success();
 }
