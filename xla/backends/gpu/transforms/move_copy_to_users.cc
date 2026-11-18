@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/move_copy_to_users.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -303,9 +302,16 @@ struct CopyIntoWhileBody {
   std::vector<Use> slice_uses;
 };
 
-// Adds the uses of `reader` to `uses` and returns the size of the largest
-// result of a use, or nullopt if `reader` is used by anything but a slice or
-// dynamic-slice of it. The use as operand `passed_on_as` of `passed_on_to` is
+// The copy of an element of while loop state is only moved into the loop if
+// the slices that are copied instead are, in total, not larger than this many
+// times the element. The copy of a slice can be fused with the slice, so
+// copying more than the element is accepted for not keeping the element in two
+// layouts.
+constexpr int64_t kMaxSliceBytesPerCopiedElementByte = 2;
+
+// Adds the uses of `reader` to `uses` and returns the total size of the
+// results of the uses, or nullopt if `reader` is used by anything but a slice
+// or dynamic-slice of it. The use as operand `passed_on_as` of `passed_on_to` is
 // skipped.
 std::optional<int64_t> CollectSliceUses(HloInstruction* reader,
                                         const HloInstruction* passed_on_to,
@@ -314,7 +320,7 @@ std::optional<int64_t> CollectSliceUses(HloInstruction* reader,
   if (reader->IsRoot()) {
     return std::nullopt;
   }
-  int64_t largest_slice_bytes = 0;
+  int64_t slice_bytes = 0;
   for (HloInstruction* user : reader->users()) {
     for (int64_t operand_no : user->OperandIndices(reader)) {
       if (user == passed_on_to && operand_no == passed_on_as) {
@@ -326,11 +332,10 @@ std::optional<int64_t> CollectSliceUses(HloInstruction* reader,
         return std::nullopt;
       }
       uses.push_back({user, operand_no});
-      largest_slice_bytes =
-          std::max(largest_slice_bytes, ShapeUtil::ByteSizeOf(user->shape()));
+      slice_bytes += ShapeUtil::ByteSizeOf(user->shape());
     }
   }
-  return largest_slice_bytes;
+  return slice_bytes;
 }
 
 // Returns how to move the copy that produces element `index` of the initial
@@ -340,10 +345,11 @@ std::optional<int64_t> CollectSliceUses(HloInstruction* reader,
 // The copy can be moved if the loop only reads the element: the body passes
 // it on unchanged, so the loop can carry the element in the layout it has
 // before the copy. Moving pays off if the element is only read by slices, in
-// the body and after the loop, and no slice in the body copies more than the
-// element over all iterations. The copies of the slices then replace the copy
-// of the element, and the element is not kept in two layouts while the loop
-// runs.
+// the body and after the loop, and the slices of all iterations and the slices
+// after the loop together are not larger than
+// kMaxSliceBytesPerCopiedElementByte times the element. The copies of the
+// slices then replace the copy of the element, and the element is not kept in
+// two layouts while the loop runs.
 std::optional<CopyIntoWhileBody> MatchCopyIntoWhileBody(
     HloInstruction* while_op, int64_t index) {
   HloInstruction* init = while_op->mutable_operand(0);
@@ -380,27 +386,34 @@ std::optional<CopyIntoWhileBody> MatchCopyIntoWhileBody(
 
   // Apart from that, the element must only be read by slices.
   CopyIntoWhileBody result{copy, index, {}};
-  int64_t largest_slice_bytes_in_body = 0;
+  int64_t slice_bytes_per_iteration = 0;
   for (HloInstruction* reader : ElementReaders(body_parameter, index)) {
-    std::optional<int64_t> largest_slice_bytes =
+    std::optional<int64_t> slice_bytes =
         CollectSliceUses(reader, body_root, index, result.slice_uses);
-    if (!largest_slice_bytes.has_value()) {
+    if (!slice_bytes.has_value()) {
       return std::nullopt;
     }
-    largest_slice_bytes_in_body =
-        std::max(largest_slice_bytes_in_body, *largest_slice_bytes);
+    slice_bytes_per_iteration += *slice_bytes;
   }
-  if (largest_slice_bytes_in_body > 0) {
-    std::optional<int64_t> trip_count = TripCount(while_op);
-    if (!trip_count.has_value() || *trip_count * largest_slice_bytes_in_body >
-                                       ShapeUtil::ByteSizeOf(copy->shape())) {
-      return std::nullopt;
-    }
-  }
+  int64_t total_slice_bytes = 0;
   for (HloInstruction* reader : ElementReaders(while_op, index)) {
-    if (!CollectSliceUses(reader, nullptr, -1, result.slice_uses).has_value()) {
+    std::optional<int64_t> slice_bytes =
+        CollectSliceUses(reader, nullptr, -1, result.slice_uses);
+    if (!slice_bytes.has_value()) {
       return std::nullopt;
     }
+    total_slice_bytes += *slice_bytes;
+  }
+  if (slice_bytes_per_iteration > 0) {
+    std::optional<int64_t> trip_count = TripCount(while_op);
+    if (!trip_count.has_value()) {
+      return std::nullopt;
+    }
+    total_slice_bytes += *trip_count * slice_bytes_per_iteration;
+  }
+  if (total_slice_bytes > kMaxSliceBytesPerCopiedElementByte *
+                              ShapeUtil::ByteSizeOf(copy->shape())) {
+    return std::nullopt;
   }
   return result;
 }

@@ -400,14 +400,15 @@ TEST_F(MoveCopyToUsersTest, SliceInWhileBody) {
 }
 
 TEST_F(MoveCopyToUsersTest, SlicesInWhileBodyAndAfterWhileLoop) {
-  // The body reads two layers per iteration, and one more layer is read after
-  // the loop. Each of the slices is copied.
+  // The body reads two layers in each of 7 iterations, and one more layer is
+  // read after the loop. Each of the slices is copied: 15 layers in total,
+  // which is not more than twice the 8 layers of the stack.
   CheckMoveCopyToUsers(
       WhileLoopOverCopiedStack(
           absl::StrCat(kDynamicSliceOfStack, "\n",
                        "other = f32[1,16,32]{1,0,2} slice(stack), "
                        "slice={[0:1], [0:16], [0:32]}"),
-          "stack", /*trip_count=*/8,
+          "stack", /*trip_count=*/7,
           "stack_after = f32[8,16,32]{1,0,2} get-tuple-element(loop), index=1\n"
           "last = f32[1,16,32]{1,0,2} slice(stack_after), "
           "slice={[7:8], [0:16], [0:32]}"),
@@ -427,13 +428,46 @@ TEST_F(MoveCopyToUsersTest, SlicesInWhileBodyAndAfterWhileLoop) {
 )");
 }
 
-TEST_F(MoveCopyToUsersTest, WhileBodyCopiesMoreThanTheArrayNoChange) {
-  // The slice copies one layer in each of 16 iterations, which is more than
-  // the 8 layers of the stack.
+TEST_F(MoveCopyToUsersTest, SliceCopiesTwiceTheArrayInWhileBody) {
+  // The slice copies one layer in each of 16 iterations, which is twice the 8
+  // layers of the stack.
   CheckMoveCopyToUsers(
       WhileLoopOverCopiedStack("layer = f32[1,16,32]{1,0,2} slice(stack), "
                                "slice={[3:4], [0:16], [0:32]}",
                                "stack", /*trip_count=*/16),
+      R"(
+// CHECK:       body
+// CHECK:         [[stack:%[^ ]+]] = f32[8,16,32]{2,1,0} get-tuple-element({{.*}}), index=1
+// CHECK:         [[slice:%[^ ]+]] = f32[1,16,32]{2,1,0} slice([[stack]]), slice={[3:4], [0:16], [0:32]}
+// CHECK:         f32[1,16,32]{1,0,2} copy([[slice]])
+// CHECK:       ENTRY
+// CHECK-NOT:     copy(
+)");
+}
+
+TEST_F(MoveCopyToUsersTest, SliceCopiesMoreThanTwiceTheArrayNoChange) {
+  // The slice copies one layer in each of 17 iterations, which is more than
+  // twice the 8 layers of the stack.
+  CheckMoveCopyToUsers(
+      WhileLoopOverCopiedStack("layer = f32[1,16,32]{1,0,2} slice(stack), "
+                               "slice={[3:4], [0:16], [0:32]}",
+                               "stack", /*trip_count=*/17),
+      std::nullopt);
+}
+
+TEST_F(MoveCopyToUsersTest, SlicesTogetherCopyMoreThanTwiceTheArrayNoChange) {
+  // The body reads two layers in each of 8 iterations, and one more layer is
+  // read after the loop: 17 layers in total, which is more than twice the 8
+  // layers of the stack.
+  CheckMoveCopyToUsers(
+      WhileLoopOverCopiedStack(
+          absl::StrCat(kDynamicSliceOfStack, "\n",
+                       "other = f32[1,16,32]{1,0,2} slice(stack), "
+                       "slice={[0:1], [0:16], [0:32]}"),
+          "stack", /*trip_count=*/8,
+          "stack_after = f32[8,16,32]{1,0,2} get-tuple-element(loop), index=1\n"
+          "last = f32[1,16,32]{1,0,2} slice(stack_after), "
+          "slice={[7:8], [0:16], [0:32]}"),
       std::nullopt);
 }
 
