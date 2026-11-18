@@ -548,7 +548,8 @@ ENTRY main {
   // cluster_0 needs 4 blocks (padded to 8) and cluster_1 needs 8 blocks -> 16.
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_blocks(), 16);
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_threads_per_block(), 128);
-  EXPECT_THAT(fusion_emitter.cluster_dim(), Optional(se::ClusterDim(8, 1, 1)));
+  EXPECT_THAT(fusion_emitter.launch_dimensions().cluster_dims(),
+              Optional(se::ClusterDim(8, 1, 1)));
 
   ASSERT_OK_AND_ASSIGN(
       mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
@@ -659,7 +660,8 @@ ENTRY main {
   // threads. Total blocks = RoundUpTo(8 + 3, 8) = 16.
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_blocks(), 16);
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_threads_per_block(), 256);
-  EXPECT_THAT(fusion_emitter.cluster_dim(), Optional(se::ClusterDim(8, 1, 1)));
+  EXPECT_THAT(fusion_emitter.launch_dimensions().cluster_dims(),
+              Optional(se::ClusterDim(8, 1, 1)));
 
   ASSERT_OK_AND_ASSIGN(
       mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
@@ -798,7 +800,8 @@ ENTRY main {
   // [23..23: trailing grid padding to multiple of 8] -> 24 blocks total.
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_blocks(), 24);
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_threads_per_block(), 128);
-  EXPECT_THAT(fusion_emitter.cluster_dim(), Optional(se::ClusterDim(8, 1, 1)));
+  EXPECT_THAT(fusion_emitter.launch_dimensions().cluster_dims(),
+              Optional(se::ClusterDim(8, 1, 1)));
 
   ASSERT_OK_AND_ASSIGN(
       mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
@@ -895,7 +898,8 @@ ENTRY main {
   ThreadBlockSpecializedFusion fusion_emitter(analysis);
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_blocks(), 8);
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_threads_per_block(), 128);
-  EXPECT_THAT(fusion_emitter.cluster_dim(), Optional(se::ClusterDim(8, 1, 1)));
+  EXPECT_THAT(fusion_emitter.launch_dimensions().cluster_dims(),
+              Optional(se::ClusterDim(8, 1, 1)));
 
   ASSERT_OK_AND_ASSIGN(
       mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
@@ -997,7 +1001,8 @@ ENTRY main {
   ThreadBlockSpecializedFusion fusion_emitter(analysis);
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_blocks(), 4);
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_threads_per_block(), 128);
-  EXPECT_THAT(fusion_emitter.cluster_dim(), Optional(se::ClusterDim(4, 1, 1)));
+  EXPECT_THAT(fusion_emitter.launch_dimensions().cluster_dims(),
+              Optional(se::ClusterDim(4, 1, 1)));
 
   ASSERT_OK_AND_ASSIGN(
       mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
@@ -1245,7 +1250,7 @@ ENTRY main {
       HloFusionAnalysis::Create(*fusion, device_info_));
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_blocks(), 1);
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_threads_per_block(), 128);
-  EXPECT_EQ(fusion_emitter.cluster_dim(), std::nullopt);
+  EXPECT_EQ(fusion_emitter.launch_dimensions().cluster_dims(), std::nullopt);
 
   ASSERT_OK_AND_ASSIGN(
       mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
@@ -1333,7 +1338,8 @@ ENTRY main {
       HloFusionAnalysis::Create(*fusion, device_info_));
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_blocks(), 8);
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_threads_per_block(), 128);
-  EXPECT_THAT(fusion_emitter.cluster_dim(), Optional(se::ClusterDim(8, 1, 1)));
+  EXPECT_THAT(fusion_emitter.launch_dimensions().cluster_dims(),
+              Optional(se::ClusterDim(8, 1, 1)));
 
   ASSERT_OK_AND_ASSIGN(
       mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
@@ -1451,7 +1457,7 @@ ENTRY main {
   // 3 blocks x 256 threads. Total blocks = 1 + 3 = 4 with no cluster padding.
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_blocks(), 4);
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_threads_per_block(), 256);
-  EXPECT_EQ(fusion_emitter.cluster_dim(), std::nullopt);
+  EXPECT_EQ(fusion_emitter.launch_dimensions().cluster_dims(), std::nullopt);
 
   ASSERT_OK_AND_ASSIGN(
       mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
@@ -1577,7 +1583,7 @@ ENTRY main {
       HloFusionAnalysis::Create(*fusion, device_info_));
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_blocks(), 6);
   EXPECT_EQ(fusion_emitter.launch_dimensions().num_threads_per_block(), 128);
-  EXPECT_EQ(fusion_emitter.cluster_dim(), std::nullopt);
+  EXPECT_EQ(fusion_emitter.launch_dimensions().cluster_dims(), std::nullopt);
 
   ASSERT_OK_AND_ASSIGN(
       mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
@@ -1633,8 +1639,9 @@ TEST_F(ThreadBlockSpecializedFusionTest,
   // blocks x 128 threads (`unroll_factor = 1`). On Hopper
   // (`H100SXMDeviceInfo`), 4x unrolling shrinks it to a 2-block cluster with
   // `vector<4xi8>` accesses; on Blackwell (`B200SXMDeviceInfo`), 16x unrolling
-  // shrinks it to a single 64-thread block (`cluster_dim() == nullopt`) with
-  // `vector<16xi8>` accesses synchronized by a block barrier.
+  // shrinks it to a single 64-thread block
+  // (`launch_dimensions().cluster_dims() == nullopt`) with `vector<16xi8>`
+  // accesses synchronized by a block barrier.
   constexpr absl::string_view kPhasedHlo = R"hlo(
 phase_0 { ROOT neg = s8[1024] negate(s8[1024] parameter(0)) }
 phase_1 {
@@ -1664,7 +1671,8 @@ ENTRY main {
       HloFusionAnalysis::Create(*fusion, a100));
   EXPECT_EQ(a100_emitter.launch_dimensions().num_blocks(), 8);
   EXPECT_EQ(a100_emitter.launch_dimensions().num_threads_per_block(), 128);
-  EXPECT_THAT(a100_emitter.cluster_dim(), Optional(se::ClusterDim(8, 1, 1)));
+  EXPECT_THAT(a100_emitter.launch_dimensions().cluster_dims(),
+              Optional(se::ClusterDim(8, 1, 1)));
   ASSERT_OK_AND_ASSIGN(
       mlir::OwningOpRef<mlir::ModuleOp> a100_mlir_module,
       a100_emitter.CreateAndLowerMLIRModule(*mlir_context_, *fusion, "fusion",
@@ -1682,7 +1690,8 @@ ENTRY main {
       HloFusionAnalysis::Create(*fusion, h100));
   EXPECT_EQ(h100_emitter.launch_dimensions().num_blocks(), 2);
   EXPECT_EQ(h100_emitter.launch_dimensions().num_threads_per_block(), 128);
-  EXPECT_THAT(h100_emitter.cluster_dim(), Optional(se::ClusterDim(2, 1, 1)));
+  EXPECT_THAT(h100_emitter.launch_dimensions().cluster_dims(),
+              Optional(se::ClusterDim(2, 1, 1)));
   ASSERT_OK_AND_ASSIGN(
       mlir::OwningOpRef<mlir::ModuleOp> h100_mlir_module,
       h100_emitter.CreateAndLowerMLIRModule(*mlir_context_, *fusion, "fusion",
@@ -1706,7 +1715,7 @@ ENTRY main {
       HloFusionAnalysis::Create(*fusion, b200));
   EXPECT_EQ(b200_emitter.launch_dimensions().num_blocks(), 1);
   EXPECT_EQ(b200_emitter.launch_dimensions().num_threads_per_block(), 64);
-  EXPECT_EQ(b200_emitter.cluster_dim(), std::nullopt);
+  EXPECT_EQ(b200_emitter.launch_dimensions().cluster_dims(), std::nullopt);
   ASSERT_OK_AND_ASSIGN(
       mlir::OwningOpRef<mlir::ModuleOp> b200_mlir_module,
       b200_emitter.CreateAndLowerMLIRModule(*mlir_context_, *fusion, "fusion",
@@ -2024,7 +2033,7 @@ ENTRY main {
       HloFusionAnalysis::Create(*fusion, device_info_));
   EXPECT_EQ(emitter.launch_dimensions().num_blocks(), 1);
   EXPECT_EQ(emitter.launch_dimensions().num_threads_per_block(), 1024);
-  EXPECT_EQ(emitter.cluster_dim(), std::nullopt);
+  EXPECT_EQ(emitter.launch_dimensions().cluster_dims(), std::nullopt);
   ASSERT_OK_AND_ASSIGN(
       ThreadBlockSpecializedFusion::LlvmKernelSourceWrapper llvm_source_wrapper,
       emitter.CreateLLVMModule(device_info_, *fusion, "fusion",
