@@ -95,6 +95,7 @@ limitations under the License.
 #include "xla/service/gpu_topology.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/hlo_module_executable.h"
 #include "xla/service/hlo_value.h"
 #include "xla/service/llvm_ir/buffer_assignment_util.h"
 #include "xla/service/maybe_owning_device_address.h"
@@ -588,7 +589,7 @@ GpuExecutable::GpuExecutable(
     bool collective_use_minimal_resource,
     std::optional<GpuTopology> gpu_topology,
     ModuleConfigMetadata module_config_metadata)
-    : Executable(std::move(debug_module)),
+    : HloModuleExecutable(std::move(debug_module)),
       binary_(std::move(binary)),
       dnn_compiled_graphs_(std::move(dnn_compiled_graphs)),
       gpu_version_(device_description.gpu_compute_capability()),
