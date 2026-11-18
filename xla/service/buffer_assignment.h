@@ -96,7 +96,8 @@ class BufferAllocation {
         is_entry_computation_parameter_(false),
         is_parameter_aliased_with_output_(false),
         maybe_live_out_(false),
-        is_constant_(false) {}
+        is_constant_(false),
+        is_non_pageable_(false) {}
 
   BufferAllocation(const BufferAllocation&) = default;
   BufferAllocation& operator=(const BufferAllocation&) = default;
@@ -209,6 +210,15 @@ class BufferAllocation {
   // Sets the page id of the allocation. This is only used for multi-page
   // buffer assignment.
   void set_page_id(int64_t page) { page_id_ = page; }
+
+  // Whether this temporary allocation belongs to a dedicated non pageable
+  // region for buffers addressed at a fixed offset, so it is never split into
+  // or moved across pages.
+  bool is_non_pageable() const { return is_non_pageable_; }
+  void set_non_pageable() {
+    is_non_pageable_ = true;
+    page_id_ = -1;
+  }
 
   // Access to the logical buffers assigned to this allocation, and their
   // associated logical offsets and sizes.
@@ -480,6 +490,9 @@ class BufferAllocation {
 
   // See comment on the is_constant() accessor.
   bool is_constant_ : 1;
+
+  // See comment on the is_non_pageable() accessor.
+  bool is_non_pageable_ : 1;
 
   bool has_must_not_live_out_value_ = false;
   size_t must_not_live_out_checked_count_ = 0;
@@ -1253,6 +1266,12 @@ class BufferAssigner {
     std::function<bool(LogicalBuffer::Color)> supports_fast_buffer_assignment =
         [](LogicalBuffer::Color) { return true; };
 
+    // Returns true for HloBuffers that need a separate non pageable temporary
+    // allocation. Their own heap simulation packs them across disjoint
+    // lifetimes, and they are never split into pages, so one may exceed the
+    // page size.
+    std::function<bool(const HloBuffer&)> must_be_non_pageable;
+
     // If true, allows input-output aliased entry computation parameter
     // allocations to be used for temporary HloBuffers, before the final output
     // is written.
@@ -1485,13 +1504,17 @@ class BufferAssigner {
       const BufferAssignment* assignment, LogicalBuffer::Color color,
       HeapSimulator::Result<HloValue>& result) const;
 
+  bool MustBeNonPageable(const HloBuffer& buffer) const {
+    return opts_.must_be_non_pageable && opts_.must_be_non_pageable(buffer);
+  }
+
   // Uses the results of the heap simulator to create a single allocation, with
   // LogicalBuffers packed to specific offsets.
   absl::Status AssignBuffersFromHeapSimulator(
       HeapSimulator::Result<HloValue>& result, BufferAssignment* assignment,
       LogicalBuffer::Color color,
-      std::optional<BufferAssignment::BufferIsolationOptions>
-          isolation_options);
+      std::optional<BufferAssignment::BufferIsolationOptions> isolation_options,
+      bool is_non_pageable);
 
   // Split a set of buffers into several sets, each of which contains buffers
   // colored with the same color.
