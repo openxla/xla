@@ -827,6 +827,7 @@ cc_library(
     visibility = internal_visibility([
         ":friends",
         ":internal",
+        ":users",
     ]),
     deps = [
         ":attribute_map",
