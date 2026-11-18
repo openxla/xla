@@ -21,6 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Target/TargetOptions.h"
 #include "xla/backends/cpu/runtime/function_library.h"
@@ -35,10 +36,21 @@ namespace xla::cpu {
 
 llvm::TargetOptions CompilerTargetOptions(const HloModuleConfig& module_config);
 
+// Loads XLA:CPU object files into the current process.
+using ObjectFileLoader = absl::StatusOr<std::unique_ptr<FunctionLibrary>> (*)(
+    const std::vector<FunctionLibrary::Symbol>& compiled_symbols,
+    absl::Span<const ObjFileProto> obj_files,
+    absl::string_view data_layout_str);
+
+// Registers the loader that `LoadFunctionLibrary` uses for object files.
+// Linking `:cpu_aot_object_file_loader` registers ORC.
+void RegisterObjectFileLoader(ObjectFileLoader loader);
+
+// Loads `obj_files` with the registered loader. Returns FailedPrecondition if
+// there's none (e.g. in AOT runtimes that don't link the compiler).
 absl::StatusOr<std::unique_ptr<FunctionLibrary>> LoadFunctionLibrary(
     const std::vector<FunctionLibrary::Symbol>& compiled_symbols,
-    absl::Span<const ObjFileProto> obj_files, const HloModule* hlo_module,
-    const TargetMachineOptions& target_machine_options,
+    absl::Span<const ObjFileProto> obj_files,
     absl::string_view data_layout_str);
 
 absl::StatusOr<std::vector<FunctionLibrary::Symbol>>
