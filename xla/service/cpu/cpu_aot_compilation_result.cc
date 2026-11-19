@@ -237,6 +237,7 @@ CpuAotCompilationResult::LoadExecutableImpl(bool embed_ir_in_executable) && {
     if (!dump_snapshots) {
       StripPayloadFromLiteralProto(*hlo_proto);
     }
+    cpu_executable->set_buffer_assignment_proto(hlo_proto->buffer_assignment());
     cpu_executable->set_hlo_proto(std::move(hlo_proto));
   }
 
