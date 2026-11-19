@@ -45,6 +45,18 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla {
+namespace {
+
+// Computes sqrt(Real(pivot)) for a [..., 1, 1] diagonal pivot and flags an
+// error when the pivot is not strictly positive (negative, +/-0.0, or NaN).
+std::pair<XlaOp, XlaOp> SqrtPivot(XlaOp pivot, bool is_complex) {
+  XlaOp real = is_complex ? Real(pivot) : pivot;
+  XlaOp zero = ZerosLike(real);
+  XlaOp sqrt = Sqrt(real);
+  return {is_complex ? Complex(sqrt, zero) : sqrt, Not(Gt(real, zero))};
+}
+
+}  // namespace
 
 // The Cholesky–Banachiewicz algorithm. See
 // https://en.wikipedia.org/wiki/Cholesky_decomposition#The_Cholesky–Banachiewicz_and_Cholesky–Crout_algorithms
@@ -110,15 +122,10 @@ absl::StatusOr<std::pair<XlaOp, XlaOp>> CholeskyExpander::CholeskyUnblocked(
 
     // A - L*L.T
     l_square = body_a - l_square;
-    auto l_ii = DynamicSliceInMinorDims(l_square, {i, i}, {1, 1});
-    if (ShapeUtil::ElementIsComplex(a_shape)) {
-      auto sqrt = Sqrt(Real(l_ii));
-      l_ii = Complex(sqrt, ZerosLike(sqrt));
-      seen_error = Or(seen_error, IsNan(sqrt));
-    } else {
-      l_ii = Sqrt(l_ii);
-      seen_error = Or(seen_error, IsNan(l_ii));
-    }
+    auto [l_ii, pivot_error] =
+        SqrtPivot(DynamicSliceInMinorDims(l_square, {i, i}, {1, 1}),
+                  ShapeUtil::ElementIsComplex(a_shape));
+    seen_error = Or(seen_error, pivot_error);
     // L = (A - L*L.T) / l_ii * mask + L
     body_l = Select(mask_pred, l_square / l_ii, mask_zeros) + body_l;
 
@@ -192,14 +199,8 @@ XlaOp CholeskyExpander::BuildCholesky(XlaOp a, int64_t block_size,
       // other elements.
       XlaOp factorized_error;
       if (k == 1) {
-        if (ShapeUtil::ElementIsComplex(a_shape)) {
-          auto sqrt = Sqrt(Real(x));
-          factorized = Complex(sqrt, ZerosLike(sqrt));
-          factorized_error = IsNan(sqrt);
-        } else {
-          factorized = Sqrt(x);
-          factorized_error = IsNan(factorized);
-        }
+        std::tie(factorized, factorized_error) =
+            SqrtPivot(x, ShapeUtil::ElementIsComplex(a_shape));
       } else {
         ABSL_ASSIGN_OR_RETURN(auto tile_output,
                               CholeskyUnblocked(x, precision));
