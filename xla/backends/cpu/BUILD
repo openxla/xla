@@ -17,7 +17,7 @@ load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/backends/cpu:package_groups.bzl", "xla_cpu_backend_access")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
-load("//xla/tsl/mkl:graph.bzl", "onednn_graph_cc_library")
+load("//xla/tsl/mkl:graph.bzl", "onednn_cc_library", "onednn_graph_cc_library")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -126,7 +126,7 @@ onednn_graph_cc_library(
     deps = ["//xla/tsl/mkl:onednn"],
 )
 
-onednn_graph_cc_library(
+onednn_cc_library(
     name = "onednn_support",
     srcs = ["onednn_support.cc"],
     hdrs = ["onednn_support.h"],
@@ -138,6 +138,7 @@ onednn_graph_cc_library(
         "//xla/backends/cpu/codegen:target_machine_features",
         "//xla/backends/cpu/runtime:dot_dims",
         "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_cost_analysis",
         "//xla/service/cpu:onednn_util",
         "//xla/tsl/mkl:onednn",
         "@com_google_absl//absl/base:no_destructor",
