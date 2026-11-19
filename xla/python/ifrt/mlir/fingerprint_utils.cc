@@ -18,6 +18,8 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <optional>
+#include <string>
 #include <utility>
 
 #include "absl/log/check.h"
@@ -27,9 +29,14 @@ limitations under the License.
 #include "highwayhash/arch_specific.h"
 #include "highwayhash/hh_types.h"
 #include "highwayhash/highwayhash.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
+#include "mlir/Bytecode/BytecodeImplementation.h"
 #include "mlir/Bytecode/BytecodeWriter.h"
 #include "mlir/Bytecode/Encoding.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OwningOpRef.h"
@@ -107,6 +114,37 @@ class HighwayHashStream final : public llvm::raw_ostream {
   uint64_t buffer_pos_ = 0;
 };
 
+// Writes a `tpu_custom_call` `backend_config` without the Mosaic kernel
+// locations that JAX stores in `custom_call_config.debug_locations` (see
+// `CustomCallBackendConfig.to_json` and `jax_mosaic_unzip_debug_locations` in
+// jax/_src/tpu_custom_call.py). Other attributes are written as usual.
+mlir::LogicalResult WriteWithoutMosaicDebugLocations(
+    mlir::Attribute attr, std::optional<llvm::StringRef>& dialect_group_name,
+    mlir::DialectBytecodeWriter& writer) {
+  auto config = mlir::dyn_cast<mlir::StringAttr>(attr);
+  if (!config || !config.getValue().contains("\"debug_locations\"")) {
+    return mlir::failure();
+  }
+  llvm::Expected<llvm::json::Value> json = llvm::json::parse(config.getValue());
+  if (!json) {
+    llvm::consumeError(json.takeError());
+    return mlir::failure();
+  }
+  llvm::json::Object* kernel_config =
+      json->getAsObject() ? json->getAsObject()->getObject("custom_call_config")
+                          : nullptr;
+  if (kernel_config == nullptr || !kernel_config->erase("debug_locations")) {
+    return mlir::failure();
+  }
+  std::string stripped;
+  llvm::raw_string_ostream os(stripped);
+  os << *json;  // Object keys are printed in sorted order.
+  // A separate group keeps this encoding distinct from builtin attributes.
+  dialect_group_name = llvm::StringLiteral("xla.mosaic_backend_config");
+  writer.writeUnownedBlob(stripped);  // Copies `stripped`.
+  return mlir::success();
+}
+
 }  // namespace
 
 absl::StatusOr<uint64_t> FingerprintModuleOp(mlir::ModuleOp module_op) {
@@ -114,6 +152,7 @@ absl::StatusOr<uint64_t> FingerprintModuleOp(mlir::ModuleOp module_op) {
 
   mlir::BytecodeWriterConfig config;
   config.setElideLocations(true);
+  config.attachAttributeCallback(WriteWithoutMosaicDebugLocations);
 
   // Use a version before `kUseListOrdering` due to an MLIR bug where use list
   // ordering is not stable.
