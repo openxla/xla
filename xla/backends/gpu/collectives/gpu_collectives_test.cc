@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <array>
 #include <cstddef>
 #include <memory>
@@ -25,6 +22,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/btree_map.h"
 #include "absl/log/check.h"
@@ -32,6 +31,8 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/allocator_memory_registration.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
@@ -131,6 +132,72 @@ TEST(GpuCollectivesTest, SplitCommunicatorsNonblocking) {
   EXPECT_NE(split_comms[1]->platform_comm().handle, nullptr);
   EXPECT_OK(split_comms[0]->HealthCheck());
   EXPECT_OK(split_comms[1]->HealthCheck());
+}
+
+// Verifies that splitting an aborted parent fails before calling into NCCL.
+TEST(GpuCollectivesTest, SplitAbortedCommunicatorsFails) {
+  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
+                       PlatformUtil::GetPlatform("gpu"));
+
+  if (platform->VisibleDeviceCount() < 2) {
+    GTEST_SKIP() << "Test requires at least 2 GPUs";
+  }
+
+  ASSERT_OK_AND_ASSIGN(std::vector<se::StreamExecutor*> executors,
+                       CreateExecutors(platform, 2));
+
+  ASSERT_OK_AND_ASSIGN(auto comms, CreateCommunicators(executors, {kD0, kD1},
+                                                       /*blocking=*/false));
+  ASSERT_OK(comms[0]->Abort());
+  ASSERT_OK(comms[1]->Abort());
+
+  EXPECT_THAT(
+      SplitCommunicators(executors, comms, {kD0, kD1}, /*blocking=*/false),
+      absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition,
+                             testing::HasSubstr("Cannot split an aborted")));
+}
+
+// Verifies that Abort() on the parent cancels a nonblocking split whose peer
+// never participates, instead of deadlocking on the parent mutex.
+TEST(GpuCollectivesTest, AbortCancelsPendingNonblockingSplit) {
+  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
+                       PlatformUtil::GetPlatform("gpu"));
+
+  if (platform->VisibleDeviceCount() < 2) {
+    GTEST_SKIP() << "Test requires at least 2 GPUs";
+  }
+
+  ASSERT_OK_AND_ASSIGN(std::vector<se::StreamExecutor*> executors,
+                       CreateExecutors(platform, 2));
+
+  ASSERT_OK_AND_ASSIGN(auto comms, CreateCommunicators(executors, {kD0, kD1},
+                                                       /*blocking=*/false));
+
+  absl::StatusOr<std::vector<std::unique_ptr<GpuCommunicator>>> split;
+  {
+    // Split only rank 0. Rank 1 never joins, so the split cannot complete.
+    std::unique_ptr<tsl::Thread> thread(
+        tsl::Env::Default()->StartThread(tsl::ThreadOptions(), "split", [&] {
+          split = SplitCommunicators(
+              absl::MakeConstSpan(executors).subspan(0, 1),
+              absl::MakeConstSpan(comms).subspan(0, 1), {kD0},
+              /*blocking=*/false);
+        }));
+    // Give the split time to start polling the parent before aborting it.
+    absl::SleepFor(absl::Seconds(1));
+    ASSERT_OK(comms[0]->Abort());
+  }  // Joins the thread. A deadlock here fails the test by timeout.
+
+  // Either outcome is valid: Cancelled if Abort() interrupted the wait in
+  // Split(), or FailedPrecondition if Split() saw the abort before calling
+  // ncclCommSplit.
+  EXPECT_THAT(split.status(), absl_testing::StatusIs(testing::AnyOf(
+                                  absl::StatusCode::kCancelled,
+                                  absl::StatusCode::kFailedPrecondition)));
+
+  // Cleanup only. Destroying a healthy communicator waits for its peers, and
+  // rank 0 is aborted, so abort rank 1 as well to let teardown finish.
+  ASSERT_OK(comms[1]->Abort());
 }
 
 TEST(GpuCollectivesTest, GroupLaunchMultipleCommunicators) {

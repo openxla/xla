@@ -581,10 +581,10 @@ absl::StatusOr<ncclComm_t> NcclCommunicator::Split(int color, int key,
   absl::Status status = XLA_NCCL_STATUS(
       ncclCommSplit(comm_->comm, color, key, child.get(), &config));
   if (status.ok()) {
-    // Only parent success establishes that the child handle is valid. Split
-    // cancellation is deferred; do not interrupt this wait with either token.
-    CancellationToken never_cancelled;
-    status = ::xla::gpu::PollUntilDone(comm_->comm, never_cancelled);
+    // Only parent success establishes that the child handle is valid. Abort()
+    // cancels this wait, so a peer that never completes the split cannot
+    // deadlock Abort() on the parent mutex.
+    status = ::xla::gpu::PollUntilDone(comm_->comm, *cancel_);
   }
   if (!status.ok()) {
     // When PollUntilDone returns an error, ncclCommGetAsyncError itself may
