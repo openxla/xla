@@ -119,8 +119,8 @@ class NcclCommunicator : public GpuCommunicator {
   // nonblocking split, this method waits for the parent to publish the child
   // handle.
   //
-  // The parent mutex is held throughout the split, so Abort() waits for it.
-  // Once started, the split cannot be cancelled and has no timeout.
+  // The parent mutex is held for the whole split. The wait for a nonblocking
+  // split has no timeout, and only Abort() can interrupt it.
   absl::StatusOr<ncclComm_t> Split(int color, int key,
                                    ncclConfig_t config) const;
 
