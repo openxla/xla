@@ -786,5 +786,52 @@ TEST_F(ExecutionStreamAssignmentTest,
       absl_testing::IsOkAndHolds(ExecutionStreamId(CommunicationStreamId(1))));
 }
 
+TEST_F(ExecutionStreamAssignmentTest,
+       AsyncTritonCollectiveFusionUsesCommunicationStream) {
+  constexpr absl::string_view kModuleStr = R"hlo(
+    HloModule m
+
+    fused_ag0 {
+      p0 = f32[4] parameter(0)
+      ROOT ag = f32[8] all-gather(p0), dimensions={0}, replica_groups={{0,1}}
+    }
+
+    fused_ag1 {
+      p0 = f32[4] parameter(0)
+      ROOT ag = f32[8] all-gather(p0), dimensions={0}, replica_groups={{0,1}},
+          backend_config={"collective_backend_config":{"communication_domain":"COLLECTIVE_COMMUNICATION_DOMAIN_SCALE_UP_FABRIC"}}
+    }
+
+    ENTRY main {
+      p0 = f32[4] parameter(0)
+      start0 = ((f32[4]), f32[8]) fusion-start(p0), kind=kCustom,
+          calls=fused_ag0,
+          backend_config={"fusion_backend_config":{"kind":"__triton_collective"}}
+      start1 = ((f32[4]), f32[8]) fusion-start(p0), kind=kCustom,
+          calls=fused_ag1,
+          backend_config={"fusion_backend_config":{"kind":"__triton_collective"}}
+      done0 = f32[8] fusion-done(start0)
+      done1 = f32[8] fusion-done(start1)
+      ROOT result = (f32[8], f32[8]) tuple(done0, done1)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+
+  ExecutionStreamAssignment assignment(
+      module.get(), {/*number_of_compute_execution_streams=*/4,
+                     /*number_of_communication_execution_streams=*/1});
+  EXPECT_THAT(
+      assignment.GetExecutionStreamId(FindInstruction(module.get(), "start0")),
+      absl_testing::IsOkAndHolds(ExecutionStreamId(CommunicationStreamId(0))));
+  EXPECT_THAT(
+      assignment.GetExecutionStreamId(FindInstruction(module.get(), "start1")),
+      absl_testing::IsOkAndHolds(ExecutionStreamId(CommunicationStreamId(3))));
+  EXPECT_THAT(
+      assignment.GetExecutionStreamId(FindInstruction(module.get(), "done0")),
+      absl_testing::StatusIs(absl::StatusCode::kNotFound,
+                             ::testing::HasSubstr("No ExecutionStreamId")));
+}
+
 }  // namespace
 }  // namespace xla::gpu

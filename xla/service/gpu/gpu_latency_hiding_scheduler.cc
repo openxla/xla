@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/service/device_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -103,13 +104,13 @@ bool IsNopInstruction(const HloInstruction& hlo) {
 
 bool IsAsyncComputeStartOp(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kAsyncStart &&
-         !hlo_query::IsCollectiveCommunicationOp(hlo.async_wrapped_opcode()) &&
+         !IsGpuAsyncCollectiveStartOp(&hlo) &&
          hlo.async_execution_thread() != hlo.parent()->execution_thread();
 }
 
 bool IsAsyncComputeDoneOp(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kAsyncDone &&
-         !hlo_query::IsCollectiveCommunicationOp(hlo.async_wrapped_opcode()) &&
+         !IsGpuAsyncCollectiveDoneOp(&hlo) &&
          hlo.async_execution_thread() != hlo.parent()->execution_thread();
 }
 
@@ -206,9 +207,11 @@ using ParticipatingDeviceGroups = std::vector<std::vector<GlobalDeviceId>>;
 absl::StatusOr<ParticipatingDeviceGroups>
 GetParticipatingDevicesGroupsForAsyncStart(
     const HloInstruction& start, const DeviceAssignment& device_assignment) {
-  const HloInstruction* collective = &start;
-  if (HloPredicateIsOp<HloOpcode::kAsyncStart>(collective)) {
-    collective = collective->async_wrapped_instruction();
+  const HloInstruction* collective = GetTritonCollectiveHero(start);
+  if (collective == nullptr) {
+    collective = HloPredicateIsOp<HloOpcode::kAsyncStart>(&start)
+                     ? start.async_wrapped_instruction()
+                     : &start;
   }
   return GetParticipatingDevicesGroups(*collective, device_assignment);
 }
@@ -221,8 +224,8 @@ absl::StatusOr<ParticipatingDeviceGroups> GetParticipatingDevicesGroups(
   ParticipatingDeviceGroups groups;
   for (const HloInstruction* instruction : computation.instructions()) {
     if (!hlo_query::IsCollectiveCommunicationOp(instruction->opcode()) &&
-        !hlo_query::IsAsyncCollectiveStartOp(instruction,
-                                             /*include_send_recv=*/true)) {
+        !IsGpuAsyncCollectiveStartOp(instruction, /*include_send_recv=*/true) &&
+        !IsTritonCollectiveFusion(*instruction)) {
       continue;
     }
     ABSL_ASSIGN_OR_RETURN(ParticipatingDeviceGroups instruction_groups,
@@ -264,8 +267,7 @@ size_t CountOverlappingDevices(
 // async memcpy operations.
 bool IsGpuAsyncStart(const HloInstruction& hlo) {
   const bool is_collective_start =
-      hlo_query::IsAsyncCollectiveStartOp(&hlo,
-                                          /*include_send_recv=*/true) ||
+      IsGpuAsyncCollectiveStartOp(&hlo, /*include_send_recv=*/true) ||
       IsCollectivesGroupAsyncStartOp(hlo);
   if (is_collective_start && IsGPUSyncCollective(hlo)) {
     return false;
@@ -277,8 +279,7 @@ bool IsGpuAsyncStart(const HloInstruction& hlo) {
 // Marks async done operations to be scheduled as late as possible.
 bool IsGpuAsyncDone(const HloInstruction& hlo) {
   const bool is_collective_done =
-      hlo_query::IsAsyncCollectiveDoneOp(&hlo,
-                                         /*include_send_recv=*/true) ||
+      IsGpuAsyncCollectiveDoneOp(&hlo, /*include_send_recv=*/true) ||
       IsCollectivesGroupAsyncDoneOp(hlo);
   if (is_collective_done && IsGPUSyncCollective(*hlo.operand(0))) {
     return false;
@@ -375,6 +376,12 @@ CanonicalAsyncOp GpuGetCanonicalAsyncOp(const HloInstruction& hlo) {
       return {HloOpcode::kAsyncStart, HloOpcode::kRecv};
     case HloOpcode::kRecvDone:
       return {HloOpcode::kAsyncDone, HloOpcode::kRecv};
+    case HloOpcode::kAsyncStart:
+    case HloOpcode::kAsyncDone:
+      if (const HloInstruction* hero = GetTritonCollectiveHero(hlo)) {
+        return {hlo.opcode(), hero->opcode()};
+      }
+      return DefaultGetCanonicalAsyncOp(hlo);
     default:
       return DefaultGetCanonicalAsyncOp(hlo);
   }
