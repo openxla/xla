@@ -28,14 +28,18 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
@@ -49,6 +53,7 @@ limitations under the License.
 #include "xla/service/value_range.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -76,6 +81,78 @@ const HloInstruction* TraceThroughCopyAndGteTupleChain(
 
   return instr;
 }
+
+bool HasConstantLiteral(const HloInstruction* instr) {
+  const auto* constant = DynCast<HloConstantInstruction>(instr);
+  return constant != nullptr && constant->HasLiteral();
+}
+
+bool IsStrippedConstant(const HloInstruction* instr) {
+  const auto* constant = DynCast<HloConstantInstruction>(instr);
+  return constant != nullptr && !constant->HasLiteral();
+}
+
+bool ComputationHasStrippedConstant(const HloComputation* computation) {
+  absl::flat_hash_set<const HloComputation*> visited;
+  std::vector<const HloComputation*> worklist = {computation};
+  while (!worklist.empty()) {
+    const HloComputation* comp = worklist.back();
+    worklist.pop_back();
+    if (comp == nullptr || !visited.insert(comp).second) {
+      continue;
+    }
+    for (const HloInstruction* instr : comp->instructions()) {
+      if (IsStrippedConstant(instr)) {
+        return true;
+      }
+      for (const HloComputation* called : instr->called_computations()) {
+        worklist.push_back(called);
+      }
+    }
+  }
+  return false;
+}
+
+bool ReachesStrippedConstant(const HloInstruction* root,
+                             const HloInstruction* stop_at = nullptr) {
+  absl::flat_hash_set<const HloInstruction*> visited;
+  std::vector<const HloInstruction*> worklist = {root};
+  while (!worklist.empty()) {
+    const HloInstruction* instr = worklist.back();
+    worklist.pop_back();
+    if (instr == nullptr || instr == stop_at || !visited.insert(instr).second) {
+      continue;
+    }
+    if (IsStrippedConstant(instr)) {
+      return true;
+    }
+    if (instr->opcode() == HloOpcode::kParameter) {
+      const absl::InlinedVector<HloInstruction*, 1> callers =
+          instr->parent()->caller_instructions();
+      if (callers.size() == 1) {
+        const HloInstruction* caller = callers[0];
+        if ((caller->opcode() == HloOpcode::kWhile ||
+             caller->opcode() == HloOpcode::kCall) &&
+            instr->parameter_number() >= 0 &&
+            instr->parameter_number() < caller->operand_count()) {
+          worklist.push_back(caller->operand(instr->parameter_number()));
+          if (instr->parameter_number() != 0) {
+            worklist.push_back(caller->operand(0));
+          }
+        }
+      }
+    }
+    for (const HloInstruction* operand : instr->operands()) {
+      worklist.push_back(operand);
+    }
+    for (const HloComputation* called : instr->called_computations()) {
+      if (ComputationHasStrippedConstant(called)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
 }  // namespace
 
 // Finds and returns the non-constant operand in instr, if there is only one
@@ -86,7 +163,7 @@ const HloInstruction* TraceThroughCopyAndGteTupleChain(
 static const HloInstruction* NonConstantOperand(const HloInstruction* instr) {
   const HloInstruction* result = nullptr;
   for (const HloInstruction* operand : instr->operands()) {
-    if (!operand->IsConstant()) {
+    if (!HasConstantLiteral(operand)) {
       if (result != nullptr && result != operand) {
         return nullptr;
       }
@@ -720,7 +797,14 @@ absl::StatusOr<Literal> EvaluateIndvarInit(const HloInstruction* while_op,
   HloEvaluator evaluator(/*max_loop_iterations=*/0);
   auto* while_init = while_op->operand(0);
   auto* indvar_init = while_init->operand(indvar_tuple_idx);
-  return evaluator.Evaluate(TraceThroughCopyAndGteTupleChain(indvar_init));
+  const HloInstruction* traced_init =
+      TraceThroughCopyAndGteTupleChain(indvar_init);
+  if (ReachesStrippedConstant(traced_init)) {
+    return FailedPrecondition(
+        "Cannot evaluate induction variable init with stripped constant "
+        "literal");
+  }
+  return evaluator.Evaluate(traced_init);
 }
 
 optional<Range> MatchTrivialLoopRange(const HloInstruction* while_op) {
@@ -780,7 +864,7 @@ optional<Range> MatchLoopRangeWithKnownValues(
               << while_body_indvar_update->ToString();
       return nullopt;
     }
-    if (!trip_count_increase_step_instr->IsConstant() ||
+    if (!HasConstantLiteral(trip_count_increase_step_instr) ||
         !ShapeUtil::IsEffectiveScalar(
             trip_count_increase_step_instr->shape())) {
       VLOG(2) << "Pattern-match failed: induction variable is not getting "
@@ -798,6 +882,9 @@ optional<Range> MatchLoopRangeWithKnownValues(
     }
     VLOG(2) << "Pattern-match for trip count step failed: "
             << trip_count_increase_step_instr->ToString();
+  }
+  if (!HasConstantLiteral(trip_count_increase_step_instr)) {
+    return nullopt;
   }
 
   trip_count_step = LiteralUtil::LiteralAsScalarInt64(
@@ -831,7 +918,7 @@ optional<Range> MatchLoopRangeWithKnownValues(
 
   // Check if while_cond_bound is a GTE of a known value or a constant.
   optional<int64_t> while_cond_bound_val = std::nullopt;
-  if (while_cond_bound->IsConstant()) {
+  if (HasConstantLiteral(while_cond_bound)) {
     while_cond_bound_val =
         LiteralUtil::LiteralAsScalarInt64(while_cond_bound->literal());
   } else {
@@ -960,7 +1047,7 @@ optional<int64_t> MatchTrivialLoopInductionStep(const HloInstruction* while_op,
               << while_body_indvar_update->ToString();
       return nullopt;
     }
-    if (!trip_count_increase_step_instr->IsConstant() ||
+    if (!HasConstantLiteral(trip_count_increase_step_instr) ||
         !ShapeUtil::IsEffectiveScalar(
             trip_count_increase_step_instr->shape())) {
       VLOG(2) << "Pattern-match failed: induction variable is not getting "
@@ -970,6 +1057,9 @@ optional<int64_t> MatchTrivialLoopInductionStep(const HloInstruction* while_op,
     }
     VLOG(2) << "Pattern-match for trip count step failed: "
             << trip_count_increase_step_instr->ToString();
+  }
+  if (!HasConstantLiteral(trip_count_increase_step_instr)) {
+    return nullopt;
   }
 
   optional<int64_t> trip_count_step = LiteralUtil::LiteralAsScalarInt64(
@@ -1022,7 +1112,8 @@ optional<int64_t> MatchTrivialLoopTripCount(const HloInstruction* while_op,
   if (!Match(while_cond_root,
              m::Op().WithBinaryOperandsAnyOrder(
                  m::Op().Is(while_cond_indvar),
-                 m::ConstantEffectiveScalar(&while_cond_bound)))) {
+                 m::ConstantEffectiveScalar(&while_cond_bound))) ||
+      !HasConstantLiteral(while_cond_bound)) {
     VLOG(2) << "Pattern-match failed: while condition is not of the form "
                "op(i, N) or op(N, i).";
     return nullopt;
@@ -1156,6 +1247,10 @@ optional<int64_t> ComputeWhileLoopTripCount(const HloInstruction* while_op,
               while_cond->parameter_instruction(0), *indvar_tuple_idx)) {
     return std::nullopt;
   }
+  if (ReachesStrippedConstant(while_cond_root, while_cond_indvar) ||
+      ReachesStrippedConstant(while_body_indvar_update, while_body_indvar)) {
+    return std::nullopt;
+  }
 
   HloEvaluator evaluator(/*max_loop_iterations=*/0);
   for (int64_t trip_count = 0; trip_count != max_brute_force_iters + 1;
@@ -1245,9 +1340,13 @@ optional<int64_t> ComputeWhileLoopTripCountUpperBound(
 
   int64_t indvar_index = cond_gte->tuple_index();
   auto* while_body_indvar = while_body_root->operand(indvar_index);
-  if (while_body_indvar->opcode() != HloOpcode::kConstant) {
+  if (!HasConstantLiteral(while_body_indvar)) {
     VLOG(3) << "While body does not set the IV to a constant: "
             << while_body_indvar->ToString();
+    return nullopt;
+  }
+  if (ComputationHasStrippedConstant(while_cond)) {
+    VLOG(3) << "While condition contains a stripped constant literal.";
     return nullopt;
   }
   // Create a new while cond computation accessing only the single parameter

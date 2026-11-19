@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
@@ -1473,6 +1474,181 @@ TEST_F(WhileLoopAnalysisTest,
                 while_u32, 0, LiteralUtil::CreateR0<uint32_t>(2147483648U)),
             std::nullopt);
   EXPECT_EQ(MatchTrivialLoopRange(while_u32), std::nullopt);
+}
+
+TEST_F(WhileLoopAnalysisTest,
+       ComputeWhileLoopTripCountUpperBoundWithStrippedConstantLiteral) {
+  constexpr absl::string_view kBodyResetHlo = R"hlo(
+    HloModule stripped_body_const
+    body {
+      p_body = (f32[2], s32[]) parameter(0)
+      val = f32[2] get-tuple-element(p_body), index=0
+      const = s32[] constant(-1)
+      ROOT root = (f32[2], s32[]) tuple(val, const)
+    }
+    condition {
+      p_cond = (f32[2], s32[]) parameter(0)
+      gte = s32[] get-tuple-element(p_cond), index=1
+      const = s32[] constant(42)
+      ROOT result = pred[] compare(gte, const), direction=EQ
+    }
+    ENTRY entry {
+      param.0 = f32[2] parameter(0)
+      param.1 = s32[] parameter(1)
+      while_init = (f32[2], s32[]) tuple(param.0, param.1)
+      ROOT w = (f32[2], s32[]) while(while_init), condition=condition, body=body
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> body_mod,
+                       ParseAndReturnUnverifiedModule(kBodyResetHlo));
+  HloInstruction* body_while =
+      body_mod->entry_computation()->root_instruction();
+  auto* body_const = Cast<HloConstantInstruction>(
+      body_while->while_body()->root_instruction()->mutable_operand(1));
+  body_const->DropLiteral();
+  ASSERT_FALSE(body_const->HasLiteral());
+  EXPECT_EQ(ComputeWhileLoopTripCountUpperBound(body_while), std::nullopt);
+
+  constexpr absl::string_view kCondElidedArrayHlo = R"hlo(
+    HloModule stripped_cond_array_const
+    body {
+      p_body = (f32[2], s32[]) parameter(0)
+      val = f32[2] get-tuple-element(p_body), index=0
+      const = s32[] constant(-1)
+      ROOT root = (f32[2], s32[]) tuple(val, const)
+    }
+    condition {
+      p_cond = (f32[2], s32[]) parameter(0)
+      gte = s32[] get-tuple-element(p_cond), index=1
+      arr = s32[8] constant({...})
+      sliced = s32[1] slice(arr), slice={[0:1]}
+      bound = s32[] reshape(sliced)
+      ROOT result = pred[] compare(gte, bound), direction=EQ
+    }
+    ENTRY entry {
+      param.0 = f32[2] parameter(0)
+      param.1 = s32[] parameter(1)
+      while_init = (f32[2], s32[]) tuple(param.0, param.1)
+      ROOT w = (f32[2], s32[]) while(while_init), condition=condition, body=body
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> cond_mod,
+                       ParseAndReturnUnverifiedModule(kCondElidedArrayHlo));
+  HloInstruction* cond_while =
+      cond_mod->entry_computation()->root_instruction();
+  auto* cond_arr = Cast<HloConstantInstruction>(
+      cond_while->while_condition()->GetInstructionWithName("arr"));
+  cond_arr->DropLiteral();
+  ASSERT_FALSE(cond_arr->HasLiteral());
+  EXPECT_EQ(ComputeWhileLoopTripCountUpperBound(cond_while), std::nullopt);
+
+  constexpr absl::string_view kCountedLoopHlo = R"hlo(
+    HloModule stripped_counted_loop
+    body {
+      p_body = (s32[]) parameter(0)
+      idx = s32[] get-tuple-element(p_body), index=0
+      step = s32[] constant(1)
+      ROOT root = (s32[]) tuple(s32[] add(idx, step))
+    }
+    condition {
+      p_cond = (s32[]) parameter(0)
+      idx = s32[] get-tuple-element(p_cond), index=0
+      limit = s32[] constant(4)
+      ROOT result = pred[] compare(idx, limit), direction=LT
+    }
+    ENTRY entry {
+      init = s32[] constant(0)
+      ROOT w = (s32[]) while((s32[]) tuple(init)), condition=condition, body=body
+    }
+  )hlo";
+  for (absl::string_view stripped_target : {"init", "step", "limit"}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> loop_mod,
+                         ParseAndReturnUnverifiedModule(kCountedLoopHlo));
+    HloInstruction* loop_while =
+        loop_mod->entry_computation()->root_instruction();
+    HloInstruction* target_inst =
+        stripped_target == "init"
+            ? loop_mod->entry_computation()->GetInstructionWithName("init")
+        : stripped_target == "step"
+            ? loop_while->while_body()->GetInstructionWithName("step")
+            : loop_while->while_condition()->GetInstructionWithName("limit");
+    Cast<HloConstantInstruction>(target_inst)->DropLiteral();
+    EXPECT_EQ(ComputeWhileLoopTripCountUpperBound(loop_while), std::nullopt);
+    EXPECT_EQ(MatchTrivialLoopRange(loop_while), std::nullopt);
+  }
+
+  constexpr absl::string_view kCallerParamClimbHlo = R"hlo(
+    HloModule stripped_outer_init_climb
+    inner_body {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      ROOT r = (s32[]) tuple(s32[] add(i, s32[] constant(1)))
+    }
+    inner_cond {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      ROOT cmp = pred[] compare(i, s32[] constant(4)), direction=LT
+    }
+    callee {
+      p_call = (s32[]) parameter(0)
+      init_i = s32[] get-tuple-element(p_call), index=0
+      ROOT w = (s32[]) while((s32[]) tuple(init_i)),
+          condition=inner_cond, body=inner_body
+    }
+    ENTRY entry {
+      arr = s32[4] constant({...})
+      sl = s32[1] slice(arr), slice={[0:1]}
+      init0 = s32[] reshape(sl)
+      ROOT res = (s32[]) call((s32[]) tuple(init0)), to_apply=callee
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> climb_mod,
+                       ParseAndReturnUnverifiedModule(kCallerParamClimbHlo));
+  auto* climb_arr = Cast<HloConstantInstruction>(
+      climb_mod->entry_computation()->GetInstructionWithName("arr"));
+  climb_arr->DropLiteral();
+  ASSERT_FALSE(climb_arr->HasLiteral());
+  const HloInstruction* inner_while =
+      climb_mod->GetComputationWithName("callee")->root_instruction();
+  EXPECT_EQ(ComputeWhileLoopTripCount(inner_while), std::nullopt);
+  EXPECT_EQ(ComputeWhileLoopTripCountUpperBound(inner_while), std::nullopt);
+  EXPECT_EQ(MatchTrivialLoopRange(inner_while), std::nullopt);
+
+  constexpr absl::string_view kDeadInstructionInCalledCompHlo = R"hlo(
+    HloModule stripped_dead_in_callee
+    callee_init {
+      arr = s32[4] constant({...})
+      dead = s32[1] slice(arr), slice={[0:1]}
+      ROOT zero = s32[] constant(0)
+    }
+    body {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      ROOT r = (s32[]) tuple(s32[] add(i, s32[] constant(1)))
+    }
+    cond {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      ROOT cmp = pred[] compare(i, s32[] constant(4)), direction=LT
+    }
+    ENTRY entry {
+      init0 = s32[] call(), to_apply=callee_init
+      ROOT w = (s32[]) while((s32[]) tuple(init0)), condition=cond, body=body
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> dead_mod,
+      ParseAndReturnUnverifiedModule(kDeadInstructionInCalledCompHlo));
+  auto* dead_arr = Cast<HloConstantInstruction>(
+      dead_mod->GetComputationWithName("callee_init")
+          ->GetInstructionWithName("arr"));
+  dead_arr->DropLiteral();
+  ASSERT_FALSE(dead_arr->HasLiteral());
+  const HloInstruction* dead_while =
+      dead_mod->entry_computation()->root_instruction();
+  EXPECT_EQ(ComputeWhileLoopTripCount(dead_while), std::nullopt);
+  EXPECT_EQ(ComputeWhileLoopTripCountUpperBound(dead_while), std::nullopt);
+  EXPECT_EQ(MatchTrivialLoopRange(dead_while), std::nullopt);
 }
 
 }  // namespace
