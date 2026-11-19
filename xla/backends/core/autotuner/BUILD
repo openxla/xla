@@ -220,6 +220,7 @@ cc_library(
     srcs = ["config_assigner.cc"],
     hdrs = ["config_assigner.h"],
     deps = [
+        ":autotune_fingerprint",
         ":autotuner",
         ":autotuner_cache_interface",
         ":backends_proto_cc",
@@ -261,6 +262,7 @@ xla_cc_test(
     name = "config_assigner_test",
     srcs = ["config_assigner_test.cc"],
     deps = [
+        ":autotune_fingerprint",
         ":autotuner",
         ":autotuner_cache_interface",
         ":backends_proto_cc",
