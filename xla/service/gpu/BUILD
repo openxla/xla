@@ -1827,6 +1827,7 @@ cc_library(
     hdrs = ["pre_scheduling_copy_insertion_pipeline.h"],
     deps = [
         ":alias_info",
+        "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms:alias_passthrough_params",
         "//xla/backends/gpu/transforms:constant_fill_copy_rewriter",
         "//xla/backends/gpu/transforms:copy_fusion",

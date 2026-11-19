@@ -85,7 +85,8 @@ ENTRY main {
   WhileLoopPipelineUnroller wlpu;
   ASSERT_IS_OK(wlpu.Run(module.get()).status());
   AliasInfo alias_info;
-  CopyInsertion copy_insertion(&alias_info);
+  CopyInsertion copy_insertion(&alias_info,
+                               /*use_region_based_live_range_analysis=*/-1);
   ASSERT_IS_OK(copy_insertion.Run(module.get()).status());
 
   const HloInstruction* original_loop =
@@ -139,7 +140,8 @@ ENTRY main {
   ASSERT_IS_OK(wlpu.Run(module.get()).status());
   ASSERT_IS_OK(module->Verify());
   AliasInfo alias_info;
-  CopyInsertion copy_insertion(&alias_info);
+  CopyInsertion copy_insertion(&alias_info,
+                               /*use_region_based_live_range_analysis=*/-1);
   ASSERT_IS_OK(copy_insertion.Run(module.get()).status());
 
   const HloInstruction* original_loop =
@@ -202,7 +204,8 @@ ENTRY main {
   WhileLoopPipelineUnroller wlpu;
   ASSERT_IS_OK(wlpu.Run(module.get()).status());
   AliasInfo alias_info;
-  CopyInsertion copy_insertion(&alias_info);
+  CopyInsertion copy_insertion(&alias_info,
+                               /*use_region_based_live_range_analysis=*/-1);
   ASSERT_IS_OK(copy_insertion.Run(module.get()).status());
 
   const HloInstruction* original_loop =
@@ -307,7 +310,8 @@ ENTRY main {
   WhileLoopPipelineUnroller wlpu;
   ASSERT_IS_OK(wlpu.Run(module.get()).status());
   AliasInfo alias_info;
-  CopyInsertion copy_insertion(&alias_info);
+  CopyInsertion copy_insertion(&alias_info,
+                               /*use_region_based_live_range_analysis=*/-1);
   ASSERT_IS_OK(copy_insertion.Run(module.get()).status());
 
   const HloInstruction* pass_original_loop =
