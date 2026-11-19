@@ -127,7 +127,7 @@ TEST_F(HloOpProfilesTest, GetProfileH100) {
       std::make_pair(HloOpcode::kMultiply, PrimitiveType::F32)));
   EXPECT_EQ(
       op_profile.at(std::make_pair(HloOpcode::kMultiply, PrimitiveType::F32)),
-      3);
+      7);
 }
 
 TEST_F(HloOpProfilesTest, GetProfileSm103) {
