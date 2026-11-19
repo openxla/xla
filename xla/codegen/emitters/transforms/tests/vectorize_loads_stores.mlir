@@ -993,3 +993,34 @@ func.func @no_fold_mismatched_vector_size(
 // CHECK: scf.for {{.*}} -> (vector<2xf32>)
 // CHECK: vector.transfer_write {{.*}} : vector<2xf32>, tensor<16xf32>
 // CHECK-NOT: vector.transfer_write {{.*}} : vector<4xf32>
+
+// -----
+
+#map = #xla.indexing_map<"(d0)[s0] -> (d0 * 2 + s0),"
+  "domain: d0 in [0, 63], s0 in [0, 1]">
+func.func @no_vectorize_dsmem_load_or_store(
+    %arg0: tensor<128xf32>, %dst: tensor<128xf32>) -> (f32, tensor<128xf32>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c64 = arith.constant 64 : index
+  %cst = arith.constant 0.0 : f32
+  %outer:2 = scf.for %i = %c0 to %c64 step %c1
+      iter_args(%iter_acc = %cst, %iter_dst = %dst) -> (f32, tensor<128xf32>) {
+    %inner:2 = scf.for %j = %c0 to %c2 step %c1
+        iter_args(%acc = %iter_acc, %cur_dst = %iter_dst) -> (f32, tensor<128xf32>) {
+      %idx = xla.apply_indexing #map(%i)[%j]
+      %extracted = tensor.extract %arg0[%idx] {xla_gpu.dsmem} : tensor<128xf32>
+      %added = arith.addf %acc, %extracted : f32
+      %ins = tensor.insert %added into %cur_dst[%idx] {xla_gpu.dsmem} : tensor<128xf32>
+      scf.yield %added, %ins : f32, tensor<128xf32>
+    }
+    scf.yield %inner#0, %inner#1 : f32, tensor<128xf32>
+  }
+  return %outer#0, %outer#1 : f32, tensor<128xf32>
+}
+// CHECK-LABEL: @no_vectorize_dsmem_load_or_store
+// CHECK-NOT:   vector.transfer_read
+// CHECK-NOT:   vector.transfer_write
+// CHECK:       tensor.extract %{{.*}}[%{{.*}}] {xla_gpu.dsmem}
+// CHECK:       tensor.insert %{{.*}} into %{{.*}}[%{{.*}}] {xla_gpu.dsmem}

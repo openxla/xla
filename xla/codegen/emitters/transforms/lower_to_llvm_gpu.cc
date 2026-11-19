@@ -42,7 +42,9 @@ limitations under the License.
 #include "mlir/Dialect/Arith/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"   // IWYU pragma: keep
+#include "mlir/Dialect/LLVMIR/LLVMConversionOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // IWYU pragma: keep
+#include "mlir/Dialect/LLVMIR/NVVMAttributes.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"   // IWYU pragma: keep
 #include "mlir/Dialect/LLVMIR/ROCDLDialect.h"  // IWYU pragma: keep
 #include "mlir/Dialect/LLVMIR/ROCDLTargetInfo.h"
@@ -56,6 +58,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "tsl/platform/protobuf.h"  // IWYU pragma: keep
+#include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
 #include "xla/codegen/device_spec.h"
 #include "xla/codegen/emitters/transforms/lower_to_llvm_common.h"
 #include "xla/codegen/emitters/transforms/lowering_utils.h"
@@ -223,6 +226,34 @@ struct ExpBF16ToAMDGPU
   }
 };
 
+// Lowers `xla_gpu.dsmem_pointer` to `nvvm.mapa` in shared address space (3 ->
+// 7) so LLVM's InferAddressSpaces propagates shared::cluster provenance and
+// alias information through downstream cluster shared memory accesses.
+class DsmemPointerToNVVM
+    : public mlir::ConvertOpToLLVMPattern<xla::gpu::DsmemPointerOp> {
+ public:
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+
+  mlir::LogicalResult matchAndRewrite(
+      xla::gpu::DsmemPointerOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter& rewriter) const override {
+    mlir::Location loc = op.getLoc();
+    auto shared_ptr_type = mlir::LLVM::LLVMPointerType::get(
+        op.getContext(),
+        static_cast<unsigned>(mlir::NVVM::NVVMMemorySpace::Shared));
+    auto cluster_ptr_type = mlir::LLVM::LLVMPointerType::get(
+        op.getContext(),
+        static_cast<unsigned>(mlir::NVVM::NVVMMemorySpace::SharedCluster));
+    mlir::Value shared_ptr = mlir::LLVM::AddrSpaceCastOp::create(
+        rewriter, loc, shared_ptr_type, adaptor.getPtr());
+    mlir::Value cluster_ptr = mlir::NVVM::MapaOp::create(
+        rewriter, loc, cluster_ptr_type, shared_ptr, adaptor.getCtaRank());
+    rewriter.replaceOpWithNewOp<mlir::LLVM::AddrSpaceCastOp>(
+        op, getTypeConverter()->convertType(op.getType()), cluster_ptr);
+    return mlir::success();
+  }
+};
+
 // Lowers scalar `math.fma` directly to `llvm.intr.fma` instead of
 // MathToNVVM's libdevice `@__nv_fmaf` / `@__nv_fma` call. In particular,
 // MathToNVVM (`populateOpPatterns<math::FmaOp>` in `MathToNVVM.cpp` via
@@ -330,7 +361,9 @@ class LowerToLLVMGPUPass
       } else {
         mlir::populateGpuToNVVMConversionPatterns(converter, patterns);
         mlir::configureGpuToNVVMConversionLegality(target);
+        patterns.add<DsmemPointerToNVVM>(converter);
         patterns.add<FmaToLLVM>(converter, mlir::PatternBenefit(2));
+        target.addIllegalOp<xla::gpu::DsmemPointerOp>();
       }
       return mlir::success();
     };

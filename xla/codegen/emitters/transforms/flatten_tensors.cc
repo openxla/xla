@@ -317,7 +317,10 @@ struct RewriteTensorExtract : OpRewritePattern<ExtractOp> {
     auto tensor_1D = UnrealizedConversionCastOp::create(
                          rewriter, loc, GetFlattenedType(tensor_type), tensor)
                          .getResult(0);
-    rewriter.replaceOpWithNewOp<ExtractOp>(op, tensor_1D, linear_index);
+    auto new_extract =
+        ExtractOp::create(rewriter, loc, tensor_1D, linear_index);
+    new_extract->setDiscardableAttrs(op->getDiscardableAttrDictionary());
+    rewriter.replaceOp(op, new_extract.getResult());
     return mlir::success();
   }
 };
@@ -344,9 +347,11 @@ struct RewriteVectorTransferRead : OpRewritePattern<mv::TransferReadOp> {
     auto tensor_1D = UnrealizedConversionCastOp::create(
                          rewriter, loc, GetFlattenedType(tensor_type), tensor)
                          .getResult(0);
-    rewriter.replaceOpWithNewOp<mv::TransferReadOp>(
-        op, vector_type, tensor_1D, linear_index, op.getPadding(),
+    auto new_read = mv::TransferReadOp::create(
+        rewriter, loc, vector_type, tensor_1D, linear_index, op.getPadding(),
         llvm::ArrayRef<bool>{true});
+    new_read->setDiscardableAttrs(op->getDiscardableAttrDictionary());
+    rewriter.replaceOp(op, new_read.getResult());
     return mlir::success();
   }
 };
@@ -392,6 +397,7 @@ struct RewriteTensorInsert : OpRewritePattern<InsertOp> {
                          .getResult(0);
     auto new_insert =
         InsertOp::create(b, op.getScalar(), tensor_1D, linear_index);
+    new_insert->setDiscardableAttrs(op->getDiscardableAttrDictionary());
     auto cast_to_orig_type = UnrealizedConversionCastOp::create(
         b, tensor_type, new_insert.getResult());
     rewriter.replaceOp(op, cast_to_orig_type.getResult(0));
@@ -433,6 +439,7 @@ struct RewriteCopySlice : OpRewritePattern<CopySliceOp> {
 
     auto new_copy = CopySliceOp::create(b, src, dest, src_indices, dest_indices,
                                         op.getNumElements());
+    new_copy->setDiscardableAttrs(op->getDiscardableAttrDictionary());
     if (dest_type.getRank() >= 2) {
       auto cast_to_orig_type = UnrealizedConversionCastOp::create(
           b, dest_type, new_copy.getResult());
@@ -510,6 +517,7 @@ struct RewriteAtomicStore : OpRewritePattern<AtomicStoreOp> {
                          .getResult(0);
     auto new_store =
         AtomicStoreOp::create(b, op.getValue(), tensor_1d, linear_index);
+    new_store->setDiscardableAttrs(op->getDiscardableAttrDictionary());
     auto cast_to_orig_type = UnrealizedConversionCastOp::create(
         b, tensor_type, new_store.getResult());
     rewriter.replaceOp(op, cast_to_orig_type.getResult(0));
@@ -535,6 +543,7 @@ struct RewriteAtomicRMW : OpRewritePattern<AtomicRMWOp> {
                          b, GetFlattenedType(tensor_type), tensor)
                          .getResult(0);
     auto new_atomic_rmw = AtomicRMWOp::create(b, tensor_1D, linear_index);
+    new_atomic_rmw->setDiscardableAttrs(op->getDiscardableAttrDictionary());
     rewriter.inlineRegionBefore(op.getRegion(),
                                 &new_atomic_rmw.getRegion().front());
     rewriter.eraseBlock(&new_atomic_rmw.getRegion().back());
@@ -820,7 +829,7 @@ struct RewriteSyncThreads : OpRewritePattern<gpu::SyncThreadsOp> {
               .getResult(0));
     }
     auto new_op = gpu::SyncThreadsOp::create(
-        rewriter, loc, TypeRange(new_operands), new_operands);
+        rewriter, loc, TypeRange(new_operands), new_operands, op.getScope());
     SmallVector<Value> new_results;
     new_results.reserve(op.getNumResults());
     for (auto [index, result] : llvm::enumerate(new_op.getResults())) {
@@ -865,7 +874,10 @@ struct RewriteLinearExtractOp : OpRewritePattern<LinearExtractOp> {
   LogicalResult matchAndRewrite(LinearExtractOp op,
                                 PatternRewriter& rewriter) const override {
     Value flat_tensor = Flatten(op.getTensor(), rewriter);
-    rewriter.replaceOpWithNewOp<ExtractOp>(op, flat_tensor, op.getIndex());
+    auto new_extract =
+        ExtractOp::create(rewriter, op.getLoc(), flat_tensor, op.getIndex());
+    new_extract->setDiscardableAttrs(op->getDiscardableAttrDictionary());
+    rewriter.replaceOp(op, new_extract.getResult());
     return mlir::success();
   }
 };
@@ -880,6 +892,7 @@ struct RewriteLinearInsertOp : OpRewritePattern<LinearInsertOp> {
     Value flat_tensor = Flatten(tensor, rewriter);
     auto insert_op = InsertOp::create(rewriter, op.getLoc(), op.getValue(),
                                       flat_tensor, op.getIndex());
+    insert_op->setDiscardableAttrs(op->getDiscardableAttrDictionary());
     if (tensor_type.getRank() < 2) {
       rewriter.replaceOp(op, insert_op.getResult());
     } else {

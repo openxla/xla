@@ -158,6 +158,7 @@ cc_library(
         ":lower_to_llvm_common",
         ":lower_to_llvm_gpu_inc_gen",
         ":lowering_utils",
+        "//xla/backends/gpu/codegen/emitters/ir:xla_gpu",
         "//xla/codegen:device_spec",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_description_proto_cc",
