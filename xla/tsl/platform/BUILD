@@ -17,6 +17,7 @@ load(
     "@bazel_skylib//:bzl_library.bzl",
     "bzl_library",
 )
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load(
     "//xla/tsl:tsl.bzl",
     "if_not_fuchsia",
@@ -746,6 +747,35 @@ tsl_cc_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
+    name = "scoped_temp_dir",
+    testonly = True,
+    srcs = ["scoped_temp_dir.cc"],
+    hdrs = ["scoped_temp_dir.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        ":env",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+tsl_cc_test(
+    name = "scoped_temp_dir_test",
+    srcs = ["scoped_temp_dir_test.cc"],
+    deps = [
+        ":env",
+        ":env_impl",  # buildcleaner: keep
+        ":scoped_temp_dir",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:path",
     ],
 )
 
