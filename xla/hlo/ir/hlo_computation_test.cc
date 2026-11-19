@@ -80,8 +80,8 @@ ENTRY entry {
   ROOT out = f32[100] add(add1, reduce2)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
 
   EXPECT_EQ(CountControlEdges(*module->entry_computation()), 0);
 
@@ -157,8 +157,8 @@ ENTRY entry {
   ROOT div0 = f32[100] divide(p1, mul0)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
 
   auto post_order = module->entry_computation()->MakeInstructionPostOrder();
 
@@ -215,8 +215,8 @@ ENTRY entry {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   HloComputation* entry = module->entry_computation();
   HloComputation* sum = module->GetComputationWithName("sum");
   ASSERT_NE(entry, nullptr);
@@ -273,8 +273,8 @@ ENTRY comp2 {
   ROOT out = f32[] negate(p0)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
 
   const HloComputation* c1 = module->GetComputationWithName("comp1");
   const HloComputation* c2 = module->GetComputationWithName("comp2");
@@ -304,10 +304,10 @@ ENTRY entry {
   ROOT out = f32[] add(add0, mul0)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module1,
-                          ParseAndReturnVerifiedModule(hlo_string_1));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module2,
-                          ParseAndReturnVerifiedModule(hlo_string_2));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module1,
+                       ParseAndReturnVerifiedModule(hlo_string_1));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module2,
+                       ParseAndReturnVerifiedModule(hlo_string_2));
 
   HloComputation* comp1 = module1->entry_computation();
   HloComputation* comp2 = module2->entry_computation();
@@ -473,8 +473,8 @@ ENTRY entry {
   ROOT out = (f32[10], f32[20]) tuple(gte0, gte1)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
 
   HloComputation* computation = module->entry_computation();
 
@@ -501,8 +501,8 @@ ENTRY entry {
   ROOT out = (f32[10], f32[20], f32[30]) tuple(gte1, gte2, gte3)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
 
   HloComputation* computation = module->entry_computation();
 
@@ -527,8 +527,8 @@ ENTRY entry {
   ROOT out = (f32[10], f32[20]) tuple(gte0, gte1)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
 
   HloComputation* computation = module->entry_computation();
 
@@ -551,8 +551,8 @@ ENTRY entry {
   ROOT gte0 = f32[10] get-tuple-element(p0), index=0
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
 
   HloComputation* computation = module->entry_computation();
 
