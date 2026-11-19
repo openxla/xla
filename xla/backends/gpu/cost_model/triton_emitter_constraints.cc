@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/codegen/tiling/tiling_space.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/primitive_util.h"
 #include "xla/service/decision.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -49,6 +50,8 @@ constexpr int64_t kMaxTensorNumElements = 1048576;
 // larger than this as that leads to a large number of registers being used.
 // Also for MMA instruction we don't want tiles greater than 256.
 constexpr int64_t kMaxMMADimSize = 256;
+// Triton's NVIDIA backend requires K=32 for 8-bit dot operands.
+constexpr int64_t kMinEightBitDotContractingTileSize = 32;
 
 // Returns a conservative estimate (in bytes) of the memory required to stage a
 // tile whose sizes are `tile_sizes` for an instruction whose element type
@@ -121,26 +124,66 @@ Decision VerifyTritonConstraints(const TiledHloComputation& tiled_computation,
   // Triton's GPU codegen constrains dot operands to avoid excessive register
   // pressure and comply with hardware MMA layout constraints. Contracting and
   // free dimension tile sizes are limited to kMaxMMADimSize.
-  // TODO(b/393299275): There is also a lower bound limit for Triton on what
-  // is accepted for dimension size (both contracting and free).
+  const bool is_cuda =
+      device_info.gpu_compute_capability().cuda_compute_capability() != nullptr;
   for (const TiledHloInstruction* inst : all_instructions) {
-    if (inst->hlo()->opcode() == HloOpcode::kDot ||
-        inst->hlo()->opcode() == HloOpcode::kScaledDot) {
-      for (const TiledHloInstruction* operand : inst->operands()) {
-        auto op_tile_sizes_or = operand->tile().GetStaticTileSizes();
-        if (!op_tile_sizes_or.ok()) {
-          return Decision(op_tile_sizes_or.status());
-        }
-        llvm::SmallVector<int64_t> op_tile_sizes = std::move(*op_tile_sizes_or);
+    if (inst->hlo()->opcode() != HloOpcode::kDot &&
+        inst->hlo()->opcode() != HloOpcode::kScaledDot) {
+      continue;
+    }
+    const DotDimensionNumbers& dim_numbers =
+        inst->hlo()->dot_dimension_numbers();
+    const bool has_contracting_dim =
+        !dim_numbers.lhs_contracting_dimensions().empty() &&
+        !dim_numbers.rhs_contracting_dimensions().empty();
+    const int64_t num_operands = inst->operands().size();
+    for (int64_t operand_index = 0; operand_index < num_operands;
+         ++operand_index) {
+      const TiledHloInstruction* operand = inst->operands()[operand_index];
+      auto op_tile_sizes_or = operand->tile().GetStaticTileSizes();
+      if (!op_tile_sizes_or.ok()) {
+        return Decision(op_tile_sizes_or.status());
+      }
+      llvm::SmallVector<int64_t> op_tile_sizes = std::move(*op_tile_sizes_or);
 
-        for (int64_t size : op_tile_sizes) {
-          if (size > kMaxMMADimSize) {
-            return Decision::Forbid(absl::StrCat(
-                "Dot operand instruction ", operand->hlo()->name(),
-                " has a tile size of ", size,
-                ", which exceeds the maximum MMA dimension size of ",
-                kMaxMMADimSize, "."));
-          }
+      for (int64_t size : op_tile_sizes) {
+        if (size > kMaxMMADimSize) {
+          return Decision::Forbid(
+              absl::StrCat("Dot operand instruction ", operand->hlo()->name(),
+                           " has a tile size of ", size,
+                           ", which exceeds the maximum MMA dimension size of ",
+                           kMaxMMADimSize, "."));
+        }
+      }
+
+      // Only the matrix operands participate in the MMA. Dots without a
+      // contracting dimension only get the max-MMA check.
+      if (!is_cuda || operand_index >= 2 || !has_contracting_dim) {
+        continue;
+      }
+      const PrimitiveType element_type = operand->hlo()->shape().element_type();
+      if (primitive_util::BitWidth(element_type) != 8) {
+        continue;
+      }
+      const auto& contracting_dims =
+          operand_index == 0 ? dim_numbers.lhs_contracting_dimensions()
+                             : dim_numbers.rhs_contracting_dimensions();
+      for (int64_t contracting_dim : contracting_dims) {
+        if (contracting_dim < 0 ||
+            contracting_dim >= static_cast<int64_t>(op_tile_sizes.size())) {
+          return Decision::Forbid(
+              absl::StrCat("Dot operand instruction ", operand->hlo()->name(),
+                           " has contracting dimension ", contracting_dim,
+                           " but only ", op_tile_sizes.size(), " tile sizes."));
+        }
+        const int64_t contracting_tile_size = op_tile_sizes[contracting_dim];
+        if (contracting_tile_size < kMinEightBitDotContractingTileSize) {
+          return Decision::Forbid(absl::StrCat(
+              "Dot operand instruction ", operand->hlo()->name(),
+              " has a contracting dimension tile size of ",
+              contracting_tile_size, ", but Triton requires at least ",
+              kMinEightBitDotContractingTileSize,
+              " contracting elements for 8-bit dot operands on CUDA."));
         }
       }
     }
@@ -255,11 +298,29 @@ Decision VerifySubsetOfTritonConstraints(
   auto dimensions = tiling_space.dimensions();
 
   // Hardware MMA limits for Dot / ScaledDot instructions.
-  // TODO(b/393299275): There is also a lower bound limit for Triton on what
-  // is accepted for dimension size (both contracting and free).
+  const bool is_cuda =
+      device_info.gpu_compute_capability().cuda_compute_capability() != nullptr;
   for (const auto& [idx, dim] : llvm::enumerate(dimensions)) {
     if (dim.hlo != nullptr && (dim.hlo->opcode() == HloOpcode::kDot ||
                                dim.hlo->opcode() == HloOpcode::kScaledDot)) {
+      if (is_cuda && dim.type == TilingSpace::DimensionSemantics::kSequential &&
+          padded_tile_sizes[idx] < kMinEightBitDotContractingTileSize) {
+        if (dim.hlo->operand_count() < 2) {
+          continue;
+        }
+        const bool has_8bit_matrix_operand =
+            primitive_util::BitWidth(
+                dim.hlo->operand(0)->shape().element_type()) == 8 ||
+            primitive_util::BitWidth(
+                dim.hlo->operand(1)->shape().element_type()) == 8;
+        if (has_8bit_matrix_operand) {
+          return Decision::Forbid(absl::StrCat(
+              "Tile size ", padded_tile_sizes[idx],
+              " for contracting dimension ", idx, " of ", dim.hlo->name(),
+              " is below the minimum of ", kMinEightBitDotContractingTileSize,
+              " contracting elements for 8-bit dot operands on CUDA."));
+        }
+      }
       if (padded_tile_sizes[idx] > kMaxMMADimSize) {
         return Decision::Forbid(absl::StrCat(
             "Tile size ", padded_tile_sizes[idx], " for dimension ", idx,

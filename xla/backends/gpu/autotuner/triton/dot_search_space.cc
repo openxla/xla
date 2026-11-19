@@ -219,7 +219,12 @@ std::vector<TritonGemmConfig> TritonDotFusionSearchSpace::OptimizeConfigSet(
                  "sufficiently match the hints. Maybe the hints set does "
                  "not contain a good representative set of valid configs? "
                  "Working around this by using the full hints set instead.";
-    return std::vector<TritonGemmConfig>(hints.begin(), hints.end());
+    std::vector<TritonGemmConfig> fallback_hints(hints.begin(), hints.end());
+    for (TritonGemmConfig& hint : fallback_hints) {
+      // Keep the fallback compilable by respecting the target minimum.
+      hint.block_k = std::max(hint.block_k, min_contracting_tile_size_);
+    }
+    return fallback_hints;
   }
   return result_configs;
 }
@@ -424,6 +429,17 @@ int TritonDotFusionSearchSpace::GetMinContractingTileSize() const {
   /// TODO: b/395572776 - Triton currently requires at least 16 elements, but we
   // should be able to relax this and remove this limit here.
   constexpr int kTritonLowerLimit = 16;
+  // NVIDIA 8-bit MMA instructions have K=32; the formula above yields 16 for
+  // 8-bit operands.
+  constexpr int kEightBitContractingTileSize = 32;
+
+  const bool is_cuda =
+      device_description_.gpu_compute_capability().cuda_compute_capability() !=
+      nullptr;
+  if (is_cuda && primitive_util::BitWidth(operand_type_) == 8) {
+    return kEightBitContractingTileSize;
+  }
+
   const int min_contracting_tile_size =
       std::max(kMmaContractingBitwidth / operand_bitwidth_, kTritonLowerLimit);
   VLOG(5) << "Computing min_contracting_tile_size: Based on bitwidth of "

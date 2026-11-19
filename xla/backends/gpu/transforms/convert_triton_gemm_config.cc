@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -129,6 +130,11 @@ class ConvertTritonGemmConfigVisitor : public DfsHloRewriteVisitor {
       return absl::OkStatus();
     }
 
+    // Validate the config before mutating the fusion.
+    ABSL_ASSIGN_OR_RETURN(BlockLevelParameters block_level_parameters,
+                          FindBlockLevelParameters(dot, config, mlir_context_,
+                                                   device_description_));
+
     // Annotate the dot with the contraction tile size.
     ABSL_ASSIGN_OR_RETURN(xla::xtile::Tile tile_sizes,
                           dot->backend_config<xla::xtile::Tile>());
@@ -142,10 +148,6 @@ class ConvertTritonGemmConfigVisitor : public DfsHloRewriteVisitor {
         *gpu_config.mutable_fusion_backend_config();
     backend_config.clear_triton_gemm_config();
     backend_config.set_kind(kTritonNestedGemmFusionKind);
-
-    ABSL_ASSIGN_OR_RETURN(BlockLevelParameters block_level_parameters,
-                          FindBlockLevelParameters(dot, config, mlir_context_,
-                                                   device_description_));
 
     *backend_config.mutable_block_level_fusion_config() =
         block_level_parameters.ToBlockLevelFusionConfig();
@@ -235,6 +237,7 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
   llvm::SmallVector<int64_t> parallel_tile_sizes = with_leading_ones(root_rank);
   absl::c_sort(parallel_tile_sizes);
 
+  std::string last_verification_error;
   do {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<TilingSpace> ts,
                           TilingSpace::Create(fusion_adaptor, mlir_context));
@@ -270,6 +273,7 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
     Decision verification_status =
         VerifyTritonConstraints(*tiled_computation, device_description);
     if (!verification_status) {
+      last_verification_error = verification_status.Explain();
       VLOG(8) << "Candidate tiling violates Triton constraints: "
               << verification_status.Explain();
       continue;
@@ -314,6 +318,12 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
     return params;
   } while (absl::c_next_permutation(parallel_tile_sizes));
 
+  if (!last_verification_error.empty()) {
+    return absl::InternalError(
+        absl::StrCat("Couldn't find output tile sizes that satisfy TilingSpace "
+                     "constraints: ",
+                     last_verification_error));
+  }
   return absl::InternalError(
       "Couldn't find output tile sizes that satisfy TilingSpace constraints");
 }

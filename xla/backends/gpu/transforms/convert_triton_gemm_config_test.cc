@@ -19,6 +19,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <string>
 
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
@@ -38,6 +39,8 @@ limitations under the License.
 #include "xla/xla.pb.h"
 
 using ::absl_testing::IsOkAndHolds;
+using ::absl_testing::StatusIs;
+using ::testing::HasSubstr;
 
 namespace xla::gpu {
 namespace {
@@ -318,6 +321,71 @@ ENTRY entry {
   EXPECT_TRUE(*RunFileCheck(module->ToString(), R"(
     CHECK: "output_tiles":[{"sizes":["256"]}]
 )"));
+}
+
+TEST_F(ConvertTritonGemmConfigTest, Int8DotRejectsContractingTileBelow32) {
+  absl::string_view hlo = R"(
+dot {
+  lhs = s8[4,16] parameter(0)
+  rhs = s8[16,32768] parameter(1)
+  ROOT dot = s32[4,32768] dot(lhs, rhs),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY entry {
+  p0 = s8[4,16] parameter(0)
+  p1 = s8[16,32768] parameter(1)
+  ROOT fusion = s32[4,32768] fusion(p0, p1), kind=kCustom, calls=dot,
+    backend_config={"fusion_backend_config": {
+      "kind":"__triton_gemm", "triton_gemm_config": {
+        "block_m":"16", "block_n":"16", "block_k":"16",
+        "num_stages":"1", "num_warps":"2", "num_ctas":"1"
+      }
+    }}
+})";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hlo));
+  std::string module_string = module->ToString();
+  EXPECT_THAT(ConvertTritonGemmConfig(device_description_, &mlir_context_)
+                  .Run(module.get()),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("requires at least 32 contracting elements "
+                                 "for 8-bit dot operands on CUDA")));
+  // The config is validated before the fusion is mutated, so a rejected config
+  // must leave the module unchanged.
+  EXPECT_EQ(module->ToString(), module_string);
+}
+
+TEST_F(ConvertTritonGemmConfigTest, Int8DotWithK16AcceptsK32Tile) {
+  absl::string_view hlo = R"(
+dot {
+  lhs = s8[4,16] parameter(0)
+  rhs = s8[16,32768] parameter(1)
+  ROOT dot = s32[4,32768] dot(lhs, rhs),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY entry {
+  p0 = s8[4,16] parameter(0)
+  p1 = s8[16,32768] parameter(1)
+  ROOT fusion = s32[4,32768] fusion(p0, p1), kind=kCustom, calls=dot,
+    backend_config={"fusion_backend_config": {
+      "kind":"__triton_gemm", "triton_gemm_config": {
+        "block_m":"16", "block_n":"16", "block_k":"32",
+        "num_stages":"1", "num_warps":"2", "num_ctas":"1"
+      }
+    }}
+})";
+
+  std::unique_ptr<VerifiedHloModule> module = RunConvertTritonGemmConfig(hlo);
+  EXPECT_TRUE(*RunFileCheck(module->ToString(), R"(
+    CHECK: ROOT {{.*}} = s32[4,32768]{1,0} dot(
+    CHECK-SAME: backend_config={"sizes":["32"]}
+    CHECK: ENTRY
+    CHECK: ROOT{{.*}}fusion(
+    CHECK-SAME: "block_level_fusion_config"
+  )"));
 }
 
 }  // namespace
