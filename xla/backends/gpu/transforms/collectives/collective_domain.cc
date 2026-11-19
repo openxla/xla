@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/side_effect_util.h"
 #include "xla/util.h"
 
@@ -86,32 +87,31 @@ JoinCollectiveCommunicationDomains(CollectiveCommunicationDomain lhs,
 
 bool SupportsCollectiveCommunicationDomain(const HloInstruction& instruction) {
   const HloInstruction& canonical = CanonicalAsyncStart(instruction);
-  if (&canonical != &instruction) {
-    return SupportsCollectiveCommunicationDomain(canonical);
-  }
-
-  if (hlo_query::IsCollectiveCommunicationOp(instruction.opcode())) {
+  if (hlo_query::IsCollectiveCommunicationOp(canonical.opcode()) ||
+      IsTritonCollectiveFusion(canonical) ||
+      IsGpuAsyncCollectiveStartOp(&canonical)) {
     return true;
   }
-  if (HloPredicateIsOp<HloOpcode::kAsyncStart>(&instruction)) {
-    return hlo_query::IsCollectiveCommunicationOp(
-               instruction.async_wrapped_opcode()) ||
-           instruction.has_frontend_attribute(kCollectiveGroupMarkerAttr);
-  }
-  return false;
+  return HloPredicateIsOp<HloOpcode::kAsyncStart>(&canonical) &&
+         canonical.has_frontend_attribute(kCollectiveGroupMarkerAttr);
 }
 
 absl::StatusOr<CollectiveCommunicationDomain> GetCollectiveCommunicationDomain(
     const HloInstruction& instruction) {
   const HloInstruction& canonical = CanonicalAsyncStart(instruction);
-  absl::StatusOr<GpuBackendConfig> config =
-      canonical.backend_config<GpuBackendConfig>();
-  if (!config.ok()) {
-    return config.status();
+  ABSL_ASSIGN_OR_RETURN(GpuBackendConfig config,
+                        canonical.backend_config<GpuBackendConfig>());
+  ABSL_ASSIGN_OR_RETURN(
+      CollectiveCommunicationDomain domain,
+      JoinCollectiveCommunicationDomains(
+          kUnspecifiedCollectiveDomain,
+          config.collective_backend_config().communication_domain()));
+  if (const HloInstruction* hero = GetTritonCollectiveHero(canonical)) {
+    ABSL_ASSIGN_OR_RETURN(CollectiveCommunicationDomain hero_domain,
+                          GetCollectiveCommunicationDomain(*hero));
+    return JoinCollectiveCommunicationDomains(domain, hero_domain);
   }
-  return JoinCollectiveCommunicationDomains(
-      kUnspecifiedCollectiveDomain,
-      config->collective_backend_config().communication_domain());
+  return domain;
 }
 
 }  // namespace xla::gpu
