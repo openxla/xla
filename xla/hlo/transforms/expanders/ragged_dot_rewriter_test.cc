@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/decision.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
@@ -90,7 +91,7 @@ TEST_F(RaggedDotRewriterTest, DontRewriteIfUsingRaggedDotFusion) {
   ASSERT_OK_AND_ASSIGN(
       bool changed,
       RaggedDotRewriter(GetCudaComputeCapability(),
-                        kMinCudnnVersionForRaggedDotFusion,
+                        gpu::kMinCudnnVersionForRaggedDotFusion,
                         se::SemanticVersion{0, 0, 0},
                         [](const HloInstruction*) { return Decision::Allow(); })
           .Run(module.get()));
@@ -116,10 +117,10 @@ TEST_F(RaggedDotRewriterTest, RewriteIfNoCudnnSupportCallback) {
       .mutable_debug_options()
       .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
   // Without a support callback nothing vouches for cuDNN, so expand.
-  ASSERT_OK_AND_ASSIGN(bool changed,
-                       RaggedDotRewriter(GetCudaComputeCapability(),
-                                         kMinCudnnVersionForRaggedDotFusion)
-                           .Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RaggedDotRewriter(GetCudaComputeCapability(),
+                                      gpu::kMinCudnnVersionForRaggedDotFusion)
+                        .Run(module.get()));
   EXPECT_TRUE(changed);
 }
 
@@ -149,7 +150,7 @@ TEST_F(RaggedDotRewriterTest, RewriteIfPreAmpereForRaggedDotFusion) {
       bool changed,
       RaggedDotRewriter(
           se::CudaComputeCapability{se::CudaComputeCapability::kVolta, 0},
-          kMinCudnnVersionForRaggedDotFusion, se::SemanticVersion{0, 0, 0},
+          gpu::kMinCudnnVersionForRaggedDotFusion, se::SemanticVersion{0, 0, 0},
           [&](const HloInstruction*) {
             ++calls;
             return Decision::Allow();
@@ -214,8 +215,8 @@ TEST_F(RaggedDotRewriterTest, RaggedDotWgradFusionGate) {
   };
   const TestCase cases[] = {
       {se::CudaComputeCapability::Hopper(),
-       kMinCudnnVersionForRaggedDotWgradFusion,
-       kMinCudaToolkitVersionForRaggedDotWgradFusion, false},
+       gpu::kMinCudnnVersionForRaggedDotWgradFusion,
+       gpu::kMinCudaToolkitVersionForRaggedDotWgradFusion, false},
       {se::CudaComputeCapability::Blackwell(),
        se::dnn::VersionInfo{9, 25, 1},
        {13, 3, 0},
@@ -238,7 +239,7 @@ TEST_F(RaggedDotRewriterTest, RaggedDotWgradFusionGate) {
        true},
   };
   for (const TestCase& tc : cases) {
-    EXPECT_EQ(SupportsCudnnRaggedDotWgrad(tc.cc, tc.cudnn, tc.toolkit),
+    EXPECT_EQ(gpu::SupportsCudnnRaggedDotWgrad(tc.cc, tc.cudnn, tc.toolkit),
               !tc.expected_changed);
     ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                          ParseAndReturnVerifiedModule(kWgradModule));
@@ -253,7 +254,7 @@ TEST_F(RaggedDotRewriterTest, RaggedDotWgradFusionGate) {
                              .Run(module.get()));
     EXPECT_EQ(changed, tc.expected_changed);
   }
-  EXPECT_FALSE(SupportsCudnnRaggedDotWgrad(
+  EXPECT_FALSE(gpu::SupportsCudnnRaggedDotWgrad(
       GetRocmComputeCapability(), se::dnn::VersionInfo{9, 25, 1}, {13, 3, 0}));
 }
 
@@ -280,8 +281,8 @@ TEST_F(RaggedDotRewriterTest, CudnnSupportCallbackDecidesFusionOrExpansion) {
     ASSERT_OK_AND_ASSIGN(
         bool changed,
         RaggedDotRewriter(GetCudaComputeCapability(),
-                          kMinCudnnVersionForRaggedDotFusion,
-                          kMinCudaToolkitVersionForRaggedDotWgradFusion,
+                          gpu::kMinCudnnVersionForRaggedDotFusion,
+                          gpu::kMinCudaToolkitVersionForRaggedDotWgradFusion,
                           [&](const HloInstruction* ragged_dot) {
                             ++calls;
                             return Decision(cudnn_supported, "unsupported");
@@ -317,8 +318,8 @@ TEST_F(RaggedDotRewriterTest, ExpandsWhenBinaryLibrariesDisabled) {
   ASSERT_OK_AND_ASSIGN(
       bool changed,
       RaggedDotRewriter(GetCudaComputeCapability(),
-                        kMinCudnnVersionForRaggedDotFusion,
-                        kMinCudaToolkitVersionForRaggedDotWgradFusion,
+                        gpu::kMinCudnnVersionForRaggedDotFusion,
+                        gpu::kMinCudaToolkitVersionForRaggedDotWgradFusion,
                         [](const HloInstruction*) { return Decision::Allow(); })
           .Run(module.get()));
   EXPECT_TRUE(changed);
