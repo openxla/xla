@@ -125,6 +125,12 @@ absl::StatusOr<bool> WhileLoopConstantSinking::TrySinkingConstantsIntoWhileLoop(
       }
     }
 
+    if (should_sink_ && !should_sink_(invariant_value, *invariant_body_gte)) {
+      VLOG(2) << "Not sinking " << invariant_value.ToShortString() << " into "
+              << while_instr->name() << ": rejected by the should-sink hook";
+      continue;
+    }
+
     // Sink into the while_body.
     // Should have at least one user that's not while_body_root.
     if (invariant_body_gte->user_count() > 1) {

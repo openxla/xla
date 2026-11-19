@@ -16,9 +16,13 @@ limitations under the License.
 #ifndef XLA_HLO_TRANSFORMS_SIMPLIFIERS_WHILE_LOOP_CONSTANT_SINKING_H_
 #define XLA_HLO_TRANSFORMS_SIMPLIFIERS_WHILE_LOOP_CONSTANT_SINKING_H_
 
+#include <functional>
+#include <utility>
+
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 
@@ -50,10 +54,21 @@ namespace xla {
 //
 class WhileLoopConstantSinking : public HloModulePass {
  public:
+  // Decides whether a candidate is sunk. `init_value` is the loop-invariant
+  // constant (or broadcast of a constant) in the while init tuple, and
+  // `body_gte` is the get-tuple-element of the same index in the while body.
+  // Returning false leaves that element of the loop state as it is, in both the
+  // body and the condition.
+  using ShouldSinkFn = std::function<bool(const HloInstruction& init_value,
+                                          const HloInstruction& body_gte)>;
+
+  // If `should_sink` is null, every candidate is sunk.
   explicit WhileLoopConstantSinking(bool sink_broadcast_of_constants = false,
-                                    bool sink_only_scalar_constants = false)
+                                    bool sink_only_scalar_constants = false,
+                                    ShouldSinkFn should_sink = nullptr)
       : sink_broadcast_of_constants_(sink_broadcast_of_constants),
-        sink_only_scalar_constants_(sink_only_scalar_constants) {}
+        sink_only_scalar_constants_(sink_only_scalar_constants),
+        should_sink_(std::move(should_sink)) {}
 
   ~WhileLoopConstantSinking() override = default;
 
@@ -71,6 +86,7 @@ class WhileLoopConstantSinking : public HloModulePass {
 
   const bool sink_broadcast_of_constants_;
   const bool sink_only_scalar_constants_;
+  const ShouldSinkFn should_sink_;
 };
 }  // namespace xla
 

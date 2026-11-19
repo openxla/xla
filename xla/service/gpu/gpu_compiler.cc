@@ -43,7 +43,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/optional_ref.h"
-#include "google/protobuf/text_format.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/DataLayout.h"
@@ -57,15 +56,9 @@ limitations under the License.
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
+#include "google/protobuf/text_format.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/numbers.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/platform.h"
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/autotuner/autotuning.pb.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
@@ -176,6 +169,7 @@ limitations under the License.
 #include "xla/ffi/ffi_registry.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -361,6 +355,13 @@ limitations under the License.
 #include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace gpu {
@@ -810,6 +811,72 @@ Decision IsScaledDotSupportedByBackend(const HloInstruction* instr,
       absl::StrCat("Triton: ", triton.Explain(), "; cuDNN: ", cudnn.Explain()));
 }
 
+// Whether no use of `instr`, other than operand `skip_index` of `skip_user`,
+// could fuse a broadcast in its place: every use is an operand that its user
+// updates in place (e.g. operand 0 of a dynamic-update-slice or a scatter), an
+// operand of a custom call, or an operand of a dot or convolution. Whether a
+// dot becomes a library call (cuBLAS/hipBLASLt), which reads a materialized
+// buffer, or a GEMM fusion is only decided later, so a dot operand does not
+// count as a fusing use. Bitcasts, reshapes, transposes, copies and converts
+// are looked through, since the simplifier folds them into a sunk broadcast.
+bool NoUseCanFuseBroadcast(const HloInstruction* instr,
+                           const HloInstruction* skip_user,
+                           int64_t skip_index) {
+  for (const HloInstruction* user : instr->users()) {
+    switch (user->opcode()) {
+      case HloOpcode::kBitcast:
+      case HloOpcode::kReshape:
+      case HloOpcode::kTranspose:
+      case HloOpcode::kCopy:
+      case HloOpcode::kConvert:
+        if (!NoUseCanFuseBroadcast(user, /*skip_user=*/nullptr,
+                                   /*skip_index=*/-1)) {
+          return false;
+        }
+        continue;
+      case HloOpcode::kCustomCall:
+      case HloOpcode::kDot:
+      case HloOpcode::kScaledDot:
+      case HloOpcode::kRaggedDot:
+      case HloOpcode::kConvolution:
+        continue;
+      default:
+        break;
+    }
+    const auto in_place_pairs =
+        HloDataflowAnalysis::GetInPlaceInputOutputPairs(user);
+    for (int64_t i = 0, e = user->operand_count(); i < e; ++i) {
+      if (user->operand(i) != instr || (user == skip_user && i == skip_index)) {
+        continue;
+      }
+      const bool in_place =
+          absl::c_any_of(in_place_pairs, [&](const auto& pair) {
+            return pair.first.operand_number == i &&
+                   pair.first.operand_index.empty();
+          });
+      if (!in_place) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// WhileLoopConstantSinking hook: keeps a broadcast of a constant in the loop
+// state when no use of it in the body can fuse it. Sinking it would only add a
+// broadcast kernel to every iteration, where a custom call or a GEMM library
+// call reads the carried buffer as is and copy insertion gives an in-place
+// user a copy of the same size.
+bool ShouldSinkIntoWhileLoop(const HloInstruction& init_value,
+                             const HloInstruction& body_gte) {
+  if (init_value.opcode() != HloOpcode::kBroadcast ||
+      body_gte.user_count() <= 1) {
+    return true;
+  }
+  return !NoUseCanFuseBroadcast(
+      &body_gte, body_gte.parent()->root_instruction(), body_gte.tuple_index());
+}
+
 absl::Status RunOptimizationPasses(
     const GpuCompiler& compiler, HloModule* hlo_module,
     const GpuTargetConfig& gpu_target_config,
@@ -1032,7 +1099,14 @@ absl::Status RunOptimizationPasses(
                                              gpu_version);
     pipeline.AddPass<SortSimplifier>();
     pipeline.AddPass<TupleSimplifier>();
-    pipeline.AddPass<WhileLoopConstantSinking>();
+    if (debug_options
+            .xla_gpu_experimental_while_loop_sink_broadcast_constants()) {
+      pipeline.AddPass<WhileLoopConstantSinking>(
+          /*sink_broadcast_of_constants=*/true,
+          /*sink_only_scalar_constants=*/false, ShouldSinkIntoWhileLoop);
+    } else {
+      pipeline.AddPass<WhileLoopConstantSinking>();
+    }
     pipeline.AddPass<WhileLoopSimplifier>();
     pipeline.AddPass<SliceSinker>();
 

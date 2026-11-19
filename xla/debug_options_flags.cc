@@ -622,6 +622,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_enable_tensor_ir(false);
   opts.set_xla_gpu_experimental_enable_triton_scan(true);
   opts.set_xla_gpu_experimental_multi_phase_fusion(false);
+  opts.set_xla_gpu_experimental_while_loop_sink_broadcast_constants(false);
   opts.set_xla_gpu_async_copy_min_bytes(-1);
 
   // Disable float checks.
@@ -4060,6 +4061,16 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         "fusions are emitted as a sequence of phases of a single kernel. "
         "Phases exchange data via HBM or caches and synchronize with block "
         "cluster barriers."));
+    flag_list->push_back(tsl::Flag(
+        "xla_gpu_experimental_while_loop_sink_broadcast_constants",
+        bool_setter_for(
+            &DebugOptions::
+                set_xla_gpu_experimental_while_loop_sink_broadcast_constants),
+        debug_options
+            ->xla_gpu_experimental_while_loop_sink_broadcast_constants(),
+        "If true, WhileLoopConstantSinking in the GPU optimization pipeline "
+        "also sinks loop-invariant broadcasts of constants into while loops, "
+        "unless no use in the loop body can fuse the broadcast."));
     flag_list->push_back(tsl::Flag(
         "xla_gpu_experimental_ragged_all_to_all_use_device_kernel",
         bool_setter_for(
