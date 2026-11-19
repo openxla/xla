@@ -1295,9 +1295,7 @@ cc_library(
         "no-oneapi",
         "rocm-only",
     ],
-    visibility = [
-        "//xla/backends/gpu/runtime:__subpackages__",
-    ],
+    visibility = ["//visibility:private"],
     deps = [
         ":rccl_errors",
         "//xla:util",
