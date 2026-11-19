@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/profile_guided_latency_estimator.h"
+#include "xla/hlo/transforms/hlo_scheduling/profile_guided_latency_estimator.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -38,7 +38,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/service/latency_hiding_scheduler.h"
+#include "xla/hlo/transforms/hlo_scheduling/latency_hiding_scheduler.h"
 
 namespace xla {
 
