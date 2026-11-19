@@ -1085,13 +1085,14 @@ std::string GetNonDefaultDebugOptions(const DebugOptions& debug_options) {
       continue;
     }
 
-    // For fields with explicit presence, an explicitly set value that equals
-    // the value of an unset default is still non-default: unset can mean
-    // "automatic", which differs from an explicit value.
-    const bool presence_differs =
-        field->has_presence() &&
-        reflection->HasField(debug_options, field) !=
-            reflection->HasField(default_options, field);
+    // For fields with explicit presence, an explicitly set value where the
+    // default is unset is still non-default: unset can mean "automatic", which
+    // differs from an explicit value. The reverse (unset in `debug_options`,
+    // set in the default) is not reported, so partially populated protos do
+    // not spuriously dump default-valued fields.
+    const bool presence_differs = field->has_presence() &&
+                                  reflection->HasField(debug_options, field) &&
+                                  !reflection->HasField(default_options, field);
     if (presence_differs ||
         GetValueAsString(reflection, debug_options, field) !=
             GetValueAsString(reflection, default_options, field)) {

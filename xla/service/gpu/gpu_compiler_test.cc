@@ -2010,8 +2010,9 @@ ENTRY main {
       debug_options.set_xla_gpu_command_buffer_keep_collectives_out_of_outputs(
           *keep_collectives_out_of_outputs);
     } else {
-      debug_options
-          .clear_xla_gpu_command_buffer_keep_collectives_out_of_outputs();
+      EXPECT_FALSE(
+          debug_options
+              .has_xla_gpu_command_buffer_keep_collectives_out_of_outputs());
     }
 
     Compiler::CompileOptions compile_options;

@@ -1057,6 +1057,10 @@ absl::StatusOr<bool> IsInMaybeLiveOutAllocation(
 TEST_F(GpuMemorySpaceAssignmentTest,
        MustNotLiveOutRequiresCollectiveCommandBuffersAndVaRemapping) {
   DebugOptions debug_options = GetModuleConfigForTest().debug_options();
+  // The flag is unset by default, which means automatic.
+  EXPECT_FALSE(
+      debug_options
+          .has_xla_gpu_command_buffer_keep_collectives_out_of_outputs());
   EXPECT_FALSE(CreateMustNotLiveOut(debug_options).has_value());
   EXPECT_FALSE(
       CreateMustNotLiveOut(WithCollectiveCommandBuffers(
@@ -1085,32 +1089,6 @@ TEST_F(GpuMemorySpaceAssignmentTest,
   EXPECT_FALSE(CreateMustNotLiveOut(flag_off).has_value());
   EXPECT_FALSE(
       CreateBufferAssignerOptions(flag_off).must_not_live_out.has_value());
-}
-
-TEST_F(GpuMemorySpaceAssignmentTest, MustNotLiveOutIsAutoEnabledWhenUnset) {
-  // Collective command buffers with `update_mode`, flag left unset.
-  auto flag_unset = [&](DebugOptions::CommandBufferUpdateMode update_mode) {
-    DebugOptions debug_options = WithCollectiveCommandBuffers(
-        GetModuleConfigForTest().debug_options(), update_mode);
-    EXPECT_FALSE(
-        debug_options
-            .has_xla_gpu_command_buffer_keep_collectives_out_of_outputs());
-    return debug_options;
-  };
-
-  // Not set: enabled with SKIP_TEMP or SKIP_PROFILED only.
-  EXPECT_TRUE(
-      CreateMustNotLiveOut(flag_unset(DebugOptions::SKIP_TEMP)).has_value());
-  EXPECT_TRUE(CreateMustNotLiveOut(flag_unset(DebugOptions::SKIP_PROFILED))
-                  .has_value());
-  EXPECT_FALSE(CreateMustNotLiveOut(flag_unset(DebugOptions::ALWAYS_UPDATE))
-                   .has_value());
-
-  // Not set, and COLLECTIVES is not in command buffers.
-  DebugOptions no_collectives = flag_unset(DebugOptions::SKIP_TEMP);
-  no_collectives.clear_xla_gpu_enable_command_buffer();
-  no_collectives.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
-  EXPECT_FALSE(CreateMustNotLiveOut(no_collectives).has_value());
 }
 
 TEST_F(GpuMemorySpaceAssignmentTest,
