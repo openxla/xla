@@ -965,10 +965,11 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
           stablehlo::ConvertPrecisionConfig(&precision_config, builder_)));
       if (instruction->precision_config().algorithm() !=
           PrecisionConfig::ALG_UNSET) {
-        attributes.push_back(builder_->getNamedAttr(
-            "algorithm",
+        ABSL_ASSIGN_OR_RETURN(
+            mlir::stablehlo::DotAlgorithmAttr algorithm,
             stablehlo::ConvertDotAlgorithm(
-                instruction->precision_config().algorithm(), builder_)));
+                instruction->precision_config().algorithm(), builder_));
+        attributes.push_back(builder_->getNamedAttr("algorithm", algorithm));
       }
       // Consider consolidating DotOps together.
       if (DotIsDefault(instruction)) {

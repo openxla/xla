@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -169,17 +170,20 @@ absl::StatusOr<Value> ScaledDot(mlir::ImplicitLocOpBuilder& b,
 
 namespace {
 
-Value EmitStableHloDotAndAdd(mlir::ImplicitLocOpBuilder& b, Value lhs,
-                             Value rhs, Value acc, PrecisionSpec precision_spec,
-                             mlir::stablehlo::DotDimensionNumbersAttr dims) {
+absl::StatusOr<Value> EmitStableHloDotAndAdd(
+    mlir::ImplicitLocOpBuilder& b, Value lhs, Value rhs, Value acc,
+    PrecisionSpec precision_spec,
+    mlir::stablehlo::DotDimensionNumbersAttr dims) {
   auto precision_config = mlir::stablehlo::PrecisionConfigAttr::get(
       b.getContext(), {precision_spec.lhs_operand_precision,
                        precision_spec.rhs_operand_precision});
+  ABSL_ASSIGN_OR_RETURN(
+      mlir::stablehlo::DotAlgorithmAttr algorithm,
+      stablehlo::ConvertDotAlgorithm(precision_spec.algorithm, &b));
   auto dot = mlir::stablehlo::DotGeneralOp::create(
       b, acc.getType(), lhs, rhs, dims,
       /*precision_config=*/precision_config,
-      /*algorithm=*/
-      stablehlo::ConvertDotAlgorithm(precision_spec.algorithm, &b));
+      /*algorithm=*/algorithm);
 
   auto add_result =
       mlir::isa<mlir::IntegerType>(dot.getResult().getType().getElementType())
@@ -340,9 +344,11 @@ absl::StatusOr<Value> EmitSingleTileDot(mlir::ImplicitLocOpBuilder& b,
   mlir::stablehlo::DotDimensionNumbersAttr dot_dimension_numbers =
       xla::stablehlo::ConvertDotDimensionNumbers(dim_nums, &b);
 
-  Value result = EmitStableHloDotAndAdd(b, dot_operands.lhs, dot_operands.rhs,
-                                        dot_operands.accumulator,
-                                        precision_spec, dot_dimension_numbers);
+  ABSL_ASSIGN_OR_RETURN(
+      Value result,
+      EmitStableHloDotAndAdd(b, dot_operands.lhs, dot_operands.rhs,
+                             dot_operands.accumulator, precision_spec,
+                             dot_dimension_numbers));
 
   // TODO(b/393299275): once we've moved on from the legacy emitter, we should
   // make sure that this accumulator type is equal to the one derived here.

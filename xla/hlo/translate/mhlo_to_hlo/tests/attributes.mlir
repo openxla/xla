@@ -206,6 +206,30 @@ module @dot_algorithm_bf16_bf16_f32_x6 {
 
 // -----
 
+// CHECK-LABEL: HloModule dot_algorithm_bf16_bf16_f32_x9
+module @dot_algorithm_bf16_bf16_f32_x9 {
+  func.func @main(%arg0: tensor<2x2x2xf32>, %arg1: tensor<2x2x2xf32>) -> tensor<2x2x2xf32> {
+    // CHECK: %[[ARG0:.+]] = f32[2,2,2] parameter(0)
+    // CHECK: %[[ARG1:.+]] = f32[2,2,2] parameter(1)
+    // CHECK: f32[2,2,2] dot(%[[ARG0]], %[[ARG1]]), {{.*}}, algorithm=dot_bf16_bf16_f32_x9
+    %0 = "mhlo.dot_general"(%arg0, %arg1) <{
+      dot_dimension_numbers = #mhlo.dot<lhs_batching_dimensions = [0], rhs_batching_dimensions = [0], lhs_contracting_dimensions = [2], rhs_contracting_dimensions = [1]>,
+      precision_config = [#mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>],
+      algorithm = #mhlo.dot_algorithm<
+        lhs_precision_type = bf16,
+        rhs_precision_type = bf16,
+        accumulation_type = f32,
+        lhs_component_count = 1,
+        rhs_component_count = 1,
+        num_primitive_operations = 9,
+        allow_imprecise_accumulation = false
+      >
+    }> : (tensor<2x2x2xf32>, tensor<2x2x2xf32>) -> tensor<2x2x2xf32>  return %0 : tensor<2x2x2xf32>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: HloModule dot_algorithm_tf32_tf32_f32
 module @dot_algorithm_tf32_tf32_f32 {
   func.func @main(%arg0: tensor<2x2x2xf32>, %arg1: tensor<2x2x2xf32>) -> tensor<2x2x2xf32> {
