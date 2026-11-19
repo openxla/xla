@@ -1161,6 +1161,12 @@ message DebugOptions {
   // NCCL_WIN_DEFAULT.
   optional bool xla_gpu_experimental_nccl_window_symmetric = 561;
 
+  // Cache NCCL symmetric windows on the GPU communicator, registered once for
+  // the whole underlying device allocation, instead of per executable and per
+  // buffer. All executables in a process must use the same value (for loaded
+  // executables it is taken from the load-time DebugOptions).
+  optional bool xla_gpu_experimental_cache_nccl_window_in_communicator = 587;
+
   // For sub-byte dot operands, layout them along contracting dimensions.
   optional bool xla_gpu_experimental_pack_dot_operands_along_k_dimension = 362;
 
@@ -2092,7 +2098,7 @@ message DebugOptions {
   // AOT forward-compatibility window for U64 segmented radix sort has elapsed.
   optional bool xla_gpu_experimental_enable_raft_u64_radix = 584;
 
-  // Next id: 587
+  // Next id: 588
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
