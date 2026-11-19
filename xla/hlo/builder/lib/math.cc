@@ -1219,10 +1219,11 @@ XlaOp Acosh(XlaOp x, const std::optional<ResultAccuracy>& result_accuracy,
     // TODO(jlebar): For now, we ignore the question of overflow if x is a
     // complex type, because we don't yet have exhaustive tests for complex trig
     // functions.
-    auto naive_result = Log(x + Sqrt((x + one) * (x - one)));
     if (primitive_util::IsComplexType(shape.element_type())) {
-      return naive_result;
+      return Log(x + Sqrt(x + one) * Sqrt(x - one));
     }
+    auto xm1 = x - one;
+    auto naive_result = Log1p(xm1 + Sqrt((x + one) * xm1));
     auto overflow_result = Log(x) + Log(ScalarLike(x, 2));
 
     auto sqrt_max_value = Sqrt(MaxFiniteValue(b, shape.element_type()));
