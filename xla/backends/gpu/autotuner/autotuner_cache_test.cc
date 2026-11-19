@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/autotuning/autotuner_cache.h"
+#include "xla/backends/gpu/autotuner/autotuner_cache.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -34,6 +34,7 @@ limitations under the License.
 #include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
+#include "xla/backends/gpu/autotuner/autotune_cache_key.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -41,7 +42,6 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/dump.h"
-#include "xla/service/gpu/autotuning/autotune_cache_key.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/platform.h"
