@@ -123,66 +123,17 @@ struct uint128 {
 };
 static_assert(sizeof(uint128) == 16, "uint128 should be 16 bytes in size");
 
-// Returns whether to use the `kind` interleave kernel for K = `k` and
-// `elem_size`-byte elements.
-//
-// Measured against the default kernel on 2026-10-11 with the
-// BM_TransposeSmallDim_* benchmarks in transpose_test.cc on AMD Milan, Intel
-// Sapphire Rapids and Arm Neoverse V2. K >= 8 was much slower on some of these.
-// K = 4 was faster only for interleave of 1- and 2-byte elements. Deinterleave
-// beyond the per-size K limits was slower on at least one platform. Among the
-// selected cases, the only slowdown was 16-byte interleave at K = 6 and 7 on
-// Sapphire Rapids (up to 6%).
-constexpr bool InterleaveKernelIsFaster(TransposePlan::InnerKernelKind kind,
-                                        int64_t k, int64_t elem_size) {
+// Returns whether to use the `kind` interleave/deinterleave kernel for `k` and
+// `elem_size`-byte elements instead of the default 2D transpose (see
+// `InterleaveKernelIsFaster` and `DeinterleaveKernelIsFaster` in
+// transpose_kernels.h). Among the selected cases, 16-byte interleave at k = 6
+// and 7 is up to 6% slower on some x86 CPUs.
+constexpr bool SmallDimKernelIsFaster(TransposePlan::InnerKernelKind kind,
+                                      int64_t k, int64_t elem_size) {
   if (kind == TransposePlan::InnerKernelKind::kInterleave) {
-    return k >= 2 && k < 8 && (k != 4 || elem_size <= 2);
+    return InterleaveKernelIsFaster(elem_size, k);
   }
-  int64_t max_k = 0;
-  switch (elem_size) {
-    case 1:
-    case 2:
-      max_k = 7;
-      break;
-    case 4:
-      max_k = 5;
-      break;
-    case 8:
-      max_k = 3;
-      break;
-  }
-  return k >= 2 && k != 4 && k <= max_k;
-}
-
-// Maps a runtime K to a compile-time constant for `fn`, instantiating `fn` only
-// for the K that InterleaveKernelIsFaster can select for `kind` and T, so
-// kernels that are never used are not compiled.
-template <typename T, TransposePlan::InnerKernelKind kind, typename Fn>
-TransposeOp::Fn WithInterleaveSize(int64_t k, Fn fn) {
-  const auto call = [&](auto const_k) -> TransposeOp::Fn {
-    if constexpr (InterleaveKernelIsFaster(kind, const_k, sizeof(T))) {
-      return fn(const_k);
-    } else {
-      LOG(FATAL) << "Unreachable: interleave kernel with K=" << k
-                 << " sizeof(T)=" << sizeof(T);
-    }
-  };
-  switch (k) {
-    case 2:
-      return call(std::integral_constant<int, 2>{});
-    case 3:
-      return call(std::integral_constant<int, 3>{});
-    case 4:
-      return call(std::integral_constant<int, 4>{});
-    case 5:
-      return call(std::integral_constant<int, 5>{});
-    case 6:
-      return call(std::integral_constant<int, 6>{});
-    case 7:
-      return call(std::integral_constant<int, 7>{});
-    default:
-      LOG(FATAL) << "Invalid interleave size " << k;
-  }
+  return DeinterleaveKernelIsFaster(elem_size, k);
 }
 
 // Operations that combine, offset, repeat, or allocate scratch memory for child
@@ -300,41 +251,6 @@ void OpScalarTranspose2D(const TransposeOp* __restrict op,
   }
 }
 
-// Interleaves `op->count` slices of `K` rows of `op->a_elems` elements of `T`
-// spaced `op->lda` bytes apart in `a + i*op->da` into contiguous runs of
-// `op->a_elems * K` elements in `b + i*op->db`, computing
-// `b[K * j + k] = a[k][j]`.
-template <typename T, int K>
-ABSL_ATTRIBUTE_FUNC_ALIGN(64)
-void OpInterleave(const TransposeOp* __restrict op, const char* __restrict a,
-                  char* __restrict b, char* __restrict /*scratch*/) {
-  const int64_t count = op->count;
-  const int64_t da = op->da;
-  const int64_t db = op->db;
-  const int64_t lda = op->lda;
-  const int a_elems = op->a_elems;
-  for (int64_t i = 0; i < count; ++i) {
-    InterleaveKernel<T, K>(a + i * da, lda, b + i * db, a_elems);
-  }
-}
-
-// Splits `op->count` contiguous runs of `op->b_elems * K` elements of `T` in
-// `a + i*op->da` into `K` rows of `op->b_elems` elements spaced `op->ldb` bytes
-// apart in `b + i*op->db`, computing `b[k][j] = a[K * j + k]`.
-template <typename T, int K>
-ABSL_ATTRIBUTE_FUNC_ALIGN(64)
-void OpDeinterleave(const TransposeOp* __restrict op, const char* __restrict a,
-                    char* __restrict b, char* __restrict /*scratch*/) {
-  const int64_t count = op->count;
-  const int64_t da = op->da;
-  const int64_t db = op->db;
-  const int64_t ldb = op->ldb;
-  const int b_elems = op->b_elems;
-  for (int64_t i = 0; i < count; ++i) {
-    DeinterleaveKernel<T, K>(a + i * da, b + i * db, ldb, b_elems);
-  }
-}
-
 // Copies `op->count` contiguous runs of `op->lda` bytes from `a + i*op->da` to
 // `b + i*op->db`.
 ABSL_ATTRIBUTE_FUNC_ALIGN(64)
@@ -439,9 +355,9 @@ void OpConvertEf57(const TransposeOp* __restrict op, const char* __restrict a,
 //     - `(16, 16)` -> `GetTransposeMacroKernelOp<4 | (4 << 16)>()`
 //     - `(2, 16)`  -> `OpScalarTranspose2D<uint32_t>` (smaller than 4)
 //   - `kind = kInterleave, interleave_size = 3`:
-//     - `(64, 3)`  -> `OpInterleave<uint32_t, 3>`
+//     - `(64, 3)`  -> `GetInterleaveOp(4, 3)`
 //   - `kind = kDeinterleave, interleave_size = 3`:
-//     - `(3, 64)`  -> `OpDeinterleave<uint32_t, 3>`
+//     - `(3, 64)`  -> `GetDeinterleaveOp(4, 3)`
 template <typename T>
 TransposeOp::Fn SelectTranspose2DOpTyped(TransposePlan::InnerKernelKind kind,
                                          int inner_block_elems,
@@ -449,17 +365,17 @@ TransposeOp::Fn SelectTranspose2DOpTyped(TransposePlan::InnerKernelKind kind,
                                          int b_elems) {
   if (kind == TransposePlan::InnerKernelKind::kInterleave) {
     DCHECK_EQ(b_elems, interleave_size);
-    return WithInterleaveSize<T, TransposePlan::InnerKernelKind::kInterleave>(
-        interleave_size, [](auto const_k) -> TransposeOp::Fn {
-          return &OpInterleave<T, const_k>;
-        });
+    TransposeOp::Fn fn = GetInterleaveOp(sizeof(T), interleave_size);
+    CHECK(fn != nullptr) << "Unsupported interleave kernel: elem_size="
+                         << sizeof(T) << " k=" << interleave_size;
+    return fn;
   }
   if (kind == TransposePlan::InnerKernelKind::kDeinterleave) {
     DCHECK_EQ(a_elems, interleave_size);
-    return WithInterleaveSize<T, TransposePlan::InnerKernelKind::kDeinterleave>(
-        interleave_size, [](auto const_k) -> TransposeOp::Fn {
-          return &OpDeinterleave<T, const_k>;
-        });
+    TransposeOp::Fn fn = GetDeinterleaveOp(sizeof(T), interleave_size);
+    CHECK(fn != nullptr) << "Unsupported deinterleave kernel: elem_size="
+                         << sizeof(T) << " k=" << interleave_size;
+    return fn;
   }
   DCHECK(kind == TransposePlan::InnerKernelKind::kDefault);
   if (inner_block_elems == 1 || a_elems < inner_block_elems ||
@@ -2043,8 +1959,7 @@ absl::Status TransposePlan::Initialize() {
       // The K-groups are back to back, so the small side is one contiguous run.
       const bool contiguous = group_stride == k * elem_size_in_bytes_;
       // Faster than the default kernel for this K and element size.
-      const bool faster =
-          InterleaveKernelIsFaster(kind, k, elem_size_in_bytes_);
+      const bool faster = SmallDimKernelIsFaster(kind, k, elem_size_in_bytes_);
       const bool large_side_is_long = large_size >= 8;
       return no_partial_tile && contiguous && faster && large_side_is_long;
     };
