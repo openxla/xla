@@ -365,12 +365,14 @@ TEST_F(CpuAotLoadExecutableTest, DoesNotEmbedHloProtoByDefault) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
                        std::move(*loaded).LoadExecutable());
   EXPECT_EQ(executable->hlo_proto(), nullptr);
+  EXPECT_EQ(executable->buffer_assignment_proto(), nullptr);
 }
 
 TEST_F(CpuAotLoadExecutableTest, DoesNotEmbedHloProtoWhenEmbedIrDisabled) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
                        LoadWithEmbedIr(/*embed_ir_in_executable=*/false));
   EXPECT_EQ(executable->hlo_proto(), nullptr);
+  EXPECT_EQ(executable->buffer_assignment_proto(), nullptr);
 }
 
 TEST_F(CpuAotLoadExecutableTest, EmbedsStrippedHloProtoWhenEmbedIrEnabled) {
@@ -381,6 +383,7 @@ TEST_F(CpuAotLoadExecutableTest, EmbedsStrippedHloProtoWhenEmbedIrEnabled) {
   ASSERT_NE(hlo_proto, nullptr);
   EXPECT_TRUE(hlo_proto->has_hlo_module());
   EXPECT_TRUE(hlo_proto->has_buffer_assignment());
+  EXPECT_NE(executable->buffer_assignment_proto(), nullptr);
 
   int num_literals = 0;
   for (const auto& computation : hlo_proto->hlo_module().computations()) {
