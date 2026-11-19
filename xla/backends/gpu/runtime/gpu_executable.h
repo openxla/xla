@@ -57,6 +57,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/hlo.pb.h"
+#include "xla/service/hlo_module_executable.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/service/stream_pool.h"
@@ -80,7 +81,7 @@ namespace gpu {
 // Launches the given GPU kernel via the StreamExecutor.
 //
 // This is an immutable data type after initialization, and thus thread safe.
-class GpuExecutable : public Executable {
+class GpuExecutable : public HloModuleExecutable {
  public:
   struct NumAdditionalStreams {
     int compute = 0;
