@@ -118,6 +118,17 @@ TEST(DumpTest, GetDumpSubdirPath) {
   EXPECT_THAT(tsl::Env::Default()->IsDirectory(dump_subdir), IsOk());
 }
 
+TEST(DumpTest, GetDumpSubdirPathUnsanitizedModuleName) {
+  const std::string temp_dir = tsl::testing::TmpDir();
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::string dump_subdir,
+      pjrt::GetDumpSubdirPath(temp_dir, "../../../unsafe_module/name", 0));
+  EXPECT_THAT(dump_subdir, HasSubstr(temp_dir));
+  EXPECT_THAT(dump_subdir, HasSubstr(".._.._.._unsafe_module_name"));
+  EXPECT_THAT(dump_subdir, ::testing::Not(HasSubstr("/unsafe_module/name")));
+  EXPECT_THAT(tsl::Env::Default()->IsDirectory(dump_subdir), IsOk());
+}
+
 TEST(DumpTest, GetDumpSubdirPathEmptyPath) {
   TF_ASSERT_OK_AND_ASSIGN(std::string dump_subdir,
                           pjrt::GetDumpSubdirPath("", "my_module", 0));
