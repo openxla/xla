@@ -138,6 +138,34 @@ func.func @main(%arg0: tensor<8xf32>, %arg1: tensor<f32>) -> tensor<f32> {
 
 // -----
 
+// Tests that the tuple and get-tuple-elements packing the operands of a
+// multi-operand all-gather, and the get-tuple-elements unpacking its results,
+// do not inherit its frontend_attributes.
+
+func.func @main(%arg0: tensor<8x2xf32>, %arg1: tensor<8x4xf32>) -> tensor<8x16xf32> {
+  %0:2 = "mhlo.all_gather"(%arg0, %arg1) {
+    all_gather_dim = 1 : i64,
+    channel_handle = #mhlo.channel_handle<handle = 1, type = 0>,
+    replica_groups = dense<[[0, 2, 4, 6], [1, 3, 5, 7]]> : tensor<2x4xi64>,
+    use_global_device_ids,
+    mhlo.frontend_attributes = {_xla_stream_annotation = "collective"}
+  } : (tensor<8x2xf32>, tensor<8x4xf32>) -> (tensor<8x8xf32>, tensor<8x16xf32>)
+  %1 = mhlo.add %0#1, %0#1 : tensor<8x16xf32>
+  func.return %1 : tensor<8x16xf32>
+}
+
+// CHECK:  ENTRY
+// CHECK-NOT:   frontend_attributes={
+// CHECK:       %[[ALL_GATHER:.*]] = (f32[8,8], f32[8,16]) all-gather
+// CHECK-SAME:  frontend_attributes={_xla_stream_annotation="collective"}
+// CHECK:       get-tuple-element(%[[ALL_GATHER]]), index=0
+// CHECK-NOT:   frontend_attributes={
+// CHECK:       get-tuple-element(%[[ALL_GATHER]]), index=1
+// CHECK-NOT:   frontend_attributes={
+// CHECK:       ROOT
+
+// -----
+
 // Tests that the get-tuple-elements unpacking an infeed do not inherit its
 // frontend_attributes.
 

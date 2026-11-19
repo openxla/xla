@@ -3737,6 +3737,9 @@ XlaOp XlaBuilder::AllGatherImpl(XlaOp operand, int64_t all_gather_dimension,
       if (operand_shape->tuple_shapes().size() == 0) {
         return Unimplemented("0 element tuple AllGather is not supported");
       }
+      // Operand-unpacking GTEs must not inherit the op's frontend attributes.
+      XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+          this, FrontendAttributes());
       for (int i = 0; i < operand_shape->tuple_shapes().size(); ++i) {
         operand_shapes.push_back(&operand_shape->tuple_shapes(i));
         operands.push_back(GetTupleElement(operand, i));
@@ -4424,6 +4427,9 @@ XlaOp XlaBuilder::ReduceScatterWithDeviceList(
       if (operand_shape->tuple_shapes().size() == 0) {
         return Unimplemented("0 element tuple ReduceScatter is not supported");
       }
+      // Operand-unpacking GTEs must not inherit the op's frontend attributes.
+      XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+          this, FrontendAttributes());
       for (int i = 0; i < operand_shape->tuple_shapes().size(); ++i) {
         if (operand_shape->tuple_shapes(i).element_type() !=
             operand_shape->tuple_shapes(0).element_type()) {
@@ -6545,9 +6551,17 @@ XlaOp AllGatherTuple(absl::Span<const XlaOp> operands,
                      const std::optional<Layout>& layout,
                      const std::optional<bool> use_global_device_ids) {
   CHECK(!operands.empty());
-  return operands[0].builder()->AllGather(
-      operands[0].builder()->Tuple(operands), all_gather_dimension, shard_count,
-      replica_groups, channel_id, layout, use_global_device_ids);
+  XlaBuilder* builder = operands[0].builder();
+  XlaOp tuple;
+  {
+    // Operand-packing tuple must not inherit the op's frontend attributes.
+    XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+        builder, FrontendAttributes());
+    tuple = builder->Tuple(operands);
+  }
+  return builder->AllGather(tuple, all_gather_dimension, shard_count,
+                            replica_groups, channel_id, layout,
+                            use_global_device_ids);
 }
 
 XlaOp CrossReplicaSum(const XlaOp operand,
@@ -7272,9 +7286,17 @@ XlaOp AllGatherTupleWithDeviceList(
     const std::optional<Layout>& layout,
     std::optional<bool> use_global_device_ids) {
   CHECK(!operands.empty());
-  return operands[0].builder()->AllGatherWithDeviceList(
-      operands[0].builder()->Tuple(operands), all_gather_dimension, shard_count,
-      replica_groups, channel_id, layout, use_global_device_ids);
+  XlaBuilder* builder = operands[0].builder();
+  XlaOp tuple;
+  {
+    // Operand-packing tuple must not inherit the op's frontend attributes.
+    XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+        builder, FrontendAttributes());
+    tuple = builder->Tuple(operands);
+  }
+  return builder->AllGatherWithDeviceList(
+      tuple, all_gather_dimension, shard_count, replica_groups, channel_id,
+      layout, use_global_device_ids);
 }
 
 XlaOp AllReduceWithDeviceList(const XlaOp operand,
