@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstdint>
 #include <deque>
 #include <functional>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <sstream>
