@@ -13,12 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
@@ -42,6 +41,8 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/xla.pb.h"
@@ -62,6 +63,17 @@ TEST_F(AllToAllMultiProcessE2ETest, OneShotAllToAll2Processes) {
                                                      .cuda_compute_capability()
                                                      ->IsAtLeastAmpere()) {
     GTEST_SKIP() << "One-shot all-to-all requires Ampere+ for CUDA.";
+  }
+  // On ROCm, DeviceDescription::runtime_version() reports the HIP runtime
+  // version (populated from hipRuntimeGetVersion()), not the ROCm release
+  // version. ROCm 10.0 ships HIP runtime 7.15, so gate on HIP >= 7.15 to skip
+  // ROCm releases prior to 10.0.
+  if (const se::RocmComputeCapability* rocm_cc =
+          desc.gpu_compute_capability().rocm_compute_capability();
+      rocm_cc != nullptr &&
+      desc.runtime_version() < stream_executor::SemanticVersion(7, 15, 0)) {
+    GTEST_SKIP() << "One-shot all-to-all requires ROCm 10.0+ (HIP runtime "
+                    "7.15+).";
   }
 
   ASSERT_EQ(client()->addressable_device_count(), 1);

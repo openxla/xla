@@ -2284,8 +2284,14 @@ absl::StatusOr<SymmetricMemoryType> GetSymmetricMemoryType(
     return absl::UnimplementedError(
         "Cross-host symmetric memory collectives are not supported.");
   }
-  return is_lsa_possible ? SymmetricMemoryType::kLoadStoreAccessible
-                         : SymmetricMemoryType::kXlaRendezvous;
+  if (is_lsa_possible) {
+    return SymmetricMemoryType::kLoadStoreAccessible;
+  }
+  LOG(WARNING)
+      << "Falling back to the XLA rendezvous symmetric-memory path for "
+         "single-host collective "
+      << collective->name();
+  return SymmetricMemoryType::kXlaRendezvous;
 }
 
 absl::StatusOr<CollectiveKernelSpec> CreateCollectiveKernelSpec(

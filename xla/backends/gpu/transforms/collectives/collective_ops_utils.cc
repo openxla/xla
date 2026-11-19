@@ -48,6 +48,8 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/side_effect_util.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/semantic_version.h"
+#include "xla/tsl/util/env_var.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -227,6 +229,15 @@ bool IsLocalReplicaGroup(int64_t num_devices_per_host,
   });
 }
 
+// Minimum ROCm runtime required for LSA (load/store accessible) symmetric
+// memory: the symmetric-memory window APIs (ncclCommWindowRegister and friends)
+// first ship with the RCCL of ROCm 10.0.
+//
+// On ROCm, DeviceDescription::runtime_version() reports the HIP runtime version
+// (populated from hipRuntimeGetVersion()), not the ROCm release version. ROCm
+// 10.0 ships HIP runtime 7.15, so that is what we compare against.
+constexpr se::SemanticVersion kMinRocmSymmetricMemoryHipVersion{7, 15, 0};
+
 // Returns true if xla_gpu_unsupported_use_cross_host_one_shot_kernel is enabled
 // for the given collective op type.
 bool IsCrossHostOneShotKernelEnabled(
@@ -350,10 +361,34 @@ bool IsSpmdGenerated(const HloInstruction& instr) {
 }
 
 bool IsLsaPossible(const GpuTopology& gpu_topology) {
-  return gpu_topology.has_gpu_target_config() &&
-         gpu_topology.gpu_target_config()
-             .device_description.gpu_compute_capability()
-             .IsCuda();
+  if (!gpu_topology.has_gpu_target_config()) {
+    return false;
+  }
+  const se::DeviceDescription& device_description =
+      gpu_topology.gpu_target_config().device_description;
+  const se::GpuComputeCapability& cc =
+      device_description.gpu_compute_capability();
+  // CUDA devices support load-store accessible (LSA) symmetric memory.
+  if (cc.IsCuda()) {
+    return true;
+  }
+  // ROCm: LSA / GIN symmetric memory needs the RCCL symmetric-memory window
+  // APIs, which first ship with ROCm 10.0, and RCCL's cuMem allocator, which is
+  // only on when NCCL_CUMEM_ENABLE >= 1 (on ROCm it defaults to 0). Without
+  // cuMem, comm->symmetricSupport is false and RcclSymmetricMemory::Create
+  // fails; since the kLoadStoreAccessible choice is final (the thunk has no
+  // run-time fallback), the emitter must see "no" here to fall back to the
+  // rendezvous path.
+  if (cc.IsRocm()) {
+    int64_t cumem_enable = 0;
+    return device_description.runtime_version() >=
+               kMinRocmSymmetricMemoryHipVersion &&
+           tsl::ReadInt64FromEnvVar("NCCL_CUMEM_ENABLE", /*default_val=*/0,
+                                    &cumem_enable)
+               .ok() &&
+           cumem_enable >= 1;
+  }
+  return false;
 }
 
 int64_t GetCollectiveKernelDomainSize(
