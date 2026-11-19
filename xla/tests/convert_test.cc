@@ -79,6 +79,15 @@ class ConvertTestF16 : public ConvertTest {
 using F16TypeList = ::testing::Types<Eigen::half, bfloat16>;
 TYPED_TEST_SUITE(ConvertTestF16, F16TypeList);
 
+template <typename T>
+class ConvertTestF6 : public ConvertTest {
+ public:
+  using ConvertTest::ConvertTest;
+};
+
+using F6TypeList = ::testing::Types<tsl::float6_e2m3fn, tsl::float6_e3m2fn>;
+TYPED_TEST_SUITE(ConvertTestF6, F6TypeList);
+
 TEST_F(ConvertTest, ConvertR1S32ToR1S32) {
   XlaBuilder builder(TestName());
   auto a = ConstantR1<int32_t>(&builder, {42, 64});
@@ -2109,6 +2118,24 @@ TYPED_TEST(ConvertTestF16, ConvertF4e2m1fnF16RoundtripExhaustive4) {
 
   ConvertElementType(ConstantR1<TypeParam>(&builder, all_f16), F4E2M1FN);
   this->ComputeAndCompare(&builder, {}, ErrorSpec(0.));
+}
+
+// ----- F6E2M3FN, F6E3M2FN
+TYPED_TEST(ConvertTestF6, ConvertF6ToWiderFloatExhaustive) {
+  // Convert every FP6 bit pattern to a wider floating point type. The input is
+  // passed as a parameter, because FP6 constants cannot be serialized yet.
+  using From = TypeParam;
+  std::vector<From> all_f6;
+  for (int i = 0; i < 64; i++) {
+    all_f6.push_back(Eigen::numext::bit_cast<From>(static_cast<uint8_t>(i)));
+  }
+  Literal arg_literal = LiteralUtil::CreateR1<From>(all_f6);
+  for (PrimitiveType dst_type : {F16, BF16, F32}) {
+    XlaBuilder builder(this->TestName());
+    auto arg_param = Parameter(&builder, 0, arg_literal.shape(), "arg_param");
+    ConvertElementType(arg_param, dst_type);
+    this->ComputeAndCompare(&builder, {&arg_literal}, ErrorSpec(0.));
+  }
 }
 
 // ----- F8E8M0FNU

@@ -165,7 +165,9 @@ Value IsNaN(Value value, mlir::ImplicitLocOpBuilder& b) {
   if (mlir::LLVM::isCompatibleOuterType(ty)) {
     return ma::CmpFOp::create(b, ma::CmpFPredicate::UNO, value, value);
   }
-  if (llvm::isa<mlir::Float4E2M1FNType>(ty)) {
+  // MX float types have neither infinities nor NaNs.
+  if (llvm::isa<mlir::Float4E2M1FNType, mlir::Float6E2M3FNType,
+                mlir::Float6E3M2FNType>(ty)) {
     return ma::ConstantIntOp::create(b, b.getI1Type(), false);
   }
 

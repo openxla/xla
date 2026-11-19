@@ -159,6 +159,32 @@ module {
 // -----
 
 module {
+  func.func @f6e2m3_to_f16(%arg0: f6E2M3FN) -> f16 {
+    %ret = arith.extf %arg0 : f6E2M3FN to f16
+    return %ret : f16
+  }
+}
+
+// CHECK-LABEL: @f6e2m3_to_f16
+// CHECK-NOT: arith.extf
+// CHECK: arith.bitcast %arg0 : f6E2M3FN to i6
+
+// -----
+
+module {
+  func.func @f6e3m2_to_f32(%arg0: f6E3M2FN) -> f32 {
+    %ret = arith.extf %arg0 : f6E3M2FN to f32
+    return %ret : f32
+  }
+}
+
+// CHECK-LABEL: @f6e3m2_to_f32
+// CHECK-NOT: arith.extf
+// CHECK: arith.bitcast %arg0 : f6E3M2FN to i6
+
+// -----
+
+module {
   func.func @f16_to_f4(%arg0: f16) -> f4E2M1FN {
     %ret = arith.truncf %arg0 : f16 to f4E2M1FN
     return %ret : f4E2M1FN
