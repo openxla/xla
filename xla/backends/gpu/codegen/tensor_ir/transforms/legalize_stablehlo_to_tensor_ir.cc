@@ -282,10 +282,6 @@ mlir::Value CreateFloatSplat(mlir::ConversionPatternRewriter& rewriter,
       rewriter, loc, mlir::DenseElementsAttr::get(type, splat));
 }
 
-// NOTE: Decomposing Expm1(x) to Exp(x) - 1.0 can result in a severe loss of
-// precision for values of x close to 0. nv_tensor_ir has no expm1, so this is
-// the only available lowering; the caveat is reproduced from the converter
-// this pass replaces because it is invisible in the emitted IR.
 struct Expm1OpConversion
     : public mlir::OpConversionPattern<mlir::stablehlo::Expm1Op> {
   using mlir::OpConversionPattern<
@@ -301,18 +297,12 @@ struct Expm1OpConversion
       return rewriter.notifyMatchFailure(
           op, "expected a ranked floating-point result");
     }
-    mlir::Location loc = op.getLoc();
-    mlir::Value one = CreateFloatSplat(rewriter, loc, result_type, /*value=*/1);
-    mlir::Value exp = mlir::nv_tensor_ir::ExpOp::create(
-        rewriter, loc, result_type, adaptor.getOperand());
-    rewriter.replaceOpWithNewOp<mlir::nv_tensor_ir::SubOp>(op, result_type, exp,
-                                                           one);
+    rewriter.replaceOpWithNewOp<mlir::nv_tensor_ir::ExpM1Op>(
+        op, result_type, adaptor.getOperand());
     return mlir::success();
   }
 };
 
-// NOTE: Decomposing Log1p(x) to Log(x + 1.0) can result in a severe loss of
-// precision for values of x close to 0. See the note on Expm1OpConversion.
 struct Log1pOpConversion
     : public mlir::OpConversionPattern<mlir::stablehlo::Log1pOp> {
   using mlir::OpConversionPattern<
@@ -328,12 +318,8 @@ struct Log1pOpConversion
       return rewriter.notifyMatchFailure(
           op, "expected a ranked floating-point result");
     }
-    mlir::Location loc = op.getLoc();
-    mlir::Value one = CreateFloatSplat(rewriter, loc, result_type, /*value=*/1);
-    mlir::Value sum = mlir::nv_tensor_ir::AddOp::create(
-        rewriter, loc, result_type, adaptor.getOperand(), one);
-    rewriter.replaceOpWithNewOp<mlir::nv_tensor_ir::LogOp>(op, result_type,
-                                                           sum);
+    rewriter.replaceOpWithNewOp<mlir::nv_tensor_ir::Log1POp>(
+        op, result_type, adaptor.getOperand());
     return mlir::success();
   }
 };
