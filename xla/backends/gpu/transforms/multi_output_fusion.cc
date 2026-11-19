@@ -96,9 +96,42 @@ const HloSliceInstruction* FindUniqueSlice(const HloInstruction* parent,
   return nullptr;
 }
 
-FusionDecision ParameterSlicesAreNonOverlapping(const HloInstruction& instr1,
-                                                const HloInstruction& instr2,
-                                                const HloInstruction* parent) {
+// Returns true if `instr1` and `instr2` are same-shape reductions whose
+// estimated standalone execution times are both below the kernel launch
+// overhead (`GpuPerformanceModelBase::kKernelLaunchOverhead`, 1 us).
+//
+// Sibling fusion of consumers that read disjoint slices of a common producer is
+// normally rejected because it saves no memory traffic. For such launch-bound
+// reductions (e.g. the K and V slices of a decode-step QKV reduction) the
+// dominant cost is the launch itself, so merging them into one multi-output
+// fusion saves a launch (~1 us), which is at least as much as either kernel's
+// own execution time. Larger reductions are excluded: there the extra kernel
+// launch is negligible and the merged kernel could be less efficient than two
+// separate ones.
+bool AreLaunchBoundDisjointReductionSiblings(
+    const HloInstruction& instr1, const HloInstruction& instr2,
+    FusionInfoCache* fusion_info_cache,
+    GpuPerformanceModel& gpu_performance_model,
+    GpuHloCostAnalysis* cost_analysis) {
+  if (!instr1.shape().IsArray() ||
+      !ShapeUtil::Equal(instr1.shape(), instr2.shape()) ||
+      !GetMinReduceInputElements(instr1, fusion_info_cache).has_value() ||
+      !GetMinReduceInputElements(instr2, fusion_info_cache).has_value()) {
+    return false;
+  }
+  return gpu_performance_model
+                 .EstimateRunTimeForInstruction(&instr1, cost_analysis)
+                 .exec_time < GpuPerformanceModelBase::kKernelLaunchOverhead &&
+         gpu_performance_model
+                 .EstimateRunTimeForInstruction(&instr2, cost_analysis)
+                 .exec_time < GpuPerformanceModelBase::kKernelLaunchOverhead;
+}
+
+FusionDecision ParameterSlicesAreNonOverlapping(
+    const HloInstruction& instr1, const HloInstruction& instr2,
+    const HloInstruction* parent, FusionInfoCache* fusion_info_cache,
+    GpuPerformanceModel& gpu_performance_model,
+    GpuHloCostAnalysis* cost_analysis) {
   if (parent->shape().IsTuple()) {
     return FusionDecision::Allow();
   }
@@ -123,6 +156,11 @@ FusionDecision ParameterSlicesAreNonOverlapping(const HloInstruction& instr1,
   for (int64_t dim = 0; dim < parent->shape().dimensions().size(); ++dim) {
     bool overlap = starts1[dim] < limits2[dim] && starts2[dim] < limits1[dim];
     if (!overlap) {
+      if (AreLaunchBoundDisjointReductionSiblings(
+              instr1, instr2, fusion_info_cache, gpu_performance_model,
+              cost_analysis)) {
+        return FusionDecision::Allow();
+      }
       return FusionDecision::Forbid("slices are non-overlapping");
     }
   }
@@ -366,7 +404,9 @@ FusionDecision CanFuseSiblings(const HloInstruction& sibling_consumer_1,
                                const HloDfsReachability& reachability,
                                FusionInfoCache* fusion_info_cache,
                                HloFusionAnalysisCache* fusion_analysis_cache,
-                               const se::DeviceDescription& device_info) {
+                               const se::DeviceDescription& device_info,
+                               GpuPerformanceModel& gpu_performance_model,
+                               GpuHloCostAnalysis* cost_analysis) {
   if (reachability.IsConnected(&sibling_consumer_1, &sibling_consumer_2)) {
     return FusionDecision::Forbid(
         absl::StrCat(sibling_consumer_1.name(), " and ",
@@ -383,7 +423,8 @@ FusionDecision CanFuseSiblings(const HloInstruction& sibling_consumer_1,
   // iterations to converge. We assume this case to be very rare in
   // practice.
   RETURN_IF_NOT_FUSIBLE(ParameterSlicesAreNonOverlapping(
-      sibling_consumer_1, sibling_consumer_2, &common_producer));
+      sibling_consumer_1, sibling_consumer_2, &common_producer,
+      fusion_info_cache, gpu_performance_model, cost_analysis));
 
   // These checks should be last, as they may be expensive.
   RETURN_IF_NOT_FUSIBLE(LegalToFuse(sibling_consumer_1, sibling_consumer_2,
@@ -407,6 +448,7 @@ bool MultiOutputFusion::FuseSiblings(
         invalidate_caches_callback,
     FusionInfoCache* fusion_info_cache,
     HloFusionAnalysisCache* fusion_analysis_cache,
+    GpuPerformanceModel& gpu_performance_model,
     GpuHloCostAnalysis* cost_analysis) {
   const HloComputation* computation = parent->parent();
   const HloModule* module = computation->parent();
@@ -441,7 +483,8 @@ bool MultiOutputFusion::FuseSiblings(
 
       if (auto fusible = CanFuseSiblings(**i, **j, *parent, *reachability_,
                                          fusion_info_cache,
-                                         fusion_analysis_cache, device_info_);
+                                         fusion_analysis_cache, device_info_,
+                                         gpu_performance_model, cost_analysis);
           !fusible) {
         // We pick `j` arbitrarily as a consumer.
         if (dump_fusion) {
@@ -538,7 +581,7 @@ absl::StatusOr<bool> MultiOutputFusion::DoMultiOutputFusion() {
                        fusion_info_cache.Invalidate(instr);
                      },
                      &fusion_info_cache, &fusion_analysis_cache,
-                     &cost_analysis)) {
+                     gpu_performance_model, &cost_analysis)) {
       changed = true;
     }
     // Second, perform producer-consumer multi-output fusion. This order will

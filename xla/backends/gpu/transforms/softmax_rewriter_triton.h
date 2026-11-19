@@ -42,6 +42,10 @@ namespace gpu {
 struct DiamondDescriptor {
   HloInstruction* root = nullptr;
   HloInstruction* producer = nullptr;
+  // If set, the first stage of a two-stage (tree) reduction whose second stage
+  // is the diamond's reduction. It stays outside the fusion and becomes an
+  // additional fusion operand.
+  HloInstruction* split_reduction_producer = nullptr;
 };
 
 using DiamondMatchingDecision = std::variant<FusionDecision, HloInstruction*>;
