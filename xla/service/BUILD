@@ -1177,6 +1177,7 @@ cc_library(
     srcs = ["profile_guided_latency_estimator.cc"],
     hdrs = ["profile_guided_latency_estimator.h"],
     deps = [
+        ":latency_estimator",
         ":latency_hiding_scheduler",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -1194,6 +1195,7 @@ xla_cc_test(
     name = "profile_guided_latency_estimator_test",
     srcs = ["profile_guided_latency_estimator_test.cc"],
     deps = [
+        ":latency_estimator",
         ":latency_hiding_scheduler",
         ":profile_guided_latency_estimator",
         "//xla/hlo/analysis:alias_info",

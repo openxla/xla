@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/hlo_cost_analysis.h"
+#include "xla/service/latency_estimator.h"
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/service/profile_guided_latency_estimator.h"
 #include "xla/shape.h"
