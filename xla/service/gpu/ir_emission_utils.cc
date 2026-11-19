@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/layout_util.h"
 #include "xla/permutation_util.h"
@@ -69,6 +70,42 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+namespace {
+
+template <typename InstructionT>
+InstructionT* FindTritonCollectiveHero(InstructionT& instr) {
+  InstructionT* fusion =
+      instr.IsAsynchronous() ? instr.async_wrapped_instruction() : &instr;
+  if (fusion == nullptr || !IsTritonCollectiveFusion(*fusion)) {
+    return nullptr;
+  }
+  HloComputation* computation = fusion->fused_instructions_computation();
+  if (computation == nullptr) {
+    return nullptr;
+  }
+  if (InstructionT* root = computation->root_instruction();
+      root != nullptr &&
+      hlo_query::IsCollectiveCommunicationOp(root->opcode())) {
+    return root;
+  }
+  for (InstructionT* fused_instr : computation->instructions()) {
+    if (hlo_query::IsCollectiveCommunicationOp(fused_instr->opcode())) {
+      return fused_instr;
+    }
+  }
+  return nullptr;
+}
+
+bool IsAsyncTritonCollectiveFusion(const HloInstruction& instr,
+                                   HloOpcode opcode) {
+  if (instr.opcode() != opcode) {
+    return false;
+  }
+  const HloInstruction* wrapped = instr.async_wrapped_instruction();
+  return wrapped != nullptr && IsTritonCollectiveFusion(*wrapped);
+}
+
+}  // namespace
 
 bool IsGpublasLtSupportedGroupedMatMul(const HloInstruction& instr) {
   if (instr.opcode() == HloOpcode::kRaggedDot) {
@@ -539,6 +576,42 @@ std::optional<std::string> GetCustomFusionConfigName(
     return std::nullopt;
   }
   return fusion_backend_config.custom_fusion_config().name();
+}
+
+bool IsTritonCollectiveFusion(const HloInstruction& instr) {
+  if (!instr.IsCustomFusion()) {
+    return false;
+  }
+  absl::StatusOr<GpuBackendConfig> gpu_config =
+      instr.backend_config<GpuBackendConfig>();
+  return gpu_config.ok() && gpu_config->fusion_backend_config().kind() ==
+                                kTritonCollectiveFusionKind;
+}
+
+const HloInstruction* GetTritonCollectiveHero(const HloInstruction& instr) {
+  return FindTritonCollectiveHero(instr);
+}
+
+HloInstruction* GetTritonCollectiveHero(HloInstruction& instr) {
+  return FindTritonCollectiveHero(instr);
+}
+
+bool IsAsyncTritonCollectiveFusionStart(const HloInstruction& instr) {
+  return IsAsyncTritonCollectiveFusion(instr, HloOpcode::kAsyncStart);
+}
+
+bool IsGpuAsyncCollectiveStartOp(const HloInstruction* instr,
+                                 bool include_send_recv) {
+  return instr != nullptr &&
+         (hlo_query::IsAsyncCollectiveStartOp(instr, include_send_recv) ||
+          IsAsyncTritonCollectiveFusionStart(*instr));
+}
+
+bool IsGpuAsyncCollectiveDoneOp(const HloInstruction* instr,
+                                bool include_send_recv) {
+  return instr != nullptr &&
+         (hlo_query::IsAsyncCollectiveDoneOp(instr, include_send_recv) ||
+          IsAsyncTritonCollectiveFusion(*instr, HloOpcode::kAsyncDone));
 }
 
 }  // namespace gpu

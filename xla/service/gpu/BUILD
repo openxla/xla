@@ -1130,6 +1130,7 @@ cc_library(
         "//xla/codegen:ir_emission_utils",
         "//xla/codegen/xtile:xtile_config_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:buffer_assignment",
         "//xla/service:collective_ops_utils",
