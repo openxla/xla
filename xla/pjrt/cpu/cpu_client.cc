@@ -150,6 +150,39 @@ static int CpuDeviceCount() {
 
 namespace {
 
+// Wraps an Eigen::ThreadPoolInterface so that every scheduled task executes
+// with denormal flushing disabled (ScopedDontFlushDenormal).
+class DontFlushDenormalThreadPool final : public Eigen::ThreadPoolInterface {
+ public:
+  explicit DontFlushDenormalThreadPool(Eigen::ThreadPoolInterface* pool)
+      : pool_(pool) {}
+
+  void Schedule(std::function<void()> fn) override {
+    pool_->Schedule([fn = std::move(fn)]() {
+      tsl::port::ScopedDontFlushDenormal dont_flush;
+      fn();
+    });
+  }
+
+  void ScheduleWithHint(std::function<void()> fn, int start, int end) override {
+    pool_->ScheduleWithHint(
+        [fn = std::move(fn)]() {
+          tsl::port::ScopedDontFlushDenormal dont_flush;
+          fn();
+        },
+        start, end);
+  }
+
+  void Cancel() override { pool_->Cancel(); }
+
+  int NumThreads() const override { return pool_->NumThreads(); }
+
+  int CurrentThreadId() const override { return pool_->CurrentThreadId(); }
+
+ private:
+  Eigen::ThreadPoolInterface* pool_;
+};
+
 std::optional<int32_t> GetCpuDeviceOrdinal(
     const DeviceAssignment& device_assignment, int process_index) {
   for (int replica = 0; replica < device_assignment.replica_count();
@@ -466,6 +499,11 @@ PjRtCpuRawClient::PjRtCpuRawClient(
         eigen_intraop_pool_->NumThreads());
     intraop_device_ = eigen_intraop_device_.get();
   }
+  CHECK(intraop_device_ != nullptr && intraop_device_->getPool() != nullptr);
+  dont_flush_eigen_intraop_pool_ =
+      std::make_unique<DontFlushDenormalThreadPool>(intraop_device_->getPool());
+  dont_flush_eigen_intraop_device_ = std::make_unique<Eigen::ThreadPoolDevice>(
+      dont_flush_eigen_intraop_pool_.get(), intraop_device_->numThreads());
 }
 
 PjRtCpuRawClient::~PjRtCpuRawClient() = default;
@@ -1554,11 +1592,15 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
           ? nullptr
           : dynamic_cast<const CpuExecuteContext*>(options.context);
 
+  bool ftz = !cpu_executable->has_module() ||
+             cpu_executable->module().config().debug_options().xla_cpu_ftz();
+
   const Eigen::ThreadPoolDevice* intra_op_device =
       (cpu_execute_context != nullptr &&
        cpu_execute_context->intra_op_thread_pool() != nullptr)
           ? cpu_execute_context->intra_op_thread_pool()
-          : raw_client->eigen_intraop_device();
+          : (ftz ? raw_client->eigen_intraop_device()
+                 : raw_client->dont_flush_eigen_intraop_device());
   if (intra_op_device != nullptr && intra_op_device->getPool() != nullptr) {
     run_options.set_intra_op_thread_pool(intra_op_device);
   }
@@ -1644,11 +1686,17 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
   }
 
   auto execute_thunks = [cpu_executable, buffer_table = std::move(buffer_table),
-                         run_options = std::move(run_options)]()
+                         run_options = std::move(run_options), ftz]() mutable
       -> absl::StatusOr<tsl::AsyncValueRef<cpu::Thunk::ExecuteEvent>> {
     // Set denormal and rounding behavior to match the default TF
-    // ThreadPool behavior.
-    tsl::port::ScopedFlushDenormal flush;
+    // ThreadPool behavior, unless xla_cpu_ftz is disabled.
+    std::optional<tsl::port::ScopedFlushDenormal> flush;
+    std::optional<tsl::port::ScopedDontFlushDenormal> dont_flush;
+    if (ftz) {
+      flush.emplace();
+    } else {
+      dont_flush.emplace();
+    }
     tsl::port::ScopedSetRound round(FE_TONEAREST);
 
     ABSL_RETURN_IF_ERROR(buffer_table.status());
@@ -1674,6 +1722,9 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
 
     cpu::BufferAllocations allocations(buffer_device_mem);
 
+    const Eigen::ThreadPoolDevice* intra_op_thread_pool =
+        run_options.intra_op_thread_pool();
+
     ABSL_ASSIGN_OR_RETURN(
         cpu::Thunk::CollectiveExecuteParams collective_params,
         cpu::Thunk::CollectiveExecuteParams::Create(&run_options));
@@ -1682,8 +1733,6 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
         cpu::Thunk::CustomCallExecuteParams custom_call_execute_params,
         cpu::Thunk::CustomCallExecuteParams::Create(&run_options));
 
-    const Eigen::ThreadPoolDevice* intra_op_thread_pool =
-        run_options.intra_op_thread_pool();
     cpu::ThreadPoolTaskRunner task_runner(intra_op_thread_pool != nullptr
                                               ? intra_op_thread_pool->getPool()
                                               : nullptr);
@@ -1692,7 +1741,7 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
         cpu_executable->function_library(),
         &allocations,
         cpu::GetXfeedManager(run_options.device_ordinal()),
-        run_options.intra_op_thread_pool(),
+        intra_op_thread_pool,
         &task_runner,
         &collective_params,
         &custom_call_execute_params,
