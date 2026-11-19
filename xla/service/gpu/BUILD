@@ -2186,6 +2186,7 @@ cc_library(
         "//xla:side_effect_util",
         "//xla/backends/gpu/hlo/transforms:dynamic_slice_copy",
         "//xla/backends/gpu/hlo/transforms/collectives:collective_domain",
+        "//xla/backends/gpu/hlo/transforms/collectives:collective_ops_utils",
         "//xla/backends/gpu/hlo/transforms/hlo_scheduling:gpu_latency_hiding_scheduler",
         "//xla/backends/gpu/runtime:execution_stream_id",
         "//xla/hlo/ir:hlo",

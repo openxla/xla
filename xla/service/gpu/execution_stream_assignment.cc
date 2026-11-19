@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "xla/backends/gpu/hlo/transforms/collectives/collective_domain.h"
+#include "xla/backends/gpu/hlo/transforms/collectives/collective_ops_utils.h"
 #include "xla/backends/gpu/hlo/transforms/dynamic_slice_copy.h"
 #include "xla/backends/gpu/hlo/transforms/hlo_scheduling/gpu_latency_hiding_scheduler.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
@@ -236,6 +237,7 @@ std::optional<ExecutionScopeKind> IsExecutionScopeStart(
   if (auto* start = DynCast<HloAsyncStartInstruction>(hlo)) {
     // Collective operations run on communication streams.
     if (IsWrappedCollective(start) || IsCustomCollectiveOp(start) ||
+        IsCollectiveFusion(*start) ||
         start->has_frontend_attribute(kCollectiveGroupMarkerAttr)) {
       return ExecutionScopeKind::kCommunication;
     }

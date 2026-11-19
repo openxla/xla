@@ -3216,5 +3216,89 @@ ENTRY main {
           HasSubstr("carried-done: Skipped due to kExceedsOverlapLimit")));
 }
 
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       ScheduleAsyncCollectiveFusionAsCollective) {
+  constexpr absl::string_view kFdoProfile = R"pb(
+    costs { name: "add" cost_us: 100000.0 }
+  )pb";
+  constexpr absl::string_view kHloModule = R"hlo(
+    HloModule test, replica_count=2
+
+    fused_ag0 {
+      p0 = f32[4] parameter(0)
+      ROOT ag = f32[8] all-gather(p0), dimensions={0}, replica_groups={{0,1}}
+    }
+
+    fused_ag1 {
+      p0 = f32[4] parameter(0)
+      ROOT ag = f32[8] all-gather(p0), dimensions={0}, replica_groups={{0,1}}
+    }
+
+    ENTRY main {
+      p0 = f32[4] parameter(0)
+      p1 = f32[4] parameter(1)
+      start0 = ((f32[4]), f32[8]) fusion-start(p0), kind=kCustom,
+        calls=fused_ag0,
+        backend_config={"fusion_backend_config":{"kind":"__triton_collective"}}
+      start1 = ((f32[4]), f32[8]) fusion-start(p0), kind=kCustom,
+        calls=fused_ag1,
+        backend_config={"fusion_backend_config":{"kind":"__triton_collective"}}
+      add = f32[4] add(p1, p1)
+      done0 = f32[8] fusion-done(start0)
+      done1 = f32[8] fusion-done(start1)
+      ROOT result = (f32[8], f32[8], f32[4]) tuple(done0, done1, add)
+    }
+  )hlo";
+
+  HloModuleConfig config = GetModuleConfig(kFdoProfile);
+  config.set_replica_count(2);
+  DeviceAssignment device_assignment(/*replica_count=*/2,
+                                     /*computation_count=*/1);
+  device_assignment(0, 0) = 0;
+  device_assignment(1, 0) = 1;
+  config.set_static_device_assignment(device_assignment);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule, config));
+
+  HloInstruction* start0 = FindInstruction(module.get(), "start0");
+  HloInstruction* done0 = FindInstruction(module.get(), "done0");
+  SchedulerConfig sched_config;
+  GpuAsyncTracker async_tracker(sched_config);
+  EXPECT_TRUE(async_tracker.IsSupportedAsyncStart(*start0));
+  EXPECT_TRUE(async_tracker.IsSupportedAsyncDone(*done0));
+  const int64_t collective_resource =
+      ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamCollectives);
+  absl::Span<const ResourcePair> start_resources =
+      async_tracker.GetResourcesFromInstruction(*start0);
+  ASSERT_EQ(start_resources.size(), 1);
+  EXPECT_EQ(start_resources[0].first, collective_resource);
+  EXPECT_EQ(start_resources[0].second, ResourceUsageType::kResourceRelease);
+  absl::Span<const ResourcePair> done_resources =
+      async_tracker.GetResourcesFromInstruction(*done0);
+  ASSERT_EQ(done_resources.size(), 1);
+  EXPECT_EQ(done_resources[0].first, collective_resource);
+  EXPECT_EQ(done_resources[0].second, ResourceUsageType::kResourceOccupy);
+
+  // Even with num_parallel_resources=2, collective fusions have opaque device
+  // groups so GpuScheduleCrossesOverlapLimit conservatively serializes them
+  // while still overlapping `add` with one of the collectives.
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_experimental_enable_collective_multi_streaming(true);
+  ASSERT_OK(ScheduleModule(module.get(), /*num_parallel_resources=*/2,
+                           DebugOptions::PGLE_STRICTNESS_LEVEL_OFF));
+
+  std::vector<HloInstruction*> sequence =
+      module->schedule().sequence(module->entry_computation()).instructions();
+  const int start0_idx = GetIndexByName(sequence, "start0");
+  const int done0_idx = GetIndexByName(sequence, "done0");
+  const int start1_idx = GetIndexByName(sequence, "start1");
+  const int done1_idx = GetIndexByName(sequence, "done1");
+  const int add_idx = GetIndexByName(sequence, "add");
+  EXPECT_TRUE(done0_idx < start1_idx || done1_idx < start0_idx);
+  EXPECT_TRUE((start0_idx < add_idx && add_idx < done0_idx) ||
+              (start1_idx < add_idx && add_idx < done1_idx));
+}
+
 }  // namespace
 }  // namespace xla::gpu
