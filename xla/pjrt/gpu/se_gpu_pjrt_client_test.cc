@@ -154,6 +154,7 @@ using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::Pair;
 using ::testing::SizeIs;
+using ::testing::Truly;
 using ::testing::VariantWith;
 
 absl::StatusOr<PjRtDeviceEventPtr::DefinitionStreamInfo>
@@ -3596,6 +3597,88 @@ TEST(StreamExecutorGpuClientTest, PlatformAllocatorIsSynchronousPassthrough) {
                         ->down_cast<PjRtStreamExecutorRawClient>();
   EXPECT_NE(dynamic_cast<se::MultiDeviceAdapter*>(raw_client->allocator()),
             nullptr);
+}
+
+// The "platform" allocator runs the sub-allocator free visitors when a
+// collective memory buffer is freed (GetStreamExecutorGpuClient appends
+// gpu::ReleaseSymmetricMemory to them). Default memory buffers do not run them.
+TEST(StreamExecutorGpuClientTest,
+     PlatformAllocatorRunsFreeVisitorsForCollectiveMemory) {
+  std::vector<std::pair<void*, int>> freed;  // (ptr, device_ordinal)
+
+  GpuClientOptions options;
+  options.allocator_config.kind = GpuAllocatorConfig::Kind::kPlatform;
+  options.allocator_config.sub_allocator_free_visitors.push_back(
+      [&freed](void* ptr, int device_ordinal, size_t) {
+        freed.emplace_back(ptr, device_ordinal);
+      });
+  options.allowed_devices = {0};
+  ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+
+  auto* raw_client = absl::down_cast<CommonPjRtClient*>(client.get())
+                         ->raw_client()
+                         ->down_cast<PjRtStreamExecutorRawClient>();
+  se::DeviceAddressAllocator* allocator = raw_client->allocator();
+  ASSERT_NE(allocator, nullptr);
+
+  constexpr int kDefault = static_cast<int>(gpu::MemorySpaceColor::kDefault);
+  constexpr int kCollective =
+      static_cast<int>(gpu::MemorySpaceColor::kCollective);
+  constexpr uint64_t kBytes = uint64_t{1} << 20;
+
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> default_memory,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kDefault));
+  ASSERT_OK(default_memory.Free());
+  EXPECT_THAT(freed, IsEmpty());
+
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> collective_memory,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kCollective));
+  void* collective_ptr = collective_memory->opaque();
+  ASSERT_OK(collective_memory.Free());
+  EXPECT_THAT(freed, ElementsAre(Pair(collective_ptr, 0)));
+}
+
+// Without preallocation there is no shared spatially partitioned pool, so a
+// separate collective BFC allocator is created. It returns its regions to the
+// device through the sub-allocator, which runs the free visitors.
+TEST(StreamExecutorGpuClientTest, CollectiveBfcAllocatorRunsFreeVisitors) {
+  absl::Mutex mu;
+  std::vector<se::DeviceAddressBase> freed;
+  GpuClientOptions options;
+  options.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
+  options.allocator_config.memory_fraction = 0.05;
+  options.allocator_config.preallocate = false;
+  options.allocator_config.collective_memory_size = 64 << 20;
+  options.allocator_config.sub_allocator_free_visitors.push_back(
+      [&](void* ptr, int, size_t num_bytes) {
+        absl::MutexLock lock(mu);
+        freed.emplace_back(ptr, num_bytes);
+      });
+  options.allowed_devices = {0};
+  uintptr_t collective_address = 0;
+  {
+    ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+    auto* raw_client = absl::down_cast<CommonPjRtClient*>(client.get())
+                           ->raw_client()
+                           ->down_cast<PjRtStreamExecutorRawClient>();
+    ASSERT_OK_AND_ASSIGN(
+        se::ScopedDeviceAddress<uint8_t> collective,
+        raw_client->allocator()->Allocate(
+            /*device_ordinal=*/0, uint64_t{1} << 20,
+            /*retry_on_failure=*/false,
+            static_cast<int>(gpu::MemorySpaceColor::kCollective)));
+    collective_address = reinterpret_cast<uintptr_t>(collective->opaque());
+  }
+  absl::MutexLock lock(mu);
+  EXPECT_THAT(freed, Contains(Truly([&](const se::DeviceAddressBase& r) {
+                uintptr_t base = reinterpret_cast<uintptr_t>(r.opaque());
+                return base <= collective_address &&
+                       collective_address < base + r.size();
+              })));
 }
 
 // With a preallocated, spatially partitioned BFC allocator, one shared arena

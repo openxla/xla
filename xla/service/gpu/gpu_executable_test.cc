@@ -1136,6 +1136,8 @@ TEST_F(GpuExecutableTest, RuntimeMetadataSurvivesProtoRoundTrip) {
   DebugOptions load_time_options = GetDebugOptionsFromFlags();
   load_time_options.set_xla_dump_to(dump_dir.path());
   load_time_options.set_xla_gpu_experimental_nccl_window_symmetric(true);
+  load_time_options.set_xla_gpu_experimental_cache_nccl_window_in_communicator(
+      true);
   load_time_options.set_xla_gpu_nccl_collective_max_nchannels(3);
 
   ASSERT_OK_AND_ASSIGN(
@@ -1158,8 +1160,27 @@ TEST_F(GpuExecutableTest, RuntimeMetadataSurvivesProtoRoundTrip) {
   EXPECT_EQ(runtime_options.xla_gpu_nccl_collective_max_nchannels(), 7);
   EXPECT_EQ(runtime_options.xla_dump_to(), dump_dir.path());
   EXPECT_TRUE(runtime_options.xla_gpu_experimental_nccl_window_symmetric());
+  EXPECT_TRUE(
+      runtime_options.xla_gpu_experimental_cache_nccl_window_in_communicator());
   EXPECT_EQ(loaded_executable->static_device_assignment()->ToString(),
             config.static_device_assignment().ToString());
+
+  // Load-time override also clears `cache_nccl_window_in_communicator` when
+  // compiled with it enabled.
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto_with_cached_windows,
+                       loaded_executable->ToProto());
+  load_time_options.set_xla_gpu_experimental_cache_nccl_window_in_communicator(
+      false);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> loaded_with_flag_disabled,
+      GpuExecutable::FromProto(proto_with_cached_windows,
+                               MakeVoltaDeviceDescription(), "TEST_PLATFORM",
+                               load_time_options));
+  EXPECT_FALSE(loaded_with_flag_disabled->runtime_debug_options()
+                   .xla_gpu_experimental_cache_nccl_window_in_communicator());
+  EXPECT_FALSE(loaded_with_flag_disabled->module_config()
+                   .debug_options()
+                   .xla_gpu_experimental_cache_nccl_window_in_communicator());
 
   EXPECT_EQ(loaded_executable->name(), reference_executable->name());
   EXPECT_EQ(loaded_executable->name(), loaded_executable->module().name());

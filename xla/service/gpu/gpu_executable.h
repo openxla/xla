@@ -450,10 +450,12 @@ class GpuExecutable : public Executable {
   std::unique_ptr<GpuAliasInfo> alias_info_;
 
   // The DebugOptions used at run time. These are the compile-time options from
-  // the module config, with `xla_dump_to` and
-  // `xla_gpu_experimental_nccl_window_symmetric` taken from the load-time
-  // options for loaded executables (see `FromProto`). If the executable has no
-  // module config at all, these are the options passed to `Create`.
+  // the module config, with `xla_dump_to`,
+  // `xla_gpu_experimental_nccl_window_symmetric`, and
+  // `xla_gpu_experimental_cache_nccl_window_in_communicator` taken from the
+  // load-time options for loaded executables (see `FromProto`). If the
+  // executable has no module config at all, these are the options passed to
+  // `Create`.
   //
   // This is a copy taken in `Create`. Changing the module config after that
   // (e.g. through `HloModule::mutable_config()`) doesn't affect execution.
@@ -464,6 +466,7 @@ class GpuExecutable : public Executable {
   // |--------------------------------------|--------------------------|
   // | ExecuteThunks (NCCL channels, stream | runtime_debug_options_   |
   // | priority, nccl_window_symmetric,     |                          |
+  // | cache_nccl_window_in_communicator,   |                          |
   // | progress tracking, timeouts,         |                          |
   // | rendezvous timeouts)                 |                          |
   // | Buffer allocator (command buffer     | runtime_debug_options_   |

@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
@@ -65,6 +66,7 @@ limitations under the License.
 #include "xla/service/lockable.h"
 #include "xla/service/rendezvous.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
@@ -135,6 +137,33 @@ struct GpuCliqueCreatedCallbacks {
   absl::Mutex mu;
   std::vector<GpuCliqueCreatedCallback> callbacks ABSL_GUARDED_BY(mu);
 };
+
+// Cliques to forward `ReleaseSymmetricMemory` to. Kept apart from
+// `ProcessGpuCliques` because releases come from allocator free paths, which
+// must not wait for `ProcessGpuCliques::mu`: it can be held for a whole run
+// while abandoning a clique.
+struct SymmetricMemoryCliques {
+  absl::Mutex mu;
+  std::vector<std::weak_ptr<LockableGpuClique>> cliques ABSL_GUARDED_BY(mu);
+};
+
+SymmetricMemoryCliques& GetSymmetricMemoryCliques() {
+  static absl::NoDestructor<SymmetricMemoryCliques> cliques;
+  return *cliques;
+}
+
+void AddSymmetricMemoryClique(
+    const std::shared_ptr<LockableGpuClique>& clique) {
+  SymmetricMemoryCliques& registry = GetSymmetricMemoryCliques();
+  absl::MutexLock lock(registry.mu);
+  registry.cliques.erase(
+      std::remove_if(registry.cliques.begin(), registry.cliques.end(),
+                     [](const std::weak_ptr<LockableGpuClique>& c) {
+                       return c.expired();
+                     }),
+      registry.cliques.end());
+  registry.cliques.push_back(clique);
+}
 }  // namespace
 
 // Returns process-local GPU cliques.
@@ -508,6 +537,7 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
       VLOG(3) << absl::StrFormat("[%s] [ranks=%s] Created new clique %v",
                                  DeviceOrdinalsToString(ranks),
                                  DeviceRanksToString(ranks), clique_key);
+      AddSymmetricMemoryClique(emplaced.first->second);
     }
 
     return emplaced.first->second->Acquire();
@@ -770,6 +800,7 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
       VLOG(3) << absl::StrFormat("[%s] [ranks=%s] Created new clique %v",
                                  DeviceOrdinalsToString(ranks),
                                  DeviceRanksToString(ranks), clique_key);
+      AddSymmetricMemoryClique(emplaced.first->second);
     }
 
     return emplaced.first->second->Acquire();
@@ -1235,6 +1266,23 @@ absl::Status AbortTaskCliques(int failed_task_id, absl::Status error) {
   absl::Status s = AbortOnFailure(state, updated);
   state.task_state_infos = std::move(updated);
   return s;
+}
+
+void ReleaseSymmetricMemory(LocalDeviceId device_id,
+                            se::DeviceAddressBase addr) {
+  std::vector<std::weak_ptr<LockableGpuClique>> cliques;
+  {
+    SymmetricMemoryCliques& registry = GetSymmetricMemoryCliques();
+    absl::MutexLock lock(registry.mu);
+    cliques = registry.cliques;
+  }
+  // Release outside of `registry.mu`: dropping a window can block on the
+  // communicator executor.
+  for (const std::weak_ptr<LockableGpuClique>& weak_clique : cliques) {
+    if (std::shared_ptr<LockableGpuClique> clique = weak_clique.lock()) {
+      clique->ReleaseSymmetricMemory(device_id, addr);
+    }
+  }
 }
 
 }  // namespace xla::gpu
