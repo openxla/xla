@@ -1085,8 +1085,16 @@ std::string GetNonDefaultDebugOptions(const DebugOptions& debug_options) {
       continue;
     }
 
-    if (GetValueAsString(reflection, debug_options, field) !=
-        GetValueAsString(reflection, default_options, field)) {
+    // For fields with explicit presence, an explicitly set value that equals
+    // the value of an unset default is still non-default: unset can mean
+    // "automatic", which differs from an explicit value.
+    const bool presence_differs =
+        field->has_presence() &&
+        reflection->HasField(debug_options, field) !=
+            reflection->HasField(default_options, field);
+    if (presence_differs ||
+        GetValueAsString(reflection, debug_options, field) !=
+            GetValueAsString(reflection, default_options, field)) {
       absl::StrAppend(&non_default_options, field->name(), ": ",
                       GetValueAsString(reflection, debug_options, field), "\n");
     }

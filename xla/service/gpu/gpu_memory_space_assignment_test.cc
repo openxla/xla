@@ -1029,8 +1029,8 @@ DebugOptions WithCollectiveCommandBuffers(
     DebugOptions::CommandBufferUpdateMode update_mode) {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
   debug_options.set_xla_gpu_command_buffer_update_mode(update_mode);
-  debug_options.set_xla_gpu_command_buffer_keep_collectives_out_of_outputs(
-      true);
+  // The keep-collectives-out-of-outputs flag is left as is (unset by default,
+  // which means automatic).
   return debug_options;
 }
 
@@ -1087,14 +1087,14 @@ TEST_F(GpuMemorySpaceAssignmentTest,
       CreateBufferAssignerOptions(flag_off).must_not_live_out.has_value());
 }
 
-TEST_F(GpuMemorySpaceAssignmentTest,
-       MustNotLiveOutIsAutoEnabledUnlessFlagIsExplicitlySet) {
+TEST_F(GpuMemorySpaceAssignmentTest, MustNotLiveOutIsAutoEnabledWhenUnset) {
   // Collective command buffers with `update_mode`, flag left unset.
   auto flag_unset = [&](DebugOptions::CommandBufferUpdateMode update_mode) {
     DebugOptions debug_options = WithCollectiveCommandBuffers(
         GetModuleConfigForTest().debug_options(), update_mode);
-    debug_options
-        .clear_xla_gpu_command_buffer_keep_collectives_out_of_outputs();
+    EXPECT_FALSE(
+        debug_options
+            .has_xla_gpu_command_buffer_keep_collectives_out_of_outputs());
     return debug_options;
   };
 
@@ -1111,20 +1111,30 @@ TEST_F(GpuMemorySpaceAssignmentTest,
   no_collectives.clear_xla_gpu_enable_command_buffer();
   no_collectives.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   EXPECT_FALSE(CreateMustNotLiveOut(no_collectives).has_value());
+}
 
-  // An explicit value takes priority.
-  DebugOptions flag_off = flag_unset(DebugOptions::SKIP_TEMP);
-  flag_off.set_xla_gpu_command_buffer_keep_collectives_out_of_outputs(false);
-  EXPECT_FALSE(CreateMustNotLiveOut(flag_off).has_value());
-  DebugOptions flag_on = flag_unset(DebugOptions::SKIP_PROFILED);
-  flag_on.set_xla_gpu_command_buffer_keep_collectives_out_of_outputs(true);
-  EXPECT_TRUE(CreateMustNotLiveOut(flag_on).has_value());
-
-  // The flag has no effect outside this configuration.
-  DebugOptions always_update = flag_unset(DebugOptions::ALWAYS_UPDATE);
-  always_update.set_xla_gpu_command_buffer_keep_collectives_out_of_outputs(
-      true);
-  EXPECT_FALSE(CreateMustNotLiveOut(always_update).has_value());
+TEST_F(GpuMemorySpaceAssignmentTest,
+       MustNotLiveOutExplicitFlagAlwaysTakesPriority) {
+  const DebugOptions base = GetModuleConfigForTest().debug_options();
+  const DebugOptions::CommandBufferUpdateMode kModes[] = {
+      DebugOptions::SKIP_TEMP, DebugOptions::SKIP_PROFILED,
+      DebugOptions::ALWAYS_UPDATE};
+  for (DebugOptions::CommandBufferUpdateMode mode : kModes) {
+    for (bool with_collectives : {true, false}) {
+      DebugOptions options = WithCollectiveCommandBuffers(base, mode);
+      if (!with_collectives) {
+        options.clear_xla_gpu_enable_command_buffer();
+        options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+      }
+      SCOPED_TRACE(absl::StrCat(
+          "update_mode=", DebugOptions::CommandBufferUpdateMode_Name(mode),
+          " with_collectives=", with_collectives));
+      options.set_xla_gpu_command_buffer_keep_collectives_out_of_outputs(true);
+      EXPECT_TRUE(CreateMustNotLiveOut(options).has_value());
+      options.set_xla_gpu_command_buffer_keep_collectives_out_of_outputs(false);
+      EXPECT_FALSE(CreateMustNotLiveOut(options).has_value());
+    }
+  }
 }
 
 TEST_F(GpuMemorySpaceAssignmentTest,
