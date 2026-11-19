@@ -120,6 +120,27 @@ inline constexpr absl::string_view kTritonFusionKind = "__triton";
 inline constexpr absl::string_view kTritonCollectiveFusionKind =
     "__triton_collective";
 
+// Returns true if `instr` is a custom fusion with kind
+// `kTritonCollectiveFusionKind`.
+bool IsTritonCollectiveFusion(const HloInstruction& instr);
+
+// Returns the collective communication instruction inside a Triton collective
+// fusion or an async wrapper (`async-start`, `async-update`, `async-done`)
+// around one, or nullptr otherwise.
+const HloInstruction* GetTritonCollectiveHero(const HloInstruction& instr);
+HloInstruction* GetTritonCollectiveHero(HloInstruction& instr);
+
+// Returns true if `instr` is an `async-start` wrapping a Triton collective
+// fusion (`fusion-start`).
+bool IsAsyncTritonCollectiveFusionStart(const HloInstruction& instr);
+
+// GPU-aware equivalents of `hlo_query::IsAsyncCollectiveStartOp` /
+// `IsAsyncCollectiveDoneOp` that also match async Triton collective fusions.
+bool IsGpuAsyncCollectiveStartOp(const HloInstruction* instr,
+                                 bool include_send_recv = false);
+bool IsGpuAsyncCollectiveDoneOp(const HloInstruction* instr,
+                                bool include_send_recv = false);
+
 // Fusions that use Triton have FusionBackendConfig.kind equal to this string.
 inline constexpr absl::string_view kTritonGemmFusionKind = "__triton_gemm";
 

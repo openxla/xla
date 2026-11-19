@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -1035,6 +1036,124 @@ TEST_F(IrEmissionUtilsTest,
               absl_testing::IsOkAndHolds(false));
   EXPECT_THAT(IsCublasSupportedMatMul(*root, false, /*is_normalized=*/false),
               absl_testing::IsOkAndHolds(true));
+}
+
+TEST_F(IrEmissionUtilsTest, TritonCollectiveFusionHelpers) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule m, replica_count=2
+
+    fused_ag {
+      p0 = f32[4] parameter(0)
+      ROOT ag = f32[8] all-gather(p0), dimensions={0}, replica_groups={{0,1}}
+    }
+
+    fused_ag_async {
+      p0 = f32[4] parameter(0)
+      ROOT ag_async = f32[8] all-gather(p0), dimensions={0}, replica_groups={{0,1}}
+    }
+
+    fused_variadic_ag {
+      p0 = f32[4] parameter(0)
+      p1 = f32[4] parameter(1)
+      ag_tuple = (f32[8], f32[8]) all-gather(p0, p1), dimensions={0},
+          replica_groups={{0,1}}
+      g0 = f32[8] get-tuple-element(ag_tuple), index=0
+      g1 = f32[8] get-tuple-element(ag_tuple), index=1
+      ROOT out = (f32[8], f32[8]) tuple(g0, g1)
+    }
+
+    fused_add {
+      p0 = f32[4] parameter(0)
+      ROOT sum = f32[4] add(p0, p0)
+    }
+
+    ENTRY main {
+      p0 = f32[4] parameter(0)
+      p1 = f32[4] parameter(1)
+      tok = token[] after-all()
+      send = (f32[4], u32[], token[]) send(p0, tok), channel_id=1
+      send_done = token[] send-done(send), channel_id=1
+      sync_fusion = f32[8] fusion(p0), kind=kCustom, calls=fused_ag,
+          backend_config={"fusion_backend_config":{"kind":"__triton_collective"}}
+      variadic_fusion = (f32[8], f32[8]) fusion(p0, p1), kind=kCustom,
+          calls=fused_variadic_ag,
+          backend_config={"fusion_backend_config":{"kind":"__triton_collective"}}
+      start = ((f32[4]), f32[8]) fusion-start(p0), kind=kCustom,
+          calls=fused_ag_async,
+          backend_config={"fusion_backend_config":{"kind":"__triton_collective"}}
+      update = ((f32[4]), f32[8]) fusion-update(start)
+      done = f32[8] fusion-done(update)
+      other_start = ((f32[4]), f32[4]) fusion-start(p0), kind=kLoop,
+          calls=fused_add
+      other_done = f32[4] fusion-done(other_start)
+      ROOT result = (token[], f32[8], (f32[8], f32[8]), f32[8], f32[4]) tuple(
+          send_done, sync_fusion, variadic_fusion, done, other_done)
+    }
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  HloInstruction* sync_fusion = FindInstruction(module.get(), "sync_fusion");
+  HloInstruction* variadic_fusion =
+      FindInstruction(module.get(), "variadic_fusion");
+  HloInstruction* start = FindInstruction(module.get(), "start");
+  HloInstruction* update = FindInstruction(module.get(), "update");
+  HloInstruction* done = FindInstruction(module.get(), "done");
+  HloInstruction* other_start = FindInstruction(module.get(), "other_start");
+  HloInstruction* other_done = FindInstruction(module.get(), "other_done");
+  HloInstruction* send = FindInstruction(module.get(), "send");
+  HloInstruction* send_done = FindInstruction(module.get(), "send_done");
+  ASSERT_NE(sync_fusion, nullptr);
+  ASSERT_NE(variadic_fusion, nullptr);
+  ASSERT_NE(start, nullptr);
+  ASSERT_NE(update, nullptr);
+  ASSERT_NE(done, nullptr);
+  ASSERT_NE(other_start, nullptr);
+  ASSERT_NE(other_done, nullptr);
+  ASSERT_NE(send, nullptr);
+  ASSERT_NE(send_done, nullptr);
+
+  EXPECT_TRUE(IsTritonCollectiveFusion(*sync_fusion));
+  EXPECT_TRUE(IsTritonCollectiveFusion(*variadic_fusion));
+  EXPECT_FALSE(IsTritonCollectiveFusion(*start));
+  EXPECT_FALSE(IsTritonCollectiveFusion(*other_start));
+
+  // Verify both const and mutable overloads across direct fusion, variadic
+  // non-root hero, and async-start/update/done wrappers.
+  const HloInstruction& const_sync_fusion = *sync_fusion;
+  const HloInstruction* sync_hero = GetTritonCollectiveHero(const_sync_fusion);
+  ASSERT_NE(sync_hero, nullptr);
+  EXPECT_EQ(sync_hero->opcode(), HloOpcode::kAllGather);
+  EXPECT_EQ(GetTritonCollectiveHero(*sync_fusion), sync_hero);
+
+  HloInstruction* variadic_hero = GetTritonCollectiveHero(*variadic_fusion);
+  ASSERT_NE(variadic_hero, nullptr);
+  EXPECT_EQ(variadic_hero->opcode(), HloOpcode::kAllGather);
+
+  HloInstruction* async_hero = GetTritonCollectiveHero(*start);
+  ASSERT_NE(async_hero, nullptr);
+  EXPECT_EQ(async_hero->opcode(), HloOpcode::kAllGather);
+  EXPECT_EQ(GetTritonCollectiveHero(*update), async_hero);
+  EXPECT_EQ(GetTritonCollectiveHero(*done), async_hero);
+  EXPECT_EQ(GetTritonCollectiveHero(*other_start), nullptr);
+
+  EXPECT_TRUE(IsAsyncTritonCollectiveFusionStart(*start));
+  EXPECT_FALSE(IsAsyncTritonCollectiveFusionStart(*done));
+  EXPECT_FALSE(IsAsyncTritonCollectiveFusionStart(*other_start));
+
+  EXPECT_FALSE(IsGpuAsyncCollectiveStartOp(nullptr));
+  EXPECT_FALSE(IsGpuAsyncCollectiveDoneOp(nullptr));
+  EXPECT_TRUE(IsGpuAsyncCollectiveStartOp(start));
+  EXPECT_TRUE(IsGpuAsyncCollectiveDoneOp(done));
+  EXPECT_FALSE(IsGpuAsyncCollectiveStartOp(done));
+  EXPECT_FALSE(IsGpuAsyncCollectiveDoneOp(start));
+  EXPECT_FALSE(IsGpuAsyncCollectiveStartOp(other_start));
+  EXPECT_FALSE(IsGpuAsyncCollectiveDoneOp(other_done));
+  EXPECT_FALSE(IsGpuAsyncCollectiveStartOp(send));
+  EXPECT_TRUE(IsGpuAsyncCollectiveStartOp(send, /*include_send_recv=*/true));
+  EXPECT_FALSE(IsGpuAsyncCollectiveDoneOp(send_done));
+  EXPECT_TRUE(
+      IsGpuAsyncCollectiveDoneOp(send_done, /*include_send_recv=*/true));
 }
 
 }  // namespace gpu
