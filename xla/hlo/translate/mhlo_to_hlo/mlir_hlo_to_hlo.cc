@@ -1079,6 +1079,9 @@ xla::XlaOp CreateTupleIfMultipleOps(
   }
   xla::XlaScopedShardingAssignment scoped_sharding(
       builder, CreateTupleSharding(shardings));
+  // Operand-packing tuple must not inherit the op's frontend attributes.
+  xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+      builder, xla::FrontendAttributes());
   return Tuple(builder, ops);
 }
 
@@ -1481,6 +1484,9 @@ void BuildGetTupleElementsForTupleResults(
     mlir::Operation* op, xla::XlaOp tuple, xla::XlaBuilder* builder,
     llvm::DenseMap<mlir::Value, xla::XlaOp>& values,
     unsigned num_implicit_results = 0) {
+  // Result GTEs must not inherit the op's frontend attributes.
+  xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+      builder, xla::FrontendAttributes());
   const std::optional<xla::OpSharding>& sharding = builder->sharding();
   if (sharding.has_value()) {
     bool is_tuple_sharding = sharding->type() == xla::OpSharding::TUPLE;
@@ -1720,6 +1726,9 @@ LogicalResult ExportXlaOp(SendOp op, OpLoweringContext ctx) {
   if (operands.size() == 1) {
     operand = operands[0];
   } else {
+    // Operand-packing tuple must not inherit the op's frontend attributes.
+    xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+        ctx.builder, xla::FrontendAttributes());
     operand = Tuple(ctx.builder, operands);
   }
 
@@ -1842,6 +1851,10 @@ LogicalResult ExportXlaOp(RecvOp op, OpLoweringContext ctx) {
         Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
   }
 
+  // Result GTEs must not inherit the op's frontend attributes.
+  xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+      ctx.builder, xla::FrontendAttributes());
+
   xla::XlaOp data_tuple_element;
   {
     xla::XlaScopedShardingAssignment sharding_scope(ctx.builder, data_sharding);
@@ -1893,6 +1906,10 @@ LogicalResult ExportXlaOp(InfeedOp op, OpLoweringContext ctx) {
   xla::Shape data_shape = xla::ShapeUtil::MakeTupleShape(subshapes);
   auto xla_result = xla::InfeedWithToken(token, data_shape,
                                          std::string(op.getInfeedConfig()));
+  // Result GTEs must not inherit the op's frontend attributes.
+  xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+      ctx.builder, xla::FrontendAttributes());
+
   std::optional<xla::OpSharding> data_sharding = ctx.builder->sharding();
   ctx.builder->ClearSharding();
   std::optional<xla::OpSharding> last_sharding;
@@ -1943,6 +1960,9 @@ LogicalResult ExportXlaOp(OutfeedOp op, OpLoweringContext ctx) {
   {
     xla::XlaScopedShardingAssignment scoped_sharding(
         ctx.builder, CreateTupleSharding(GetXlaOpShardings(operands)));
+    // Operand-packing tuple must not inherit the op's frontend attributes.
+    xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+        ctx.builder, xla::FrontendAttributes());
     operand = Tuple(ctx.builder, operands);
   }
 
@@ -1980,7 +2000,14 @@ LogicalResult ExportXlaOp(OptimizationBarrierOp op, OpLoweringContext ctx) {
     value_map[op.getOperation()->getResult(0)] =
         xla::OptimizationBarrier(operands[0]);
   } else {
-    auto result = xla::OptimizationBarrier(Tuple(ctx.builder, operands));
+    xla::XlaOp tuple;
+    {
+      // Operand-packing tuple must not inherit the op's frontend attributes.
+      xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+          ctx.builder, xla::FrontendAttributes());
+      tuple = Tuple(ctx.builder, operands);
+    }
+    auto result = xla::OptimizationBarrier(tuple);
     BuildGetTupleElementsForTupleResults(op, result, ctx);
   }
 
@@ -2277,6 +2304,9 @@ LogicalResult ExportXlaOp(WhileOp op, OpLoweringContext ctx) {
 
   xla::XlaOp operand = operands[0];
   if (operands.size() > 1) {
+    // Operand-packing tuple must not inherit the op's frontend attributes.
+    xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+        ctx.builder, xla::FrontendAttributes());
     operand = Tuple(ctx.builder, operands);
   }
 
@@ -3288,15 +3318,6 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
 
   if (op->getNumResults() == 1 && !return_tuple) {
     value_map[op.getResult(0)] = custom_call;
-  } else if (op.getCallTargetName() ==
-                 xla::sdy::kGlobalToLocalShapeCallTargetName ||
-             op.getCallTargetName() ==
-                 xla::sdy::kLocalToGlobalShapeCallTargetName) {
-    // ShardyXLA has the hlo -> stablehlo -> hlo round trip. These
-    // get-tuple-elements do not need to hold the frontend attributes.
-    xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
-        ctx.builder, xla::FrontendAttributes());
-    BuildGetTupleElementsForTupleResults(op, custom_call, ctx);
   } else {
     BuildGetTupleElementsForTupleResults(op, custom_call, ctx);
   }
@@ -4145,6 +4166,9 @@ LogicalResult ExportXlaOp(mhlo::AsyncStartOp op, OpLoweringContext ctx) {
     if (operands.size() == 2) {
       operand = operands[0];
     } else {
+      // Operand-packing tuple must not inherit the op's frontend attributes.
+      xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+          ctx.builder, xla::FrontendAttributes());
       operand =
           Tuple(ctx.builder, absl::Span<const xla::XlaOp>(operands).subspan(
                                  0, operands.size() - 1));
@@ -4906,15 +4930,6 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
 
   if (op->getNumResults() == 1 && !return_tuple) {
     value_map[op.getResult(0)] = custom_call;
-  } else if (op.getCallTargetName() ==
-                 xla::sdy::kGlobalToLocalShapeCallTargetName ||
-             op.getCallTargetName() ==
-                 xla::sdy::kLocalToGlobalShapeCallTargetName) {
-    // ShardyXLA has the hlo -> stablehlo -> hlo round trip. These
-    // get-tuple-elements do not need to hold the frontend attributes.
-    xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
-        ctx.builder, xla::FrontendAttributes());
-    BuildGetTupleElementsForTupleResults(op, custom_call, ctx);
   } else {
     BuildGetTupleElementsForTupleResults(op, custom_call, ctx);
   }
@@ -5386,10 +5401,8 @@ LogicalResult ConvertToHloModule::LowerStablehloCompositeCall(
   // Use GetTupleElement for multiple outputs
   unsigned num_results = composite_op.getNumResults();
   if (num_results > 1) {
-    for (unsigned i = 0; i != num_results; ++i) {
-      value_map[composite_op.getResult(i)] =
-          xla::GetTupleElement(composite_call, i);
-    }
+    BuildGetTupleElementsForTupleResults(composite_op, composite_call, builder,
+                                         value_map);
   } else if (num_results == 1) {
     value_map[composite_op.getResult(0)] = composite_call;
   }
@@ -5452,10 +5465,8 @@ LogicalResult ConvertToHloModule::LowerCompositeCall(
   // Use GetTupleElement for multiple outputs
   unsigned num_results = composite_op.getNumResults();
   if (num_results > 1) {
-    for (unsigned i = 0; i != num_results; ++i) {
-      value_map[composite_op.getResult(i)] =
-          xla::GetTupleElement(composite_call, i);
-    }
+    BuildGetTupleElementsForTupleResults(composite_op, composite_call, builder,
+                                         value_map);
   } else if (num_results == 1) {
     value_map[composite_op.getResult(0)] = composite_call;
   }
