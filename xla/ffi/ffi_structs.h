@@ -22,6 +22,7 @@ limitations under the License.
 #include <variant>
 
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/custom_options.h"
 #include "xla/executable_run_options.h"
@@ -30,6 +31,7 @@ limitations under the License.
 #include "xla/ffi/execution_state.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/runtime/device_id.h"
+#include "xla/service/device_assignment.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
@@ -41,10 +43,6 @@ limitations under the License.
 namespace Eigen {
 struct ThreadPoolDevice;
 }  // namespace Eigen
-
-namespace xla {
-class DeviceAssignment;
-}  // namespace xla
 
 namespace xla::cpu {
 class TargetMachineOptions;
@@ -83,7 +81,7 @@ struct XLA_FFI_Future {
 struct XLA_FFI_InvokeContext {
   struct LogicalDeviceContext {
     const xla::DeviceAssignment* device_assignment;
-    xla::GlobalDeviceId device_id;
+    absl::StatusOr<xla::DeviceAssignment::LogicalID> logical_device_id;
   };
 
   struct CpuContext {

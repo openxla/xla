@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_state.h"
 #include "xla/runtime/device_id.h"
+#include "xla/service/device_assignment.h"
 #include "xla/tsl/concurrency/chain.h"
 
 // XLA FFI `Invoke` is an utility function that provides a way to call XLA FFI
@@ -42,7 +43,6 @@ limitations under the License.
 
 namespace xla {
 class CustomOptions;
-class DeviceAssignment;
 class HloComputation;
 }  // namespace xla
 
@@ -81,7 +81,7 @@ namespace xla::ffi {
 struct InvokeContext {
   struct LogicalDeviceContext {
     const DeviceAssignment* device_assignment;
-    GlobalDeviceId device_id;
+    absl::StatusOr<DeviceAssignment::LogicalID> logical_device_id;
   };
 
   struct CpuContext {
