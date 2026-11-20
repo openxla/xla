@@ -230,7 +230,7 @@ ENTRY main {
   EXPECT_FALSE(changed);
 }
 
-TEST_F(ScanRewriterTritonTest, ReverseScanNotRewritten) {
+TEST_F(ScanRewriterTritonTest, ReverseScanRewritten) {
   constexpr absl::string_view kHloText = R"(
 HloModule reverse_scan
 
@@ -254,7 +254,7 @@ ENTRY main {
   ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
                               &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
-  EXPECT_FALSE(changed);
+  EXPECT_TRUE(changed);
 }
 
 TEST_F(ScanRewriterTritonTest, SmallBatchLargeScanDimNotRewritten) {
@@ -461,6 +461,33 @@ ENTRY main {
                               &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_FALSE(changed);
+}
+
+TEST_F(ScanRewriterTritonTest, NonTrailingScanDimRewrittenIfMinorMost) {
+  constexpr absl::string_view kHloText = R"(
+HloModule non_trailing_minor_physical_scan
+
+combiner {
+  in = f32[16] parameter(0)
+  carry = f32[16] parameter(1)
+  add = f32[16] add(carry, in)
+  ROOT t = (f32[16], f32[16]) tuple(add, add)
+}
+
+ENTRY main {
+  input = f32[4096,16]{0,1} parameter(0)
+  init = f32[16]{0} parameter(1)
+  scan = (f32[4096,16]{0,1}, f32[16]{0}) scan(input, init), dimensions={0}, num_carries=1, to_apply=combiner, is_associative=true
+  ROOT gte0 = f32[4096,16]{0,1} get-tuple-element(scan), index=0
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
+  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  EXPECT_TRUE(changed);
 }
 
 TEST_F(ScanRewriterTritonTest, DegenerateScanDimNotRewritten) {
