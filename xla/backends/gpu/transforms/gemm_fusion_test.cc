@@ -1180,6 +1180,27 @@ ENTRY e {
                                "(compute capability 8.0) and up, but got")));
 }
 
+TEST_F(GemmFusionTest, GemmFusionBailsOutOnRocmGpuWithoutTritonSupport) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+ENTRY e {
+  p0 = f32[2,53] parameter(0)
+  p0e = f32[2,53] exponential(p0)
+  p1 = s16[53,2] parameter(1)
+  p1c = f32[53,2] convert(p1)
+  ROOT dot = f32[2,2] dot(p0e, p1c),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})"));
+  se::DeviceDescription device_info = TestGpuDeviceInfo::AMDMI210DeviceInfo();
+  device_info.set_rocm_compute_capability("gfx908");
+  EXPECT_THAT(GemmFusion(device_info).Run(module.get()),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kFailedPrecondition,
+                  ::testing::HasSubstr(
+                      "ROCm Triton support is only enabled for CDNA2 (gfx90a), "
+                      "RDNA3 (gfx11) and newer GPUs, but got gfx908.")));
+}
+
 TEST_F(GemmFusionTest, GemmFusionSucceedsOnNonCudaGpu) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
