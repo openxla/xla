@@ -363,6 +363,7 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallTypedFFI(
     invoke_context.logical_device_context =
         ffi::InvokeContext::LogicalDeviceContext{
             params.collective_params->device_assignment,
+            params.collective_params->global_device_id,
             params.collective_params->logical_device_id};
   }
 

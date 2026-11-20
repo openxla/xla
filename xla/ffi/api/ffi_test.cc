@@ -577,7 +577,7 @@ TEST(FfiTest, LogicalDeviceInfo) {
   assignment(1, 2) = 7;
   InvokeContext context;
   context.logical_device_context = InvokeContext::LogicalDeviceContext{
-      &assignment, DeviceAssignment::LogicalID{1, 2}};
+      &assignment, GlobalDeviceId(7), DeviceAssignment::LogicalID{1, 2}};
   ASSERT_OK(Invoke(Api(), *handler, call_frame, context));
 }
 
@@ -603,18 +603,22 @@ TEST(FfiTest, LogicalDeviceInfoNullContext) {
   EXPECT_THAT(status.message(), HasSubstr("invocation context is null"));
 }
 
-TEST(FfiTest, LogicalDeviceInfoDeviceNotInAssignment) {
+TEST(FfiTest, LogicalDeviceInfoReportsAssignmentErrors) {
   auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
   auto handler = Ffi::Bind().Ctx<LogicalDeviceInfo>().To(
       [](LogicalDeviceInfo) { return Error::Success(); });
-  DeviceAssignment assignment(/*replica_count=*/1, /*computation_count=*/1);
-  assignment(0, 0) = 4;
-  InvokeContext context;
-  context.logical_device_context = InvokeContext::LogicalDeviceContext{
-      &assignment, assignment.LogicalIdForDevice(GlobalDeviceId(7))};
-  EXPECT_THAT(Invoke(Api(), *handler, call_frame, context),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("Device 7 doesn't appear")));
+  DeviceAssignment assignment(/*replica_count=*/2, /*computation_count=*/1);
+  assignment.Fill(4);
+  auto query = [&](int device_id) {
+    InvokeContext context;
+    context.logical_device_context = InvokeContext::LogicalDeviceContext{
+        &assignment, GlobalDeviceId(device_id), std::nullopt};
+    return Invoke(Api(), *handler, call_frame, context);
+  };
+  EXPECT_THAT(query(7), StatusIs(absl::StatusCode::kInvalidArgument,
+                                 HasSubstr("Device 7 doesn't appear")));
+  EXPECT_THAT(query(4), StatusIs(absl::StatusCode::kInvalidArgument,
+                                 HasSubstr("Device 4 not unique")));
 }
 
 TEST(FfiTest, LogicalDeviceInfoUnsupportedApi) {

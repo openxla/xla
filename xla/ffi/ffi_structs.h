@@ -22,7 +22,6 @@ limitations under the License.
 #include <variant>
 
 #include "absl/status/status.h"
-#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/custom_options.h"
 #include "xla/executable_run_options.h"
@@ -81,7 +80,8 @@ struct XLA_FFI_Future {
 struct XLA_FFI_InvokeContext {
   struct LogicalDeviceContext {
     const xla::DeviceAssignment* device_assignment;
-    absl::StatusOr<xla::DeviceAssignment::LogicalID> logical_device_id;
+    xla::GlobalDeviceId global_device_id;
+    std::optional<xla::DeviceAssignment::LogicalID> logical_device_id;
   };
 
   struct CpuContext {

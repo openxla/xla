@@ -250,8 +250,6 @@ xla_cc_test(
         "//xla/service/cpu:cpu_executable_run_options",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
     ],
 )

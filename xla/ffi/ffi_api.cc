@@ -379,10 +379,14 @@ static XLA_FFI_Error* XLA_FFI_LogicalDeviceInfo_Get(
         "Logical device information requires an execution device assignment")};
   }
   const DeviceAssignment& assignment = *logical->device_assignment;
-  const absl::StatusOr<DeviceAssignment::LogicalID>& id =
-      logical->logical_device_id;
-  if (!id.ok()) {
-    return new XLA_FFI_Error{id.status()};
+  std::optional<DeviceAssignment::LogicalID> id = logical->logical_device_id;
+  if (!id) {
+    // Setup retains only successful lookups. Recover the diagnostic on demand.
+    auto resolved = assignment.LogicalIdForDevice(logical->global_device_id);
+    if (!resolved.ok()) {
+      return new XLA_FFI_Error{std::move(resolved).status()};
+    }
+    id = *resolved;
   }
   args->replica_id = id->replica_id;
   args->partition_id = id->computation_id;

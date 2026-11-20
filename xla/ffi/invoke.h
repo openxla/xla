@@ -81,7 +81,8 @@ namespace xla::ffi {
 struct InvokeContext {
   struct LogicalDeviceContext {
     const DeviceAssignment* device_assignment;
-    absl::StatusOr<DeviceAssignment::LogicalID> logical_device_id;
+    GlobalDeviceId global_device_id;
+    std::optional<DeviceAssignment::LogicalID> logical_device_id;
   };
 
   struct CpuContext {

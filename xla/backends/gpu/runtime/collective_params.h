@@ -78,7 +78,7 @@ struct CollectiveParams {
   bool need_barrier = false;
   bool collective_use_minimal_resource;
   bool nccl_window_symmetric = false;
-  absl::StatusOr<DeviceAssignment::LogicalID> logical_device_id;
+  std::optional<DeviceAssignment::LogicalID> logical_device_id;
 
  private:
   CollectiveParams(
