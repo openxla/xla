@@ -179,7 +179,8 @@ absl::StatusOr<bool> AllReduceReassociate::RunImpl(
   }
 
   bool changed = false;
-  for (auto computation : module->computations(execution_threads)) {
+  for (HloComputation* computation :
+       module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* inst : computation->MakeInstructionPostOrder()) {
       // Check if the instruction we want to reassociate with will match any
       // valid all-reduce reduction function. Save the ReductionKind object for
