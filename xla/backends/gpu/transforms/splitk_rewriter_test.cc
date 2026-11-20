@@ -366,6 +366,29 @@ CHECK: f32[8,12804,128]{{.*}} reshape(%rhs)
                   .value_or(false));
 }
 
+TEST_F(SplitkRewriterTest, SplitKDotKeepsFrontendAttributes) {
+  const char* hlo_string = R"(
+HloModule module
+
+ENTRY test {
+  lhs = f32[16,10240]{1,0} parameter(0)
+  rhs = f32[10240,128]{1,0} parameter(1)
+  ROOT dot = f32[16,128]{1,0} dot(lhs, rhs),
+      lhs_contracting_dims={1}, rhs_contracting_dims={0},
+      frontend_attributes={_scheduling_group_id="1"}
+})";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       rewriter_.HloModulePass::Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_TRUE(RunFileCheck(module->ToString(), R"(
+CHECK: dot({{.*}}), lhs_batch_dims={1}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}, frontend_attributes={_scheduling_group_id="1"}
+  )")
+                  .value_or(false));
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
