@@ -100,6 +100,10 @@ TEST_F(CpuPjrtCompilerTest, CompileXlaComputationSuccess) {
 
 TEST_F(CpuPjrtCompilerTest, CompileMlirOpSuccess) {
   xla::CompileOptions options;
+  std::string dump_dir;
+  ASSERT_TRUE(tsl::Env::Default()->LocalTempFilename(&dump_dir));
+  options.env_option_overrides = {{"xla_dump_to", dump_dir}};
+
   auto context = std::make_unique<mlir::MLIRContext>();
   context->loadDialect<mlir::func::FuncDialect, mlir::mhlo::MhloDialect>();
   auto mlir_module =
@@ -115,6 +119,11 @@ TEST_F(CpuPjrtCompilerTest, CompileMlirOpSuccess) {
                                                   std::move(mlir_module)),
                        *topology_description,
                        /*client=*/nullptr));
+
+  std::vector<std::string> dumps;
+  ASSERT_OK(tsl::Env::Default()->GetMatchingPaths(
+      tsl::io::JoinPath(dump_dir, "*", "module.mlir"), &dumps));
+  EXPECT_THAT(dumps, testing::SizeIs(1));
 }
 
 TEST_F(CpuPjrtCompilerTest, CompileXlaComputationWithAvx512FeatureOn) {
