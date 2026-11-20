@@ -143,7 +143,8 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
     bool preallocate, std::optional<int64_t> gpu_system_memory_size,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_alloc_visitors,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_free_visitors,
-    bool enable_spatial_partitioning, absl::string_view name_prefix) {
+    bool enable_spatial_partitioning, absl::string_view name_prefix,
+    uint64_t reserved_bytes) {
   if (enable_spatial_partitioning && !preallocate) {
     return InvalidArgument(
         "Spatial partitioning of the BFC allocator requires preallocate=true.");
@@ -209,14 +210,35 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
     allocator_memory = gpu_system_memory_size.value();
   }
 
+  if (reserved_bytes > 0 && reserved_bytes >= allocator_memory) {
+    return InvalidArgument(
+        "Memory reserved for other pools on device %i (%s) exceeds the default "
+        "pool budget (%s); raise memory_fraction / gpu_system_memory_size or "
+        "lower the reservation (e.g. locality_domain_memory_size).",
+        device_ordinal, tsl::strings::HumanReadableNumBytes(reserved_bytes),
+        tsl::strings::HumanReadableNumBytes(allocator_memory));
+  }
+  allocator_memory -= reserved_bytes;
+
   allocator_memory = RoundUpGpuMemoryLimit(allocator_memory);
 
   // Cap on the mapped prefix: a fraction of total (not free) device memory,
   // rounded down to the mapping granularity once the reservation reports it.
+  // `reserved_bytes` comes out of the cap as well as the initial allocation, so
+  // the default pool plus the pools owning the reservation stay under the cap.
   size_t growth_capacity =
       allow_growth ? static_cast<size_t>(total_memory * growth_fraction)
                    : static_cast<size_t>(total_memory);
   if (allow_growth) {
+    if (reserved_bytes > 0 && reserved_bytes >= growth_capacity) {
+      return InvalidArgument(
+          "Memory reserved for other pools on device %i (%s) does not fit "
+          "under the BFC growth cap (%s); raise the cap or lower the "
+          "reservation (e.g. locality_domain_memory_size).",
+          device_ordinal, tsl::strings::HumanReadableNumBytes(reserved_bytes),
+          tsl::strings::HumanReadableNumBytes(growth_capacity));
+    }
+    growth_capacity -= reserved_bytes;
     ABSL_RETURN_IF_ERROR(
         ValidateBfcGrowthMemoryLimit(allocator_memory, growth_capacity));
   }
@@ -386,6 +408,65 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateTempBufferBFCAllocator(
         "Memory fraction %s leaves no device memory for the temp buffer pool "
         "of --xla_gpu_temp_buffer_use_separate_color; lower the fraction.",
         MemFractionToString(memory_fraction));
+  }
+  return allocator;
+}
+
+absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>>
+CreateLocalityDomainBFCAllocator(
+    se::StreamExecutor* executor, int locality_domain_id,
+    size_t locality_domain_memory_size,
+    const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_alloc_visitors,
+    const std::vector<tsl::SubAllocator::Visitor>&
+        sub_allocator_free_visitors) {
+  int device_ordinal = executor->device_ordinal();
+  if (locality_domain_memory_size == 0) {
+    return InvalidArgument(
+        "Locality-domain BFC allocator for device %i requires a nonzero "
+        "locality_domain_memory_size",
+        device_ordinal);
+  }
+  ABSL_ASSIGN_OR_RETURN(
+      auto memory_allocator,
+      executor->CreateLocalityDomainMemoryAllocator(locality_domain_id));
+  auto sub_allocator = std::make_unique<se::StreamExecutorAllocator>(
+      std::move(memory_allocator),
+      /*memory_type=*/stream_executor::MemorySpace::kDevice, device_ordinal,
+      sub_allocator_alloc_visitors, sub_allocator_free_visitors);
+
+  const size_t allocator_memory =
+      RoundUpGpuMemoryLimit(locality_domain_memory_size);
+  LOG(INFO) << "XLA backend allocating "
+            << tsl::strings::HumanReadableNumBytes(allocator_memory)
+            << " on locality domain " << locality_domain_id << " of device "
+            << device_ordinal << " for LocalityDomainBFCAllocator.";
+
+  tsl::BFCAllocator::Options opts;
+  opts.allow_growth = false;
+  auto allocator = std::make_unique<tsl::BFCAllocator>(
+      std::move(sub_allocator), allocator_memory,
+      absl::StrCat("GPU_", device_ordinal, "_ld", locality_domain_id, "_bfc"),
+      opts);
+
+  // BFC defers its first region allocation until the first request. Force it
+  // now so the domain is reserved before any other pool allocates.
+  tsl::AllocationAttributes attrs;
+  attrs.retry_on_failure = false;
+  void* probe = allocator->AllocateRaw(tsl::Allocator::kAllocatorAlignment,
+                                       /*num_bytes=*/1, attrs);
+  if (probe != nullptr) {
+    allocator->DeallocateRaw(probe);
+  }
+  std::optional<tsl::AllocatorStats> stats = allocator->GetStats();
+  const int64_t pool_bytes =
+      stats.has_value() ? stats->pool_bytes.value_or(0) : 0;
+  if (probe == nullptr || pool_bytes < static_cast<int64_t>(allocator_memory)) {
+    return ResourceExhausted(
+        "Could not reserve %s on locality domain %d of device %i (reserved "
+        "%s); lower locality_domain_memory_size.",
+        tsl::strings::HumanReadableNumBytes(allocator_memory),
+        locality_domain_id, device_ordinal,
+        tsl::strings::HumanReadableNumBytes(pool_bytes));
   }
   return allocator;
 }

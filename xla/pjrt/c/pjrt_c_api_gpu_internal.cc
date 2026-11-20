@@ -126,6 +126,8 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
            PJRT_NamedValue_Type::PJRT_NamedValue_kString},
           {"collective_memory_size",
            PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
+          {"locality_domain_memory_size",
+           PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
           {"visible_devices", PJRT_NamedValue_Type::PJRT_NamedValue_kInt64List},
           {"node_id", PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
           {"num_nodes", PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
@@ -194,6 +196,16 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
           "memory_fraction_policy: %s", fraction.status().message())));
     }
     allocator_config.memory_fraction_policy = *fraction;
+  }
+  if (auto it = create_options.find("locality_domain_memory_size");
+      it != create_options.end()) {
+    int64_t locality_domain_memory_size = std::get<int64_t>(it->second);
+    if (locality_domain_memory_size < 0) {
+      return StatusToPjRtError(absl::InvalidArgumentError(absl::StrFormat(
+          "locality_domain_memory_size must be non-negative, got %d",
+          locality_domain_memory_size)));
+    }
+    allocator_config.locality_domain_memory_size = locality_domain_memory_size;
   }
   std::optional<std::set<int>> visible_devices =
       GetVisibleDevicesFromOptions(create_options);

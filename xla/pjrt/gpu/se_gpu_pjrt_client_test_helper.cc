@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_client_test_helper.h"
 
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -26,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -43,6 +42,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/raw_buffer.h"
@@ -66,6 +66,14 @@ GpuClientOptions GetTestGpuClientOptions(int num_devices) {
     allowed.insert(i);
   }
   options.allowed_devices = std::move(allowed);
+  return options;
+}
+
+GpuClientOptions GetTestLocalityDomainGpuClientOptions(int num_devices) {
+  GpuClientOptions options = GetTestGpuClientOptions(num_devices);
+  options.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
+  options.allocator_config.locality_domain_memory_size =
+      kTestLocalityDomainMemorySize;
   return options;
 }
 

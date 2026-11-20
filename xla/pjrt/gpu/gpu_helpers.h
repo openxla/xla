@@ -81,13 +81,32 @@ absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>> GetGpuHostAllocator(
 // returned. Non-spatial and unified-memory pools use only the start fraction.
 //
 // The allocator is named `<name_prefix>_<device ordinal>_bfc`.
+//
+// `reserved_bytes` is memory owned by other pools, such as locality-domain
+// pools, and is carved out of this pool's budget: out of the initial
+// allocation (the start of `memory_fraction` of total memory, or
+// `gpu_system_memory_size` when set) and, for a pool that grows, out of the
+// growth cap too. Returns InvalidArgument if the reservation does not leave a
+// nonempty initial allocation that fits under the reduced cap.
 absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
     se::StreamExecutor* executor, const MemFraction& memory_fraction,
     bool preallocate, std::optional<int64_t> gpu_system_memory_size,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_alloc_visitors,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_free_visitors,
     bool enable_spatial_partitioning = false,
-    absl::string_view name_prefix = "GPU");
+    absl::string_view name_prefix = "GPU", uint64_t reserved_bytes = 0);
+
+// Builds a fixed-size BFCAllocator whose memory is placed on locality domain
+// `locality_domain_id` of `executor`'s device. The pool is preallocated before
+// this function returns, so its physical placement does not depend on later
+// allocations from other pools. Returns ResourceExhausted if the device cannot
+// provide the full `locality_domain_memory_size` on that domain.
+absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>>
+CreateLocalityDomainBFCAllocator(
+    se::StreamExecutor* executor, int locality_domain_id,
+    size_t locality_domain_memory_size,
+    const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_alloc_visitors,
+    const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_free_visitors);
 
 // Builds a BFCAllocator for all local GPUs that uses collective memory.
 absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateCollectiveBFCAllocator(

@@ -15,6 +15,7 @@ limitations under the License.
 #ifndef XLA_PJRT_GPU_SE_GPU_PJRT_CLIENT_TEST_HELPER_H_
 #define XLA_PJRT_GPU_SE_GPU_PJRT_CLIENT_TEST_HELPER_H_
 
+#include <cstddef>
 #include <memory>
 #include <vector>
 
@@ -60,6 +61,13 @@ struct MemsetValue {
 };
 
 GpuClientOptions GetTestGpuClientOptions(int num_devices = 1);
+
+// Per-domain pool size used by locality-domain tests.
+inline constexpr size_t kTestLocalityDomainMemorySize = size_t{256} << 20;
+
+// Returns GetTestGpuClientOptions() configured for the BFC allocator with a
+// kTestLocalityDomainMemorySize pool on each locality domain.
+GpuClientOptions GetTestLocalityDomainGpuClientOptions(int num_devices = 1);
 
 absl::StatusOr<std::unique_ptr<xla::PjRtLoadedExecutable>> CompileExecutable(
     absl::string_view program, xla::PjRtClient& client,

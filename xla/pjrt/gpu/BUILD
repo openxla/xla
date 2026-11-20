@@ -242,6 +242,7 @@ cc_library(
         "//xla/stream_executor:stream_executor_address_allocator",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/gpu:gpu_executor_header",
+        "//xla/stream_executor/gpu:locality_domain_memory",
         "//xla/stream_executor/integrations:tf_allocator_adapter",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
@@ -385,6 +386,7 @@ cc_library(
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:raw_buffer",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/service:gpu_topology_proto_cc",
@@ -487,6 +489,7 @@ xla_test(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_address_allocator",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/gpu:locality_domain_memory",
         "//xla/stream_executor/integrations:tf_allocator_adapter",
         "//xla/tests:literal_test_util",
         "//xla/tsl/concurrency:async_value",
@@ -527,6 +530,8 @@ xla_test(
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:platform_port",
     ] + if_cuda([
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:platform",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/cuda:cuda_device_address_vmm_allocator",
     ]) + if_rocm([

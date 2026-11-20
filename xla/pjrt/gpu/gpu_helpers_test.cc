@@ -104,12 +104,14 @@ class BfcMemorySizingTest : public ::testing::Test {
  protected:
   absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> Create(
       const MemFraction& fraction,
-      std::optional<int64_t> initial_bytes = std::nullopt) {
+      std::optional<int64_t> initial_bytes = std::nullopt,
+      uint64_t reserved_bytes = 0) {
     return CreateBFCAllocator(&executor_, fraction, /*preallocate=*/true,
                               initial_bytes,
                               /*sub_allocator_alloc_visitors=*/{},
                               /*sub_allocator_free_visitors=*/{},
-                              /*enable_spatial_partitioning=*/true);
+                              /*enable_spatial_partitioning=*/true,
+                              /*name_prefix=*/"GPU", reserved_bytes);
   }
 
   SizingExecutor executor_;
@@ -199,6 +201,47 @@ TEST_F(BfcMemorySizingTest, TempBufferPoolNeedsMemoryLeftByPreallocatedPool) {
                   /*gpu_system_memory_size=*/std::nullopt, {}, {}),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("leaves no device memory")));
+}
+
+TEST_F(BfcMemorySizingTest, FixedPolicyCarvesReservedBytesFromBudget) {
+  ASSERT_OK_AND_ASSIGN(auto allocator, Create(FixedMemFraction{0.5},
+                                              /*initial_bytes=*/std::nullopt,
+                                              /*reserved_bytes=*/8 * kMiB));
+  EXPECT_EQ(allocator->GetStats()->bytes_limit, 24 * kMiB);
+  EXPECT_EQ(executor_.reservations_, 0);
+}
+
+TEST_F(BfcMemorySizingTest, GrowthCapExcludesReservedBytes) {
+  // A 16 MiB start and a 32 MiB cap, with 8 MiB owned by other pools, leave an
+  // 8 MiB initial allocation that may grow to 24 MiB.
+  for (bool explicit_initial : {false, true}) {
+    SCOPED_TRACE(explicit_initial);
+    ASSERT_OK_AND_ASSIGN(
+        auto allocator,
+        Create(
+            FlexMemFraction{16.0 / 64, 32.0 / 64},
+            explicit_initial ? std::optional<int64_t>(16 * kMiB) : std::nullopt,
+            /*reserved_bytes=*/8 * kMiB));
+    EXPECT_EQ(allocator->GetStats()->bytes_limit, 24 * kMiB);
+  }
+}
+
+TEST_F(BfcMemorySizingTest, RejectsReservedBytesThatDoNotFitUnderGrowthCap) {
+  struct Case {
+    int64_t initial_bytes;
+    uint64_t reserved_bytes;
+  };
+  // The cap is 32 MiB. In the first case the reservation alone exceeds it. In
+  // the second, the 24 MiB initial allocation only fits under the full cap,
+  // not under the 16 MiB left after the reservation.
+  for (const Case& c :
+       {Case{48 * kMiB, 40 * kMiB}, Case{40 * kMiB, 16 * kMiB}}) {
+    SCOPED_TRACE(c.reserved_bytes);
+    EXPECT_THAT(
+        Create(FlexMemFraction{16.0 / 64, 32.0 / 64}, c.initial_bytes,
+               c.reserved_bytes),
+        StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("growth cap")));
+  }
 }
 
 constexpr size_t kPoolLimit = 24 * kMiB;

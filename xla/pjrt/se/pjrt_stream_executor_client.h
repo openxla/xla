@@ -343,6 +343,13 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
   absl::StatusOr<tsl::AllocatorStats> GetAllocatorStats(
       LocalDeviceId local_device_id) const override;
 
+  // Returns stats for the pool backing `memory_space` (a layout memory-space
+  // color, e.g. an encoded locality-domain color) on `local_device_id`. Use
+  // this to read `peak_bytes_in_use` of a locality-domain pool when choosing
+  // `locality_domain_memory_size`.
+  absl::StatusOr<tsl::AllocatorStats> GetAllocatorStatsForMemorySpace(
+      LocalDeviceId local_device_id, int64_t memory_space) const;
+
   absl::Status ClearMemoryStats(LocalDeviceId local_device_id) override;
 
   virtual absl::StatusOr<PjRtDeviceEventRefVector> CrossHostReceiveBuffersInto(

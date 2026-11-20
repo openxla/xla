@@ -760,6 +760,29 @@ PjRtStreamExecutorRawClient::GetAllocatorStats(
   return *stats;
 }
 
+absl::StatusOr<tsl::AllocatorStats>
+PjRtStreamExecutorRawClient::GetAllocatorStatsForMemorySpace(
+    LocalDeviceId local_device_id, int64_t memory_space) const {
+  auto* allocator_adapter = dynamic_cast<se::MultiDeviceAdapter*>(allocator());
+  if (!allocator_adapter) {
+    return Unimplemented(
+        "GetAllocatorStatsForMemorySpace() is only implemented with "
+        "MultiDeviceAdapter allocator");
+  }
+
+  ABSL_ASSIGN_OR_RETURN(
+      tsl::Allocator * allocator,
+      allocator_adapter->GetAllocator(local_device_id.value(), memory_space));
+  std::optional<tsl::AllocatorStats> stats = allocator->GetStats();
+  if (!stats.has_value()) {
+    return Unimplemented(
+        "GetAllocatorStatsForMemorySpace() is not supported by the allocator "
+        "for memory space %d",
+        memory_space);
+  }
+  return *stats;
+}
+
 absl::Status PjRtStreamExecutorRawClient::ClearMemoryStats(
     LocalDeviceId local_device_id) {
   auto* allocator_adapter = dynamic_cast<se::MultiDeviceAdapter*>(allocator());

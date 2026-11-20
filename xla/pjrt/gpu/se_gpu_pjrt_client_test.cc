@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -33,6 +30,8 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/base/log_severity.h"
@@ -57,9 +56,9 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "google/protobuf/text_format.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "google/protobuf/text_format.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
 #include "xla/backends/gpu/ffi.h"
@@ -76,6 +75,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/parse_flags_from_env.h"
 #include "xla/pjrt/abstract_tracked_device_buffer.h"
+#include "xla/pjrt/common_pjrt_client.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/gpu/se_gpu_topology_description.h"
 #include "xla/pjrt/host_memory_allocator.h"
@@ -113,15 +113,15 @@ limitations under the License.
 #include "xla/pjrt/gpu/vmm_allocator_gate.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_device_address_vmm_allocator.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/platform.h"
 #elif TENSORFLOW_USE_ROCM
 #include "xla/pjrt/gpu/vmm_allocator_gate.h"
 #include "xla/stream_executor/rocm/rocm_device_address_vmm_allocator.h"
 #endif  // GOOGLE_CUDA
-#include "tsl/platform/mem.h"
-#include "tsl/platform/numa.h"
-#include "tsl/platform/platform.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_client_test_helper.h"
 #include "xla/stream_executor/device_address_allocator.h"
+#include "xla/stream_executor/gpu/locality_domain_memory.h"
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -139,6 +139,9 @@ limitations under the License.
 #include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/mem.h"
+#include "tsl/platform/numa.h"
+#include "tsl/platform/platform.h"
 namespace xla {
 namespace {
 
@@ -395,6 +398,127 @@ TEST(StreamExecutorGpuClientTest, MemorySpacesUniqueIds) {
     }
   }
 }
+
+#if GOOGLE_CUDA
+PjRtStreamExecutorRawClient* GetSeRawClient(PjRtClient* client) {
+  return absl::down_cast<PjRtStreamExecutorRawClient*>(
+      absl::down_cast<CommonPjRtClient*>(client)->raw_client());
+}
+
+bool IsUnavailableLocalityIntegrationStatus(const absl::Status& status) {
+  return absl::IsFailedPrecondition(status) || absl::IsUnimplemented(status) ||
+         absl::IsNotFound(status);
+}
+
+TEST(StreamExecutorGpuClientTest, LocalityDomainPoolsComeOutOfDefaultBudget) {
+  GpuClientOptions options = GetTestLocalityDomainGpuClientOptions();
+  // Without preallocation the collective pool is separate from the default
+  // pool, so its cap can be checked independently.
+  options.allocator_config.preallocate = false;
+  absl::StatusOr<std::unique_ptr<PjRtClient>> client_or =
+      GetStreamExecutorGpuClient(options);
+  if (!client_or.ok() &&
+      IsUnavailableLocalityIntegrationStatus(client_or.status())) {
+    GTEST_SKIP() << "Locality-domain pools are unavailable: "
+                 << client_or.status();
+  }
+  ASSERT_OK(client_or.status());
+  std::unique_ptr<PjRtClient> client = std::move(*client_or);
+  PjRtStreamExecutorRawClient* raw_client = GetSeRawClient(client.get());
+  const LocalDeviceId local_device_id =
+      client->addressable_devices()[0]->local_device_id();
+  LocalDeviceState* local_device_state =
+      raw_client->device_state(local_device_id);
+  ASSERT_NE(local_device_state, nullptr);
+  se::StreamExecutor* executor = local_device_state->executor();
+  int64_t free_memory = 0;
+  int64_t total_memory = 0;
+  ASSERT_TRUE(executor->DeviceMemoryUsage(&free_memory, &total_memory));
+  constexpr int64_t kGpuMemoryLimitGranularity = 2 * 1024 * 1024;
+
+  int64_t reserved_bytes = 0;
+  const int domain_count =
+      executor->GetDeviceDescription().locality_domain_count();
+  for (int domain = 0; domain < domain_count; ++domain) {
+    ASSERT_OK_AND_ASSIGN(int64_t memory_space,
+                         se::gpu::EncodeLocalityDomainMemorySpace(domain));
+    ASSERT_OK_AND_ASSIGN(tsl::AllocatorStats stats,
+                         raw_client->GetAllocatorStatsForMemorySpace(
+                             local_device_id, memory_space));
+    EXPECT_EQ(stats.bytes_limit,
+              static_cast<int64_t>(kTestLocalityDomainMemorySize));
+    ASSERT_TRUE(stats.pool_bytes.has_value());
+    EXPECT_GE(*stats.pool_bytes,
+              static_cast<int64_t>(kTestLocalityDomainMemorySize));
+    reserved_bytes += *stats.pool_bytes;
+  }
+
+  const double memory_fraction = options.allocator_config.memory_fraction;
+  const size_t default_budget = total_memory * memory_fraction;
+  ASSERT_OK_AND_ASSIGN(tsl::AllocatorStats default_stats,
+                       raw_client->GetAllocatorStats(local_device_id));
+  EXPECT_EQ(default_stats.bytes_limit,
+            RoundUpTo<int64_t>(default_budget - reserved_bytes,
+                               kGpuMemoryLimitGranularity));
+
+  // The collective pool's cap is unchanged by locality-domain reservations.
+  constexpr int64_t kCollectiveMemorySpace =
+      static_cast<int64_t>(gpu::MemorySpaceColor::kCollective);
+  const size_t collective_budget = total_memory * (1.0 - memory_fraction);
+  ASSERT_OK_AND_ASSIGN(tsl::AllocatorStats collective_stats,
+                       raw_client->GetAllocatorStatsForMemorySpace(
+                           local_device_id, kCollectiveMemorySpace));
+  EXPECT_EQ(collective_stats.bytes_limit,
+            RoundUpTo<int64_t>(collective_budget, kGpuMemoryLimitGranularity));
+}
+
+TEST(StreamExecutorGpuClientTest,
+     LocalityDomainReservationsExceedingBudgetFailClientCreation) {
+  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
+                       PlatformUtil::GetPlatform("CUDA"));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  const int domain_count =
+      executor->GetDeviceDescription().locality_domain_count();
+  if (domain_count < 2) {
+    GTEST_SKIP() << "Requires a GPU with at least two locality domains";
+  }
+  int64_t free_memory = 0;
+  int64_t total_memory = 0;
+  ASSERT_TRUE(executor->DeviceMemoryUsage(&free_memory, &total_memory));
+
+  // Reservations that each domain can hold physically, but that are twice the
+  // default pool budget.
+  GpuClientOptions options = GetTestLocalityDomainGpuClientOptions();
+  options.allocator_config.memory_fraction =
+      0.5 * domain_count * kTestLocalityDomainMemorySize / total_memory;
+  EXPECT_THAT(GetStreamExecutorGpuClient(options),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("exceeds the default pool budget")));
+}
+
+TEST(StreamExecutorGpuClientTest,
+     OversizedLocalityDomainReservationFailsClientCreation) {
+  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
+                       PlatformUtil::GetPlatform("CUDA"));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  if (executor->GetDeviceDescription().locality_domain_count() < 2) {
+    GTEST_SKIP() << "Requires a GPU with at least two locality domains";
+  }
+  int64_t free_memory = 0;
+  int64_t total_memory = 0;
+  ASSERT_TRUE(executor->DeviceMemoryUsage(&free_memory, &total_memory));
+
+  // No single domain can hold the whole device's memory.
+  GpuClientOptions options = GetTestLocalityDomainGpuClientOptions();
+  options.allocator_config.locality_domain_memory_size = total_memory;
+  EXPECT_THAT(GetStreamExecutorGpuClient(options),
+              StatusIs(absl::StatusCode::kResourceExhausted,
+                       HasSubstr("Could not reserve")));
+}
+
+#endif  // GOOGLE_CUDA
 
 TEST(StreamExecutorGpuClientTest, NumaNode) {
   TF_ASSERT_OK_AND_ASSIGN(
