@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_PJRT_GPU_SE_GPU_PJRT_CLIENT_H_
 #define XLA_PJRT_GPU_SE_GPU_PJRT_CLIENT_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -58,6 +59,7 @@ limitations under the License.
 #include "xla/pjrt/se/pjrt_stream_executor_client.h"
 #include "xla/pjrt/se/se_raw_buffer.h"
 #include "xla/runtime/device_id.h"
+#include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/gpu_topology.pb.h"
@@ -138,6 +140,12 @@ class StreamExecutorGpuRawClient : public PjRtStreamExecutorRawClient {
       const override;
 
   void RecordMemoryStats(LocalDeviceState* local_device_state) override;
+
+  // A slice of device memory can be passed to a library (e.g. cuBLAS) without
+  // a copy, so it needs the same alignment as a buffer that XLA:GPU allocates.
+  absl::StatusOr<size_t> GetDeviceAddressAlignment() const override {
+    return static_cast<size_t>(gpu::kXlaAllocatedBufferAlignBytes);
+  }
 
  private:
   void ScheduleTransfersOnLocalDevice(

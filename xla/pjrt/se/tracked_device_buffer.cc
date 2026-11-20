@@ -107,6 +107,18 @@ class AllocatedRawSEDeviceMemory : public RawSEDeviceMemory {
   size_t sync_point_ = std::numeric_limits<size_t>::max();
 };
 
+namespace {
+
+// Memory that an execution allocates. CreateDelayedMemory() creates it
+// unconstructed. Then either ConstructDelayed() constructs it or
+// AbandonDelayed() ends it with an error.
+class DelayedRawSEDeviceMemory final : public AllocatedRawSEDeviceMemory {
+ public:
+  using AllocatedRawSEDeviceMemory::AllocatedRawSEDeviceMemory;
+};
+
+}  // namespace
+
 tsl::AsyncValueRef<RawSEDeviceMemory> RawSEDeviceMemory::Create(
     se::DeviceAddressBase value, LocalDeviceState* local_device,
     se::DeviceAddressAllocator* allocator) {
@@ -117,13 +129,24 @@ tsl::AsyncValueRef<RawSEDeviceMemory> RawSEDeviceMemory::Create(
 /*static*/ void RawSEDeviceMemory::ConstructDelayed(
     tsl::AsyncValueRef<RawSEDeviceMemory> buf, se::DeviceAddressBase value,
     LocalDeviceState* local_device, se::DeviceAddressAllocator* allocator) {
-  tsl::Cast<AllocatedRawSEDeviceMemory>(buf).emplace(value, local_device,
-                                                     allocator);
+  tsl::Cast<DelayedRawSEDeviceMemory>(buf).emplace(value, local_device,
+                                                   allocator);
 }
 
 /*static*/ tsl::AsyncValueRef<RawSEDeviceMemory>
 RawSEDeviceMemory::CreateDelayedMemory() {
-  return tsl::MakeUnconstructedAsyncValueRef<AllocatedRawSEDeviceMemory>();
+  return tsl::MakeUnconstructedAsyncValueRef<DelayedRawSEDeviceMemory>();
+}
+
+/*static*/ void RawSEDeviceMemory::AbandonDelayed(
+    const tsl::AsyncValueRef<RawSEDeviceMemory>& buf) {
+  if (!buf || buf.GetAsyncValue()->IsUnresolvedIndirect()) {
+    return;
+  }
+  if (buf.Isa<DelayedRawSEDeviceMemory>() && buf.IsUnconstructed()) {
+    buf.SetError(absl::InternalError(
+        "Delayed device memory was dropped before it was constructed."));
+  }
 }
 
 class SlicedRawSEDeviceMemory : public RawSEDeviceMemory {

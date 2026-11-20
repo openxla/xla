@@ -234,5 +234,59 @@ TEST(TrackedDeviceBufferTest, SyncSliceSuccess) {
   EXPECT_EQ(slice->mem().size(), size);
 }
 
+TEST(TrackedDeviceBufferTest, AbandonDelayedSetsErrorOnUnfilledPlaceholder) {
+  tsl::AsyncValueRef<RawSEDeviceMemory> placeholder =
+      RawSEDeviceMemory::CreateDelayedMemory();
+  tsl::AsyncValueRef<RawSEDeviceMemory> slice =
+      RawSEDeviceMemory::CreateSlice(placeholder, /*offset=*/16, /*size=*/32);
+  EXPECT_TRUE(slice.IsUnavailable());
+
+  RawSEDeviceMemory::AbandonDelayed(placeholder);
+
+  EXPECT_TRUE(placeholder.IsError());
+  tsl::BlockUntilReady(slice);
+  EXPECT_TRUE(slice.IsError());
+}
+
+TEST(TrackedDeviceBufferTest, AbandonDelayedIgnoresOtherUnconstructedMemory) {
+  auto foreign_ref =
+      tsl::MakeUnconstructedAsyncValueRef<ForeignRawSEDeviceMemory>();
+  tsl::AsyncValueRef<RawSEDeviceMemory> foreign(foreign_ref);
+
+  RawSEDeviceMemory::AbandonDelayed(foreign);
+
+  EXPECT_TRUE(foreign.IsUnavailable());
+  foreign_ref.SetError(absl::InternalError("Clean up the test."));
+}
+
+TEST(TrackedDeviceBufferTest, AbandonDelayedIgnoresUnresolvedAlias) {
+  auto alias_ref = tsl::MakeIndirectAsyncValue();
+  tsl::AsyncValueRef<RawSEDeviceMemory> alias(alias_ref);
+
+  RawSEDeviceMemory::AbandonDelayed(alias);
+
+  EXPECT_TRUE(alias.IsUnavailable());
+  alias_ref->SetError(absl::InternalError("Clean up the test."));
+}
+
+TEST(TrackedDeviceBufferTest, AbandonDelayedIgnoresNullMemory) {
+  tsl::AsyncValueRef<RawSEDeviceMemory> null_memory;
+
+  RawSEDeviceMemory::AbandonDelayed(null_memory);
+
+  EXPECT_FALSE(null_memory);
+}
+
+TEST(TrackedDeviceBufferTest, AbandonDelayedIgnoresAvailableMemory) {
+  std::vector<char> data(128, 0xAB);
+  tsl::AsyncValueRef<RawSEDeviceMemory> memory =
+      tsl::MakeAvailableAsyncValueRef<ForeignRawSEDeviceMemory>(
+          se::DeviceAddressBase(data.data(), data.size()), [] {});
+
+  RawSEDeviceMemory::AbandonDelayed(memory);
+
+  EXPECT_TRUE(memory.IsConcrete());
+}
+
 }  // namespace
 }  // namespace xla
