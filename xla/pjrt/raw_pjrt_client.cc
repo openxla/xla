@@ -694,6 +694,17 @@ bool PjRtRawClientInterface::ShouldRetryOnOom(
   return false;
 }
 
+bool PjRtRawClientInterface::ShouldRetryBufferAllocationOnOom(
+    int attempts, PJRT_Memory* memory_space, size_t on_device_bytes_count,
+    absl::Status allocate_status) {
+  if (auto* cpp = down_cast<PjRtRawClient>()) {
+    return cpp->ShouldRetryBufferAllocationOnOom(attempts, memory_space,
+                                                 on_device_bytes_count,
+                                                 std::move(allocate_status));
+  }
+  return false;
+}
+
 void PjRtRawClientInterface::UpdateGlobalProcessInfo(
     absl::Span<xla::coordination::TaskInfo> infos) {
   std::vector<PJRT_ProcessInfo> c_infos;

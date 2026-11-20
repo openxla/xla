@@ -295,6 +295,10 @@ class PjRtRawClientInterface : public PJRT_RawClient {
                         PjRtExecutableLoadState* load_state,
                         absl::Status prepare_status);
 
+  bool ShouldRetryBufferAllocationOnOom(int attempts, PJRT_Memory* memory_space,
+                                        size_t on_device_bytes_count,
+                                        absl::Status allocate_status);
+
   void UpdateGlobalProcessInfo(absl::Span<xla::coordination::TaskInfo> infos);
 
   void RecordMemoryStats();
@@ -507,6 +511,17 @@ class PjRtRawClient : public PjRtRawClientInterface {
   virtual bool ShouldRetryOnOom(int attempts, LocalDeviceId local_device_id,
                                 PjRtExecutableLoadState* load_state,
                                 absl::Status prepare_status) {
+    return false;
+  }
+
+  // Called when AllocateRawBuffer fails with RESOURCE_EXHAUSTED and
+  // retry_on_oom is true. Backends that can free or defragment device memory
+  // (e.g., evicting cached programs) may return true to signal
+  // CommonPjRtClient to retry the allocation.
+  virtual bool ShouldRetryBufferAllocationOnOom(int attempts,
+                                                PJRT_Memory* memory_space,
+                                                size_t on_device_bytes_count,
+                                                absl::Status allocate_status) {
     return false;
   }
 
