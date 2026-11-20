@@ -673,20 +673,20 @@ TEST(ArrayImplTest, MakeArraysFromHostBufferShardsAndCopyToHostBuffer) {
       /*buffers=*/{
           {{0},
            {data0->data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/nullptr}},
+            /*hold=*/nullptr}},
           {{1},
            {data1->data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/nullptr}}},
+            /*hold=*/nullptr}}},
       /*array_spec=*/{dtype, shape, sharding, /*layout=*/nullptr},
   });
   specs.push_back({
       /*buffers=*/{
           {{0},
            {data1->data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/nullptr}},
+            /*hold=*/nullptr}},
           {{1},
            {data0->data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/nullptr}}},
+            /*hold=*/nullptr}}},
       /*array_spec=*/{dtype, shape, sharding, /*layout=*/nullptr},
   });
 
@@ -863,14 +863,14 @@ TEST(ArrayImplTest, CopyArraysToHostBufferShardsSingleDevice) {
       /*buffers=*/{
           {{0},
            {data0.data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/nullptr}}},
+            /*hold=*/nullptr}}},
       /*array_spec=*/{dtype, shape, sharding, /*layout=*/nullptr},
   });
   make_specs.push_back({
       /*buffers=*/{
           {{0},
            {data1.data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/nullptr}}},
+            /*hold=*/nullptr}}},
       /*array_spec=*/{dtype, shape, sharding, /*layout=*/nullptr},
   });
 
@@ -938,10 +938,10 @@ TEST(ArrayImplTest, CopyArraysToHostBufferShardsMultiDevice) {
       /*buffers=*/{
           {{0},
            {data0.data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/nullptr}},
+            /*hold=*/nullptr}},
           {{1},
            {data1.data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/nullptr}}},
+            /*hold=*/nullptr}}},
       /*array_spec=*/{dtype, shape, sharding, /*layout=*/nullptr},
   });
 
@@ -999,7 +999,7 @@ TEST(ArrayImplTest, CopyArraysToHostBufferShardsReplicated) {
       /*buffers=*/{
           {{0, 1},
            {data.data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/nullptr}}},
+            /*hold=*/nullptr}}},
       /*array_spec=*/{dtype, shape, sharding, /*layout=*/nullptr},
   });
 
@@ -1046,7 +1046,7 @@ absl::StatusOr<std::vector<std::vector<float>>> MakeAndCopyArrayToHost(
         {{i},
          {addressable_shard_data[i].data(), dtype, shard_shape,
           /*byte_strides=*/std::nullopt,
-          /*host_buffer_hold=*/nullptr}});
+          /*hold=*/nullptr}});
   }
 
   std::vector<Client::MakeArraysFromHostBufferShardsSpec> make_specs;
@@ -1224,14 +1224,14 @@ TEST(ArrayImplTest, MakeArraysFromHostBufferShardsWithDifferentDevices) {
       /*buffers=*/{
           {{0},
            {data->data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/nullptr}}},
+            /*hold=*/nullptr}}},
       /*array_spec=*/{dtype, shape, sharding0, /*layout=*/nullptr},
   });
   specs.push_back({
       /*buffers=*/{
           {{0},
            {data->data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/nullptr}}},
+            /*hold=*/nullptr}}},
       /*array_spec=*/{dtype, shape, sharding1, /*layout=*/nullptr},
   });
 
@@ -1280,14 +1280,14 @@ TEST(ArrayImplTest, MakeArraysFromHostBufferShardsWithDifferentMemoryKinds) {
       /*buffers=*/{
           {{0},
            {data->data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/nullptr}}},
+            /*hold=*/nullptr}}},
       /*array_spec=*/{dtype, shape, sharding0, /*layout=*/nullptr},
   });
   specs.push_back({
       /*buffers=*/{
           {{0},
            {data->data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/nullptr}}},
+            /*hold=*/nullptr}}},
       /*array_spec=*/{dtype, shape, sharding1, /*layout=*/nullptr},
   });
 
@@ -1549,20 +1549,20 @@ TEST(ArrayImplTest,
       /*buffers=*/{
           {{0},
            {data_ptr0, dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/cords0}},
+            /*hold=*/cords0}},
           {{1},
            {data_ptr1, dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/cords1}}},
+            /*hold=*/cords1}}},
       /*array_spec=*/{dtype, shape, sharding, /*layout=*/nullptr},
   });
   specs.push_back({
       /*buffers=*/{
           {{0},
            {data_ptr1, dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/cords1}},
+            /*hold=*/cords1}},
           {{1},
            {data_ptr0, dtype, shard_shape, /*byte_strides=*/std::nullopt,
-            /*host_buffer_hold=*/cords0}}},
+            /*hold=*/cords0}}},
       /*array_spec=*/{dtype, shape, sharding, /*layout=*/nullptr},
   });
 
@@ -1576,12 +1576,12 @@ TEST(ArrayImplTest,
 
   // Resetting these references does not necessarily destroy host buffers
   // immediately. The host buffer will be destroyed once the transfer also
-  // finishes and `on_done` is destroyed.
+  // finishes and `hold` is destroyed.
   //
   // There is no need to reset references, but doing so in this test may shorten
   // the lifetime of host buffers and help detect an incorrect API
   // implementation as a form of use-after-free if the implementation destroyed
-  // `on_done` prematurely.
+  // `hold` prematurely.
   cords0 = nullptr;
   cords1 = nullptr;
 
@@ -2361,11 +2361,11 @@ TEST(ArrayImplTest, FullyReplicatedShardOnPartitionedArrayFails) {
       /*buffers=*/{{{0},
                     {shard0_data.data(), DType(DType::kS32), Shape({2}),
                      /*byte_strides=*/std::nullopt,
-                     /*host_buffer_hold=*/nullptr}},
+                     /*hold=*/nullptr}},
                    {{1},
                     {shard1_data.data(), DType(DType::kS32), Shape({2}),
                      /*byte_strides=*/std::nullopt,
-                     /*host_buffer_hold=*/nullptr}}},
+                     /*hold=*/nullptr}}},
       /*array_spec=*/
       {DType(DType::kS32), Shape({4}), std::move(sharding), /*layout=*/nullptr},
   }};
@@ -3266,16 +3266,16 @@ TEST(ArrayImplTest, CopyArraysWithPartialReuse) {
         /*buffers=*/{
             {{0},
              {data0->data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-              /*host_buffer_hold=*/data0}},
+              /*hold=*/data0}},
             {{1},
              {data1->data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-              /*host_buffer_hold=*/data1}},
+              /*hold=*/data1}},
             {{2},
              {data2->data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-              /*host_buffer_hold=*/data2}},
+              /*hold=*/data2}},
             {{3},
              {data3->data(), dtype, shard_shape, /*byte_strides=*/std::nullopt,
-              /*host_buffer_hold=*/data3}},
+              /*hold=*/data3}},
         },
         /*array_spec=*/{dtype, shape, sharding, /*layout=*/nullptr},
     });
@@ -3700,10 +3700,10 @@ TEST(ArrayImplTest,
   std::vector<Client::MakeArraysFromHostBufferShardsSpec> specs = {{
       /*buffers=*/{{{0},
                     {shard0_data.data(), DType(DType::kF32), Shape({2}),
-                     /*byte_strides=*/std::nullopt, /*on_done=*/nullptr}},
+                     /*byte_strides=*/std::nullopt, /*hold=*/nullptr}},
                    {{1},
                     {shard1_data.data(), DType(DType::kF32), Shape({2}),
-                     /*byte_strides=*/std::nullopt, /*on_done=*/nullptr}}},
+                     /*byte_strides=*/std::nullopt, /*hold=*/nullptr}}},
       /*array_spec=*/
       {DType(DType::kF32), Shape({4}), std::move(partitioned_sharding),
        /*layout=*/nullptr},
@@ -3909,48 +3909,6 @@ TEST(ArrayImplTest, IsDeleted) {
   auto future = array->Delete();
   EXPECT_TRUE(array->IsDeleted());
   TF_EXPECT_OK(future.Await());
-}
-
-TEST(ArrayImplTest, LegacyCallableCleanupShims) {
-  ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
-
-  DType dtype(DType::kF32);
-  Shape shape({2, 3});
-  auto data = std::make_shared<std::vector<float>>(6);
-  absl::c_iota(*data, 0);
-  Device* device = client->addressable_devices().at(0);
-  ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
-
-  int callback_count = 0;
-  ASSERT_OK_AND_ASSIGN(
-      ArrayRef array,
-      client->MakeArrayFromHostBuffer(
-          data->data(), dtype, shape, /*byte_strides=*/std::nullopt, sharding,
-          /*layout=*/nullptr,
-          Client::HostBufferSemantics::kImmutableOnlyDuringCall,
-          [hold = data, &callback_count]() { ++callback_count; }));
-  EXPECT_EQ(callback_count, 1);
-  EXPECT_EQ(data.use_count(), 1);
-
-  int shard_callback_count = 0;
-  Client::MakeArraysFromHostBufferShardsSpec spec = {
-      /*buffers=*/{{{0},
-                    {data->data(), dtype, shape,
-                     /*byte_strides=*/std::nullopt,
-                     /*on_done=*/
-                     [hold = data, &shard_callback_count]() {
-                       ++shard_callback_count;
-                     }}}},
-      /*array_spec=*/{dtype, shape, sharding, /*layout=*/nullptr},
-  };
-  ASSERT_OK_AND_ASSIGN(
-      std::vector<ArrayRef> shard_arrays,
-      client->MakeArraysFromHostBufferShards(
-          absl::MakeSpan(&spec, 1),
-          Client::HostBufferSemantics::kImmutableOnlyDuringCall));
-  ASSERT_EQ(shard_arrays.size(), 1);
-  EXPECT_EQ(shard_callback_count, 1);
-  EXPECT_EQ(data.use_count(), 1);
 }
 
 }  // namespace

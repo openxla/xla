@@ -46,10 +46,10 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test_helpers.h"
+#include "xla/hlo/transforms/layout_assignment.h"
 #include "xla/layout.h"
 #include "xla/literal_util.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/layout_assignment.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -4759,6 +4759,86 @@ TEST_F(HloVerifierTest, InconsistentWhileSharding) {
               HasSubstr("Inconsistent while sharding among instructions"));
 }
 
+// A while loop whose induction variable is tuple index 0 with init=2, step=3,
+// and the given `dynamic_variables` entries.
+std::string WhileWithDynamicVariablesHlo(absl::string_view dynamic_variables) {
+  return absl::StrCat(R"(
+    HloModule While
+
+    body {
+      p0 = (s32[], f32[4]) parameter(0)
+      ivar = s32[] get-tuple-element(p0), index=0
+      data = f32[4] get-tuple-element(p0), index=1
+      c3 = s32[] constant(3)
+      next_ivar = s32[] add(ivar, c3)
+      ROOT result = (s32[], f32[4]) tuple(next_ivar, data)
+    }
+
+    condition {
+      p0 = (s32[], f32[4]) parameter(0)
+      ivar = s32[] get-tuple-element(p0), index=0
+      c8 = s32[] constant(8)
+      ROOT cmp = pred[] compare(ivar, c8), direction=LT
+    }
+
+    ENTRY main {
+      data = f32[4] parameter(0)
+      c2 = s32[] constant(2)
+      tuple = (s32[], f32[4]) tuple(c2, data)
+      ROOT while = (s32[], f32[4]) while(tuple), condition=condition, body=body,
+          backend_config={"known_trip_count":{"n":"2"},
+                          "known_init_step":{"init":"2","step":"3"},
+                          "known_induction_variable":{"tuple_index":"0"},
+                          "dynamic_variables":[)",
+                      dynamic_variables, "]}\n    }");
+}
+
+TEST_F(HloVerifierTest, WhileInductionVariableEntryAgreeingWithInitStep) {
+  for (absl::string_view entries :
+       {"", R"({"init":"2","step":"3","tuple_index":"0"})",
+        R"({"tuple_index":"0"})",
+        R"({"init":"0","step":"1","tuple_index":"1"})"}) {
+    SCOPED_TRACE(entries);
+    ASSERT_OK_AND_ASSIGN(
+        auto module,
+        ParseAndReturnUnverifiedModule(WhileWithDynamicVariablesHlo(entries)));
+    EXPECT_THAT(verifier().Run(module.get()), absl_testing::IsOk());
+  }
+}
+
+TEST_F(HloVerifierTest, WhileInductionVariableEntryContradictingInitStep) {
+  for (absl::string_view entries :
+       {R"({"init":"0","step":"3","tuple_index":"0"})",
+        R"({"init":"2","step":"1","tuple_index":"0"})"}) {
+    SCOPED_TRACE(entries);
+    ASSERT_OK_AND_ASSIGN(
+        auto module,
+        ParseAndReturnUnverifiedModule(WhileWithDynamicVariablesHlo(entries)));
+    EXPECT_THAT(
+        verifier().Run(module.get()),
+        absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition,
+                               HasSubstr("disagrees with known_init_step")));
+  }
+}
+
+TEST_F(HloVerifierTest, WhileDynamicVariableEntryWithOnlyInitOrStep) {
+  // Half-populated entries violate the "set both or neither" contract, for the
+  // induction variable (index 0) and any other variable (index 1) alike.
+  for (absl::string_view entries : {R"({"step":"3","tuple_index":"0"})",
+                                    R"({"init":"2","tuple_index":"0"})",
+                                    R"({"step":"1","tuple_index":"1"})",
+                                    R"({"init":"0","tuple_index":"1"})"}) {
+    SCOPED_TRACE(entries);
+    ASSERT_OK_AND_ASSIGN(
+        auto module,
+        ParseAndReturnUnverifiedModule(WhileWithDynamicVariablesHlo(entries)));
+    EXPECT_THAT(verifier().Run(module.get()),
+                absl_testing::StatusIs(
+                    absl::StatusCode::kFailedPrecondition,
+                    HasSubstr("must set both init and step or neither")));
+  }
+}
+
 TEST_F(HloVerifierTest, InconsistentConditionSharding) {
   const char* const hlo = R"(
   HloModule Module
@@ -8208,6 +8288,65 @@ TEST_F(HloVerifierTest, FmaValidAndInvalid) {
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("Expected element type in shape to be "
                                  "floating for fma operation; got S32.")));
+}
+
+TEST_F(HloVerifierTest, VariadicScatterDifferentFloatPrecisionsAllowed) {
+  constexpr absl::string_view kHlo = R"(
+  HloModule variadic_scatter_mixed_floats
+
+  comb {
+    a0 = f32[] parameter(0)
+    a1 = bf16[] parameter(1)
+    b0 = f32[] parameter(2)
+    b1 = bf16[] parameter(3)
+    sum0 = f32[] add(a0, b0)
+    sum1 = bf16[] add(a1, b1)
+    ROOT t = (f32[], bf16[]) tuple(sum0, sum1)
+  }
+
+  ENTRY main {
+    x0 = f32[8,16] parameter(0)
+    x1 = bf16[8,16] parameter(1)
+    idx = s32[4,1] parameter(2)
+    up0 = f32[4,16] parameter(3)
+    up1 = bf16[4,16] parameter(4)
+    ROOT s = (f32[8,16], bf16[8,16]) scatter(x0, x1, idx, up0, up1),
+        update_window_dims={1},
+        inserted_window_dims={0},
+        scatter_dims_to_operand_dims={0},
+        index_vector_dim=1,
+        to_apply=comb
+  })";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHlo));
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(HloVerifierTest, ScatterSlotPrecisionMismatchRejected) {
+  constexpr absl::string_view kHlo = R"(
+  HloModule scatter_slot_precision_mismatch
+
+  comb {
+    a0 = f32[] parameter(0)
+    b0 = f32[] parameter(1)
+    ROOT s0 = f32[] add(a0, b0)
+  }
+
+  ENTRY main {
+    x0 = f32[8,16] parameter(0)
+    idx = s32[4,1] parameter(1)
+    up0 = bf16[4,16] parameter(2)
+    ROOT s = f32[8,16] scatter(x0, idx, up0),
+        update_window_dims={1},
+        inserted_window_dims={0},
+        scatter_dims_to_operand_dims={0},
+        index_vector_dim=1,
+        to_apply=comb
+  })";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHlo));
+  EXPECT_THAT(verifier().Run(module.get()),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Shape mismatch between to_apply computation "
+                                 "parameter and operand 2")));
 }
 
 }  // namespace

@@ -41,7 +41,6 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_raw_client.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
-#include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -167,6 +166,9 @@ class PjRtExecutableLoadState
 class PjRtRawClientInterface;
 
 struct PjRtRawClientDeleter {
+  PjRtRawClientDeleter() = default;
+  template <typename T>
+  PjRtRawClientDeleter(std::default_delete<T>) {}
   void operator()(PjRtRawClientInterface* client) const;
 };
 using PjRtRawClientRef =
@@ -225,9 +227,6 @@ class PjRtRawClientInterface : public PJRT_RawClient {
 
   absl::StatusOr<PjRtDeviceEventRef> CreateDeviceEventForStream(
       LocalDeviceId local_device_id, std::intptr_t stream);
-
-  std::optional<std::shared_ptr<KeyValueStoreInterface>> key_value_store()
-      const;
 
   absl::Status DmaMap(void* data, size_t size);
 
@@ -416,12 +415,6 @@ class PjRtRawClient : public PjRtRawClientInterface {
       LocalDeviceId local_device_id, std::intptr_t stream) {
     return absl::UnimplementedError(
         "CreateDeviceEventForStream is not supported");
-  }
-
-  // Returns the process-level key-value store, if supported.
-  virtual std::optional<std::shared_ptr<KeyValueStoreInterface>>
-  key_value_store() const {
-    return std::nullopt;
   }
 
   // Experimental: Maps memory for fast transfers. May have backend specific

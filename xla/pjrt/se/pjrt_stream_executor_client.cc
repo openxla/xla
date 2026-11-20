@@ -83,7 +83,6 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
-#include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -95,7 +94,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "riegeli/bytes/cord_reader.h"
@@ -1894,7 +1892,7 @@ PjRtStreamExecutorRawClient::UpdateCompileOptions(
       build_options.debug_options().xla_gpu_shard_autotuning();
   if (!lookup_addressable_devices && !use_xla_gpu_shard_autotuning) {
     if (build_options.device_ordinal() < 0) {
-      build_options.set_device_ordinal(0);
+      build_options.set_device_ordinal(client()->default_device_ordinal());
     }
     return std::shared_ptr<DeviceAssignment>();
   }

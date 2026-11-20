@@ -1384,14 +1384,29 @@ void RegisterDistributedDeviceErrorListener(
       });
 }
 
-// Builds a LocalDeviceState for each GPU present.
+// Builds a LocalDeviceState for each GPU present. If `compute_stream_priority`
+// is set, each device's compute, host-to-device, and device-to-host streams
+// are created at that priority.
 absl::StatusOr<std::map<int, std::unique_ptr<LocalDeviceState>>>
 BuildLocalDeviceStates(
     LocalClient* xla_client, bool schedule_async,
     std::optional<int> max_inflight_computations, int node_id, int num_nodes,
     const std::shared_ptr<KeyValueStoreInterface>& kv_store,
-    const std::shared_ptr<std::atomic<bool>>& error_already_fired) {
+    const std::shared_ptr<std::atomic<bool>>& error_already_fired,
+    std::optional<int> compute_stream_priority = std::nullopt) {
   std::map<int, std::unique_ptr<LocalDeviceState>> addressable_devices;
+  // Only pass stream options when a priority is requested. The transfer stream
+  // counts stay at the client's defaults (LocalDeviceState::
+  // kNumDeviceToHostStreams and kNumDeviceToDeviceStreams, the counts used when
+  // no options are given. StreamOptions' own defaults are 1).
+  std::optional<LocalDeviceState::StreamOptions> stream_options;
+  if (compute_stream_priority.has_value()) {
+    stream_options = LocalDeviceState::StreamOptions{
+        .priority = *compute_stream_priority,
+        .num_device_to_host_streams = 4,
+        .num_device_to_device_streams = 4,
+    };
+  }
   for (se::StreamExecutor* executor :
        xla_client->backend().stream_executors()) {
     int device_ordinal = executor->device_ordinal();
@@ -1405,9 +1420,8 @@ BuildLocalDeviceStates(
         std::make_unique<LocalDeviceState>(
             executor, xla_client, LocalDeviceState::kComputeSynchronized,
             max_inflight_computations, /*allow_event_reuse=*/true,
-            /*use_callback_stream=*/true, /*device_ordinal=*/-1,
-            /*stream_options=*/std::nullopt, schedule_async,
-            std::move(device_error_callback)));
+            /*use_callback_stream=*/true, /*device_ordinal=*/-1, stream_options,
+            schedule_async, std::move(device_error_callback)));
   }
   return std::move(addressable_devices);
 }
@@ -1580,7 +1594,8 @@ GetStreamExecutorGpuDeviceAllocator(
         // MemorySpace::kCollective = 2)
         auto collective_allocator =
             std::make_shared<se::StreamExecutorMemoryAllocator>(
-                executor, static_cast<int64_t>(se::MemorySpace::kCollective));
+                executor, static_cast<int64_t>(se::MemorySpace::kCollective),
+                allocator_config.sub_allocator_free_visitors);
         allocators.push_back(
             {std::move(collective_allocator), stream,
              /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kCollective});
@@ -1643,7 +1658,8 @@ GetStreamExecutorGpuDeviceAllocator(
           CreateCollectiveBFCAllocator(
               ordinal_and_device.second->executor(),
               /*memory_fraction=*/MemFractionLeft(memory_fraction),
-              allocator_config.collective_memory_size));
+              allocator_config.collective_memory_size,
+              allocator_config.sub_allocator_free_visitors));
       allocators.push_back(
           {std::move(collective_bfc_allocator),
            ordinal_and_device.second->compute_stream(),
@@ -2191,13 +2207,21 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
       local_device_states,
       BuildLocalDeviceStates(xla_client, use_async_dispatch,
                              options.max_inflight_computations, options.node_id,
-                             options.num_nodes, kv_store, error_already_fired));
+                             options.num_nodes, kv_store, error_already_fired,
+                             options.compute_stream_priority));
   EnablePeerAccess(xla_client->backend().stream_executors());
 
   GpuAllocatorConfig allocator_config = options.allocator_config;
   bool preallocate_device_memory = allocator_config.preallocate;
   auto memory_registration =
       CreateAllocatorMemoryRegistration(&allocator_config);
+  // Drops symmetric memory cached on communicators when the collective memory
+  // it was registered for is returned to the device.
+  allocator_config.sub_allocator_free_visitors.push_back(
+      [](void* ptr, int device_ordinal, size_t num_bytes) {
+        gpu::ReleaseSymmetricMemory(LocalDeviceId(device_ordinal),
+                                    se::DeviceAddressBase(ptr, num_bytes));
+      });
 
   bool preallocate_host_memory;
   ABSL_RETURN_IF_ERROR(tsl::ReadBoolFromEnvVar(

@@ -19,7 +19,7 @@ load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/pjrt/gpu:package_groups.bzl", "xla_gpu_internal_packages")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tests:build_defs.bzl", "AMD_GPU_ANY_BACKEND", "xla_test")
 load("//xla/tools:source_hash.bzl", "source_hash")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_libtpu_portable", "get_compatible_with_portable")
@@ -426,7 +426,7 @@ xla_test(
         "--threadmanager_use_executor_impl=false",
     ],
     backend_tags = {
-        "amdgpu_any": ["flaky"],
+        AMD_GPU_ANY_BACKEND: ["flaky"],
     },
     backends = ["gpu"],
     shard_count = 4,
@@ -481,7 +481,9 @@ xla_test(
         "//xla/service:platform_util",
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/service/gpu:gpu_memory_space_assignment",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor:platform",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_address_allocator",
         "//xla/stream_executor:stream_executor_h",
@@ -497,6 +499,7 @@ xla_test(
         "//xla/util/split_proto:split_proto_reader",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -584,6 +587,7 @@ xla_test(
         "//xla/pjrt/se:event_pool",
         "//xla/pjrt/se:local_device_state",
         "//xla/pjrt/se:pjrt_stream_executor_client",
+        "//xla/runtime:chip_id",
         "//xla/runtime:device_id",
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
@@ -648,6 +652,7 @@ xla_test(
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner:in_memory_store",
+        "//xla/backends/gpu/autotuner:autotuner_cache",
         "//xla/backends/gpu/tests:multi_process_gpu_test_base",
         "//xla/backends/gpu/tests:multi_process_gpu_test_main",
         "//xla/client:executable_build_options",
@@ -664,7 +669,6 @@ xla_test(
         "//xla/pjrt/se:pjrt_stream_executor_client",
         "//xla/runtime:device_id",
         "//xla/service:platform_util",
-        "//xla/service/gpu/autotuning:autotuner_cache",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:memory_space",
@@ -1183,7 +1187,7 @@ cc_library(
 xla_test(
     name = "gpu_client_stream_error_test",
     srcs = ["gpu_client_stream_error_test.cc"],
-    # TODO(b/570474829): Switch back to "nvgpu_any" once the test passes on H100.
+    # TODO: b/570474829 - Switch to NVIDIA_GPU_ANY_BACKEND once the test passes on H100.
     backends = [
         "v100",
     ],

@@ -32,7 +32,6 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/numeric/int128.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -42,12 +41,10 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "absl/types/span.h"
 #include "rocm/include/hip/driver_types.h"
 #include "rocm/include/hip/hip_runtime.h"
 #include "rocm/include/hip/hip_version.h"
 #include "rocm/rocm_config.h"
-#include "tsl/platform/fingerprint.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/blas.h"
@@ -114,11 +111,6 @@ hipDeviceptr_t AsROCmDevicePtr(const DeviceAddressBase& gpu_mem) {
 // See description on const version above.
 hipDeviceptr_t AsROCmDevicePtr(DeviceAddressBase* gpu_mem) {
   return AsROCmDevicePtr(*gpu_mem);
-}
-
-absl::uint128 Fingerprint128(const absl::string_view s) {
-  auto fp = tsl::Fingerprint128(s);
-  return absl::MakeUint128(fp.high64, fp.low64);
 }
 
 bool ShouldLaunchDelayKernel() {
@@ -397,60 +389,6 @@ absl::StatusOr<DeviceAddressBase> RocmExecutor::GetMemoryRange(
   return absl::InternalError(
       absl::StrFormat("failed to get pointer into for device pointer %p; %s",
                       location.opaque(), ToString(result).c_str()));
-}
-
-absl::StatusOr<std::shared_ptr<DeviceAddressBase>>
-RocmExecutor::CreateOrShareConstant(Stream* stream,
-                                    absl::Span<const uint8_t> content) {
-  absl::MutexLock lock{shared_constants_mu_};
-  // We assume all constants are uniquely identified by this hash. In the
-  // (highly unlikely) event of a hash collision, the program will likely crash
-  // (because the cached constant that will be returned by mistake is unlikely
-  // to have the correct size).
-  absl::uint128 fingerprint = Fingerprint128(absl::string_view(
-      reinterpret_cast<const char*>(content.data()), content.size()));
-  // Must insert nullptr first to get an iterator to the insertion point.
-  auto insert_result = shared_constants_.insert(
-      {fingerprint, std::weak_ptr<DeviceAddressBase>()});
-  auto it = insert_result.first;
-  bool was_already_in_cache = !insert_result.second;
-  std::shared_ptr<DeviceAddressBase> shared_constant;
-
-  if (was_already_in_cache) {
-    shared_constant = it->second.lock();
-  }
-
-  if (shared_constant == nullptr) {
-    // Either the constant wasn't found in the cache, or it was but its
-    // weak_ptr had expired.
-    DeviceAddressBase* new_constant =
-        new DeviceAddressBase(Allocate(content.size(), /*memory_space=*/0));
-    if (new_constant->opaque() == nullptr) {
-      return absl::InternalError(absl::StrFormat(
-          "Failed to allocate %d bytes for new constant", content.size()));
-    }
-
-    ABSL_RETURN_IF_ERROR(
-        stream->Memcpy(new_constant, content.data(), content.size()));
-    absl::Status status = stream->BlockHostUntilDone();
-    if (!status.ok()) {
-      Deallocate(new_constant);
-      status.Update(absl::InternalError(absl::StrFormat(
-          "Memcpy to device address %p failed", new_constant->opaque())));
-      return status;
-    }
-
-    // Capturing 'this' in the custom deleter means this executor must
-    // outlive all shared uses of this constant.
-    shared_constant = std::shared_ptr<DeviceAddressBase>(
-        new_constant, [this](DeviceAddressBase* p) {
-          Deallocate(p);
-          delete p;
-        });
-    it->second = std::weak_ptr<DeviceAddressBase>(shared_constant);
-  }
-
-  return shared_constant;
 }
 
 absl::StatusOr<std::unique_ptr<EventBasedTimer>>
@@ -1136,6 +1074,17 @@ absl::StatusOr<MemorySpace> RocmExecutor::GetPointerMemorySpace(
     const void* ptr) {
   hipDeviceptr_t pointer =
       reinterpret_cast<hipDeviceptr_t>(const_cast<void*>(ptr));
+
+  // Managed memory is reported with a device/unified memory type depending on
+  // where it currently resides, so query the managed attribute first (as the
+  // CUDA executor does) to classify it consistently.
+  unsigned int is_managed = 0;
+  if (hipPointerGetAttribute(&is_managed, HIP_POINTER_ATTRIBUTE_IS_MANAGED,
+                             pointer) == hipSuccess &&
+      is_managed) {
+    return MemorySpace::kUnified;
+  }
+
   unsigned int value;
   hipError_t result = hipPointerGetAttribute(
       &value, HIP_POINTER_ATTRIBUTE_MEMORY_TYPE, pointer);
@@ -1145,6 +1094,9 @@ absl::StatusOr<MemorySpace> RocmExecutor::GetPointerMemorySpace(
         return MemorySpace::kDevice;
       case hipMemoryTypeHost:
         return MemorySpace::kHost;
+      case hipMemoryTypeManaged:
+      case hipMemoryTypeUnified:
+        return MemorySpace::kUnified;
       default:
         return absl::InternalError(
             absl::StrCat("unknown memory space provided by ROCM API: ", value));
@@ -1163,9 +1115,12 @@ bool RocmExecutor::IsHostMemoryPinned(const void* ptr, uint64_t size) {
   hipDeviceptr_t pointer =
       reinterpret_cast<hipDeviceptr_t>(const_cast<void*>(ptr));
 
-  uint64_t start_addr;
-  uint64_t range_size;
-  unsigned int memory_type;
+  // For pageable host memory, hipDrvPointerGetAttributes succeeds but doesn't
+  // write RANGE_START_ADDR and RANGE_SIZE. So don't leave the results
+  // uninitialized.
+  uint64_t start_addr = 0;
+  uint64_t range_size = 0;
+  unsigned int memory_type = 0;
   hipPointer_attribute attrs[3] = {HIP_POINTER_ATTRIBUTE_MEMORY_TYPE,
                                    HIP_POINTER_ATTRIBUTE_RANGE_START_ADDR,
                                    HIP_POINTER_ATTRIBUTE_RANGE_SIZE};

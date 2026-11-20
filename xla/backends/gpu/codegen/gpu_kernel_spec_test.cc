@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/gpu_kernel_spec.pb.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 
@@ -38,6 +39,7 @@ TEST(GpuKernelSpecTest, ProtoRoundTrip) {
         launch_dimensions {
           block_counts { coordinates { x: 32 y: 31 z: 30 } }
           thread_counts_per_block { coordinates { x: 256 y: 255 z: 254 } }
+          cluster_dims { coordinates { x: 8 y: 7 z: 6 } }
         }
         kernel_arguments {
           args {
@@ -82,13 +84,13 @@ TEST(GpuKernelSpecTest, ProtoRoundTrip) {
             }
           }
         }
-        cluster_dim { coordinates { x: 8 y: 7 z: 6 } }
       )pb");
   std::vector<BufferAllocation> buffer_allocations = {
       BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0)};
 
   ASSERT_OK_AND_ASSIGN(GpuKernelSpec spec,
                        GpuKernelSpec::FromProto(proto, buffer_allocations));
+  EXPECT_EQ(spec.launch_dimensions().cluster_dims(), se::ClusterDim(8, 7, 6));
 
   ASSERT_OK_AND_ASSIGN(GpuKernelSpecProto round_trip_proto, spec.ToProto());
   EXPECT_THAT(round_trip_proto, EqualsProto(proto));

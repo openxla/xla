@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/python/ifrt/ir/ifrt_ops.h"
 #include "xla/python/ifrt/ir/sharding_param.h"
 #include "xla/python/ifrt/memory.h"
+#include "xla/python/ifrt/shape.h"
 
 // Generated definitions.
 #include "xla/python/ifrt/ir/ifrt_dialect.cc.inc"
@@ -229,10 +230,14 @@ mlir::LogicalResult IfrtArrayType::verify(
   }
   int64_t num_elements = 1;
   for (int64_t dim : shape.getShape()) {
-    if (__builtin_mul_overflow(num_elements, dim, &num_elements)) {
+    if (dim == 0) {
+      continue;
+    }
+    if (__builtin_mul_overflow(num_elements, dim, &num_elements) ||
+        num_elements > Shape::kMaxNumElements) {
       return emitError()
-             << "Array shape element count overflows 64-bit signed integer: "
-             << shape;
+             << "Array shape element count exceeds maximum supported elements ("
+             << Shape::kMaxNumElements << "): " << shape;
     }
   }
   if (llvm::isa<IfrtTokenType>(shape.getElementType())) {
@@ -274,6 +279,25 @@ xla::LayoutMode IfrtArrayType::LayoutMode() const {
     return *layout_mode;
   }
   return xla::LayoutMode(xla::LayoutMode::Mode::kDefault);
+}
+
+absl::StatusOr<llvm::SmallVector<int64_t>> IfrtArrayType::LocalShape() const {
+  return getShardingAttr().LocalShapeFromGlobalShape(getShape().getShape());
+}
+
+bool IfrtArrayType::HasSameLayout(IfrtArrayType other) const {
+  if (getLayoutAttr() == other.getLayoutAttr()) {
+    return true;
+  }
+  xla::LayoutMode lhs_mode = LayoutMode();
+  xla::LayoutMode rhs_mode = other.LayoutMode();
+  if (lhs_mode.mode != rhs_mode.mode) {
+    return false;
+  }
+  if (lhs_mode.mode == xla::LayoutMode::Mode::kUserSpecified) {
+    return lhs_mode.user_layout == rhs_mode.user_layout;
+  }
+  return true;
 }
 
 void IfrtArrayType::print(mlir::AsmPrinter& odsPrinter) const {

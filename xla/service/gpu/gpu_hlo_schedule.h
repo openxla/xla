@@ -26,8 +26,8 @@ limitations under the License.
 #include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/transforms/hlo_scheduling/latency_hiding_scheduler.h"
 #include "xla/service/gpu/alias_info.h"
-#include "xla/service/latency_hiding_scheduler.h"
 #include "xla/stream_executor/device_description.h"
 
 namespace xla {

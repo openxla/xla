@@ -13,12 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <cstdint>
 #include <queue>
-#include <string>
 
 #include "absl/log/check.h"
-#include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -27,13 +24,11 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
@@ -52,7 +47,6 @@ namespace ifrt {
 
 namespace {
 
-using mlir::StringAttr;
 using mlir::func::FuncOp;
 
 class IfrtMergeOpsPass : public impl::IfrtMergeOpsPassBase<IfrtMergeOpsPass> {
@@ -86,17 +80,14 @@ bool HasUniformLayoutModes(CopyArraysOp op) {
   if (op.getInputs().empty() || op.getOutputs().empty()) {
     return false;
   }
-  std::string src_layout =
-      GetArrayType(op.getInputs().front()).LayoutMode().ToString();
-  std::string dst_layout =
-      GetArrayType(op.getOutputs().front()).LayoutMode().ToString();
+  IfrtArrayType first_input = GetArrayType(op.getInputs().front());
+  IfrtArrayType first_output = GetArrayType(op.getOutputs().front());
   return llvm::all_of(op.getInputs().drop_front(),
                       [&](mlir::Value input) {
-                        return GetArrayType(input).LayoutMode().ToString() ==
-                               src_layout;
+                        return GetArrayType(input).HasSameLayout(first_input);
                       }) &&
          llvm::all_of(op.getOutputs().drop_front(), [&](mlir::Value output) {
-           return GetArrayType(output).LayoutMode().ToString() == dst_layout;
+           return GetArrayType(output).HasSameLayout(first_output);
          });
 }
 
@@ -126,13 +117,8 @@ llvm::hash_code GetBaseMergeKey(IfrtPairwiseArrayOpInterface op) {
   hash = llvm::hash_combine(hash, input_type.getDevicesAttr());
   IfrtArrayType output_type = GetArrayType(op.getOutputs().front());
   hash = llvm::hash_combine(hash, output_type.getDevicesAttr());
-  // We can't hash by the bool itself, and `donated` is an optional attr, so
-  // false can be represented by nullptr or BoolAttr(false). So we explicitly
-  // convert to BoolAttr.
-  hash = llvm::hash_combine(
-      hash, mlir::BoolAttr::get(op.getContext(), op.getDonated()),
-      op->getDiscardableAttrDictionary());
-  return hash;
+  return llvm::hash_combine(hash, op.getDonated(),
+                            op->getDiscardableAttrDictionary());
 }
 
 // Groups `CopyArraysOp`s by:
@@ -154,21 +140,11 @@ llvm::hash_code GetMergeKey(CopyArraysOp op) {
   llvm::hash_code hash = GetBaseMergeKey(op);
   IfrtArrayType input_type = GetArrayType(op.getInputs().front());
   IfrtArrayType output_type = GetArrayType(op.getOutputs().front());
-  hash = llvm::hash_combine(
-      hash, mlir::BoolAttr::get(op.getContext(), op.getReuse()));
-  hash = llvm::hash_combine(
-      hash,
-      StringAttr::get(op.getContext(), absl::StrCat(input_type.MemoryKind())));
-  hash = llvm::hash_combine(
-      hash, StringAttr::get(op.getContext(),
-                            absl::StrCat(input_type.LayoutMode().ToString())));
-  hash = llvm::hash_combine(
-      hash,
-      StringAttr::get(op.getContext(), absl::StrCat(output_type.MemoryKind())));
-  hash = llvm::hash_combine(
-      hash, StringAttr::get(op.getContext(),
-                            absl::StrCat(output_type.LayoutMode().ToString())));
-  return hash;
+  return llvm::hash_combine(hash, op.getReuse(),
+                            absl::StrCat(input_type.MemoryKind()),
+                            input_type.LayoutMode().ToString(),
+                            absl::StrCat(output_type.MemoryKind()),
+                            output_type.LayoutMode().ToString());
 }
 
 // Groups `ReshardOp`s by:
@@ -180,20 +156,6 @@ llvm::hash_code GetMergeKey(ReshardOp op) { return GetBaseMergeKey(op); }
 // - src and dst devices to avoid merging `BitcastArraysOp`s across meshes.
 // - `donated` because the donation is all-or-nothing.
 llvm::hash_code GetMergeKey(BitcastArraysOp op) { return GetBaseMergeKey(op); }
-
-template <typename OpT>
-IfrtPairwiseArrayOpInterface CreateMergedPairwiseOp(
-    mlir::IRRewriter& rewriter, OpT first_op, mlir::Location loc,
-    mlir::TypeRange output_types, mlir::ValueRange inputs) {
-  llvm::SmallVector<mlir::Type> result_types(output_types.begin(),
-                                             output_types.end());
-  result_types.push_back(IfrtControlType::get(rewriter.getContext()));
-  typename OpT::Properties props = first_op.getProperties();
-  props.operandSegmentSizes = {static_cast<int32_t>(inputs.size()), 0};
-  OpT merged = OpT::create(rewriter, loc, result_types, inputs, props,
-                           first_op->getDiscardableAttrDictionary().getValue());
-  return merged;
-}
 
 void RewriteMergedGroup(mlir::IRRewriter& rewriter,
                         llvm::ArrayRef<IfrtPairwiseArrayOpInterface> to_merge) {
@@ -224,16 +186,9 @@ void RewriteMergedGroup(mlir::IRRewriter& rewriter,
   rewriter.setInsertionPointAfter(to_merge.back());
   mlir::Location fused_loc = rewriter.getFusedLoc(locs);
   IfrtPairwiseArrayOpInterface merged_op =
-      llvm::TypeSwitch<mlir::Operation*, IfrtPairwiseArrayOpInterface>(
-          first_group_op.getOperation())
-          .Case<CopyArraysOp, ReshardOp, BitcastArraysOp>([&](auto first_op) {
-            return CreateMergedPairwiseOp(rewriter, first_op, fused_loc,
-                                          output_types, inputs);
-          })
-          .Default([&](mlir::Operation* op) -> IfrtPairwiseArrayOpInterface {
-            LOG(FATAL) << "Unsupported op type: "
-                       << op->getName().getStringRef().str() << " for merging.";
-          });
+      first_group_op.cloneWithNewInputsAndOutputs(
+          rewriter, fused_loc, inputs, output_types,
+          /*control_inputs=*/mlir::ValueRange());
 
   // Replace the original group with the new merged op.
   int merged_output_index = 0;

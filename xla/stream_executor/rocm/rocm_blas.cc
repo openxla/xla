@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_helpers.h"
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/rocm/rocm_blas_helper.h"
 #include "xla/stream_executor/rocm/rocm_complex_converters.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/scratch_allocator.h"
@@ -118,10 +119,6 @@ FOREACH_ROCBLAS_API(ROCBLAS_API_WRAPPER)
 namespace gpu {
 
 using rocm::ROCMComplex;
-
-extern void rocm_Broadcast_fp32(void* stream, float* dst, int dst_stride,
-                                int batches, int src_batches, float* src,
-                                int size);
 
 template <class T>
 const RocBlasType_t<T>* const* complex_cast(const DeviceAddress<T*>& a) {

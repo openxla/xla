@@ -18,11 +18,13 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/status/status_matchers.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -37,7 +39,9 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::absl_testing::IsOkAndHolds;
 using ::testing::ElementsAre;
+using ::testing::Ne;
 
 TEST(CpuTopologyDescriptionTest, ToProto) {
   std::vector<CpuTopology::CpuDevice> cpu_devices = {{0, 0}, {0, 1}};
@@ -230,6 +234,31 @@ TEST(CpuTopologyDescriptionTest, GetDefaultLayout) {
                    .MakeCanonicalShapeForMemorySpace(
                        CpuDeviceMemorySpace::kKindId, s4_shape, &bad_s4_layout)
                    .ok());
+}
+
+TEST(CpuTopologyDescriptionTest, FingerprintIgnoresProcessId) {
+  xla::cpu::TargetMachineOptions avx2_options(
+      /*triple=*/"x86_64-unknown-linux-gnu", /*cpu=*/"skylake",
+      /*features=*/"+avx2");
+  CpuTopologyDescription topology_p0(
+      xla::CpuId(), "cpu", "1.0", CpuTopology({{0, 0}, {0, 1}}, avx2_options));
+  CpuTopologyDescription topology_p1(
+      xla::CpuId(), "cpu", "1.0", CpuTopology({{1, 0}, {1, 1}}, avx2_options));
+
+  ASSERT_OK_AND_ASSIGN(uint64_t fp_p0, topology_p0.Fingerprint());
+  EXPECT_THAT(topology_p1.Fingerprint(), IsOkAndHolds(fp_p0));
+
+  CpuTopologyDescription single_device_topology(
+      xla::CpuId(), "cpu", "1.0", CpuTopology({{0, 0}}, avx2_options));
+  EXPECT_THAT(single_device_topology.Fingerprint(), IsOkAndHolds(Ne(fp_p0)));
+
+  xla::cpu::TargetMachineOptions avx512_options(
+      /*triple=*/"x86_64-unknown-linux-gnu", /*cpu=*/"skylake-avx512",
+      /*features=*/"+avx512f");
+  CpuTopologyDescription avx512_topology(
+      xla::CpuId(), "cpu", "1.0",
+      CpuTopology({{0, 0}, {0, 1}}, avx512_options));
+  EXPECT_THAT(avx512_topology.Fingerprint(), IsOkAndHolds(Ne(fp_p0)));
 }
 
 }  // namespace

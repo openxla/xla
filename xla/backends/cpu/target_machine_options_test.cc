@@ -23,6 +23,7 @@ limitations under the License.
 #include "llvm/ADT/StringRef.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
+#include "tsl/platform/cpu_info.h"
 #include "xla/debug_options_flags.h"
 #include "xla/service/cpu/executable.pb.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -210,6 +211,16 @@ TEST(TargetMachineOptionsTest, NativeMatchesLLVMBehaviour) {
     EXPECT_FALSE(expected_features[feature])
         << "Feature " << feature << " is not disabled";
   }
+}
+
+TEST(TargetMachineOptionsTest, DefaultMaxIsaCapsToNeonOnAArch64) {
+  if (!tsl::port::IsAarch64CPU()) {
+    GTEST_SKIP() << "This test is for AArch64 CPUs.";
+  }
+  DebugOptions explicit_neon;
+  explicit_neon.set_xla_cpu_max_isa("NEON");
+  EXPECT_EQ(TargetMachineOptions(DebugOptions()),
+            TargetMachineOptions(explicit_neon));
 }
 
 }  // namespace

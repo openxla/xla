@@ -89,6 +89,16 @@ TEST(DebugOptions, CommandBufferUpdateModeDefaultsToAlwaysUpdate) {
       DebugOptions::ALWAYS_UPDATE);
 }
 
+TEST(DebugOptions, CommandBufferKeepCollectivesOutOfOutputsIsUnsetByDefault) {
+  // Unset lets the GPU compiler enable it only with collective command buffers
+  // and the SKIP_TEMP or SKIP_PROFILED update mode.
+  DebugOptions options = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_FALSE(
+      options.has_xla_gpu_command_buffer_keep_collectives_out_of_outputs());
+  EXPECT_FALSE(
+      options.xla_gpu_command_buffer_keep_collectives_out_of_outputs());
+}
+
 TEST(DebugOptions,
      SchedulerMemoryFencingDefaultsToAutomaticWithOneSlackWindow) {
   EXPECT_EQ(
@@ -586,6 +596,91 @@ TEST(DebugOptions, ResetFlagValuesPreservesCudaDataDirFromEnv) {
   tsl::unsetenv("XLA_FLAGS");
   ResetFlagValues();
   ParseDebugOptionFlagsFromEnv(/*reset_envvar=*/true);
+}
+TEST(DebugOptions, XlaCpuMaxIsaDefaultIsEmpty) {
+  EXPECT_EQ(DefaultDebugOptionsIgnoringFlags().xla_cpu_max_isa(), "");
+}
+
+TEST(DebugOptions, ExecutionWarnStuckTimeoutFlagsParsing) {
+  DebugOptions opts = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_EQ(opts.xla_gpu_execution_warn_stuck_timeout(), "");
+  EXPECT_EQ(opts.xla_gpu_device_execution_warn_stuck_timeout(), "");
+
+  std::vector<tsl::Flag> flags;
+  MakeDebugOptionsFlags(&flags, &opts);
+  std::vector<std::string> flag_args = {
+      "--xla_gpu_execution_warn_stuck_timeout=15s",
+      "--xla_gpu_device_execution_warn_stuck_timeout=30s"};
+  EXPECT_TRUE(tsl::Flags::Parse(flag_args, flags));
+  EXPECT_EQ(opts.xla_gpu_execution_warn_stuck_timeout(), "15s");
+  EXPECT_EQ(opts.xla_gpu_device_execution_warn_stuck_timeout(), "30s");
+
+  std::vector<std::string> inf_args = {
+      "--xla_gpu_execution_warn_stuck_timeout=inf",
+      "--xla_gpu_device_execution_warn_stuck_timeout=inf"};
+  EXPECT_TRUE(tsl::Flags::Parse(inf_args, flags));
+  EXPECT_EQ(opts.xla_gpu_execution_warn_stuck_timeout(), "inf");
+  EXPECT_EQ(opts.xla_gpu_device_execution_warn_stuck_timeout(), "inf");
+
+  std::vector<std::string> empty_args = {
+      "--xla_gpu_execution_warn_stuck_timeout=",
+      "--xla_gpu_device_execution_warn_stuck_timeout="};
+  EXPECT_TRUE(tsl::Flags::Parse(empty_args, flags));
+  EXPECT_EQ(opts.xla_gpu_execution_warn_stuck_timeout(), "");
+  EXPECT_EQ(opts.xla_gpu_device_execution_warn_stuck_timeout(), "");
+
+  std::vector<std::string> zero_args = {
+      "--xla_gpu_execution_warn_stuck_timeout=0s",
+      "--xla_gpu_device_execution_warn_stuck_timeout=0s"};
+  EXPECT_TRUE(tsl::Flags::Parse(zero_args, flags));
+  EXPECT_EQ(opts.xla_gpu_execution_warn_stuck_timeout(), "0s");
+  EXPECT_EQ(opts.xla_gpu_device_execution_warn_stuck_timeout(), "0s");
+
+  for (const std::string& invalid : {"not_a_duration", "-5s", "-inf"}) {
+    std::vector<std::string> invalid_warn_args = {
+        "--xla_gpu_device_execution_warn_stuck_timeout=" + invalid};
+    EXPECT_FALSE(tsl::Flags::Parse(invalid_warn_args, flags)) << invalid;
+    std::vector<std::string> invalid_terminate_args = {
+        "--xla_gpu_execution_terminate_timeout=" + invalid};
+    EXPECT_FALSE(tsl::Flags::Parse(invalid_terminate_args, flags)) << invalid;
+  }
+}
+
+TEST(DebugOptions, DefaultToAlgDotBf16ExplicitlySetIndicator) {
+  int* pargc;
+  std::vector<char*>* pargv;
+  ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
+  tsl::unsetenv("XLA_FLAGS");
+
+  DebugOptions default_opts = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_FALSE(default_opts.xla_gpu_default_to_alg_dot_bf16_bf16_f32());
+  EXPECT_FALSE(default_opts.has_xla_gpu_unsupported_explicit_bf16_default());
+  EXPECT_FALSE(default_opts.xla_gpu_unsupported_explicit_bf16_default());
+
+  {
+    ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
+    tsl::setenv("XLA_FLAGS", "--xla_gpu_default_to_alg_dot_bf16_bf16_f32=true",
+                1);
+    DebugOptions proto_opts = DefaultDebugOptionsIgnoringFlags();
+    DebugOptions opts = GetDebugOptionsFromProtoAndFlags(&proto_opts);
+    EXPECT_TRUE(opts.xla_gpu_default_to_alg_dot_bf16_bf16_f32());
+    EXPECT_TRUE(opts.has_xla_gpu_unsupported_explicit_bf16_default());
+    EXPECT_TRUE(opts.xla_gpu_unsupported_explicit_bf16_default());
+  }
+
+  {
+    ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
+    tsl::setenv("XLA_FLAGS", "--xla_gpu_default_to_alg_dot_bf16_bf16_f32=false",
+                1);
+    DebugOptions proto_opts = DefaultDebugOptionsIgnoringFlags();
+    DebugOptions opts = GetDebugOptionsFromProtoAndFlags(&proto_opts);
+    EXPECT_FALSE(opts.xla_gpu_default_to_alg_dot_bf16_bf16_f32());
+    EXPECT_TRUE(opts.has_xla_gpu_unsupported_explicit_bf16_default());
+    EXPECT_TRUE(opts.xla_gpu_unsupported_explicit_bf16_default());
+  }
+
+  tsl::unsetenv("XLA_FLAGS");
+  ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
 }
 }  // namespace
 }  // namespace xla

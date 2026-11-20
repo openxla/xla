@@ -27,6 +27,7 @@ load(
 )
 load(
     "//xla/tests:build_defs.bzl",
+    "NVIDIA_GPU_ANY_BACKEND",
     "xla_test",
 )
 load(
@@ -363,7 +364,7 @@ xla_test(
     deps = [
         ":asm_compiler",
         "//xla:debug_options_flags",
-        "//xla/service/gpu/llvm_gpu_backend:amdgpu_backend",
+        "//xla/backends/gpu/target_lowering:amdgpu_backend",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
@@ -481,7 +482,7 @@ cc_library(
 xla_test(
     name = "gpu_cudamallocasync_allocator_test",
     srcs = ["gpu_cudamallocasync_allocator_test.cc"],
-    backends = ["nvgpu_any"],
+    backends = [NVIDIA_GPU_ANY_BACKEND],
     tags = ["cuda-only"],
     deps = [
         ":gpu_cudamallocasync_allocator",
@@ -517,7 +518,6 @@ cc_library(
     deps = [
         ":blas_lt_matmul_algorithm_proto_cc",
         "//xla/stream_executor/cuda:cublas_lt_matmul_algorithm",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
     ],
@@ -531,9 +531,9 @@ xla_cc_test(
         ":blas_lt_matmul_algorithm_proto_cc",
         "//xla/stream_executor/cuda:cublas_lt_matmul_algorithm",
         "//xla/tsl/util/proto:proto_matchers",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
+        "@com_google_protobuf//:protobuf",
     ],
 )
 
@@ -800,6 +800,7 @@ xla_test(
     srcs = ["gpu_executor_test.cc"],
     backends = ["gpu"],
     deps = [
+        ":gpu_executor_header",
         "//xla/service:platform_util",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_description",

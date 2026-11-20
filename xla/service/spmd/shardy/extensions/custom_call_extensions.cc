@@ -169,7 +169,7 @@ struct CustomCallShardingRuleOpInterface
   mlir::sdy::OpShardingRuleAttr getShardingRule(mlir::Operation* op) const {
     auto customCall = llvm::cast<mlir::stablehlo::CustomCallOp>(op);
     llvm::StringRef callTargetName = customCall.getCallTargetName();
-    if (callTargetName == "compute-on-done" ||
+    if (callTargetName == "compute-on-done" || callTargetName == "X64Combine" ||
         callTargetName == "X64SplitHigh" || callTargetName == "X64SplitLow" ||
         callTargetName == "_SPMDInternalOp_MultiPad" ||
         callTargetName == "_SPMDInternalOp_RotateRight" ||
@@ -207,6 +207,34 @@ struct CustomCallShardingRuleOpInterface
                      mlir::sdy::FactorType::kNeedReplication)
           .addFactor(rank - 1, inShape[rank - 1],
                      mlir::sdy::FactorType::kNeedReplication)
+          .build();
+    }
+    if (callTargetName == "TopKBatchMajorSmallK") {
+      if (customCall.getNumOperands() != 1 || customCall.getNumResults() != 1) {
+        return mlir::sdy::OpShardingRuleAttr();
+      }
+      mlir::ShapedType inType = mlir::sdy::dynCastStaticShapedType(
+          customCall.getOperand(0).getType());
+      mlir::ShapedType outType =
+          mlir::sdy::dynCastStaticShapedType(customCall.getResult(0).getType());
+      if (!inType || !outType || inType.getRank() != 2 ||
+          outType.getRank() != 2 ||
+          inType.getDimSize(0) != outType.getDimSize(0)) {
+        return mlir::sdy::OpShardingRuleAttr();
+      }
+      // Require replication and block propagation on both the batch and
+      // selection dimensions (`[batch, n] -> [batch, k]`).
+      constexpr int64_t kNull = mlir::sdy::kNullDim;
+      return mlir::sdy::OpShardingRuleBuilder(customCall)
+          .addFactor(0, inType.getDimSize(0),
+                     mlir::sdy::FactorType::kNeedReplication,
+                     /*isBlocked=*/true)
+          .addFactor({1}, {kNull}, inType.getDimSize(1),
+                     mlir::sdy::FactorType::kNeedReplication,
+                     /*isBlocked=*/true)
+          .addFactor({kNull}, {1}, outType.getDimSize(1),
+                     mlir::sdy::FactorType::kNeedReplication,
+                     /*isBlocked=*/true)
           .build();
     }
     if (callTargetName == "QrDecompositionBlock") {
@@ -321,6 +349,40 @@ struct CustomCallShardingRuleOpInterface
                      mlir::sdy::FactorType::kNeedReplication)
           .build();
     }
+    if (callTargetName == "EighTpu") {
+      if (customCall.getNumOperands() != 4 || customCall.getNumResults() != 6) {
+        return mlir::sdy::OpShardingRuleAttr();
+      }
+      // Propagate batch dimensions pointwise and require replication on the
+      // trailing quadrant and eigenvalue dimensions.
+      mlir::ShapedType inType = mlir::sdy::dynCastStaticShapedType(
+          customCall.getOperand(0).getType());
+      if (!inType) {
+        return mlir::sdy::OpShardingRuleAttr();
+      }
+      llvm::ArrayRef<int64_t> inShape = inType.getShape();
+      if (inShape.size() < 2 || inShape[inShape.size() - 2] != inShape.back() ||
+          !allHaveStaticShape(customCall.getOperands().drop_front(1),
+                              inShape) ||
+          !allHaveStaticShape(customCall.getResults().take_front(2),
+                              inShape.drop_back(1)) ||
+          !allHaveStaticShape(customCall.getResults().drop_front(2), inShape)) {
+        return mlir::sdy::OpShardingRuleAttr();
+      }
+      int64_t nonBatchDim1 = inShape.size() - 2;
+      int64_t nonBatchDim2 = inShape.size() - 1;
+      constexpr int64_t kNull = mlir::sdy::kNullDim;
+      return mlir::sdy::OpShardingRuleBuilder(customCall)
+          .addPointwise(inShape.drop_back(2))
+          .addFactor(nonBatchDim1, inShape[nonBatchDim1],
+                     mlir::sdy::FactorType::kNeedReplication)
+          .addFactor({nonBatchDim2, nonBatchDim2, nonBatchDim2, nonBatchDim2},
+                     {kNull, kNull, nonBatchDim2, nonBatchDim2, nonBatchDim2,
+                      nonBatchDim2},
+                     inShape[nonBatchDim2],
+                     mlir::sdy::FactorType::kNeedReplication)
+          .build();
+    }
     if (callTargetName == "TopK") {
       assert(customCall.getNumOperands() == 1 &&
              customCall.getNumResults() == 2);
@@ -334,24 +396,6 @@ struct CustomCallShardingRuleOpInterface
     }
     if (callTargetName == kPartialReduceTargetName) {
       return createPartialReduceShardingRule(customCall);
-    }
-    if (callTargetName == "X64Combine") {
-      // Replicate and block propagation when `X64Combine` feeds
-      // `RngBitGeneratorOp`, whose 1D `ui64` initial state must stay replicated
-      // and cannot be resharded.
-      if (llvm::any_of(customCall->getUsers(), [](mlir::Operation* user) {
-            return llvm::isa<mlir::stablehlo::RngBitGeneratorOp>(user);
-          })) {
-        mlir::sdy::OpShardingRuleBuilder builder(customCall);
-        llvm::ArrayRef<int64_t> shape =
-            mlir::sdy::getTensorShape(customCall.getResult(0));
-        assert(shape.size() == 1);
-        builder.addFactor(0, shape.front(),
-                          mlir::sdy::FactorType::kNeedReplication,
-                          /*isBlocked=*/true);
-        return builder.build();
-      }
-      return mlir::sdy::OpShardingRuleBuilder::buildPointwise(customCall);
     }
     // TODO(b/327191011): output unregistered op stats instead.
     static llvm::once_flag onceFlag;
@@ -377,7 +421,8 @@ struct CustomCallPartitioningOpInterface
           CustomCallPartitioningOpInterface, mlir::stablehlo::CustomCallOp> {
   std::optional<mlir::LogicalResult> resolvePermutationFactors(
       mlir::Operation* op, mlir::sdy::OpShardingRuleAttr shardingRule,
-      mlir::IRRewriter& rewriter, const mlir::SymbolTable& symbolTable) const {
+      mlir::IRRewriter& rewriter, mlir::SymbolTable& symbolTable,
+      int64_t& /*nextChannelId*/) const {
     auto customCall = llvm::cast<mlir::stablehlo::CustomCallOp>(op);
     if (customCall.getCallTargetName() == kPartialReduceTargetName) {
       return resolvePartialReduce(customCall, shardingRule, rewriter,

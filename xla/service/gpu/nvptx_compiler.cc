@@ -28,6 +28,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -48,6 +49,8 @@ limitations under the License.
 #include "tsl/platform/path.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
+#include "xla/backends/gpu/target_lowering/nvptx_backend.h"
+#include "xla/backends/gpu/target_lowering/nvptx_utils.h"
 #include "xla/backends/gpu/transforms/algebraic_simplifier.h"
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/backends/gpu/transforms/conv_fp8_fallback.h"
@@ -60,6 +63,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/cudnn_norm_rewriter.h"
 #include "xla/backends/gpu/transforms/cudnn_pad_for_convolutions.h"
 #include "xla/backends/gpu/transforms/cudnn_simplify_padding.h"
+#include "xla/backends/gpu/transforms/ragged_dot_cudnn_support.h"
 #include "xla/backends/gpu/transforms/triangular_solve_rewriter.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -67,6 +71,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/transforms/call_inliner.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/convert_mover.h"
 #include "xla/hlo/transforms/simplifiers/float_normalization.h"
@@ -74,16 +79,15 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/reshape_mover.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
-#include "xla/service/call_inliner.h"
 #include "xla/service/compilation_stats.h"
 #include "xla/service/compiler.h"
+#include "xla/service/decision.h"
 #include "xla/service/dump.h"
 #include "xla/service/float_support.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/gpu_compiler.h"
+#include "xla/service/gpu/gpu_pipeline.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/llvm_gpu_backend/nvptx_backend.h"
-#include "xla/service/gpu/llvm_gpu_backend/nvptx_utils.h"
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/gpu/nvptx_alias_info.h"
 #include "xla/service/gpu/ptx_compile_options_from_debug_options.h"
@@ -223,7 +227,7 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
   AlgebraicSimplifierOptions algsimp_options = GetAlgebraicSimplifierOptions(
       AlgebraicSimplifierMode::kGpuConvoluationCanonicalization,
       hlo_module->config().debug_options(),
-      /*is_non_cuda_platform=*/false);
+      /*is_cuda_platform=*/true);
   pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(algsimp_options,
                                                        gpu_version);
 
@@ -269,6 +273,13 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
           .status());
 
   return absl::OkStatus();
+}
+
+Decision NVPTXCompiler::IsRaggedDotSupportedByCuDnn(
+    const HloInstruction* instr, const GpuTargetConfig& gpu_target_config,
+    se::StreamExecutor* absl_nullable stream_exec) const {
+  return gpu::IsRaggedDotSupportedByCuDnn(
+      *instr, gpu_target_config.device_description, stream_exec);
 }
 
 absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
@@ -538,6 +549,7 @@ absl::StatusOr<absl::string_view> NVPTXCompiler::AsmFileExtension() const {
 absl::StatusOr<GpuCompiler::BackendCompileResult>
 NVPTXCompiler::CompileTargetBinary(
     const HloModuleConfig& module_config, llvm::Module* llvm_module,
+    absl::string_view kernel_fingerprint,
     const stream_executor::DeviceDescription& device_description,
     bool relocatable, const HloModule* debug_module,
     std::optional<int> shard_number) {
@@ -550,16 +562,19 @@ NVPTXCompiler::CompileTargetBinary(
     selected_module = llvm_module;
   }
   const DebugOptions& debug_options = module_config.debug_options();
-  const se::cuda::CompilationProvider* compilation_provider = nullptr;
-  std::optional<se::SemanticVersion> ptx_version;
+
+  ABSL_ASSIGN_OR_RETURN(
+      const se::cuda::CompilationProvider* compilation_provider,
+      GetCompilationProvider(debug_options, nullptr));
+  ABSL_ASSIGN_OR_RETURN(std::optional<se::SemanticVersion> ptx_version,
+                        GetPtxVersionForCompilation(*compilation_provider));
+
   std::string ptx;
   if (!(debug_module &&
         MaybeLoadPtxFromFile(module_config, debug_module, &ptx))) {
     if (selected_module->empty() && selected_module->global_empty()) {
       return BackendCompileResult{};
     }
-    ABSL_ASSIGN_OR_RETURN(compilation_provider,
-                          GetCompilationProvider(debug_options, nullptr));
 
     // This may print multiple lines per HLO compilation because of the
     // parallelized compilation of LLVM modules.
@@ -570,8 +585,6 @@ NVPTXCompiler::CompileTargetBinary(
         debug_options.xla_enable_scoped_logging_timers());
     uint64_t start_usecs = tsl::Env::Default()->NowMicros();
 
-    ABSL_ASSIGN_OR_RETURN(ptx_version,
-                          GetPtxVersionForCompilation(*compilation_provider));
     ABSL_ASSIGN_OR_RETURN(
         ptx,
         nvptx::CompileToPtx(
@@ -587,13 +600,6 @@ NVPTXCompiler::CompileTargetBinary(
 
   if (ptx.empty()) {
     return BackendCompileResult{};
-  }
-
-  if (compilation_provider == nullptr) {
-    ABSL_ASSIGN_OR_RETURN(compilation_provider,
-                          GetCompilationProvider(debug_options, nullptr));
-    ABSL_ASSIGN_OR_RETURN(ptx_version,
-                          GetPtxVersionForCompilation(*compilation_provider));
   }
 
   se::cuda::CompilationOptions compilation_options =
@@ -636,9 +642,9 @@ NVPTXCompiler::CompileTargetBinary(
                                 std::move(relocatable_module.module_stats)};
   }
 
-  ABSL_ASSIGN_OR_RETURN(
-      se::cuda::Assembly assembly,
-      compilation_provider->Compile(cc, ptx, compilation_options));
+  ABSL_ASSIGN_OR_RETURN(se::cuda::Assembly assembly,
+                        compilation_provider->Compile(
+                            cc, ptx, kernel_fingerprint, compilation_options));
   record_ptx_to_cubin_metric();
   return BackendCompileResult{std::move(ptx), std::move(assembly.cubin),
                               std::move(assembly.module_stats)};

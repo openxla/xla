@@ -260,8 +260,9 @@ message DebugOptions {
   // The number of seconds to wait before terminating a collective.
   optional int32 xla_cpu_collective_timeout_seconds = 438;
 
-  // Use region analysis in copy insertion pass.
-  optional bool xla_cpu_copy_insertion_use_region_analysis = 337;
+  // DEPRECATED: region analysis is always used in copy insertion.
+  optional bool xla_cpu_copy_insertion_use_region_analysis = 337
+      [deprecated = true];
 
   // Sets how often we verify the emitted modules. Higher "levels mean
   // more frequent verification. Currently supported: 0, 1.
@@ -713,10 +714,13 @@ message DebugOptions {
   // in the CollectivesRegistry.
   optional string xla_gpu_collectives_implementation = 468;
 
-  // With COLLECTIVES in `xla_gpu_enable_command_buffer` and the SKIP_TEMP or
-  // SKIP_PROFILED update mode, keeps buffers of collectives that may be
-  // recorded into command buffers out of output allocations, so the
-  // collectives are not re-recorded on every execution. Costs temp memory.
+  // Keeps buffers of collectives that may be recorded into command buffers out
+  // of output allocations, so the collectives are not re-recorded on every
+  // execution. Costs temp memory.
+  // When not set, it is enabled automatically if COLLECTIVES is in
+  // `xla_gpu_enable_command_buffer` and the update mode is SKIP_TEMP or
+  // SKIP_PROFILED, and disabled otherwise. An explicit value always takes
+  // priority in every configuration.
   optional bool xla_gpu_command_buffer_keep_collectives_out_of_outputs = 572;
 
   optional CommandBufferSchedulingMode xla_gpu_command_buffer_scheduling_mode =
@@ -730,7 +734,9 @@ message DebugOptions {
   // See CommandBufferUpdateMode for details.
   optional CommandBufferUpdateMode xla_gpu_command_buffer_update_mode = 469;
 
-  optional bool xla_gpu_copy_insertion_use_region_analysis = 236;
+  // DEPRECATED: region analysis is always used in copy insertion.
+  optional bool xla_gpu_copy_insertion_use_region_analysis = 236
+      [deprecated = true];
 
   // Crashes the program when any kind of verification fails, instead of just
   // logging the failures. One example is cross checking of convolution results
@@ -769,6 +775,11 @@ message DebugOptions {
   // At this point, XLA may still choose a higher precision dot algorithm, but
   // we expect this to change at a later point.
   optional bool xla_gpu_default_to_alg_dot_bf16_bf16_f32 = 441;
+
+  // Internal indicator set to true when
+  // --xla_gpu_default_to_alg_dot_bf16_bf16_f32 is explicitly passed via XLA
+  // flags.
+  optional bool xla_gpu_unsupported_explicit_bf16_default = 589;
 
   // Guarantees run-to-run determinism.
   // This flag disables autotuning and selects the first __valid__ autotune
@@ -988,6 +999,23 @@ message DebugOptions {
   // time running on the device.
   optional string xla_gpu_device_execution_terminate_timeout = 553;
 
+  // Time duration to wait before logging a warning (and progress-tracker dump,
+  // if enabled) that a single host-side XLA:GPU execution has not finished.
+  // Does not terminate the process.
+  //
+  // Uses the same duration string format as
+  // xla_gpu_execution_terminate_timeout. Empty or "inf" disables the warning.
+  optional string xla_gpu_execution_warn_stuck_timeout = 585;
+
+  // Time duration to wait before logging a warning (and progress-tracker dump,
+  // if enabled) that enqueued XLA:GPU device work has not completed after host
+  // dispatch. Does not terminate the process.
+  //
+  // Uses the same duration string format as
+  // xla_gpu_device_execution_terminate_timeout. Empty or "inf" disables the
+  // warning.
+  optional string xla_gpu_device_execution_warn_stuck_timeout = 586;
+
   optional bool xla_gpu_exhaustive_tiling_search = 219;
 
   // If true, autotune all fusions with block level emitter.
@@ -1200,6 +1228,11 @@ message DebugOptions {
   // flags or deviceless cudnn compilation works by default.
   optional bool
       xla_gpu_experimental_use_autotune_cache_also_for_deterministic_ops = 566;
+
+  // If true, lower supported kRaggedDot ops not handled by cuDNN or hipBLASLt
+  // through the experimental Triton (XTile) backend instead of expanding them
+  // to dense dots.
+  optional bool xla_gpu_experimental_triton_ragged_dot = 587;
 
   // Experimental: filter specifying which collective operations should use
   // custom kernels (e.g. Triton one-shot / two-shot) instead of NCCL.
@@ -2042,6 +2075,13 @@ message DebugOptions {
   // Use xla_gpu_cublas_fallback to allow/disallow fallback to cuBLAS.
   optional string xla_gpu_override_triton_configs_file = 578;
 
+  // The following autotune cache fields replace their deprecated xla_gpu_*
+  // counterparts. They are intentionally left unset by default: readers use a
+  // new field only when it is set and otherwise fall back to the deprecated
+  // one. The defaults move to these fields once the deprecated ones are
+  // removed.
+  // TODO(b/519059655): Set defaults when the xla_gpu_* fields are removed.
+
   // File to write autotune cache results to. It will be a binary file unless
   // the name ends with .txt or .textproto.
   optional string xla_dump_autotune_cache_to = 579;
@@ -2060,14 +2100,21 @@ message DebugOptions {
   // cache miss.
   optional bool xla_fail_on_autotune_cache_miss = 583;
 
+  // If true, enables RAFT select_k Radix paths for U64-packed stable TopK.
+  // TODO(b/409009349): Enable by default after 2026-11-28 once the 14-day GPU
+  // AOT forward-compatibility window for U64 segmented radix sort has elapsed.
+  optional bool xla_gpu_experimental_enable_raft_u64_radix = 584;
+
+  optional string xla_gpu_compileiq_db_path = 588;
+
   // Kernels issued after a collective wait until the collective kernel is
   // dispatched, so no device runs compute ahead of a collective its peers wait
   // for. Covers NCCL, ragged all-to-all and XLA collective kernels and needs
   // NCCL 2.32 and driver 12.3. Not collective permute, send, recv or command
   // buffers.
-  optional bool xla_gpu_experimental_explicit_launch_ordering = 584;
+  optional bool xla_gpu_experimental_explicit_launch_ordering = 590;
 
-  // Next id: 585
+  // Next id: 591
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

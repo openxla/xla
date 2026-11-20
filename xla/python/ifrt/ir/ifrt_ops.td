@@ -92,7 +92,9 @@ def Ifrt_CopyArraysOp
 }
 
 def Ifrt_AssembleOp
-    : Ifrt_Op<"Assemble", [AttrSizedOperandSegments, NestedInIfrtFunc]> {
+    : Ifrt_Op<"Assemble",
+              [AttrSizedOperandSegments, NestedInIfrtFunc,
+               Ifrt_ControlOpInterface]> {
   let summary = "Assembles single device arrays to a sharded array";
   let description = [{
     Builds a larger array out of individual per-device arrays.
@@ -122,7 +124,8 @@ def Ifrt_AssembleOp
   let hasVerifier = 1;
 }
 
-def Ifrt_DisassembleOp : Ifrt_Op<"Disassemble", [NestedInIfrtFunc]> {
+def Ifrt_DisassembleOp
+    : Ifrt_Op<"Disassemble", [NestedInIfrtFunc, Ifrt_ControlOpInterface]> {
   let summary = "Disassembles a sharded array to single device arrays";
   let description = [{
     Breaks an array up into per-device arrays.
@@ -218,7 +221,7 @@ def Ifrt_CallOp : Ifrt_Op<"Call",
     [AttrSizedOperandSegments,
      NestedInIfrtFunc,
      IfrtCallLike<"::mlir::func::FuncOp">,
-     Ifrt_ArrayOpInterface,
+     Ifrt_CallOpInterface,
      DeclareOpInterfaceMethods<CallOpInterface>,
      DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Call some function on a set of devices";
@@ -268,7 +271,7 @@ def Ifrt_CallLoadedExecutableOp : Ifrt_Op<"CallLoadedExecutable",
     [AttrSizedOperandSegments,
      NestedInIfrtFunc,
      IfrtCallLike<"LoadedExecutableOp">,
-     Ifrt_ArrayOpInterface,
+     Ifrt_CallOpInterface,
      DeclareOpInterfaceMethods<CallOpInterface>,
      DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Call some loaded executable";

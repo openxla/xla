@@ -17,6 +17,10 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstddef>
+#include <cstdint>
+#include <vector>
+
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -652,6 +656,28 @@ TEST_F(SyclGpuRuntimeTest, TestMallocAll_Positive) {
                                                           /*byte_count=*/1024));
   EXPECT_NE(shared_ptr, nullptr);
   FreeAndNullify(shared_ptr);
+}
+
+TEST_F(SyclGpuRuntimeTest, TestMallocAll_Alignment) {
+  // USM pools small requests, so neighbors stay live while they are checked.
+  constexpr size_t kSizes[] = {1, 16, 16, 64, 100, 4096};
+  std::vector<void*> buffers;
+  for (size_t byte_count : kSizes) {
+    ASSERT_OK_AND_ASSIGN(void* device_ptr,
+                         SyclMallocDevice(kDefaultDeviceOrdinal, byte_count));
+    buffers.push_back(device_ptr);
+    ASSERT_OK_AND_ASSIGN(void* host_ptr,
+                         SyclMallocHost(kDefaultDeviceOrdinal, byte_count));
+    buffers.push_back(host_ptr);
+    ASSERT_OK_AND_ASSIGN(void* shared_ptr,
+                         SyclMallocShared(kDefaultDeviceOrdinal, byte_count));
+    buffers.push_back(shared_ptr);
+  }
+  for (void*& ptr : buffers) {
+    EXPECT_NE(ptr, nullptr);
+    EXPECT_EQ(reinterpret_cast<uintptr_t>(ptr) % kUsmAlignBytes, 0) << ptr;
+    FreeAndNullify(ptr);
+  }
 }
 
 TEST_F(SyclGpuRuntimeTest, TestMallocAll_InvalidDeviceOrdinal) {

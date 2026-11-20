@@ -34,10 +34,12 @@ limitations under the License.
 #include "xla/autotune_results.pb.h"
 #include "xla/backends/gpu/transforms/compiled_cudnn_graph_cache.h"
 #include "xla/hlo/analysis/alias_info.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/compilation_stats.h"
+#include "xla/service/decision.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -76,6 +78,10 @@ class NVPTXCompiler : public GpuCompiler {
       const se::SemanticVersion& toolkit_version,
       CompilationStats* compilation_stats) override;
 
+  Decision IsRaggedDotSupportedByCuDnn(
+      const HloInstruction* instr, const GpuTargetConfig& gpu_target_config,
+      se::StreamExecutor* absl_nullable stream_exec) const override;
+
   absl::Status OptimizeHloPostLayoutAssignment(
       HloModule* hlo_module, se::StreamExecutor* stream_exec,
       const CompileOptions& options, const GpuTopology& gpu_topology,
@@ -103,6 +109,7 @@ class NVPTXCompiler : public GpuCompiler {
 
   absl::StatusOr<BackendCompileResult> CompileTargetBinary(
       const HloModuleConfig& module_config, llvm::Module* llvm_module,
+      absl::string_view kernel_fingerprint,
       const stream_executor::DeviceDescription& device_description,
       bool relocatable, const HloModule* debug_module,
       std::optional<int> shard_number) override;

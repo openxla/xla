@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/cord.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -41,6 +42,7 @@ limitations under the License.
 #include "xla/python/ifrt/bundle.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/compiler.h"
+#include "xla/python/ifrt/custom_options_util.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
@@ -60,6 +62,7 @@ limitations under the License.
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt/value.h"
 #include "xla/python/pjrt_ifrt/executable_metadata.pb.h"
+#include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/pjrt_host_callback.h"
 #include "xla/python/pjrt_ifrt/xla_client.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
@@ -840,6 +843,46 @@ TEST(PjRtExecutableImplTest, EmptyOutputsBundleSliceSizesCompileOptionsSerDes) {
                 Optional(IsEmpty()));
   }
 }
+
+TEST(PjRtExecutableImplTest, InternalCustomOptionsRegistered) {
+  EXPECT_EQ(PjRtCompatibleLoadedExecutable::kCallLocation, "call_location");
+  EXPECT_EQ(PjRtCompatibleLoadedExecutable::kUseOutputArena,
+            "use_output_arena");
+  EXPECT_TRUE(IsIfrtInternalCustomOption(
+      PjRtCompatibleLoadedExecutable::kCallLocation));
+  EXPECT_TRUE(IsIfrtInternalCustomOption(
+      PjRtCompatibleLoadedExecutable::kUseOutputArena));
+  EXPECT_FALSE(IsIfrtInternalCustomOption("non_internal_option"));
+}
+
+TEST(PjRtExecutableImplTest, CompileRejectsOversizedParameterShape) {
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Client> client, test_util::GetClient());
+  Compiler* compiler = client->GetDefaultCompiler();
+  Device* const device = client->addressable_devices().front();
+  ASSERT_OK_AND_ASSIGN(DeviceListRef device_list,
+                       client->MakeDeviceList({device}));
+
+  for (const std::string& tensor_type :
+       {absl::StrCat("tensor<", Shape::kMaxNumElements + 1, "xi8>"),
+        absl::StrCat("tensor<", Shape::kMaxNumElements + 1, "x0xi8>")}) {
+    const std::string module_str = absl::StrCat(
+        "module @oversized_param {\n", "  func.func @main(%arg0: ", tensor_type,
+        ") {\n", "    return\n", "  }\n", "}\n");
+    mlir::MLIRContext context;
+    ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                         xla::ParseMlirModuleString(module_str, context));
+
+    xla::CompileOptions compile_options;
+    EXPECT_THAT(compiler
+                    ->CompileAndLoad(std::make_unique<HloProgram>(*module),
+                                     std::make_unique<XlaCompileOptions>(
+                                         compile_options, device_list))
+                    .Await(),
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         ::testing::HasSubstr("is too large")));
+  }
+}
+
 }  // namespace
 }  // namespace ifrt
 }  // namespace xla

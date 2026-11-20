@@ -16,11 +16,15 @@ limitations under the License.
 #ifndef XLA_PYTHON_IFRT_IR_UTILS_H_
 #define XLA_PYTHON_IFRT_IR_UTILS_H_
 
+#include <optional>
 #include <string>
 
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
@@ -28,7 +32,10 @@ limitations under the License.
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Types.h"
+#include "mlir/IR/ValueRange.h"
+#include "mlir/Support/LogicalResult.h"
 #include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/device.h"
@@ -50,6 +57,62 @@ struct IfrtCallOpInfo : llvm::DenseMapInfo<CallOp> {
 // Retrieves the function named "main" from the given module, if it exists, and
 // fails otherwise.
 mlir::func::FuncOp GetMainFunction(mlir::ModuleOp module);
+
+// Returns a snapshot of all top-level IFRT functions (`IsIfrtFunction`) in
+// `module`. Snapshotting into a vector allows callers to safely insert or erase
+// top-level callee symbols in `module` during iteration.
+llvm::SmallVector<mlir::func::FuncOp> GetIfrtFunctions(mlir::ModuleOp module);
+
+// Constructs a 1-level nested `@<callee_module>::@<callee>` `SymbolRefAttr`
+// referencing `callee` inside `callee_module`.
+mlir::SymbolRefAttr MakeOutlinedCalleeSymbolRef(mlir::ModuleOp callee_module,
+                                                mlir::func::FuncOp callee);
+
+// Returns the top-level symbol operation in `root_module` corresponding to
+// `callee` (`callee` itself when top-level, or its enclosing child `ModuleOp`
+// when outlined one module deep), or `nullptr` if `callee` has an unsupported
+// parent hierarchy.
+mlir::Operation* GetCalleeRootSymbolOp(mlir::func::FuncOp callee,
+                                       mlir::ModuleOp root_module);
+
+// Resolves `call_op`'s callee in `symbol_table` and verifies that it is
+// outlined as `@main` inside a child `ModuleOp` of `call_op`'s enclosing
+// `ModuleOp`. Emits an op error on `call_op` and returns `mlir::failure()`
+// otherwise.
+mlir::FailureOr<mlir::ModuleOp> GetOutlinedAtomProgramModule(
+    CallOp call_op, mlir::SymbolTableCollection& symbol_table);
+
+// Result of cloning an outlined atom-program `ModuleOp`.
+struct ClonedAtomProgramModule {
+  mlir::ModuleOp module;
+  mlir::func::FuncOp main_func;
+  mlir::SymbolRefAttr callee_ref;
+};
+
+// Clones `callee_module` with private symbol visibility, inserts it into its
+// parent symbol table immediately after `callee_module`, and returns the cloned
+// module, its `@main` `FuncOp`, and its `@<module>::@main` `SymbolRefAttr`.
+ClonedAtomProgramModule CloneOutlinedAtomProgramModule(
+    mlir::ModuleOp callee_module, mlir::SymbolTableCollection& symbol_table);
+
+// Returns true if `attr` is a `mlir::UnitAttr` or a `mlir::BoolAttr` with
+// value `true`.
+bool IsTrueOrUnitAttr(mlir::Attribute attr);
+
+// Returns true if `dict` carries any buffer donation or output-aliasing
+// argument attribute (`jax.buffer_donor`, `tf.aliasing_output`, or
+// `ifrt.donated`).
+bool HasDonatedOrAliasedDictAttr(mlir::DictionaryAttr dict);
+
+// Returns true if `type` is an `IfrtArrayType` whose tensor element type is
+// `IfrtTokenType` (`!ifrt.array<tensor<!ifrt.token>, ...>`).
+bool IsTokenArrayType(mlir::Type type);
+
+// Returns the index of `operand_num` within `inputs`, or `std::nullopt` if
+// `inputs` is empty or `operand_num` falls outside `inputs` (for example, a
+// control input).
+std::optional<unsigned> GetArrayInputIndex(mlir::OperandRange inputs,
+                                           unsigned operand_num);
 
 // Returns true if transferring between from and to array requires a reshard.
 bool IsReshard(IfrtArrayType from, IfrtArrayType to);

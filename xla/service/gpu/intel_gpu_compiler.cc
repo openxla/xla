@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/intel_gpu_compiler.h"
 
 #include "absl/status/status_macros.h"
+#include "xla/backends/gpu/target_lowering/spirv_backend.h"
 #include "xla/backends/gpu/transforms/algebraic_simplifier.h"
 #include "xla/backends/gpu/transforms/conv_padding_legalization.h"
 #include "xla/backends/gpu/transforms/conv_rewriter.h"
@@ -24,14 +25,14 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/transforms/call_inliner.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/convert_mover.h"
 #include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
 #include "xla/hlo/transforms/simplifiers/reshape_mover.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
-#include "xla/service/call_inliner.h"
 #include "xla/service/dump.h"
-#include "xla/service/gpu/llvm_gpu_backend/spirv_backend.h"
+#include "xla/service/gpu/gpu_pipeline.h"
 #include "xla/service/gpu/target_constants.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/hlo_verifier.h"
@@ -76,7 +77,7 @@ absl::Status IntelGpuCompiler::OptimizeHloConvolutionCanonicalization(
   AlgebraicSimplifierOptions algsimp_options = GetAlgebraicSimplifierOptions(
       AlgebraicSimplifierMode::kGpuConvoluationCanonicalization,
       hlo_module->config().debug_options(),
-      /*is_non_cuda_platform=*/true);
+      /*is_cuda_platform=*/false);
   pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(algsimp_options,
                                                        gpu_version);
 
@@ -140,6 +141,7 @@ absl::Status IntelGpuCompiler::AddConfigAssignerPass(
 absl::StatusOr<GpuCompiler::BackendCompileResult>
 IntelGpuCompiler::CompileTargetBinary(
     const HloModuleConfig& module_config, llvm::Module* llvm_module,
+    absl::string_view kernel_fingerprint,
     const stream_executor::DeviceDescription& device_description,
     bool relocatable, const HloModule* debug_module,
     std::optional<int> shard_number) {

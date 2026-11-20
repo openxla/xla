@@ -547,7 +547,7 @@ absl::Status CustomCallThunk::Prepare(const PrepareParams& params) {
   TF_RET_CHECK(params.ffi_kernel_registry != nullptr);
   TF_RET_CHECK(params.executor != nullptr);
   KernelRegistrationExtension registration_ext(params.ffi_kernel_registry,
-                                               params.executor);
+                                               params.executor, use_pdl_);
 
   if (c_bundle && c_bundle->prepare) {
     return ExecuteFfiHandler(
@@ -613,7 +613,7 @@ absl::Status CustomCallThunk::Initialize(const InitializeParams& params) {
   TF_RET_CHECK(params.ffi_kernel_registry != nullptr);
   TF_RET_CHECK(executor != nullptr);
   KernelRegistrationExtension registration_ext(params.ffi_kernel_registry,
-                                               executor);
+                                               executor, use_pdl_);
 
   if (c_bundle && c_bundle->initialize) {
     return ExecuteFfiHandler(

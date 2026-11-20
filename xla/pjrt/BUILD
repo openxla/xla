@@ -69,10 +69,12 @@ cc_library(
         "//xla:executable_run_options",
         "//xla:future",
         "//xla:literal",
+        "//xla/pjrt/c:pjrt_c_api_device_event_hdrs",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_helpers",
+        "//xla/pjrt/c:pjrt_c_api_raw_buffer_extension_hdrs",
         "//xla/pjrt/c:pjrt_c_api_raw_client_hdrs",
         "//xla/pjrt/c:pjrt_c_api_status_utils",
-        "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
         "//xla/runtime:device_id",
         "//xla/tsl/concurrency:async_value",
@@ -762,15 +764,22 @@ cc_library(
     visibility = internal_visibility([":friends"]),
     deps = [
         ":pjrt_common",
+        ":pjrt_compiler_variant",
         "//xla/pjrt/proto:pjrt_build_stamp_proto_cc",
         "//xla/pjrt/proto:pjrt_value_type_proto_cc",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/container:node_hash_map",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_protobuf//:protobuf_lite",
         "@com_google_protobuf//:timestamp_cc_proto",
@@ -856,13 +865,18 @@ xla_cc_test(
     srcs = ["pjrt_build_stamp_test.cc"],
     deps = [
         ":pjrt_build_stamp",
+        ":pjrt_common",
+        ":pjrt_compiler_variant",
         "//xla/pjrt/proto:pjrt_build_stamp_proto_cc",
         "//xla/tsl/util/proto:parse_text_proto",
         "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
@@ -891,6 +905,8 @@ cc_library(
         "//xla/runtime:chip_id",
         "//xla/runtime:device_id",
         "//xla/runtime:process_id",
+        "//xla/service:device_assignment",
+        "//xla/service:hlo_cost_analysis",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -932,7 +948,6 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:fingerprint",
     ],
 )
 
@@ -1220,10 +1235,28 @@ xla_cc_test(
 
 cc_library(
     name = "transpose_kernels",
-    srcs = ["transpose_kernels.cc"],
+    srcs = [
+        "transpose_kernels.cc",
+        "transpose_kernels_interleave.cc",
+        "transpose_kernels_internal.h",
+    ],
     hdrs = ["transpose_kernels.h"],
     deps = [
         "@com_google_absl//absl/base:core_headers",
+        "@highway//:hwy",
+    ],
+)
+
+xla_cc_test(
+    name = "transpose_kernels_test",
+    srcs = ["transpose_kernels_test.cc"],
+    deps = [
+        ":transpose_kernels",
+        "//xla:types",
+        "//xla/hlo/testlib:test",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/numeric:int128",
+        "@com_google_absl//absl/strings:str_format",
         "@highway//:hwy",
     ],
 )
@@ -1243,14 +1276,11 @@ cc_library(
         "//xla:ef57",
         "//xla:permutation_util",
         "//xla:util",
-        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:function_ref",
-        "@com_google_absl//absl/log:absl_check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
@@ -1258,6 +1288,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/profiler/lib:traceme",
     ],
 )
@@ -1347,7 +1378,6 @@ xla_cc_test(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
-        "@highway//:hwy",
     ],
 )
 
@@ -1377,6 +1407,7 @@ xla_cc_test(
     deps = [
         ":strided_gather",
         ":transpose",
+        "@com_google_absl//absl/hash:hash_testing",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
@@ -1946,8 +1977,29 @@ cc_library(
     hdrs = ["pjrt_compiler_variant.h"],
     visibility = ["//visibility:public"],
     deps = [
+        ":pjrt_common",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:fingerprint",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_compiler_variant_test",
+    srcs = ["pjrt_compiler_variant_test.cc"],
+    deps = [
+        ":pjrt_common",
+        ":pjrt_compiler_variant",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:fingerprint",
     ],
 )

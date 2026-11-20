@@ -43,7 +43,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/service/copy_insertion.h"
+#include "xla/hlo/transforms/copy_insertion.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/platform_util.h"
@@ -1238,38 +1238,34 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
   )";
   GpuAliasInfo alias_info(se::DeviceDescription{});
   for (absl::string_view view_shape : {"f32[256]{0}", "f32[2,128]{1,0}"}) {
-    for (int64_t region_limit : {0, -1}) {
-      SCOPED_TRACE(view_shape);
-      SCOPED_TRACE(region_limit);
-      std::string hlo =
-          absl::StrReplaceAll(kHlo, {{"$view_shape", view_shape}});
-      ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-      auto pipeline = MakePipeline();
-      ASSERT_OK_AND_ASSIGN(bool changed, pipeline.Run(module.get()));
-      ASSERT_TRUE(changed);
-      HloInstruction* fusion = module->entry_computation()->root_instruction();
-      ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
-      ASSERT_EQ(fusion->operand_count(), 2);
-      ASSERT_EQ(fusion->operand(0)->opcode(), HloOpcode::kNegate);
-      ASSERT_EQ(fusion->operand(1)->opcode(), HloOpcode::kBitcast);
-      {
-        ASSERT_OK_AND_ASSIGN(auto aliases,
-                             HloAliasAnalysis::Run(module.get(), &alias_info));
-        ASSERT_EQ(&aliases->GetUniqueBufferAt(fusion->operand(0)),
-                  &aliases->GetUniqueBufferAt(fusion->operand(1)));
-      }
-
-      CopyInsertion copy_insertion(&alias_info, region_limit);
-      ASSERT_OK(copy_insertion.Run(module.get()).status());
-
+    SCOPED_TRACE(view_shape);
+    std::string hlo = absl::StrReplaceAll(kHlo, {{"$view_shape", view_shape}});
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+    auto pipeline = MakePipeline();
+    ASSERT_OK_AND_ASSIGN(bool changed, pipeline.Run(module.get()));
+    ASSERT_TRUE(changed);
+    HloInstruction* fusion = module->entry_computation()->root_instruction();
+    ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+    ASSERT_EQ(fusion->operand_count(), 2);
+    ASSERT_EQ(fusion->operand(0)->opcode(), HloOpcode::kNegate);
+    ASSERT_EQ(fusion->operand(1)->opcode(), HloOpcode::kBitcast);
+    {
       ASSERT_OK_AND_ASSIGN(auto aliases,
                            HloAliasAnalysis::Run(module.get(), &alias_info));
-      EXPECT_EQ(&aliases->GetUniqueBufferAt(fusion),
-                &aliases->GetUniqueBufferAt(fusion->operand(0)));
-      EXPECT_NE(&aliases->GetUniqueBufferAt(fusion),
-                &aliases->GetUniqueBufferAt(fusion->operand(1)))
-          << module->ToString();
+      ASSERT_EQ(&aliases->GetUniqueBufferAt(fusion->operand(0)),
+                &aliases->GetUniqueBufferAt(fusion->operand(1)));
     }
+
+    CopyInsertion copy_insertion(&alias_info);
+    ASSERT_OK(copy_insertion.Run(module.get()).status());
+
+    ASSERT_OK_AND_ASSIGN(auto aliases,
+                         HloAliasAnalysis::Run(module.get(), &alias_info));
+    EXPECT_EQ(&aliases->GetUniqueBufferAt(fusion),
+              &aliases->GetUniqueBufferAt(fusion->operand(0)));
+    EXPECT_NE(&aliases->GetUniqueBufferAt(fusion),
+              &aliases->GetUniqueBufferAt(fusion->operand(1)))
+        << module->ToString();
   }
 }
 

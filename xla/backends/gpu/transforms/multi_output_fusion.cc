@@ -32,22 +32,23 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "xla/backends/gpu/cost_model/fusion_analysis_cache.h"
+#include "xla/backends/gpu/cost_model/gpu_hlo_cost_analysis.h"
+#include "xla/backends/gpu/cost_model/gpu_performance_model.h"
+#include "xla/backends/gpu/cost_model/gpu_performance_model_base.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/analysis/hlo_dfs_reachability.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/transforms/instruction_fusion.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
-#include "xla/service/gpu/model/fusion_analysis_cache.h"
-#include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
-#include "xla/service/gpu/model/gpu_performance_model.h"
-#include "xla/service/gpu/model/gpu_performance_model_base.h"
 #include "xla/service/gpu/reduction_utils.h"
 #include "xla/service/hlo_graph_dumper.h"
-#include "xla/service/instruction_fusion.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/launch_dim.h"
@@ -363,11 +364,11 @@ FusionDecision ColumnReductionDoesNotStarveSibling(
 FusionDecision CanFuseSiblings(const HloInstruction& sibling_consumer_1,
                                const HloInstruction& sibling_consumer_2,
                                const HloInstruction& common_producer,
-                               const HloDfsReachability& reachability,
+                               bool siblings_are_connected,
                                FusionInfoCache* fusion_info_cache,
                                HloFusionAnalysisCache* fusion_analysis_cache,
                                const se::DeviceDescription& device_info) {
-  if (reachability.IsConnected(&sibling_consumer_1, &sibling_consumer_2)) {
+  if (siblings_are_connected) {
     return FusionDecision::Forbid(
         absl::StrCat(sibling_consumer_1.name(), " and ",
                      sibling_consumer_2.name(), " are connected"));
@@ -436,12 +437,20 @@ bool MultiOutputFusion::FuseSiblings(
     if ((*i)->opcode() != HloOpcode::kFusion) {
       continue;
     }
+    // Siblings from `first` on that are connected to `i`. Fusing changes the
+    // graph, so this is recomputed after every fusion.
+    auto find_connected = [&](std::vector<HloInstruction*>::iterator first) {
+      return reachability_->FindConnected(
+          *i, absl::MakeConstSpan(siblings).subspan(first - siblings.begin()));
+    };
+    absl::flat_hash_set<const HloInstruction*> connected =
+        find_connected(i + 1);
     for (auto j = i + 1; j != siblings.end();) {
       VLOG(3) << "Considering " << (*i)->name() << " and " << (*j)->name();
 
-      if (auto fusible = CanFuseSiblings(**i, **j, *parent, *reachability_,
-                                         fusion_info_cache,
-                                         fusion_analysis_cache, device_info_);
+      if (auto fusible = CanFuseSiblings(
+              **i, **j, *parent, connected.contains(*j), fusion_info_cache,
+              fusion_analysis_cache, device_info_);
           !fusible) {
         // We pick `j` arbitrarily as a consumer.
         if (dump_fusion) {
@@ -492,8 +501,9 @@ bool MultiOutputFusion::FuseSiblings(
                                    "| inside multi-output fusion"));
       CHECK_OK(cost_analysis->RevisitInstruction(remaining));
       changed = true;
-      siblings.erase(j);
+      j = siblings.erase(j);
       RecomputeReachability();
+      connected = find_connected(j);
     }
   }
   return changed;

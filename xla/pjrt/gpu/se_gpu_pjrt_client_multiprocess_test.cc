@@ -43,6 +43,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "xla/backends/autotuner/in_memory_store.h"
+#include "xla/backends/gpu/autotuner/autotuner_cache.h"
 #include "xla/backends/gpu/tests/multi_process_gpu_test_base.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/debug_options_flags.h"
@@ -62,7 +63,6 @@ limitations under the License.
 #include "xla/pjrt/se/local_device_state.h"
 #include "xla/pjrt/se/pjrt_stream_executor_client.h"
 #include "xla/runtime/device_id.h"
-#include "xla/service/gpu/autotuning/autotuner_cache.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -366,7 +366,7 @@ TEST_P(InterProcessCollectiveInitTest, EagerInit) {
   auto* se_client = absl::down_cast<CommonPjRtClient*>(custom_client.get());
   ASSERT_NE(se_client, nullptr);
   auto* raw_client =
-      absl::down_cast<PjRtStreamExecutorRawClient*>(se_client->raw_client());
+      se_client->raw_client()->down_cast<PjRtStreamExecutorRawClient>();
   ASSERT_OK_AND_ASSIGN(
       LocalDeviceState * local_device_state,
       raw_client->GetLocalDeviceState(

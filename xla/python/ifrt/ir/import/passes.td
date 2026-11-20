@@ -136,11 +136,13 @@ the outputs of another ifrt op.
 
 def IfrtVerifyDonationPass :
     Pass<"ifrt-verify-donation", "mlir::func::FuncOp"> {
-  let summary = "Verify that `!ifrt.array` are not donated more than once.";
+  let summary = "Verify that `!ifrt.array` shards are not donated more than once.";
   let description = [{
-Verifiy that no `!ifrt.array` is donated more than once, and that all
-`ifrt.array`s that are donated and arguments of the main func have
-`ifrt.donated` attribute.
+Verifies per-shard donation and aliasing across IFRT ops so that no
+`!ifrt.array` shard is donated or used after being donated, array-consuming ops
+(e.g., `ifrt.Call`, `ifrt.BitcastArrays`) do not receive duplicate donated
+shards within the same op, and any donated shard originating from an argument of
+the IFRT function has the `ifrt.donated` attribute.
   }];
 }
 
@@ -157,60 +159,90 @@ def IfrtPopulateAtomProgramMetadataPass :
     Pass<"ifrt-populate-atom-program-metadata", "mlir::ModuleOp"> {
   let summary = "Populate metadata from call site to atom functions";
   let description = [{
-For every CallOp, this pass
-  1. clones the callee's parent ModuleOp
-  2. adds `ifrt.num_devices` attribute to the callee's parent ModuleOp
-  2. attaches shardings and devices to the inputs and outputs of the callee's
-     main FuncOp
-  3. attaches `tf.aliasing_output` attr to the callee main FuncOp's inputs
+For each group of `ifrt.Call` ops in `@main` sharing a callee and call-site
+metadata (matching input/output types and attributes except
+`operandSegmentSizes`), this pass requires the callee to be outlined as `@main`
+in a direct child `ModuleOp` and:
+  1. mutates the callee's parent `ModuleOp` in place when it is private and
+     exclusively referenced by the group (otherwise clones a private copy and
+     redirects the group's calls)
+  2. adds `ifrt.num_devices` to the callee's parent `ModuleOp`, and copies
+     `ifrt.compile_options_key` and `ifrt.local_view` if present on the
+     `ifrt.Call`
+  3. attaches `ifrt.sharding` (plus `ifrt.memory_kind` if present, and
+     `ifrt.devices` as a permutation relative to the `ifrt.Call`'s device list
+     only when an array's devices differ from the call's devices) to the inputs
+     and outputs of the callee's `main` `FuncOp`
+  4. attaches `tf.aliasing_output` to the callee `main` `FuncOp`'s inputs
      according to `io_aliases`
-  4. attaches `jax.buffer_donor` attr to the callee main FuncOp's inputs
+  5. attaches `jax.buffer_donor` to the callee `main` `FuncOp`'s inputs
      according to `donated_input_indices`
 
-For CallOps with the same callee, a different clone will be created for each
-CallOp, even if the populated metadata are the same. User may want to run
-`ifrt-duplicated-callee-elimination` pass to dedup the clones.
+`ifrt.Call` ops referencing the same callee with identical metadata share a
+single populated module, avoiding redundant clones. When a callee's root
+`ModuleOp` is private and only referenced by its `ifrt.Call` ops in `@main`,
+the earliest variant group reuses it in place (mutating with zero clones when
+all call sites share one configuration, and bounding clones to one per extra
+distinct variant). For outlined callees with internal symbol references inside
+the enclosing `ModuleOp` (such as recursive calls), the unmutated body is split
+into a private helper in place (or in the clone) so internal callers are
+unaffected by call-site metadata mutations.
 
-For example, the following code
+The pass fails with an op error if root-scope symbol uses cannot be determined
+(e.g., an unregistered region-bearing op in the root module), if any `ifrt.Call`
+in `@main` does not reference a defined `@main` `FuncOp` inside a direct child
+`ModuleOp`, or if internal symbol uses cannot be determined inside an outlined
+callee `ModuleOp`.
+
+For example, the following code (with a private, exclusively referenced
+`@callee`, mutated in place; a public or multi-variant `@callee` is cloned into
+a private copy instead)
 
 ```mlir
-%0, %ctrl_0 = ifrt.Call @callee::@main(%arg0) on devices [0, 1]
-    {io_aliases=[array<i32: 1, 0>]}
+%0, %ctrl_0 = ifrt.Call @callee::@main(%arg0, %arg1) on devices [0, 1]
+    <io_aliases = [array<i32: 1, 0>], donated_input_indices = [0]>
     : (!ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
-                   [0,1]>,
+                   [0, 1], memory_kind = "device">,
        !ifrt.array<tensor<4x4xi32>, #ifrt.sharding_param<1x2 to [0] on 2>,
-                   [0,1]>)
+                   [1, 0]>)
     -> !ifrt.array<tensor<4x4xi32>, #ifrt.sharding_param<1x2 to [0] on 2>,
-                   [0,1]>
+                   [0, 1]>
 
-module @callee {
-  func.func private @main(%arg0: tensor<2x2xi32>, %arg1: tensor<4x4xi32>)
-      -> tensor<4x4xi32> {}
+module @callee <sym_visibility = "private"> {
+  func.func @main(%arg0: tensor<2x2xi32>, %arg1: tensor<4x4xi32>)
+      -> tensor<4x4xi32> {
+    return %arg1 : tensor<4x4xi32>
+  }
 }
 ```
 
 will be replaced by
 
 ```mlir
-%0, %ctrl_0 = ifrt.Call @new_callee::@main(%arg0) on devices [0, 1]
+%0, %ctrl_0 = ifrt.Call @callee::@main(%arg0, %arg1) on devices [0, 1]
+    <io_aliases = [array<i32: 1, 0>], donated_input_indices = [0]>
     : (!ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
-                   [0,1]>)
+                   [0, 1], memory_kind = "device">,
+       !ifrt.array<tensor<4x4xi32>, #ifrt.sharding_param<1x2 to [0] on 2>,
+                   [1, 0]>)
     -> !ifrt.array<tensor<4x4xi32>, #ifrt.sharding_param<1x2 to [0] on 2>,
-                   [0,1]>
+                   [0, 1]>
 
-module @new_callee attributes {ifrt.num_devices = 2} {
-  func.func private @new_callee(
+module @callee <sym_visibility = "private">
+    attributes {ifrt.num_devices = 2 : i32} {
+  func.func @main(
       %arg0: tensor<2x2xi32> {
+        ifrt.memory_kind = "device",
         ifrt.sharding = #ifrt.sharding_param<2x1 to [0] on 2>,
-        ifrt.devices = #ifrt<devices[0,1]>},
+        jax.buffer_donor = true},
       %arg1: tensor<4x4xi32> {
+        ifrt.devices = #ifrt<devices[1, 0]>,
         ifrt.sharding = #ifrt.sharding_param<1x2 to [0] on 2>,
-        ifrt.devices = #ifrt<devices[0,1]>
         tf.aliasing_output = 0 : i32})
       -> (tensor<4x4xi32> {
-        ifrt.sharding = #ifrt.sharding_param<1x2 to [0] on 2>,
-        ifrt.devices = #ifrt<devices[0,1]>})
-      {}
+        ifrt.sharding = #ifrt.sharding_param<1x2 to [0] on 2>}) {
+    return %arg1 : tensor<4x4xi32>
+  }
 }
 ```
   }];
@@ -293,9 +325,30 @@ def IfrtCopyConstantsPass :
     Pass<"ifrt-copy-constants", "mlir::ModuleOp"> {
   let summary = "Copies constants produced in one atom program to their consumers.";
   let description = [{
-Copies `ConstantLike` ops returned by producer `ifrt.Call` atom programs into
-consumer `ifrt.Call` atom programs, tracing across zero or more `ifrt.Reshard`
-or `ifrt.CopyArrays` ops.
+Visits IFRT functions in reverse program order and copies zero-operand,
+single-result `ConstantLike` ops returned by single-block producer `ifrt.Call`
+atom programs into consumer `ifrt.Call` atom programs when the constant's type
+matches a used consumer entry-block argument, tracing across zero or more
+`ifrt.Reshard` or `ifrt.CopyArrays` ops. `ifrt.local_view` calls are skipped
+(both as producers and consumers), and multi-block producer callees are
+skipped. Constants carrying symbol references (e.g., `sdy.sharding` referencing
+a module-local `sdy.mesh`) or whose symbol uses cannot be determined are skipped
+when copying across `SymbolTable` boundaries.
+
+Before mutating a consumer callee, if its root symbol (a top-level `func.func`
+or enclosing outlined `ModuleOp`) is non-private or has other root-scope symbol
+uses (e.g., another `ifrt.Call` or a top-level `func.call`), it is cloned into
+a private copy and the call is redirected. For outlined callees with internal
+symbol references inside the enclosing `ModuleOp` (such as recursive calls), the
+unmutated body is split into a private helper so internal callers are
+unaffected.
+
+The pass fails with an op error if root-scope symbol uses cannot be determined
+(e.g., an unregistered region-bearing op in the root module), if any
+non-`ifrt.local_view` `ifrt.Call` in a single-block IFRT function cannot
+resolve a defined callee nested at most one `ModuleOp` deep (including external
+declarations), or if internal symbol uses cannot be determined inside a mutated
+outlined `ModuleOp`.
 
 Note: this pass does not clean up dead arguments, results, or transfers left
 behind after copying constants.
@@ -308,17 +361,32 @@ def IfrtCallDedupPass :
   let description = [{
 Processes `ifrt.Call` ops in IFRT functions in program order to:
 1. Redirect uses of duplicate non-donated, non-aliased input block arguments
-   (with matching callee argument types and normalized argument attributes)
-   inside the callee `func.func` to the first matching block argument. If the
-   callee (or its enclosing outlined `ModuleOp`) is non-private or has other
-   symbol uses (e.g., another `ifrt.Call` or a `func.call`), it is cloned as a
-   private symbol before mutating its arguments.
+   (with matching callee argument types and normalized argument attributes on
+   both callee and call op) inside the callee `func.func` to the first matching
+   block argument. If the callee's root symbol (a top-level `func.func` or
+   enclosing outlined `ModuleOp`) is non-private or has other root-scope symbol
+   uses (e.g., another `ifrt.Call` or a top-level `func.call`), it is cloned
+   into a private copy before mutating its arguments, and calls with the same
+   callee and duplicate-argument pattern share the cached clone. For outlined
+   callees with internal symbol references inside the enclosing `ModuleOp` (such
+   as recursive calls), the unmutated body is split into a private helper in
+   place (avoiding an extra module clone for sole-caller private modules) or in
+   the cloned module (when shared or non-private).
 2. Redirect caller uses of duplicate `ifrt.Call` outputs (returning the same
    SSA value in the callee with identical `!ifrt.array` types and normalized
-   result attributes) to the first matching output, excluding outputs aliased
-   to a call input or donated/aliased to a downstream consumer.
+   result attributes on both callee and call op) to the first matching output,
+   excluding outputs aliased to a call input or donated/aliased to a downstream
+   consumer.
 
-Dead arguments and results are left to be erased by `IfrtDcePass`.
+Private non-IFRT original root symbols that become unused after calls are
+redirected to specialized clones are erased (transitively) at pass exit. Dead
+arguments and results are left to be erased by `IfrtDcePass`.
+
+The pass fails with an op error if root-scope symbol uses cannot be determined
+(e.g., an unregistered region-bearing op in the root module), or if a callee
+with used duplicate arguments cannot be prepared for mutation (e.g., nested
+more than one `ModuleOp` deep or inside an outlined `ModuleOp` with an
+unregistered region-bearing op).
   }];
 }
 
@@ -327,18 +395,34 @@ def IfrtDcePass : Pass<"ifrt-dce", "mlir::ModuleOp"> {
                 "program regions, and erases dead "
                 "Call/Reshard/CopyArrays/BitcastArrays/RemapArrays ops.";
   let description = [{
-Walks IFRT functions in reverse order to:
-1. Erase unused outputs (or the entire op when all array outputs are unused,
-   forwarding `control_inputs` to `control_output` users) from
+Simplifies distinct defined atom-program callees referenced by `ifrt.Call` ops
+in place upfront via region simplification, then walks IFRT functions in reverse
+order to:
+1. Erase unused outputs (or the entire op when all array outputs are unused and
+   `control_inputs` can be forwarded to `control_output` users) from
    `IfrtPairwiseArrayOpInterface` ops (`ifrt.Reshard`, `ifrt.CopyArrays`,
    `ifrt.BitcastArrays`) and from `ifrt.RemapArrays` ops (pruning unused
    `ifrt.RemapArrays` inputs as a result of erasing unused outputs and
    remapping `mappings` indices).
 2. Erase unused `ifrt.Call` results and corresponding callee `func.return`
-   operands, simplify callee regions, erase unused callee block arguments and
-   `ifrt.Call` inputs (remapping `io_aliases`, `donated_input_indices`,
-   `arg_attrs`, and `res_attrs`), and erase dead empty `ifrt.Call` ops along
-   with unused private callees.
+   operands, simplify callee regions, update or remove `tf.aliasing_output`
+   argument attributes on the callee, and erase unused callee block arguments
+   and `ifrt.Call` inputs (remapping `io_aliases`, `donated_input_indices`,
+   `arg_attrs`, and `res_attrs`). Before changing a callee's signature,
+   non-private callees or callees with other root-scope symbol uses are cloned
+   into private copies, and outlined callees with internal symbol references
+   inside the enclosing `ModuleOp` split the unmutated copy into a private
+   helper. Dead `ifrt.Call` ops whose callees are single-block and side-effect
+   free and whose `control_inputs` can be forwarded are erased along with newly
+   unused private non-IFRT root symbols (transitively), with an end-of-pass
+   sweep catching tracked symbols whose remaining references are dropped after
+   a call is erased or redirected.
+
+The pass fails with an op error if root-scope symbol uses cannot be determined
+(e.g., an unregistered region-bearing op in the root module), if any `ifrt.Call`
+in an IFRT function cannot resolve a defined callee nested at most one
+`ModuleOp` deep (including external declarations), or if internal symbol uses
+cannot be determined inside a mutated outlined `ModuleOp`.
   }];
 }
 
