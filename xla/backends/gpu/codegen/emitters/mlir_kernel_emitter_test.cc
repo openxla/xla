@@ -44,9 +44,12 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"
+#include "xla/backends/gpu/codegen/emitters/loop.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/codegen/llvm_kernel_source.h"
 #include "xla/codegen/mlir_kernel_source.h"
+#include "xla/hlo/analysis/alias_info.h"
+#include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -55,8 +58,12 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/buffer_value.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/logical_buffer.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/xla.pb.h"
@@ -341,6 +348,210 @@ TEST_F(MlirKernelFusionTest, CreateLLVMModuleEmitsNoLineInfoByDefault) {
     // CHECK: define void @fusion(
     // CHECK-NOT: !dbg
     // CHECK-NOT: !DICompileUnit
+  )"),
+              absl_testing::IsOkAndHolds(true));
+}
+
+// Copy emitter reporting contiguous output writes, so stores can be hinted.
+class ContiguousCopyEmitter : public DummyCopyEmitter {
+ public:
+  bool WritesOutputsContiguously() const override { return true; }
+};
+
+// Hints need buffers above 16x L2 (64 MiB on the MI300 test device).
+constexpr absl::string_view kLargeCopyModule = R"(
+    fused_computation {
+      ROOT %p0 = f32[20000000] parameter(0)
+    }
+
+    ENTRY main {
+      %p0 = f32[20000000] parameter(0)
+      ROOT fusion = f32[20000000] fusion(%p0), kind=kLoop,
+        calls=fused_computation
+    })";
+
+absl::StatusOr<std::string> EmitLlvmIrWithBufferAssignment(
+    HloModule& module, const se::DeviceDescription& device_info,
+    std::unique_ptr<MlirKernelEmitter> kernel_emitter =
+        std::make_unique<ContiguousCopyEmitter>()) {
+  AliasInfo alias_info;
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<BufferAssignment> assignment,
+      BufferAssigner::Run(
+          &module, std::make_unique<DependencyHloOrdering>(&module),
+          [](const BufferValue& buffer) {
+            return ShapeUtil::ByteSizeOf(buffer.shape(), sizeof(void*));
+          },
+          &alias_info, [](LogicalBuffer::Color) { return 0; },
+          BufferAssigner::Options{.allocate_buffers_for_constants = true}));
+
+  std::unique_ptr<mlir::MLIRContext> mlir_context = CreateMlirContext();
+  MlirKernelFusion emitter(std::move(kernel_emitter));
+  ABSL_ASSIGN_OR_RETURN(LlvmKernelSource source,
+                        MlirKernelFusionTestPeer::CreateLLVMModule(
+                            emitter, device_info,
+                            *Cast<HloFusionInstruction>(
+                                module.entry_computation()->root_instruction()),
+                            "fusion", assignment.get(), *mlir_context));
+  auto llvm_module = std::move(source).thread_safe_module();
+  std::string out;
+  llvm::raw_string_ostream stream(out);
+  stream << *llvm_module.getModuleUnlocked();
+  return out;
+}
+
+TEST_F(MlirKernelFusionTest, NoNontemporalLoadsWithoutInputIndexingOnMI300) {
+  // The emitter has no thread id to input maps, so loads stay temporal.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kLargeCopyModule));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_nontemporal_hints(true);
+  ASSERT_OK_AND_ASSIGN(std::string llvm_ir,
+                       EmitLlvmIrWithBufferAssignment(
+                           *module, TestGpuDeviceInfo::AMDMI300DeviceInfo()));
+  EXPECT_THAT(RunFileCheck(llvm_ir, R"(
+    // CHECK-NOT: load {{.*}}!nontemporal
+  )"),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(RunFileCheck(llvm_ir, R"(
+    // CHECK: store float {{.*}}!nontemporal
+  )"),
+              absl_testing::IsOkAndHolds(true));
+}
+
+TEST_F(MlirKernelFusionTest, NoNontemporalHintsWhenFlagDisabled) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kLargeCopyModule));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_nontemporal_hints(false);
+  ASSERT_OK_AND_ASSIGN(std::string llvm_ir,
+                       EmitLlvmIrWithBufferAssignment(
+                           *module, TestGpuDeviceInfo::AMDMI300DeviceInfo()));
+  EXPECT_THAT(RunFileCheck(llvm_ir, R"(
+    // CHECK-NOT: !nontemporal
+  )"),
+              absl_testing::IsOkAndHolds(true));
+}
+
+// Emits the root fusion of `module` with the loop emitter on MI300.
+absl::StatusOr<std::string> EmitLoopFusionOnMI300(HloModule& module) {
+  const se::DeviceDescription device_info =
+      TestGpuDeviceInfo::AMDMI300DeviceInfo();
+  HloFusionAnalysis analysis = HloFusionAnalysis::Create(
+      *Cast<HloFusionInstruction>(
+          module.entry_computation()->root_instruction()),
+      device_info);
+  return EmitLlvmIrWithBufferAssignment(module, device_info,
+                                        std::make_unique<LoopFusion>(analysis));
+}
+
+TEST_F(MlirKernelFusionTest, NontemporalLoadsOfWholeLinesOnMI300) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    fused_computation {
+      %p0 = f32[32,96,112,112] parameter(0)
+      ROOT %neg = f32[32,96,112,112] negate(%p0)
+    }
+
+    ENTRY main {
+      %p0 = f32[32,96,112,112] parameter(0)
+      ROOT fusion = f32[32,96,112,112] fusion(%p0), kind=kLoop,
+        calls=fused_computation
+    })"));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_nontemporal_hints(true);
+  ASSERT_OK_AND_ASSIGN(std::string llvm_ir, EmitLoopFusionOnMI300(*module));
+  EXPECT_THAT(RunFileCheck(llvm_ir, R"(
+    // CHECK: load {{.*}}!nontemporal
+    // CHECK: store {{.*}}!nontemporal
+  )"),
+              absl_testing::IsOkAndHolds(true));
+}
+
+TEST_F(MlirKernelFusionTest, NoNontemporalLoadsOfLinesReadInPiecesOnMI300) {
+  // The pad shifts rows off the 128-byte lines: several loads per line.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    fused_computation {
+      %p0 = f32[32,96,112,112] parameter(0)
+      %zero = f32[] constant(0)
+      ROOT %pad = f32[32,96,113,113] pad(%p0, %zero), padding=0_0x0_0x0_1x0_1
+    }
+
+    ENTRY main {
+      %p0 = f32[32,96,112,112] parameter(0)
+      ROOT fusion = f32[32,96,113,113] fusion(%p0), kind=kLoop,
+        calls=fused_computation
+    })"));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_nontemporal_hints(true);
+  ASSERT_OK_AND_ASSIGN(std::string llvm_ir, EmitLoopFusionOnMI300(*module));
+  EXPECT_THAT(RunFileCheck(llvm_ir, R"(
+    // CHECK-NOT: load {{.*}}!nontemporal
+  )"),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(RunFileCheck(llvm_ir, R"(
+    // CHECK: store {{.*}}!nontemporal
+  )"),
+              absl_testing::IsOkAndHolds(true));
+}
+
+TEST_F(MlirKernelFusionTest, NoNontemporalLoadsAfterLeadingPadOnMI300) {
+  // The first blocks write only padding; later rows are read in pieces.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    fused_computation {
+      %p0 = f32[32,96,112,112] parameter(0)
+      %zero = f32[] constant(0)
+      ROOT %pad = f32[32,98,114,114] pad(%p0, %zero), padding=0_0x1_1x1_1x1_1
+    }
+
+    ENTRY main {
+      %p0 = f32[32,96,112,112] parameter(0)
+      ROOT fusion = f32[32,98,114,114] fusion(%p0), kind=kLoop,
+        calls=fused_computation
+    })"));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_nontemporal_hints(true);
+  ASSERT_OK_AND_ASSIGN(std::string llvm_ir, EmitLoopFusionOnMI300(*module));
+  EXPECT_THAT(RunFileCheck(llvm_ir, R"(
+    // CHECK-NOT: load {{.*}}!nontemporal
+  )"),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(RunFileCheck(llvm_ir, R"(
+    // CHECK: store {{.*}}!nontemporal
+  )"),
+              absl_testing::IsOkAndHolds(true));
+}
+
+TEST_F(MlirKernelFusionTest, NoNontemporalLoadsOfSubByteElementsOnMI300) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    fused_computation {
+      %p0 = s4[200000000] parameter(0)
+      ROOT %neg = s4[200000000] negate(%p0)
+    }
+
+    ENTRY main {
+      %p0 = s4[200000000] parameter(0)
+      ROOT fusion = s4[200000000] fusion(%p0), kind=kLoop,
+        calls=fused_computation
+    })"));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_nontemporal_hints(true);
+  ASSERT_OK_AND_ASSIGN(std::string llvm_ir, EmitLoopFusionOnMI300(*module));
+  EXPECT_THAT(RunFileCheck(llvm_ir, R"(
+    // CHECK-NOT: load {{.*}}!nontemporal
+  )"),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(RunFileCheck(llvm_ir, R"(
+    // CHECK: store {{.*}}!nontemporal
   )"),
               absl_testing::IsOkAndHolds(true));
 }

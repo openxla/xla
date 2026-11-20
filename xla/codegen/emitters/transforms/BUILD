@@ -227,10 +227,7 @@ cc_library(
     hdrs = ["passes.h"],
     deps = [
         ":atomic_rmw_utils",
-        ":convert_pure_call_ops_pass",
         ":passes_inc_gen",
-        ":simplify_affine_pass",
-        ":simplify_arith_pass",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -240,6 +237,7 @@ cc_library(
         "//xla/codegen/emitters:elemental_hlo_to_mlir",
         "//xla/codegen/emitters:implicit_arith_op_builder",
         "//xla/codegen/emitters:kernel_api_builder",
+        "//xla/codegen/emitters:nontemporal_hints",
         "//xla/codegen/emitters:utils",
         "//xla/codegen/emitters/ir:xla",
         "//xla/codegen/intrinsic:erf",
@@ -367,7 +365,8 @@ cc_library(
     srcs = ["pass_pipelines.cc"],
     hdrs = ["pass_pipelines.h"],
     deps = [
-        ":convert_pure_call_ops_pass",
+        ":passes",
+        ":simplify_arith_pass",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Transforms",
