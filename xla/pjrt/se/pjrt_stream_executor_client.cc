@@ -704,8 +704,9 @@ PjRtStreamExecutorExecutableLoadState::LoadRawExecutable(
         std::make_shared<DeviceAssignment>(std::move(default_da));
   }
   return std::make_unique<PjRtStreamExecutorRawLoadedExecutable>(
-      replica, partition, run_id, local_device_id, std::move(device_assignment),
-      std::move(local_exec), std::move(se_executable), raw_client());
+      replica, partition, host_callback_idx, run_id, local_device_id,
+      std::move(device_assignment), std::move(local_exec),
+      std::move(se_executable), raw_client());
 }
 
 absl::Status PjRtStreamExecutorRawClient::TransferToInfeed(
@@ -827,23 +828,25 @@ using tsl::MakeConstructedAsyncValueRef;
 // The returned function is not thread-safe: it is only called from the thread
 // that launches the executable.
 static SendDeviceMemoryFunction ConvertSendCallbacksToSendFunction(
-    int replica, absl::Span<const std::vector<SendCallback>> send_callbacks,
+    size_t host_callback_idx,
+    absl::Span<const std::vector<SendCallback>> send_callbacks,
     AsyncWorkRunner* async_work_runner,
     std::vector<AsyncValueRef<std::unique_ptr<se::Event>>>* send_events) {
-  // Check if we have callbacks registered for the given replica.
-  if (replica >= send_callbacks.size()) {
-    return [replica](int64_t channel_id, se::Stream*, const Shape&,
-                     const se::DeviceAddressBase&,
-                     const absl::flat_hash_map<std::string, std::string>&) {
+  // Check if we have callbacks registered for the given device.
+  if (host_callback_idx >= send_callbacks.size()) {
+    return [host_callback_idx](
+               int64_t channel_id, se::Stream*, const Shape&,
+               const se::DeviceAddressBase&,
+               const absl::flat_hash_map<std::string, std::string>&) {
       return Internal(
           "Don't send a buffer to the channel_id=%d, there was no send "
-          "callbacks registered for the replica=%d",
-          channel_id, replica);
+          "callbacks registered for the device at index %d",
+          channel_id, host_callback_idx);
     };
   }
 
-  // SendCallbacks registered for a device ordinal. Can be empty.
-  absl::Span<const SendCallback> callbacks = send_callbacks[replica];
+  // SendCallbacks registered for the device. Can be empty.
+  absl::Span<const SendCallback> callbacks = send_callbacks[host_callback_idx];
 
   static constexpr size_t kMinPruneThreshold = 16;
   return [callbacks, async_work_runner, send_events,
@@ -1022,21 +1025,23 @@ class StreamExecutorCopyToDeviceStream : public CopyToDeviceStream {
 }  // namespace
 
 static RecvDeviceMemoryFunction ConvertRecvCallbacksToRecvFunction(
-    int replica, absl::Span<const std::vector<RecvCallback>> recv_callbacks) {
-  // Check if we have callbacks registered for the given replica.
-  if (replica >= recv_callbacks.size()) {
-    return [replica](int64_t channel_id, se::Stream*, const Shape&,
-                     se::DeviceAddressBase*,
-                     const absl::flat_hash_map<std::string, std::string>&) {
+    size_t host_callback_idx,
+    absl::Span<const std::vector<RecvCallback>> recv_callbacks) {
+  // Check if we have callbacks registered for the given device.
+  if (host_callback_idx >= recv_callbacks.size()) {
+    return [host_callback_idx](
+               int64_t channel_id, se::Stream*, const Shape&,
+               se::DeviceAddressBase*,
+               const absl::flat_hash_map<std::string, std::string>&) {
       return InvalidArgument(
           "Failed to receive a buffer from the channel_id=%d, there was no "
-          "recv callbacks registered for the replica=%d",
-          channel_id, replica);
+          "recv callbacks registered for the device at index %d",
+          channel_id, host_callback_idx);
     };
   }
 
-  // RecvCallbacks registered for a device ordinal. Can be empty.
-  absl::Span<const RecvCallback> callbacks = recv_callbacks[replica];
+  // RecvCallbacks registered for the device. Can be empty.
+  absl::Span<const RecvCallback> callbacks = recv_callbacks[host_callback_idx];
 
   return [callbacks](int64_t channel_id, se::Stream* stream, const Shape& shape,
                      se::DeviceAddressBase* dst,
@@ -1454,6 +1459,7 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
        parameter_is_tupled_arguments =
            compile_options.parameter_is_tupled_arguments,
        replica = replica_, partition = partition_,
+       host_callback_idx = host_callback_idx_,
        extra_deps = std::move(extra_deps),
        result_definition_event_promises =
            std::move(result_definition_event_promises),
@@ -1464,11 +1470,11 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
     // adaptor records their completion events directly in `send_events`.
     std::vector<AsyncValueRef<std::unique_ptr<se::Event>>> send_events;
     SendDeviceMemoryFunction send_device_memory =
-        ConvertSendCallbacksToSendFunction(replica, send_callbacks,
+        ConvertSendCallbacksToSendFunction(host_callback_idx, send_callbacks,
                                            raw_client->async_work_runner(),
                                            &send_events);
     RecvDeviceMemoryFunction recv_device_memory =
-        ConvertRecvCallbacksToRecvFunction(replica, recv_callbacks);
+        ConvertRecvCallbacksToRecvFunction(host_callback_idx, recv_callbacks);
 
     ExecutableRunOptions run_options;
     run_options.set_stream(device_state->compute_stream());
