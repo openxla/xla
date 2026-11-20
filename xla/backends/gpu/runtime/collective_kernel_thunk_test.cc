@@ -490,7 +490,7 @@ absl::StatusOr<se::DeviceAddressBase> RunCollectiveKernelThunk(
   // correct memory space to kernel parameters and results buffers.
   const int device_ordinal = executor->device_ordinal();
   if (metadata.device_buffers[device_ordinal].is_null()) {
-    metadata.device_buffers[device_ordinal] = executor->AllocateArray<uint64_t>(
+    metadata.device_buffers[device_ordinal] = executor->AllocateArray<uint8_t>(
         metadata.total_buffer_size,
         /*memory_space=*/static_cast<int>(se::MemorySpace::kCollective));
   }
