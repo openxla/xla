@@ -23,6 +23,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "xla/service/device_assignment.h"
+
 namespace xla {
 
 /*static*/ RunId RunId::CreateUniqueId() {
