@@ -146,8 +146,9 @@ const Shape* TryInternShape(const Shape& shape) {
   if (shape.IsTuple() && shape.tuple_shapes().size() == 0) {
     return &NilShape();
   }
-  if (shape.IsArray() && shape.dimensions().size() == 0 && shape.is_static() &&
-      shape.has_layout() && shape.layout().tiles().size() == 0 &&
+  if (shape.IsArray() && shape.dimensions().empty() && shape.is_static() &&
+      shape.has_layout() && shape.layout().tiles().empty() &&
+      shape.layout().bit_planes().empty() &&
       shape.layout().memory_space() == 0 &&
       shape.layout().element_size_in_bits() == 0) {
     return &ScalarShape(shape.element_type());
@@ -267,9 +268,13 @@ void Literal::SetShape(const Shape& shape) {
         if (!subshape->has_layout()) {
           LayoutUtil::SetToDefaultLayout(subshape);
         }
-        if (subshape->IsArray() &&
-            LayoutUtil::HasCustomElementSizeInBits(*subshape)) {
-          subshape->mutable_layout()->set_element_size_in_bits(0);
+        if (subshape->IsArray()) {
+          if (LayoutUtil::HasCustomElementSizeInBits(*subshape)) {
+            subshape->mutable_layout()->set_element_size_in_bits(0);
+          }
+          if (!subshape->layout().bit_planes().empty()) {
+            subshape->mutable_layout()->clear_bit_planes();
+          }
         }
       });
 
@@ -452,7 +457,8 @@ absl::Span<const NativeT> RawData(const HolderT& holder) {
   }();
   DCHECK(shape.IsArray()) << __func__
                           << " is only supported for dense arrays: " << shape;
-  DCHECK(!shape.has_layout() || shape.layout().element_size_in_bits() == 0)
+  DCHECK(!shape.has_layout() || (shape.layout().element_size_in_bits() == 0 &&
+                                 shape.layout().bit_planes().empty()))
       << __func__
       << " is not supported for layouts with custom bit size: " << shape;
   DCHECK_EQ(primitive_util::ByteWidth(shape.element_type()), sizeof(NativeT))
@@ -475,7 +481,8 @@ absl::Span<NativeT> RawData(HolderT& holder) {
   }();
   DCHECK(shape.IsArray()) << __func__
                           << " is only supported for dense arrays: " << shape;
-  DCHECK(!shape.has_layout() || shape.layout().element_size_in_bits() == 0)
+  DCHECK(!shape.has_layout() || (shape.layout().element_size_in_bits() == 0 &&
+                                 shape.layout().bit_planes().empty()))
       << __func__
       << " is not supported for layouts with custom bit size: " << shape;
   DCHECK_EQ(primitive_util::ByteWidth(shape.element_type()), sizeof(NativeT))
@@ -1112,6 +1119,9 @@ Literal LiteralBase::Relayout(const Layout& new_layout,
     subshape->mutable_layout()->set_element_size_in_bits(0);
   }
   // LINT.ThenChange(//tensorflow/compiler/xla/types.h)
+  if (!subshape->layout().bit_planes().empty()) {
+    subshape->mutable_layout()->clear_bit_planes();
+  }
   Literal result(new_shape);
   CHECK_OK(result.CopyFrom(*this));
   return result;

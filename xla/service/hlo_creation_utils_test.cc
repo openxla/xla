@@ -22,6 +22,7 @@ limitations under the License.
 #include <memory>
 
 #include "absl/log/check.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -36,8 +37,11 @@ limitations under the License.
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/service/hlo_module_util.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -605,6 +609,72 @@ TEST_F(HloCreationUtilsTest, NewModuleWithFusion) {
   EXPECT_EQ(to_apply->root_instruction()->opcode(), HloOpcode::kAdd);
   EXPECT_EQ(fusion_module->entry_computation()->root_instruction()->name(),
             absl::StrCat(all_reduce_start->name(), "-", "fusion"));
+}
+
+TEST_F(HloCreationUtilsTest, MakeConvertToHloHandlesSubByteBitPlanes) {
+  static constexpr absl::string_view kModuleStr = R"hlo(
+    HloModule test
+
+    ENTRY main {
+      p0 = s4[16,128]{1,0:T(16,128)BP(2:(16,1))(2:(16,1))} parameter(0)
+      p1 = f32[16,128]{1,0} parameter(1)
+      ROOT out = (s4[16,128]{1,0:T(16,128)BP(2:(16,1))(2:(16,1))}, f32[16,128]{1,0}) tuple(p0, p1)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+  HloInstruction* p0 = module->entry_computation()->parameter_instruction(0);
+  HloInstruction* p1 = module->entry_computation()->parameter_instruction(1);
+
+  HloInstruction* s4_to_u4 = MakeConvertToHlo(p0, U4);
+  EXPECT_EQ(s4_to_u4->shape().layout().element_size_in_bits(), 0);
+  EXPECT_EQ(s4_to_u4->shape().layout().bit_planes().size(), 2);
+  EXPECT_THAT(LayoutUtil::ValidateLayoutInShape(s4_to_u4->shape()),
+              absl_testing::IsOk());
+
+  HloInstruction* f32_to_u4 = MakeConvertToHlo(p1, U4);
+  EXPECT_EQ(f32_to_u4->shape().layout().element_size_in_bits(), 4);
+  EXPECT_TRUE(f32_to_u4->shape().layout().bit_planes().empty());
+  EXPECT_THAT(LayoutUtil::ValidateLayoutInShape(f32_to_u4->shape()),
+              absl_testing::IsOk());
+}
+
+TEST_F(HloCreationUtilsTest,
+       UpdateEntryComputationLayoutPreservesWholeTensorBitPlanes) {
+  static constexpr absl::string_view kModuleStr = R"hlo(
+    HloModule test, entry_computation_layout={
+      (s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))}, s64[16,128]{1,0})
+      -> s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))}
+    }
+
+    ENTRY main {
+      p0 = s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))} parameter(0)
+      p1 = s64[16,128]{1,0} parameter(1)
+      ROOT sum = s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))} add(p0, p1)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+
+  UpdateEntryComputationLayout(
+      module.get(),
+      [](const Shape& shape) {
+        Shape tiled = shape;
+        *tiled.mutable_layout()->mutable_tiles() = {Tile({8, 128})};
+        tiled.mutable_layout()->clear_bit_planes();
+        return tiled;
+      },
+      /*empty_tiles_only=*/true);
+
+  EXPECT_EQ(ShapeUtil::HumanStringWithLayout(
+                module->entry_computation_layout().parameter_layout(0).shape()),
+            "s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))}");
+  EXPECT_EQ(ShapeUtil::HumanStringWithLayout(
+                module->entry_computation_layout().parameter_layout(1).shape()),
+            "s64[16,128]{1,0:T(8,128)}");
+  EXPECT_EQ(ShapeUtil::HumanStringWithLayout(
+                module->entry_computation_layout().result_layout().shape()),
+            "s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))}");
 }
 }  // namespace
 }  // namespace xla

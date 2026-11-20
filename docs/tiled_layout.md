@@ -193,3 +193,62 @@ This section shows examples of popular XLA formats.
 6.  **TPU 1 bit tile format** - TPUs currently use 1 byte for one boolean value,
     i.e. the size in bytes of the PRED element type is 1. It would be less
     wasteful to use a tiling by `(32,128)(32,1)` and use only 1 bit per element.
+
+## Bit-plane layouts
+
+Some hardware formats split each logical element's bits across two or more
+non-adjacent bit-planes instead of storing all bits of element `i` contiguously
+as `E(n)` does. `LayoutProto.bit_planes` (`BitPlaneProto`) represents this
+explicitly:
+
+```protobuf
+message BitPlaneProto {
+  int64 bit_offset = 1;         // LSB bit offset in each logical element (>= 0)
+  int64 bit_width = 2;          // bits per element in this plane (> 0)
+  repeated TileProto tiles = 3; // subtiles within this plane
+}
+```
+
+In HLO text, bit-planes are written `BP(w[:tiles])...` when `bit_offset`
+matches the running LSB prefix sum (`0, w_0, w_0 + w_1, ...`), and
+`BP(w@offset[:tiles])...` otherwise (omitting `:tiles` when `plane.tiles` is
+empty, e.g. `BP(32)(32)`).
+
+### Semantics and invariants
+
+*   **Mutual exclusion with `E(n)`:** `bit_planes` and non-zero
+    `element_size_in_bits` are mutually exclusive. When `bit_planes` is
+    non-empty, `ShapeUtil::ElementSizeInBits` equals `sum(bit_width)`.
+*   **Bit coverage:** `bit_planes` must contain at least 2 planes with
+    `bit_offset >= 0`, `bit_width > 0`, and pairwise-disjoint bit ranges
+    `[bit_offset, bit_offset + bit_width)` whose union is a single contiguous
+    interval `[0, sum(bit_width))` with
+    `sum(bit_width) >= primitive_util::LogicalBitWidth(element_type)` (any bits
+    `>= primitive_util::LogicalBitWidth(element_type)` are zero-padded).
+*   **Non-empty outer `tiles` (per-strip bit-plane split):** Outer `tiles` are
+    applied to the physical shape first (`tiles[1..]` must evenly divide their
+    parent dimensions and `tiles.back()` may not use `d`). Each instance of
+    `tiles.back()` forms an innermost strip whose elements are emitted plane by
+    plane; within plane `p`, `plane.tiles` (containing positive dimensions only,
+    with exact division at every step) orders the strip's elements, packed
+    densely LSB-first within bytes. When `tail_padding_alignment_in_elements`
+    (`L(n)`) is not `1`, it must be a multiple of the strip element count.
+    *   TPU 6-bit (`f6e3m2fn` / `f6e2m3fn`) 2D compact strip:
+        `{1,0:T(16,128)BP(4:(8,1))(2:(16,1))}`
+    *   TPU 6-bit 2D multi-strip / match-dimension:
+        `{1,0:T(256,128)(16,128)BP(4:(8,1))(2:(16,1))}`,
+        `{1,0:T(d,128)(16,128)BP(4:(8,1))(2:(16,1))}`
+    *   TPU 6-bit 1D strip:
+        `{0:T(2048)BP(4:(128)(8,1))(2:(128)(16,1))}`
+*   **Empty outer `tiles` (whole-tensor bit-plane split):** Each plane `p`
+    applies `plane.tiles` independently to the full physical shape
+    (`plane.tiles` may be empty, `plane.tiles[0]` may pad the shape, prepend
+    `1`s for lower-rank arrays, combine dimensions with `*`, or use `d`, and
+    `plane.tiles[1..]` must divide evenly), aligns its padded element count to
+    `L(n)` when `L(n) != 1`, and concatenates planes sequentially across the
+    whole tensor (after a single leading `M(prefix)` dynamic metadata header
+    when present).
+    *   TPU 64-bit integer (`s64` / `u64`) whole-tensor 32-bit lo/hi split:
+        `{1,0:BP(32:(8,128))(32:(8,128))}` (2D+), `{0:BP(32:(1024))(32:(1024))}`
+        (1D), `{:BP(32:(128))(32:(128))}` (0D), `{0:L(128)BP(32:(1))(32:(1))}`
+        (linear).

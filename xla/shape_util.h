@@ -560,12 +560,14 @@ class ShapeUtil {
       absl::Span<const Tile> tiles = {},
       int64_t tail_padding_alignment_in_elements = 1,
       int64_t element_size_in_bits = 0, int64_t memory_space = 0,
-      absl::Span<const SplitConfig> split_configs = {}) {
-    return MakeValidatedShapeWithDenseLayout(
-               element_type, dimensions, minor_to_major, tiles,
-               tail_padding_alignment_in_elements, element_size_in_bits,
-               memory_space, split_configs)
-        .value();
+      absl::Span<const SplitConfig> split_configs = {},
+      absl::Span<const BitPlane> bit_planes = {}) {
+    absl::StatusOr<Shape> shape = MakeValidatedShapeWithDenseLayout(
+        element_type, dimensions, minor_to_major, tiles,
+        tail_padding_alignment_in_elements, element_size_in_bits, memory_space,
+        split_configs, bit_planes);
+    CHECK_OK(shape.status());
+    return *std::move(shape);
   }
 
   // Constructs a new dense array shape with the given minor_to_major order in
@@ -576,7 +578,8 @@ class ShapeUtil {
       absl::Span<const Tile> tiles = {},
       int64_t tail_padding_alignment_in_elements = 1,
       int64_t element_size_in_bits = 0, int64_t memory_space = 0,
-      absl::Span<const SplitConfig> split_configs = {});
+      absl::Span<const SplitConfig> split_configs = {},
+      absl::Span<const BitPlane> bit_planes = {});
 
   // Constructs a new sparse array shape with the given minor_to_major order
   // in its Layout. Returns a value shape such that shape.has_layout().

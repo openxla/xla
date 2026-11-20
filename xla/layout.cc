@@ -15,12 +15,15 @@ limitations under the License.
 
 #include "xla/layout.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <ostream>
 #include <string>
 #include <utility>
 
+#include "absl/algorithm/container.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -43,6 +46,17 @@ namespace {
 void SaveTileToEmptyProto(const Tile& tile, TileProto& tile_proto) {
   for (int64_t i : tile.dimensions()) {
     tile_proto.add_dimensions(i);
+  }
+}
+
+// Populates `bit_plane` to `bit_plane_proto`. `bit_plane_proto` must be an
+// empty message.
+void SaveBitPlaneToEmptyProto(const BitPlane& bit_plane,
+                              BitPlaneProto& bit_plane_proto) {
+  bit_plane_proto.set_bit_offset(bit_plane.bit_offset());
+  bit_plane_proto.set_bit_width(bit_plane.bit_width());
+  for (const Tile& tile : bit_plane.tiles()) {
+    SaveTileToEmptyProto(tile, *bit_plane_proto.add_tiles());
   }
 }
 
@@ -79,6 +93,9 @@ void SaveLayoutToEmptyProto(const Layout& layout, LayoutProto& proto) {
   }
   proto.set_dynamic_shape_metadata_prefix_bytes(
       layout.dynamic_shape_metadata_prefix_bytes());
+  for (const BitPlane& bit_plane : layout.bit_planes()) {
+    SaveBitPlaneToEmptyProto(bit_plane, *proto.add_bit_planes());
+  }
 }
 
 }  // namespace
@@ -119,6 +136,56 @@ std::string Tile::ToString() const {
   return std::move(printer).ToString();
 }
 
+/* static */ absl::StatusOr<BitPlane> BitPlane::FromProto(
+    const BitPlaneProto& proto) {
+  TF_RET_CHECK(proto.bit_offset() >= 0);
+  TF_RET_CHECK(proto.bit_width() > 0);
+  BitPlane bit_plane;
+  bit_plane.bit_offset_ = proto.bit_offset();
+  bit_plane.bit_width_ = proto.bit_width();
+  bit_plane.tiles_.reserve(proto.tiles_size());
+  for (const TileProto& tile_proto : proto.tiles()) {
+    ABSL_ASSIGN_OR_RETURN(*bit_plane.add_tiles(), Tile::FromProto(tile_proto));
+  }
+  return bit_plane;
+}
+
+void BitPlane::ToProto(BitPlaneProto& proto) const {
+  proto.Clear();
+  SaveBitPlaneToEmptyProto(*this, proto);
+}
+
+BitPlaneProto BitPlane::ToProto() const {
+  BitPlaneProto proto;
+  SaveBitPlaneToEmptyProto(*this, proto);
+  return proto;
+}
+
+void BitPlane::Print(Printer* printer, bool print_bit_offset) const {
+  printer->Append("(");
+  printer->Append(bit_width_);
+  if (print_bit_offset) {
+    printer->Append("@");
+    printer->Append(bit_offset_);
+  }
+  if (!tiles_.empty()) {
+    printer->Append(":");
+    for (const Tile& tile : tiles_) {
+      tile.Print(printer);
+    }
+  }
+  printer->Append(")");
+}
+
+std::string BitPlane::ToString() const {
+  StringPrinter printer;
+  Print(&printer, /*print_bit_offset=*/true);
+  return std::move(printer).ToString();
+}
+
+Layout::ColdData::ColdData() = default;
+Layout::ColdData::~ColdData() = default;
+
 Layout::Layout()
     : index_primitive_type_(PRIMITIVE_TYPE_INVALID),
       pointer_primitive_type_(PRIMITIVE_TYPE_INVALID) {}
@@ -154,7 +221,8 @@ Layout::Layout(absl::Span<const int64_t> minor_to_major,
                int64_t element_size_in_bits, int64_t memory_space,
                absl::Span<const SplitConfig> split_configs,
                std::unique_ptr<Shape> physical_shape,
-               int64_t dynamic_shape_metadata_prefix_bytes)
+               int64_t dynamic_shape_metadata_prefix_bytes,
+               absl::Span<const BitPlane> bit_planes)
     : index_primitive_type_(index_primitive_type),
       pointer_primitive_type_(element_primitive_type),
       memory_space_(memory_space),
@@ -163,10 +231,14 @@ Layout::Layout(absl::Span<const int64_t> minor_to_major,
       tiles_(tiles.begin(), tiles.end()),
       split_configs_(split_configs.begin(), split_configs.end()),
       tail_padding_alignment_in_elements_(tail_padding_alignment_in_elements),
-      physical_shape_(std::move(physical_shape)),
       dynamic_shape_metadata_prefix_bytes_(
           dynamic_shape_metadata_prefix_bytes) {
   CHECK_GE(tail_padding_alignment_in_elements, 1);
+  if (physical_shape != nullptr || !bit_planes.empty()) {
+    cold_data_ = std::make_unique<ColdData>();
+    cold_data_->physical_shape = std::move(physical_shape);
+    cold_data_->bit_planes.assign(bit_planes.begin(), bit_planes.end());
+  }
 }
 
 Layout::Layout(const Layout& other)
@@ -179,11 +251,19 @@ Layout::Layout(const Layout& other)
       split_configs_(other.split_configs_),
       tail_padding_alignment_in_elements_(
           other.tail_padding_alignment_in_elements_),
-      physical_shape_(other.physical_shape_ != nullptr
-                          ? std::make_unique<Shape>(*other.physical_shape_)
-                          : nullptr),
       dynamic_shape_metadata_prefix_bytes_(
-          other.dynamic_shape_metadata_prefix_bytes_) {}
+          other.dynamic_shape_metadata_prefix_bytes_) {
+  if (other.cold_data_ != nullptr &&
+      (other.cold_data_->physical_shape != nullptr ||
+       !other.cold_data_->bit_planes.empty())) {
+    cold_data_ = std::make_unique<ColdData>();
+    if (other.cold_data_->physical_shape != nullptr) {
+      cold_data_->physical_shape =
+          std::make_unique<Shape>(*other.cold_data_->physical_shape);
+    }
+    cold_data_->bit_planes = other.cold_data_->bit_planes;
+  }
+}
 
 Layout::Layout(Layout&& other) = default;
 
@@ -200,10 +280,21 @@ Layout& Layout::operator=(const Layout& other) {
     element_size_in_bits_ = other.element_size_in_bits_;
     memory_space_ = other.memory_space_;
     split_configs_ = other.split_configs_;
-    if (other.physical_shape_ != nullptr) {
-      physical_shape_ = std::make_unique<Shape>(*other.physical_shape_);
+    if (other.cold_data_ != nullptr &&
+        (other.cold_data_->physical_shape != nullptr ||
+         !other.cold_data_->bit_planes.empty())) {
+      if (cold_data_ == nullptr) {
+        cold_data_ = std::make_unique<ColdData>();
+      }
+      if (other.cold_data_->physical_shape != nullptr) {
+        cold_data_->physical_shape =
+            std::make_unique<Shape>(*other.cold_data_->physical_shape);
+      } else {
+        cold_data_->physical_shape = nullptr;
+      }
+      cold_data_->bit_planes = other.cold_data_->bit_planes;
     } else {
-      physical_shape_ = nullptr;
+      cold_data_ = nullptr;
     }
     dynamic_shape_metadata_prefix_bytes_ =
         other.dynamic_shape_metadata_prefix_bytes_;
@@ -243,6 +334,10 @@ Layout& Layout::operator=(Layout&& other) = default;
   }
   layout.set_dynamic_shape_metadata_prefix_bytes(
       proto.dynamic_shape_metadata_prefix_bytes());
+  for (const BitPlaneProto& bit_plane_proto : proto.bit_planes()) {
+    ABSL_ASSIGN_OR_RETURN(*layout.add_bit_planes(),
+                          BitPlane::FromProto(bit_plane_proto));
+  }
   return layout;
 }
 
@@ -345,6 +440,34 @@ void Layout::Print(Printer* printer) const {
     printer->Append(")");
   }
 
+  // Print bit-planes as BP(...)...(...). Omit `@bit_offset` when offsets match
+  // the sequential LSB prefix sum (0, w_0, ...).
+  if (!bit_planes().empty()) {
+    print_colon_if_have_not();
+    printer->Append("BP");
+    int64_t expected_offset = 0;
+    bool sequential_offsets = true;
+    for (const BitPlane& plane : bit_planes()) {
+      if (plane.bit_offset() != expected_offset) {
+        sequential_offsets = false;
+        break;
+      }
+      if (plane.bit_width() <= 0) {
+        sequential_offsets = false;
+        break;
+      }
+      if (expected_offset >
+          std::numeric_limits<int64_t>::max() - plane.bit_width()) {
+        expected_offset = -1;
+      } else {
+        expected_offset += plane.bit_width();
+      }
+    }
+    for (const BitPlane& plane : bit_planes()) {
+      plane.Print(printer, /*print_bit_offset=*/!sequential_offsets);
+    }
+  }
+
   // Print the memory space as S(n). Omit this if n is 0.
   if (memory_space() != 0) {
     print_colon_if_have_not();
@@ -368,7 +491,7 @@ void Layout::Print(Printer* printer) const {
   if (has_physical_shape()) {
     print_colon_if_have_not();
     printer->Append("P(");
-    physical_shape_->Print(printer, /*print_layout=*/true);
+    cold_data_->physical_shape->Print(printer, /*print_layout=*/true);
     printer->Append(")");
   }
 
@@ -395,6 +518,9 @@ bool Layout::Equal::operator()(const Layout& lhs, const Layout& rhs) {
     return false;
   }
   if (!ignore_tiles_ && lhs.tiles() != rhs.tiles()) {
+    return false;
+  }
+  if (!ignore_bit_planes_ && lhs.bit_planes() != rhs.bit_planes()) {
     return false;
   }
   if (!ignore_tail_padding_alignment_in_elements_ &&
@@ -442,32 +568,115 @@ std::ostream& operator<<(std::ostream& out, const Tile& tile) {
   return out;
 }
 
+std::ostream& operator<<(std::ostream& out, const BitPlane& bit_plane) {
+  out << bit_plane.ToString();
+  return out;
+}
+
 std::ostream& operator<<(std::ostream& out, const Layout& layout) {
   out << layout.ToString();
   return out;
 }
 
 Shape* Layout::mutable_physical_shape() {
-  if (physical_shape_ == nullptr) {
-    physical_shape_ = std::make_unique<Shape>();
+  if (cold_data_ == nullptr) {
+    cold_data_ = std::make_unique<ColdData>();
   }
-  return physical_shape_.get();
+  if (cold_data_->physical_shape == nullptr) {
+    cold_data_->physical_shape = std::make_unique<Shape>();
+  }
+  return cold_data_->physical_shape.get();
 }
 
-void Layout::clear_physical_shape() { physical_shape_ = nullptr; }
+void Layout::clear_physical_shape() {
+  if (cold_data_ != nullptr) {
+    cold_data_->physical_shape = nullptr;
+    if (cold_data_->bit_planes.empty()) {
+      cold_data_ = nullptr;
+    }
+  }
+}
+
+BitPlane* Layout::mutable_bit_planes(int index) {
+  CHECK(cold_data_ != nullptr);
+  return &cold_data_->bit_planes[index];
+}
+
+BitPlane* Layout::add_bit_planes() {
+  if (cold_data_ == nullptr) {
+    cold_data_ = std::make_unique<ColdData>();
+  }
+  cold_data_->bit_planes.push_back(BitPlane());
+  return &cold_data_->bit_planes.back();
+}
+
+Layout& Layout::add_bit_planes(const BitPlane& bit_plane) {
+  *add_bit_planes() = bit_plane;
+  return *this;
+}
+
+Layout& Layout::clear_bit_planes() {
+  if (cold_data_ != nullptr) {
+    cold_data_->bit_planes.clear();
+    if (cold_data_->physical_shape == nullptr) {
+      cold_data_ = nullptr;
+    }
+  }
+  return *this;
+}
+
+BitPlaneVector* Layout::mutable_bit_planes() {
+  if (cold_data_ == nullptr) {
+    cold_data_ = std::make_unique<ColdData>();
+  }
+  return &cold_data_->bit_planes;
+}
 
 Layout& Layout::DeleteDimension(int dim_to_delete) {
   CHECK_GE(dim_to_delete, 0);
   CHECK_LT(dim_to_delete, minor_to_major_.size());
 
+  int64_t deleted_minor_dim = -1;
   int64_t deleted_physical_dim = -1;
   for (int i = 0; i < minor_to_major_.size(); ++i) {
     if (minor_to_major_[i] == dim_to_delete) {
+      deleted_minor_dim = i;
       deleted_physical_dim = minor_to_major_.size() - 1 - i;
       break;
     }
   }
   CHECK_NE(deleted_physical_dim, -1);
+
+  if (!bit_planes().empty()) {
+    auto consumed_minor_dims = [](absl::Span<const Tile> seq) -> int64_t {
+      int64_t consumed = 0;
+      int64_t generated = 0;
+      for (const Tile& tile : seq) {
+        const int64_t rank = tile.dimensions().size();
+        if (rank > generated) {
+          consumed += (rank - generated);
+          generated = rank;
+        }
+        const int64_t num_combines =
+            absl::c_count(tile.dimensions(), Tile::kCombineDimension);
+        generated += (rank - 2 * num_combines);
+      }
+      return consumed;
+    };
+    int64_t tiled_minor_dims = 0;
+    if (!tiles_.empty()) {
+      tiled_minor_dims = consumed_minor_dims(tiles_);
+    } else {
+      for (const BitPlane& plane : bit_planes()) {
+        tiled_minor_dims =
+            std::max(tiled_minor_dims, consumed_minor_dims(plane.tiles()));
+      }
+    }
+    if (deleted_minor_dim < tiled_minor_dims) {
+      clear_tiles();
+      clear_bit_planes();
+    }
+  }
 
   for (int i = 0; i < minor_to_major_.size();) {
     if (minor_to_major_[i] == dim_to_delete) {

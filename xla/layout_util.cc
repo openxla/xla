@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -28,10 +29,13 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/layout.h"
+#include "xla/overflow_util.h"
+#include "xla/primitive_util.h"
 #include "xla/printer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -74,7 +78,8 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
     int64_t element_size_in_bits, int64_t memory_space,
     absl::Span<const SplitConfig> split_configs,
     std::optional<Shape> physical_shape,
-    int64_t dynamic_shape_metadata_prefix_bytes) {
+    int64_t dynamic_shape_metadata_prefix_bytes,
+    absl::Span<const BitPlane> bit_planes) {
   Layout layout;
   layout.mutable_minor_to_major()->assign(minor_to_major.begin(),
                                           minor_to_major.end());
@@ -103,6 +108,9 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
   }
   layout.set_dynamic_shape_metadata_prefix_bytes(
       dynamic_shape_metadata_prefix_bytes);
+  for (const BitPlane& bit_plane : bit_planes) {
+    layout.add_bit_planes(bit_plane);
+  }
   return layout;
 }
 
@@ -213,6 +221,388 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
   return absl::OkStatus();
 }
 
+namespace {
+
+int64_t CheckedAdd(int64_t a, int64_t b) {
+  std::optional<int64_t> sum = OverflowSafeAdd(a, b);
+  CHECK(sum.has_value());
+  return *sum;
+}
+
+int64_t CheckedMultiply(int64_t a, int64_t b) {
+  auto [prod, overflow] = OverflowSafeMultiply(a, b);
+  CHECK(!overflow);
+  return prod;
+}
+
+std::optional<int64_t> OverflowSafeRoundUpTo(int64_t value, int64_t divisor) {
+  if (value < 0 || divisor <= 0) {
+    return std::nullopt;
+  }
+  const int64_t quotient = value / divisor + (value % divisor != 0 ? 1 : 0);
+  auto [prod, overflow] = OverflowSafeMultiply(quotient, divisor);
+  if (overflow) {
+    return std::nullopt;
+  }
+  return prod;
+}
+
+std::optional<int64_t> OverflowSafeProduct(absl::Span<const int64_t> dims) {
+  int64_t prod = 1;
+  for (int64_t d : dims) {
+    auto [next, overflow] = OverflowSafeMultiply(prod, d);
+    if (overflow) {
+      return std::nullopt;
+    }
+    prod = next;
+  }
+  return prod;
+}
+
+absl::Status ValidateAndApplyTopTileForBitPlanes(
+    std::vector<int64_t>& current_shape, absl::Span<const Tile> tiles,
+    bool forbid_match_dim, const Shape& shape, int64_t* out_inner_rank) {
+  const Tile& tile = tiles[0];
+  absl::Span<const int64_t> sub_tile_dims =
+      tiles.size() > 1 ? tiles[1].dimensions() : absl::Span<const int64_t>();
+  absl::StatusOr<LayoutUtil::ResolvedTileStep> step =
+      LayoutUtil::ResolveTileStep(current_shape, tile, sub_tile_dims);
+  if (!step.ok()) {
+    return InvalidArgument("%s: %s", step.status().message(),
+                           shape.ToString(true));
+  }
+  if (forbid_match_dim) {
+    for (int64_t dim : tile.dimensions()) {
+      if (dim == Tile::kMatchDimension) {
+        return InvalidArgument(
+            "kMatchDimension ('d') is not allowed in the innermost outer tile "
+            "when bit_planes is set: %s",
+            shape.ToString(true));
+      }
+    }
+  }
+  *out_inner_rank = static_cast<int64_t>(step->effective_tile_dims.size());
+  current_shape = std::move(step->next_shape);
+  return absl::OkStatus();
+}
+
+absl::Status ValidateAndApplyExactSubtile(std::vector<int64_t>& current_shape,
+                                          const Tile& subtile,
+                                          const Shape& shape) {
+  if (subtile.dimensions().empty()) {
+    return InvalidArgument("subtile dimensions must not be empty: %s",
+                           shape.ToString(true));
+  }
+  if (subtile.dimensions().size() > current_shape.size()) {
+    return InvalidArgument(
+        "subtile rank (%d) exceeds expanded shape rank (%d): %s",
+        subtile.dimensions().size(), current_shape.size(),
+        shape.ToString(true));
+  }
+  const int64_t tile_rank = subtile.dimensions().size();
+  const int64_t suffix_start =
+      static_cast<int64_t>(current_shape.size()) - tile_rank;
+  for (int64_t i = 0; i < tile_rank; ++i) {
+    const int64_t t = subtile.dimension(i);
+    if (t <= 0) {
+      return InvalidArgument(
+          "subtile dimension (%d) must be strictly positive (no '*' or 'd'): "
+          "%s",
+          t, shape.ToString(true));
+    }
+    const int64_t d = current_shape[suffix_start + i];
+    if (d != Shape::kUnboundedSize && d % t != 0) {
+      return InvalidArgument(
+          "subtile dimension %d does not evenly divide parent dimension %d: %s",
+          t, d, shape.ToString(true));
+    }
+  }
+
+  std::vector<int64_t> next_shape;
+  next_shape.reserve(current_shape.size() + tile_rank);
+  for (int64_t i = 0; i < suffix_start; ++i) {
+    next_shape.push_back(current_shape[i]);
+  }
+  for (int64_t i = 0; i < tile_rank; ++i) {
+    const int64_t d = current_shape[suffix_start + i];
+    const int64_t t = subtile.dimension(i);
+    next_shape.push_back(d == Shape::kUnboundedSize ? Shape::kUnboundedSize
+                                                    : d / t);
+  }
+  for (int64_t i = 0; i < tile_rank; ++i) {
+    next_shape.push_back(subtile.dimension(i));
+  }
+  current_shape = std::move(next_shape);
+  return absl::OkStatus();
+}
+
+absl::Status ValidateBitPlanesForShape(const Layout& layout,
+                                       const Shape& shape) {
+  if (layout.element_size_in_bits() != 0) {
+    return InvalidArgument(
+        "layout cannot specify both element_size_in_bits (%d) and bit_planes: "
+        "%s",
+        layout.element_size_in_bits(), shape.ToString(true));
+  }
+  if (!layout.split_configs().empty()) {
+    return InvalidArgument(
+        "layout cannot specify both split_configs and bit_planes: %s",
+        shape.ToString(true));
+  }
+  if (layout.bit_planes().size() < 2) {
+    return InvalidArgument(
+        "layout bit_planes must contain at least 2 planes (got %d): %s",
+        layout.bit_planes().size(), shape.ToString(true));
+  }
+  if (!primitive_util::IsArrayType(shape.element_type())) {
+    return InvalidArgument(
+        "layout bit_planes requires an array element type: "
+        "%s",
+        shape.ToString(true));
+  }
+
+  const int64_t elem_bits =
+      primitive_util::LogicalBitWidth(shape.element_type());
+  std::vector<std::pair<int64_t, int64_t>> intervals;
+  intervals.reserve(layout.bit_planes().size());
+  int64_t total_bits = 0;
+  for (const BitPlane& plane : layout.bit_planes()) {
+    if (plane.bit_offset() < 0) {
+      return InvalidArgument("bit_plane bit_offset must be >= 0 (got %d): %s",
+                             plane.bit_offset(), shape.ToString(true));
+    }
+    if (plane.bit_width() <= 0) {
+      return InvalidArgument("bit_plane bit_width must be > 0 (got %d): %s",
+                             plane.bit_width(), shape.ToString(true));
+    }
+    if (plane.bit_offset() >
+        std::numeric_limits<int64_t>::max() - plane.bit_width()) {
+      return InvalidArgument("bit_plane bit range overflows: %s",
+                             shape.ToString(true));
+    }
+    std::optional<int64_t> next_total_bits =
+        OverflowSafeAdd<int64_t>(total_bits, plane.bit_width());
+    if (!next_total_bits.has_value()) {
+      return InvalidArgument("bit_planes total bit_width overflows: %s",
+                             shape.ToString(true));
+    }
+    total_bits = *next_total_bits;
+    intervals.emplace_back(plane.bit_offset(),
+                           plane.bit_offset() + plane.bit_width());
+  }
+  absl::c_sort(intervals);
+  for (size_t i = 1; i < intervals.size(); ++i) {
+    if (intervals[i - 1].second > intervals[i].first) {
+      return InvalidArgument(
+          "layout bit_planes have overlapping bit ranges [%d, %d) and [%d, "
+          "%d): %s",
+          intervals[i - 1].first, intervals[i - 1].second, intervals[i].first,
+          intervals[i].second, shape.ToString(true));
+    }
+  }
+  if (intervals[0].first != 0) {
+    return InvalidArgument(
+        "layout bit_planes must cover [0, %d), starting at bit 0 (got %d): %s",
+        elem_bits, intervals[0].first, shape.ToString(true));
+  }
+  for (size_t i = 1; i < intervals.size(); ++i) {
+    if (intervals[i].first != intervals[i - 1].second) {
+      return InvalidArgument(
+          "layout bit_planes must be contiguous from bit 0 (gap between [%d, "
+          "%d) and [%d, %d)): %s",
+          intervals[i - 1].first, intervals[i - 1].second, intervals[i].first,
+          intervals[i].second, shape.ToString(true));
+    }
+  }
+  if (intervals.back().second < elem_bits) {
+    return InvalidArgument(
+        "layout bit_planes must cover all %d bits of element type (covered up "
+        "to %d): %s",
+        elem_bits, intervals.back().second, shape.ToString(true));
+  }
+
+  Shape shape_with_layout = shape;
+  *shape_with_layout.mutable_layout() = layout;
+  const std::vector<int64_t> phys_shape =
+      LayoutUtil::PhysicalDimensions(shape_with_layout);
+
+  const bool is_static_non_negative =
+      absl::c_all_of(phys_shape, [](int64_t d) { return d >= 0; });
+
+  if (!layout.tiles().empty()) {
+    std::vector<int64_t> expanded_shape = phys_shape;
+    int64_t innermost_rank = 0;
+    ABSL_RETURN_IF_ERROR(ValidateAndApplyTopTileForBitPlanes(
+        expanded_shape, layout.tiles(),
+        /*forbid_match_dim=*/layout.tiles().size() == 1, shape,
+        &innermost_rank));
+    if (is_static_non_negative) {
+      std::optional<int64_t> padded_elems = OverflowSafeProduct(expanded_shape);
+      if (padded_elems.has_value() &&
+          layout.tail_padding_alignment_in_elements() != 1) {
+        padded_elems = OverflowSafeRoundUpTo(
+            *padded_elems, layout.tail_padding_alignment_in_elements());
+      }
+      if (!padded_elems.has_value()) {
+        return InvalidArgument("bit_planes padded element count overflows: %s",
+                               shape.ToString(true));
+      }
+      auto [buf_bits, bits_overflow] =
+          OverflowSafeMultiply(*padded_elems, total_bits);
+      if (bits_overflow) {
+        return InvalidArgument("bit_planes total bit count overflows: %s",
+                               shape.ToString(true));
+      }
+    }
+    for (size_t s = 1; s < layout.tiles().size(); ++s) {
+      ABSL_RETURN_IF_ERROR(
+          ValidateAndApplyExactSubtile(expanded_shape, layout.tiles(s), shape));
+      innermost_rank = layout.tiles(s).dimensions().size();
+    }
+    std::vector<int64_t> strip_dims(expanded_shape.end() - innermost_rank,
+                                    expanded_shape.end());
+    int64_t strip_elements = 1;
+    for (int64_t d : strip_dims) {
+      auto [prod, overflow] = OverflowSafeMultiply(strip_elements, d);
+      if (overflow || prod <= 0) {
+        return InvalidArgument("strip element count overflows: %s",
+                               shape.ToString(true));
+      }
+      strip_elements = prod;
+    }
+    if (layout.tail_padding_alignment_in_elements() != 1 &&
+        layout.tail_padding_alignment_in_elements() % strip_elements != 0) {
+      return InvalidArgument(
+          "layout tail_padding_alignment_in_elements (%d) must be a multiple "
+          "of the innermost tile element count (%d) when bit_planes is set: %s",
+          layout.tail_padding_alignment_in_elements(), strip_elements,
+          shape.ToString(true));
+    }
+    for (const BitPlane& plane : layout.bit_planes()) {
+      std::vector<int64_t> plane_shape = strip_dims;
+      for (const Tile& ptile : plane.tiles()) {
+        ABSL_RETURN_IF_ERROR(
+            ValidateAndApplyExactSubtile(plane_shape, ptile, shape));
+      }
+    }
+  } else {
+    int64_t total_buf_bits = 0;
+    for (const BitPlane& plane : layout.bit_planes()) {
+      std::vector<int64_t> plane_shape = phys_shape;
+      if (!plane.tiles().empty()) {
+        int64_t unused_rank = 0;
+        ABSL_RETURN_IF_ERROR(ValidateAndApplyTopTileForBitPlanes(
+            plane_shape, plane.tiles(), /*forbid_match_dim=*/false, shape,
+            &unused_rank));
+        for (size_t s = 1; s < plane.tiles().size(); ++s) {
+          ABSL_RETURN_IF_ERROR(
+              ValidateAndApplyExactSubtile(plane_shape, plane.tiles(s), shape));
+        }
+      }
+      if (is_static_non_negative) {
+        std::optional<int64_t> plane_elems = OverflowSafeProduct(plane_shape);
+        if (plane_elems.has_value() &&
+            layout.tail_padding_alignment_in_elements() != 1) {
+          plane_elems = OverflowSafeRoundUpTo(
+              *plane_elems, layout.tail_padding_alignment_in_elements());
+        }
+        if (!plane_elems.has_value()) {
+          return InvalidArgument(
+              "bit_planes padded element count overflows: %s",
+              shape.ToString(true));
+        }
+        auto [plane_bits, plane_overflow] =
+            OverflowSafeMultiply(*plane_elems, plane.bit_width());
+        if (plane_overflow) {
+          return InvalidArgument("bit_planes total bit count overflows: %s",
+                                 shape.ToString(true));
+        }
+        std::optional<int64_t> next_buf_bits =
+            OverflowSafeAdd(total_buf_bits, plane_bits);
+        if (!next_buf_bits.has_value()) {
+          return InvalidArgument("bit_planes total bit count overflows: %s",
+                                 shape.ToString(true));
+        }
+        total_buf_bits = *next_buf_bits;
+      }
+    }
+  }
+  return absl::OkStatus();
+}
+
+void ApplyTileSequenceToCoordinates(absl::Span<const Tile> tiles,
+                                    std::vector<int64_t>& current_shape,
+                                    std::vector<int64_t>& current_indices,
+                                    int64_t* out_last_tile_rank) {
+  int64_t last_rank = 0;
+  for (size_t step_idx = 0; step_idx < tiles.size(); ++step_idx) {
+    const Tile& tile = tiles[step_idx];
+    absl::Span<const int64_t> sub_tile_dims =
+        (step_idx == 0 && tiles.size() > 1) ? tiles[1].dimensions()
+                                            : absl::Span<const int64_t>();
+    absl::StatusOr<LayoutUtil::ResolvedTileStep> step =
+        LayoutUtil::ResolveTileStep(current_shape, tile, sub_tile_dims);
+    CHECK_OK(step.status());
+    if (step->leading_pad_dims > 0) {
+      current_indices.insert(current_indices.begin(), step->leading_pad_dims,
+                             0);
+    }
+
+    std::vector<int64_t> suffix_dims = step->padded_suffix;
+    std::vector<int64_t> suffix_idx(
+        current_indices.begin() + step->suffix_start, current_indices.end());
+    std::vector<int64_t> combined_idx;
+    combined_idx.reserve(step->effective_tile_dims.size());
+    for (size_t i = 0; i < tile.dimensions().size(); ++i) {
+      if (tile.dimension(i) == Tile::kCombineDimension) {
+        CHECK_LT(i + 1, tile.dimensions().size());
+        suffix_idx[i + 1] =
+            CheckedAdd(CheckedMultiply(suffix_idx[i], suffix_dims[i + 1]),
+                       suffix_idx[i + 1]);
+        suffix_dims[i + 1] =
+            CheckedMultiply(suffix_dims[i], suffix_dims[i + 1]);
+      } else {
+        combined_idx.push_back(suffix_idx[i]);
+      }
+    }
+
+    std::vector<int64_t> next_indices(
+        current_indices.begin(), current_indices.begin() + step->suffix_start);
+    next_indices.reserve(step->next_shape.size());
+    for (size_t j = 0; j < step->effective_tile_dims.size(); ++j) {
+      next_indices.push_back(combined_idx[j] / step->effective_tile_dims[j]);
+    }
+    for (size_t j = 0; j < step->effective_tile_dims.size(); ++j) {
+      next_indices.push_back(combined_idx[j] % step->effective_tile_dims[j]);
+    }
+    last_rank = static_cast<int64_t>(step->effective_tile_dims.size());
+    current_shape = std::move(step->next_shape);
+    current_indices = std::move(next_indices);
+  }
+  if (out_last_tile_rank != nullptr) {
+    *out_last_tile_rank = last_rank;
+  }
+}
+
+int64_t RowMajorLinearIndex(absl::Span<const int64_t> shape_dims,
+                            absl::Span<const int64_t> indices) {
+  CHECK_EQ(shape_dims.size(), indices.size());
+  int64_t linear_index = 0;
+  int64_t multiplier = 1;
+  for (int64_t i = static_cast<int64_t>(shape_dims.size()) - 1; i >= 0; --i) {
+    if (indices[i] != 0) {
+      linear_index =
+          CheckedAdd(linear_index, CheckedMultiply(indices[i], multiplier));
+    }
+    if (i > 0) {
+      multiplier = CheckedMultiply(multiplier, shape_dims[i]);
+    }
+  }
+  return linear_index;
+}
+
+}  // namespace
+
 /* static */ absl::Status LayoutUtil::ValidateLayoutForShape(
     const Layout& layout, const Shape& shape) {
   if (shape.IsTuple()) {
@@ -223,7 +613,8 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
     return absl::OkStatus();
   }
 
-  if (layout.minor_to_major().empty() && layout.memory_space() != 0) {
+  if (layout.minor_to_major().empty() && layout.memory_space() != 0 &&
+      layout.bit_planes().empty()) {
     // AUTO layout with non-default memory space is allowed.
     return absl::OkStatus();
   }
@@ -333,6 +724,10 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
     }
   }
 
+  if (!layout.bit_planes().empty()) {
+    ABSL_RETURN_IF_ERROR(ValidateBitPlanesForShape(layout, shape));
+  }
+
   return absl::OkStatus();
 }
 
@@ -357,9 +752,8 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
   ShapeUtil::ForEachMutableSubshape(
       shape, [](Shape* subshape, const ShapeIndex&) {
         if (subshape->has_layout()) {
-          if (subshape->has_layout()) {
-            subshape->mutable_layout()->clear_tiles();
-          }
+          subshape->mutable_layout()->clear_tiles();
+          subshape->mutable_layout()->clear_bit_planes();
         }
       });
 }
@@ -598,6 +992,9 @@ Layout LayoutUtil::MoveDimToMinor(const Layout& layout, const int64_t dim) {
                                            absl::Span<const int64_t> indices) {
   CHECK(shape.IsArray());
   CHECK(shape.has_layout());
+  CHECK(shape.layout().bit_planes().empty())
+      << "Split bit-plane layouts do not have a single element linear index; "
+         "use BitOffsetForBitPlane instead.";
   const int num_dims = shape.dimensions().size();
   CHECK_EQ(num_dims, indices.size());
 
@@ -678,6 +1075,9 @@ Layout LayoutUtil::MoveDimToMinor(const Layout& layout, const int64_t dim) {
     const Shape& shape, absl::Span<const int64_t> indices) {
   CHECK(shape.IsArray());
   CHECK(shape.has_layout());
+  CHECK(shape.layout().bit_planes().empty())
+      << "Split bit-plane layouts do not have a single element linear index; "
+         "use BitOffsetForBitPlane instead.";
   const int num_dims = shape.dimensions().size();
   CHECK_EQ(num_dims, indices.size());
 
@@ -768,6 +1168,8 @@ Layout LayoutUtil::MoveDimToMinor(const Layout& layout, const int64_t dim) {
     const Shape& shape, int64_t linear_index) {
   CHECK(shape.IsArray());
   CHECK(shape.has_layout());
+  CHECK(shape.layout().bit_planes().empty())
+      << "Split bit-plane layouts do not have a single element linear index.";
   const int num_dims = shape.dimensions().size();
 
   if (num_dims == 0) {
@@ -882,6 +1284,106 @@ Layout LayoutUtil::MoveDimToMinor(const Layout& layout, const int64_t dim) {
   return logical_indices;
 }
 
+/*static*/ int64_t LayoutUtil::BitOffsetForBitPlane(
+    const Shape& shape, absl::Span<const int64_t> indices,
+    int64_t plane_index) {
+  CHECK(shape.IsArray());
+  CHECK(shape.has_layout());
+  const Layout& layout = shape.layout();
+  CHECK(!layout.bit_planes().empty());
+  CHECK(layout.split_configs().empty());
+  CHECK_GE(plane_index, 0);
+  CHECK_LT(plane_index, static_cast<int64_t>(layout.bit_planes().size()));
+  const int num_dims = shape.dimensions().size();
+  CHECK_EQ(num_dims, indices.size());
+  for (int d = 0; d < num_dims; ++d) {
+    CHECK_GE(indices[d], 0);
+    CHECK_LT(indices[d], shape.dimensions(d));
+  }
+
+  const std::vector<int64_t> phys_shape = PhysicalDimensions(shape);
+  std::vector<int64_t> phys_indices;
+  phys_indices.reserve(num_dims);
+  for (int64_t i = num_dims - 1; i >= 0; --i) {
+    phys_indices.push_back(indices[layout.minor_to_major(i)]);
+  }
+
+  if (!layout.tiles().empty()) {
+    std::vector<int64_t> expanded_shape = phys_shape;
+    std::vector<int64_t> expanded_indices = phys_indices;
+    int64_t innermost_rank = 0;
+    ApplyTileSequenceToCoordinates(layout.tiles(), expanded_shape,
+                                   expanded_indices, &innermost_rank);
+    const size_t prefix_len = expanded_shape.size() - innermost_rank;
+    const int64_t strip_index = RowMajorLinearIndex(
+        absl::MakeConstSpan(expanded_shape).first(prefix_len),
+        absl::MakeConstSpan(expanded_indices).first(prefix_len));
+    std::vector<int64_t> strip_shape(expanded_shape.begin() + prefix_len,
+                                     expanded_shape.end());
+    std::vector<int64_t> strip_indices(expanded_indices.begin() + prefix_len,
+                                       expanded_indices.end());
+    int64_t strip_elements = 1;
+    for (int64_t d : strip_shape) {
+      strip_elements = CheckedMultiply(strip_elements, d);
+    }
+    const int64_t strip_bits =
+        CheckedMultiply(strip_elements, ShapeUtil::ElementSizeInBits(shape));
+    int64_t prior_plane_bits = 0;
+    for (int64_t q = 0; q < plane_index; ++q) {
+      prior_plane_bits = CheckedAdd(
+          prior_plane_bits,
+          CheckedMultiply(strip_elements, layout.bit_planes(q).bit_width()));
+    }
+    ApplyTileSequenceToCoordinates(layout.bit_planes(plane_index).tiles(),
+                                   strip_shape, strip_indices,
+                                   /*out_last_tile_rank=*/nullptr);
+    const int64_t within_plane_index =
+        RowMajorLinearIndex(strip_shape, strip_indices);
+    return CheckedAdd(
+        CheckedAdd(CheckedMultiply(strip_index, strip_bits), prior_plane_bits),
+        CheckedMultiply(within_plane_index,
+                        layout.bit_planes(plane_index).bit_width()));
+  }
+
+  int64_t prior_plane_bits = 0;
+  for (int64_t q = 0; q < plane_index; ++q) {
+    std::vector<int64_t> q_shape = phys_shape;
+    std::vector<int64_t> q_zero_idx(phys_shape.size(), 0);
+    if (!layout.bit_planes(q).tiles().empty()) {
+      ApplyTileSequenceToCoordinates(layout.bit_planes(q).tiles(), q_shape,
+                                     q_zero_idx,
+                                     /*out_last_tile_rank=*/nullptr);
+    }
+    int64_t plane_elements = 1;
+    for (int64_t d : q_shape) {
+      plane_elements = CheckedMultiply(plane_elements, d);
+    }
+    if (layout.tail_padding_alignment_in_elements() != 1) {
+      std::optional<int64_t> aligned = OverflowSafeRoundUpTo(
+          plane_elements, layout.tail_padding_alignment_in_elements());
+      CHECK(aligned.has_value());
+      plane_elements = *aligned;
+    }
+    prior_plane_bits = CheckedAdd(
+        prior_plane_bits,
+        CheckedMultiply(plane_elements, layout.bit_planes(q).bit_width()));
+  }
+
+  std::vector<int64_t> plane_shape = phys_shape;
+  std::vector<int64_t> plane_indices = phys_indices;
+  if (!layout.bit_planes(plane_index).tiles().empty()) {
+    ApplyTileSequenceToCoordinates(layout.bit_planes(plane_index).tiles(),
+                                   plane_shape, plane_indices,
+                                   /*out_last_tile_rank=*/nullptr);
+  }
+  const int64_t within_plane_index =
+      RowMajorLinearIndex(plane_shape, plane_indices);
+  return CheckedAdd(
+      prior_plane_bits,
+      CheckedMultiply(within_plane_index,
+                      layout.bit_planes(plane_index).bit_width()));
+}
+
 /*static*/ int64_t LayoutUtil::MemorySpace(const Shape& shape) {
   return shape.has_layout() ? shape.layout().memory_space()
                             : Layout::kDefaultMemorySpace;
@@ -946,6 +1448,121 @@ Layout LayoutUtil::MoveDimToMinor(const Layout& layout, const int64_t dim) {
     return std::nullopt;
   }
   return configs[0];
+}
+
+/*static*/ std::vector<int64_t> LayoutUtil::PhysicalDimensions(
+    const Shape& shape) {
+  CHECK(shape.IsArray()) << ShapeUtil::HumanString(shape);
+  const Layout& layout = shape.layout();
+  const int64_t rank = shape.dimensions().size();
+  std::vector<int64_t> phys_dims;
+  phys_dims.reserve(rank);
+  for (int64_t i = rank - 1; i >= 0; --i) {
+    const int64_t logical_dim = layout.minor_to_major(i);
+    if (shape.dimensions(logical_dim) == Shape::kUnboundedSize) {
+      phys_dims.push_back(Shape::kUnboundedSize);
+    } else {
+      phys_dims.push_back(MaxSplitSize(shape, logical_dim));
+    }
+  }
+  return phys_dims;
+}
+
+/*static*/ absl::StatusOr<LayoutUtil::ResolvedTileStep>
+LayoutUtil::ResolveTileStep(absl::Span<const int64_t> current_shape,
+                            const Tile& tile,
+                            absl::Span<const int64_t> sub_tile_dims) {
+  if (tile.dimensions().empty()) {
+    return InvalidArgument("layout has empty tile dimensions");
+  }
+  if (tile.dimensions().back() == Tile::kCombineDimension) {
+    return InvalidArgument("tile cannot end with kCombineDimension ('*')");
+  }
+  for (int64_t dim : tile.dimensions()) {
+    if (dim <= 0 && dim != Tile::kCombineDimension &&
+        dim != Tile::kMatchDimension) {
+      return InvalidArgument(
+          "tile dimension %d must be positive, kCombineDimension, or "
+          "kMatchDimension",
+          dim);
+    }
+  }
+
+  ResolvedTileStep result;
+  std::vector<int64_t> padded_shape(current_shape.begin(), current_shape.end());
+  if (tile.dimensions().size() > padded_shape.size()) {
+    result.leading_pad_dims = tile.dimensions().size() - padded_shape.size();
+    padded_shape.insert(padded_shape.begin(), result.leading_pad_dims, 1);
+  }
+  result.suffix_start = padded_shape.size() - tile.dimensions().size();
+  result.padded_suffix.assign(padded_shape.begin() + result.suffix_start,
+                              padded_shape.end());
+
+  std::vector<int64_t> suffix = result.padded_suffix;
+  std::vector<int64_t> combined_dims;
+  combined_dims.reserve(tile.dimensions().size());
+  result.effective_tile_dims.reserve(tile.dimensions().size());
+  for (size_t i = 0; i < tile.dimensions().size(); ++i) {
+    if (tile.dimension(i) == Tile::kCombineDimension) {
+      if (suffix[i] == Shape::kUnboundedSize ||
+          suffix[i + 1] == Shape::kUnboundedSize) {
+        suffix[i + 1] = Shape::kUnboundedSize;
+      } else {
+        auto [prod, overflow] = OverflowSafeMultiply(suffix[i], suffix[i + 1]);
+        if (overflow) {
+          return InvalidArgument("combined tile dimension overflows");
+        }
+        suffix[i + 1] = prod;
+      }
+    } else {
+      combined_dims.push_back(suffix[i]);
+      result.effective_tile_dims.push_back(tile.dimension(i));
+    }
+  }
+
+  for (size_t j = 0; j < result.effective_tile_dims.size(); ++j) {
+    if (result.effective_tile_dims[j] == Tile::kMatchDimension) {
+      const int64_t minor =
+          static_cast<int64_t>(result.effective_tile_dims.size()) - 1 -
+          static_cast<int64_t>(j);
+      int64_t packing = 1;
+      if (minor < static_cast<int64_t>(sub_tile_dims.size())) {
+        packing = std::max<int64_t>(
+            1, sub_tile_dims[sub_tile_dims.size() - 1 - minor]);
+      } else if (minor == 1 && !sub_tile_dims.empty()) {
+        packing = std::max<int64_t>(1, sub_tile_dims[0]);
+      }
+      if (combined_dims[j] == Shape::kUnboundedSize) {
+        result.effective_tile_dims[j] = packing;
+      } else {
+        std::optional<int64_t> rounded = OverflowSafeRoundUpTo(
+            std::max<int64_t>(combined_dims[j], 1), packing);
+        if (!rounded.has_value()) {
+          return InvalidArgument("kMatchDimension tile size overflows");
+        }
+        result.effective_tile_dims[j] = *rounded;
+      }
+    }
+  }
+
+  result.next_shape.reserve(result.suffix_start +
+                            2 * result.effective_tile_dims.size());
+  for (size_t i = 0; i < result.suffix_start; ++i) {
+    result.next_shape.push_back(padded_shape[i]);
+  }
+  for (size_t j = 0; j < result.effective_tile_dims.size(); ++j) {
+    if (combined_dims[j] == Shape::kUnboundedSize) {
+      result.next_shape.push_back(Shape::kUnboundedSize);
+    } else {
+      const int64_t t = result.effective_tile_dims[j];
+      result.next_shape.push_back(combined_dims[j] / t +
+                                  (combined_dims[j] % t != 0 ? 1 : 0));
+    }
+  }
+  for (int64_t t : result.effective_tile_dims) {
+    result.next_shape.push_back(t);
+  }
+  return result;
 }
 
 /*static*/ bool LayoutUtil::IsUntiledLayout(absl::Span<const Tile> tiles,

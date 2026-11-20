@@ -375,6 +375,9 @@ Shape AddMajormostDimension(const Shape& shape) {
   for (const Tile& tile : shape.layout().tiles()) {
     *new_shape.mutable_layout()->add_tiles() = tile;
   }
+  for (const BitPlane& plane : shape.layout().bit_planes()) {
+    new_shape.mutable_layout()->add_bit_planes(plane);
+  }
   return new_shape;
 }
 

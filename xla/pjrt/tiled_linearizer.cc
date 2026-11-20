@@ -491,6 +491,11 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
     absl::Span<int64_t const> byte_strides, const Layout& device_layout,
     bool set_padding_to_nan, absl::Span<const uint32_t> dynamic_sizes,
     const TiledLinearizer::ParallelismOptions& parallelism_options) {
+  if (!device_layout.bit_planes().empty()) {
+    return absl::UnimplementedError(absl::StrFormat(
+        "TiledLinearizer does not support bit-plane layout %s for shape %s.",
+        device_layout.ToString(), host_shape.ToString()));
+  }
   if (host_shape.element_type() == C128) {
     TF_RET_CHECK(dest.size() % 2 == 0);
     Shape f64_shape = ShapeUtil::ChangeElementType(host_shape, F64);
@@ -1017,6 +1022,11 @@ absl::Status DelinearizeUsingTranspose(
   }
   if (!literal_shape.IsArray()) {
     return Unimplemented("Unsupported shape for Delinearize.");
+  }
+  if (!device_layout.bit_planes().empty()) {
+    return absl::UnimplementedError(absl::StrFormat(
+        "TiledLinearizer does not support bit-plane layout %s for shape %s.",
+        device_layout.ToString(), literal_shape.ToString()));
   }
   TF_RET_CHECK(reinterpret_cast<uintptr_t>(data.data()) % alignof(uint32_t) ==
                0);
