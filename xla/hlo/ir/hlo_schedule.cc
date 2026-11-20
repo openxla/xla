@@ -16,9 +16,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <ostream>
-#include <queue>
 #include <string>
 #include <utility>
 #include <vector>
@@ -38,7 +38,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/map_util.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/gtl/map_util.h"
@@ -156,21 +155,45 @@ const HloInstructionSequence& HloSchedule::sequence(
 
 namespace {
 
+enum InstructionState : uint8_t {
+  kInSchedule = 1 << 0,
+  kScheduled = 1 << 1,
+  kDeferred = 1 << 2,
+};
+
 // Tracks in-degrees and successors for dependency-driven schedule
 // reconstruction.
 struct DependencyTracker {
+  // Map from local_id to HloInstruction pointer for instructions in the
+  // computation.
+  std::vector<HloInstruction*> local_id_to_instruction;
+
+  // Bitflags for each local_id tracking schedule and worklist state.
+  std::vector<uint8_t> state;
+
   // Number of unscheduled operands and control predecessors for each
   // instruction in the computation.
-  absl::flat_hash_map<const HloInstruction*, int> in_degree;
+  std::vector<int32_t> in_degree;
 
-  // Map from HloInstruction X to instructions in the computation which depend
-  // on X.
-  absl::flat_hash_map<const HloInstruction*, std::vector<HloInstruction*>>
-      successors;
+  // CSR offsets for successors.
+  std::vector<int32_t> successor_offsets;
+
+  // Flat array of successor local_ids in CSR layout.
+  std::vector<int32_t> successors;
+
+  // Instructions currently in the schedule that are still present in the
+  // computation, in their existing relative order.
+  std::vector<HloInstruction*> existing_live_instructions;
 
   // Worklist of instructions whose dependencies are fully satisfied and are
   // ready to be placed in the schedule.
-  std::queue<HloInstruction*> ready_worklist;
+  std::vector<HloInstruction*> ready_worklist;
+
+  absl::Span<const int32_t> GetSuccessors(int32_t local_id) const {
+    return absl::MakeConstSpan(successors)
+        .subspan(successor_offsets[local_id],
+                 successor_offsets[local_id + 1] - successor_offsets[local_id]);
+  }
 };
 
 // Builds in-degree counts and successor lists for all instructions in the
@@ -178,103 +201,156 @@ struct DependencyTracker {
 // instructions.
 absl::StatusOr<DependencyTracker> BuildDependencyTracker(
     const HloComputation* computation,
-    const absl::flat_hash_set<int64_t>& ids_in_schedule) {
+    const HloInstructionSequence& existing_sequence) {
   DependencyTracker tracker;
-  absl::flat_hash_set<const HloInstruction*> predecessors;
 
+  int32_t num_local_ids =
+      std::max<int32_t>(0, computation->next_unique_instruction_internal_id());
   for (HloInstruction* instruction : computation->instructions()) {
-    predecessors.clear();
-    for (const HloInstruction* operand : instruction->operands()) {
-      if (predecessors.insert(operand).second) {
-        tracker.successors[operand].push_back(instruction);
-      }
-    }
-    for (HloInstruction* control_pred : instruction->control_predecessors()) {
-      if (control_pred == instruction) {
-        ABSL_RETURN_IF_ERROR(
-            control_pred->RemoveControlDependencyTo(instruction));
-      } else if (predecessors.insert(control_pred).second) {
-        tracker.successors[control_pred].push_back(instruction);
-      }
-    }
+    num_local_ids = std::max(num_local_ids, instruction->local_id() + 1);
+  }
 
-    tracker.in_degree[instruction] = predecessors.size();
+  tracker.local_id_to_instruction.assign(num_local_ids, nullptr);
+  for (HloInstruction* instruction : computation->instructions()) {
+    tracker.local_id_to_instruction[instruction->local_id()] = instruction;
+  }
 
-    // Newly added instructions with zero predecessors are ready immediately.
-    if (predecessors.empty() &&
-        !ids_in_schedule.contains(instruction->unique_id())) {
-      tracker.ready_worklist.push(instruction);
+  tracker.state.assign(num_local_ids, 0);
+  tracker.existing_live_instructions.reserve(existing_sequence.size());
+  for (int64_t id : existing_sequence.ids()) {
+    const int32_t local_id = HloInstruction::CalculateLocalId(id);
+    if (local_id >= 0 && local_id < num_local_ids) {
+      HloInstruction* inst = tracker.local_id_to_instruction[local_id];
+      if (inst != nullptr && inst->unique_id() == id) {
+        tracker.state[local_id] |= kInSchedule;
+        tracker.existing_live_instructions.push_back(inst);
+      }
     }
   }
+
+  tracker.in_degree.assign(num_local_ids, 0);
+  std::vector<int32_t> out_degree(num_local_ids, 0);
+  std::vector<int32_t> last_seen_by(num_local_ids, -1);
+
+  struct Edge {
+    int32_t pred_id;
+    int32_t succ_id;
+  };
+  std::vector<Edge> edges;
+  edges.reserve(computation->instruction_count() * 2);
+
+  for (HloInstruction* instruction : computation->instructions()) {
+    const int32_t inst_id = instruction->local_id();
+    int32_t deg = 0;
+
+    for (const HloInstruction* operand : instruction->operands()) {
+      const int32_t pred_id = operand->local_id();
+      if (last_seen_by[pred_id] != inst_id) {
+        last_seen_by[pred_id] = inst_id;
+        ++out_degree[pred_id];
+        edges.push_back({pred_id, inst_id});
+        ++deg;
+      }
+    }
+
+    while (absl::c_linear_search(instruction->control_predecessors(),
+                                 instruction)) {
+      ABSL_RETURN_IF_ERROR(instruction->RemoveControlDependencyTo(instruction));
+    }
+
+    for (HloInstruction* control_pred : instruction->control_predecessors()) {
+      const int32_t pred_id = control_pred->local_id();
+      if (last_seen_by[pred_id] != inst_id) {
+        last_seen_by[pred_id] = inst_id;
+        ++out_degree[pred_id];
+        edges.push_back({pred_id, inst_id});
+        ++deg;
+      }
+    }
+
+    tracker.in_degree[inst_id] = deg;
+
+    // Newly added instructions with zero predecessors are ready immediately.
+    if (deg == 0 && (tracker.state[inst_id] & kInSchedule) == 0) {
+      tracker.ready_worklist.push_back(instruction);
+    }
+  }
+
+  // Build the CSR graph from out_degree and edges.
+  tracker.successor_offsets.assign(num_local_ids + 1, 0);
+  for (int32_t i = 0; i < num_local_ids; ++i) {
+    tracker.successor_offsets[i + 1] =
+        tracker.successor_offsets[i] + out_degree[i];
+  }
+  tracker.successors.resize(edges.size());
+  std::vector<int32_t> write_offsets = tracker.successor_offsets;
+  for (const Edge& edge : edges) {
+    tracker.successors[write_offsets[edge.pred_id]++] = edge.succ_id;
+  }
+
   return tracker;
 }
 
 // Reconstructs the schedule by replaying existing_sequence and interleaving
 // ready instructions as their dependencies are satisfied.
-HloInstructionSequence BuildUpdatedSequence(
-    const HloInstructionSequence& existing_sequence,
-    const absl::flat_hash_map<int64_t, HloInstruction*>& id_to_instruction,
-    const absl::flat_hash_set<int64_t>& ids_in_schedule,
-    DependencyTracker& tracker) {
+HloInstructionSequence BuildUpdatedSequence(const HloComputation* computation,
+                                            DependencyTracker& tracker) {
   HloInstructionSequence new_sequence;
-  absl::flat_hash_set<const HloInstruction*> scheduled;
-  absl::flat_hash_set<const HloInstruction*> deferred_instructions;
+  new_sequence.reserve(computation->instruction_count());
+
+  size_t ready_head = 0;
 
   auto schedule_instruction = [&](HloInstruction* instruction) {
-    if (!scheduled.insert(instruction).second) {
+    const int32_t inst_id = instruction->local_id();
+    if ((tracker.state[inst_id] & kScheduled) != 0) {
       return;
     }
+    tracker.state[inst_id] |= kScheduled;
     new_sequence.push_back(instruction);
 
-    auto it = tracker.successors.find(instruction);
-    if (it != tracker.successors.end()) {
-      for (HloInstruction* successor : it->second) {
-        int& in_degree = tracker.in_degree.at(successor);
-        in_degree--;
-        CHECK_GE(in_degree, 0);
-        if (in_degree == 0) {
-          // Push newly added instructions and previously deferred instructions
-          // to the ready worklist. Instructions still awaiting their turn in
-          // existing_sequence are not pushed early.
-          if (!ids_in_schedule.contains(successor->unique_id()) ||
-              deferred_instructions.contains(successor)) {
-            tracker.ready_worklist.push(successor);
-          }
+    for (int32_t succ_id : tracker.GetSuccessors(inst_id)) {
+      int32_t& in_degree = tracker.in_degree[succ_id];
+      --in_degree;
+      CHECK_GE(in_degree, 0);
+      if (in_degree == 0) {
+        const uint8_t s = tracker.state[succ_id];
+        // Push newly added instructions and previously deferred instructions
+        // to the ready worklist. Instructions still awaiting their turn in
+        // existing_sequence are not pushed early.
+        if ((s & kInSchedule) == 0 || (s & kDeferred) != 0) {
+          tracker.ready_worklist.push_back(
+              tracker.local_id_to_instruction[succ_id]);
         }
       }
     }
   };
 
   auto drain_ready_worklist = [&]() {
-    while (!tracker.ready_worklist.empty()) {
-      HloInstruction* ready_instruction = tracker.ready_worklist.front();
-      tracker.ready_worklist.pop();
+    while (ready_head < tracker.ready_worklist.size()) {
+      HloInstruction* ready_instruction = tracker.ready_worklist[ready_head++];
       schedule_instruction(ready_instruction);
     }
+    tracker.ready_worklist.clear();
+    ready_head = 0;
   };
 
   // 1. Schedule any 0-predecessor newly added instructions first.
   drain_ready_worklist();
 
   // 2. Iterate through the existing sequence in order.
-  for (int64_t id : existing_sequence.ids()) {
-    auto it = id_to_instruction.find(id);
-    if (it == id_to_instruction.end()) {
-      // Instruction was removed from computation; skip.
-      continue;
-    }
-    HloInstruction* instruction = it->second;
-    if (scheduled.contains(instruction)) {
+  for (HloInstruction* instruction : tracker.existing_live_instructions) {
+    const int32_t inst_id = instruction->local_id();
+    if ((tracker.state[inst_id] & kScheduled) != 0) {
       // Already scheduled via the ready worklist.
       continue;
     }
-    if (tracker.in_degree.at(instruction) == 0) {
+    if (tracker.in_degree[inst_id] == 0) {
       schedule_instruction(instruction);
       drain_ready_worklist();
     } else {
       // Instruction has unsatisfied dependencies and cannot be scheduled yet;
       // defer it until its in-degree reaches 0.
-      deferred_instructions.insert(instruction);
+      tracker.state[inst_id] |= kDeferred;
     }
   }
 
@@ -288,27 +364,15 @@ HloInstructionSequence BuildUpdatedSequence(
 
 absl::Status HloSchedule::UpdateComputationSchedule(
     const HloComputation* computation) {
-  // Map from unique ID to HloInstruction pointer for instructions in the
-  // computation.
-  absl::flat_hash_map<int64_t, HloInstruction*> id_to_instruction;
-  for (HloInstruction* instruction : computation->instructions()) {
-    InsertOrDie(&id_to_instruction, instruction->unique_id(), instruction);
-  }
-
-  // Set of all HloInstructions in the schedule.
   HloInstructionSequence& current_sequence =
       sequences_.at(computation->unique_id());
-  absl::flat_hash_set<int64_t> ids_in_schedule(current_sequence.ids().begin(),
-                                               current_sequence.ids().end());
 
   // Build in-degree dependency tracking for all instructions.
   ABSL_ASSIGN_OR_RETURN(DependencyTracker tracker,
-                        BuildDependencyTracker(computation, ids_in_schedule));
+                        BuildDependencyTracker(computation, current_sequence));
 
   // Reconstruct schedule in topological order.
-  set_sequence(computation,
-               BuildUpdatedSequence(current_sequence, id_to_instruction,
-                                    ids_in_schedule, tracker));
+  set_sequence(computation, BuildUpdatedSequence(computation, tracker));
   return absl::OkStatus();
 }
 
@@ -433,35 +497,80 @@ absl::Status HloSchedule::Verify() const {
 }
 
 absl::Status HloSchedule::Verify(const HloComputation* computation) const {
-  absl::flat_hash_map<const HloInstruction*, int> instruction_position;
-  int pos = 0;
-  for (const HloInstruction* instruction :
-       sequence(computation).instructions()) {
-    TF_RET_CHECK(instruction_position.insert({instruction, pos}).second)
-        << "Instruction " << instruction->name()
-        << " appears more than once in the schedule";
-    pos++;
-  }
-  TF_RET_CHECK(instruction_position.size() == computation->instruction_count())
-      << "Schedule for computation " << computation->name() << " has "
-      << instruction_position.size() << " instructions, expected "
-      << computation->instruction_count();
+  const HloInstructionSequence& seq = sequence(computation);
+  const std::vector<HloInstruction*>& seq_instructions = seq.instructions();
+  const std::vector<int64_t>& seq_ids = seq.ids();
+
+  int32_t num_local_ids =
+      std::max<int32_t>(0, computation->next_unique_instruction_internal_id());
   for (const HloInstruction* instruction : computation->instructions()) {
-    TF_RET_CHECK(instruction_position.contains(instruction))
-        << "Instruction " << instruction->name() << " is not in schedule";
+    num_local_ids = std::max(num_local_ids, instruction->local_id() + 1);
+  }
+
+  std::vector<const HloInstruction*> local_id_to_inst(num_local_ids, nullptr);
+  for (const HloInstruction* instruction : computation->instructions()) {
+    local_id_to_inst[instruction->local_id()] = instruction;
+  }
+
+  std::vector<int32_t> inst_pos(num_local_ids, -1);
+  bool fast_path_matched = (seq_instructions.size() == seq_ids.size());
+
+  if (fast_path_matched) {
+    for (size_t pos = 0; pos < seq_instructions.size(); ++pos) {
+      const int64_t id = seq_ids[pos];
+      const int32_t lid = HloInstruction::CalculateLocalId(id);
+      if (lid >= 0 && lid < num_local_ids &&
+          local_id_to_inst[lid] == seq_instructions[pos] &&
+          inst_pos[lid] == -1) {
+        inst_pos[lid] = static_cast<int32_t>(pos);
+      } else {
+        fast_path_matched = false;
+        break;
+      }
+    }
+  }
+
+  if (fast_path_matched) {
+    TF_RET_CHECK(seq_instructions.size() == computation->instruction_count())
+        << "Schedule for computation " << computation->name() << " has "
+        << seq_instructions.size() << " instructions, expected "
+        << computation->instruction_count();
+  } else {
+    // Fall back to exact original map-based check for invalid or out-of-sync
+    // schedules to preserve all error messages and check ordering verbatim.
+    absl::flat_hash_map<const HloInstruction*, int> instruction_position;
+    instruction_position.reserve(seq_instructions.size());
+    int pos = 0;
+    for (const HloInstruction* instruction : seq_instructions) {
+      TF_RET_CHECK(instruction_position.insert({instruction, pos}).second)
+          << "Instruction " << instruction->name()
+          << " appears more than once in the schedule";
+      pos++;
+    }
+    TF_RET_CHECK(instruction_position.size() ==
+                 computation->instruction_count())
+        << "Schedule for computation " << computation->name() << " has "
+        << instruction_position.size() << " instructions, expected "
+        << computation->instruction_count();
+    for (const HloInstruction* instruction : computation->instructions()) {
+      TF_RET_CHECK(instruction_position.contains(instruction))
+          << "Instruction " << instruction->name() << " is not in schedule";
+    }
+    for (const HloInstruction* instruction : computation->instructions()) {
+      inst_pos[instruction->local_id()] = instruction_position.at(instruction);
+    }
   }
 
   for (const HloInstruction* instruction : computation->instructions()) {
+    const int32_t current_pos = inst_pos[instruction->local_id()];
     for (const HloInstruction* operand : instruction->operands()) {
-      TF_RET_CHECK(instruction_position.at(operand) <
-                   instruction_position.at(instruction))
+      TF_RET_CHECK(inst_pos[operand->local_id()] < current_pos)
           << "Instruction " << instruction->name()
           << " is not scheduled after its operand " << operand->name();
     }
 
     for (const HloInstruction* pred : instruction->control_predecessors()) {
-      TF_RET_CHECK(instruction_position.at(pred) <
-                   instruction_position.at(instruction))
+      TF_RET_CHECK(inst_pos[pred->local_id()] < current_pos)
           << "Instruction " << instruction->name()
           << " is not scheduled after its control predecessor " << pred->name();
     }
