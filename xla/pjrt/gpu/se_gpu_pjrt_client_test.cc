@@ -4850,5 +4850,28 @@ TEST(StreamExecutorGpuClientTest, InvalidMemoryFractionPolicyFlagIsReported) {
                        HasSubstr("--xla_gpu_memory_fraction_policy")));
 }
 
+TEST(StreamExecutorGpuClientTest, ExecuteWithOutputArenaIsUnimplemented) {
+  static constexpr char kProgram[] = R"(
+    HloModule output_arena
+    ENTRY main {
+      x = f32[3] parameter(0)
+      sum = f32[3] add(x, x)
+      product = f32[3] multiply(x, x)
+      ROOT result = (f32[3], f32[3]) tuple(sum, product)
+    })";
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
+  ASSERT_OK_AND_ASSIGN(auto executable, CompileExecutable(kProgram, *client));
+  Literal input = LiteralUtil::CreateR1<float>({1.0f, 2.0f, 3.0f});
+  ASSERT_OK_AND_ASSIGN(
+      auto input_buffer,
+      client->BufferFromHostLiteral(input, client->memory_spaces()[0]));
+
+  ExecuteOptions options;
+  options.use_output_arena = true;
+  EXPECT_THAT(executable->Execute({{input_buffer.get()}}, options),
+              StatusIs(absl::StatusCode::kUnimplemented));
+}
+
 }  // namespace
 }  // namespace xla

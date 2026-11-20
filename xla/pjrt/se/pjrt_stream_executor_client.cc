@@ -672,6 +672,13 @@ PjRtStreamExecutorExecutableLoadState::LoadRawExecutable(
     tsl::AsyncValueRef<PjRtExecutable> executable,
     const ExecuteOptions& options, size_t host_callback_idx, xla::RunId run_id,
     DeviceAndAssignment device_and_assign, int attempt) {
+  if (options.use_output_arena) {
+    return absl::UnimplementedError(
+        "ExecuteOptions::use_output_arena is not supported by StreamExecutor "
+        "clients: the executable allocates its outputs during the execution, "
+        "so they cannot be placed in an arena that is allocated before the "
+        "execution.");
+  }
   LocalDeviceId local_device_id = device_and_assign.local_device_id;
   int device_ordinal = local_device_id.value();
   auto se_executable = std::move(executable).Cast<StreamExecutorExecutable>();
