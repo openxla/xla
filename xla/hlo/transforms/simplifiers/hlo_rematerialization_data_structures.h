@@ -18,12 +18,12 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
+#include <deque>
 #include <optional>
-#include <utility>
+#include <vector>
 
+#include "absl/base/optimization.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
@@ -50,6 +50,21 @@ struct HloRematItem {
   // instructions ad infinitum, keep a denylist of instructions
   // which should not be rematerialized.
   bool denylisted = false;
+
+  // Cached result of CanBeRematerialized: -1 unknown, 0 false, 1 true.
+  int8_t rematerializable = -1;
+
+  // True when instruction->IsDead() holds.
+  bool is_dead = false;
+
+  // True if this item must not move due to an in place buffer overwrite.
+  bool pinned_by_overwrite = false;
+
+  // True if any operand buffer of this item is overwritten later.
+  bool has_operand_overwrites = false;
+
+  // Conservative cache of !instruction->control_successors().empty().
+  bool has_control_successors = false;
 
   // The buffers defined by this instruction.
   BufferIdList buffers_defined;
@@ -121,7 +136,7 @@ class HloRematInstructionList {
   absl::Status UpdateFromSequence(const HloInstructionSequence& order,
                                   bool preserve_denylist = true);
 
-  size_t size() const { return item_map_.size(); }
+  size_t size() const { return items_.size(); }
 
   // For ordered iteration over items.
   //    for (auto item = q.first(); item != nullptr; item = q.next(item)) {...}
@@ -143,19 +158,21 @@ class HloRematInstructionList {
   // Creates an HloRematItem for the given instruction, but doesn't add it to
   // the list. (Use InsertBeforeInstructions to add the HloRematItem to the
   // list.)
-  HloRematItem* CreateItem(HloInstruction* inst) {
-    auto item = std::make_unique<HloRematItem>();
-    item->instruction = inst;
-    CHECK(item_map_.insert({inst, std::move(item)}).second)
-        << "inserting inst twice " << inst->name();
-    return item_map_[inst].get();
-  }
+  HloRematItem* CreateItem(HloInstruction* inst);
 
   // Return the HloRematItem corresponding to inst.
   HloRematItem* GetItem(const HloInstruction* inst) const {
-    auto iter = item_map_.find(inst);
-    CHECK(iter != item_map_.end()) << "Did not find " << inst->name();
-    return iter->second.get();
+    const int32_t id = inst->local_id();
+    if (ABSL_PREDICT_TRUE(id >= 0 && static_cast<size_t>(id) <
+                                         items_by_local_id_.size())) {
+      HloRematItem* item = items_by_local_id_[id];
+      if (ABSL_PREDICT_TRUE(item != nullptr && item->instruction == inst)) {
+        return item;
+      }
+    }
+    auto iter = fallback_item_map_.find(inst);
+    CHECK(iter != fallback_item_map_.end()) << "Did not find " << inst->name();
+    return iter->second;
   }
 
   // Insert instruction 'to_insert' immediately before the earliest instruction
@@ -184,25 +201,39 @@ class HloRematInstructionList {
       HloRematItem* to_insert,
       absl::Span<HloRematItem* const> after_instructions);
 
+  void RemoveFromSkipList(HloRematItem* item);
+
+  void MarkDead(HloRematItem* item);
+
   void Denylist(const HloInstruction* inst) {
-    GetItem(inst)->denylisted = true;
+    HloRematItem* item = GetItem(inst);
+    item->denylisted = true;
+    RemoveFromSkipList(item);
   }
 
  private:
+  void RegisterItem(HloRematItem* item);
+
   // Insert instruction 'item' immediately before 'before' in the list.
   void InsertBefore(HloRematItem* item, HloRematItem* before);
 
-  HloRematItem* first_;
+  HloRematItem* first_ = nullptr;
 
   // First skip node of this list.
-  HloRematItem* first_skip_node_;
+  HloRematItem* first_skip_node_ = nullptr;
 
   // Last skip node of this list.
-  HloRematItem* last_skip_node_;
+  HloRematItem* last_skip_node_ = nullptr;
 
-  // HloRematItem for each instruction.
-  absl::flat_hash_map<const HloInstruction*, std::unique_ptr<HloRematItem>>
-      item_map_;
+  // Contiguous chunked storage of HloRematItem instances with pointer
+  // stability across CreateItem calls.
+  std::deque<HloRematItem> items_;
+
+  // Direct O(1) lookup table indexed by HloInstruction::local_id().
+  std::vector<HloRematItem*> items_by_local_id_;
+
+  // Fallback map for detached or negative local_id instructions.
+  absl::flat_hash_map<const HloInstruction*, HloRematItem*> fallback_item_map_;
 };
 }  // namespace xla
 

@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/hlo_rematerialization_data_structures.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <string>
-#include <utility>
 
 #include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_map.h"
+#include "absl/base/optimization.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -34,36 +35,75 @@ limitations under the License.
 
 namespace xla {
 
+void HloRematInstructionList::RegisterItem(HloRematItem* item) {
+  const HloInstruction* inst = item->instruction;
+  const int32_t id = inst->local_id();
+  if (ABSL_PREDICT_TRUE(id >= 0)) {
+    const size_t idx = static_cast<size_t>(id);
+    if (idx >= items_by_local_id_.size()) {
+      items_by_local_id_.resize(
+          std::max(idx + 1, items_by_local_id_.size() * 2), nullptr);
+    }
+    CHECK_EQ(items_by_local_id_[idx], nullptr)
+        << "inserting inst twice " << inst->name();
+    items_by_local_id_[idx] = item;
+  } else {
+    CHECK(fallback_item_map_.emplace(inst, item).second)
+        << "inserting inst twice " << inst->name();
+  }
+}
+
+HloRematItem* HloRematInstructionList::CreateItem(HloInstruction* inst) {
+  HloRematItem& item = items_.emplace_back();
+  item.instruction = inst;
+  item.has_control_successors = !inst->control_successors().empty();
+  RegisterItem(&item);
+  return &item;
+}
+
 absl::Status HloRematInstructionList::UpdateFromSequence(
     const HloInstructionSequence& order, bool preserve_denylist) {
-  absl::flat_hash_map<const HloInstruction*, bool> denylist;
+  absl::flat_hash_set<const HloInstruction*> denylist;
   if (preserve_denylist) {
-    for (HloInstruction* inst : order.instructions()) {
-      if (item_map_.contains(inst) && item_map_[inst]->denylisted) {
-        denylist[inst] = true;
+    for (const HloRematItem& existing : items_) {
+      if (existing.denylisted) {
+        denylist.insert(existing.instruction);
       }
     }
   }
-  // Clear item map
-  item_map_.clear();
-  int64_t position = 0;
-  HloRematItem* last = nullptr;
+  items_.clear();
+  items_by_local_id_.clear();
+  fallback_item_map_.clear();
+  first_ = nullptr;
   last_skip_node_ = nullptr;
   first_skip_node_ = nullptr;
+
+  int32_t max_local_id = -1;
   for (HloInstruction* inst : order.instructions()) {
-    // Add a new item to the linked list.
-    auto item = std::make_unique<HloRematItem>();
-    if (preserve_denylist && denylist.contains(inst)) {
-      item->denylisted = true;
+    max_local_id = std::max(max_local_id, inst->local_id());
+  }
+  if (max_local_id >= 0) {
+    items_by_local_id_.assign(static_cast<size_t>(max_local_id) + 1, nullptr);
+  }
+
+  int64_t position = 0;
+  HloRematItem* last = nullptr;
+  for (HloInstruction* inst : order.instructions()) {
+    HloRematItem& item = items_.emplace_back();
+    item.instruction = inst;
+    if (preserve_denylist && !denylist.empty() && denylist.contains(inst)) {
+      item.denylisted = true;
     }
-    item->next = nullptr;
-    item->prev = last;
+    item.is_dead = inst->IsDead();
+    item.has_control_successors = !inst->control_successors().empty();
+    item.next = nullptr;
+    item.prev = last;
     if (last == nullptr) {
-      first_ = item.get();
+      first_ = &item;
     } else {
-      last->next = item.get();
+      last->next = &item;
     }
-    last = item.get();
+    last = &item;
 
     // Initially position numbers are uniquely assigned in order. Later as
     // instructions are added with InsertBefore* methods, some instructions
@@ -71,11 +111,8 @@ absl::Status HloRematInstructionList::UpdateFromSequence(
     // to be monotonically increasing through the list, and so is still useful
     // for quickly(-ish) determining the order of arbitrary instructions in
     // the list.
-    item->instruction = inst;
-    item->position = position;
-    position++;
-
-    item_map_[inst] = std::move(item);
+    item.position = position++;
+    RegisterItem(&item);
   }
   return absl::OkStatus();
 }
@@ -124,7 +161,8 @@ void HloRematInstructionList::PromoteNodesToSkip(
     absl::FunctionRef<bool(HloRematItem*)> should_promote) {
   int64_t count = 0;
   for (auto* item = first(); item != nullptr; item = next(item)) {
-    if (should_promote(item)) {
+    if (!item->denylisted && !item->is_dead && !item->pinned_by_overwrite &&
+        item->rematerializable != 0 && should_promote(item)) {
       count += 1;
       if (first_skip_node_ == nullptr) {
         first_skip_node_ = item;
@@ -138,6 +176,31 @@ void HloRematInstructionList::PromoteNodesToSkip(
     }
   }
   VLOG(1) << " Rematerialization has " << count << " items in express lane";
+}
+
+void HloRematInstructionList::RemoveFromSkipList(HloRematItem* item) {
+  if (!item->is_skip_node) {
+    return;
+  }
+  if (item->prev_skip_node != nullptr) {
+    item->prev_skip_node->next_skip_node = item->next_skip_node;
+  } else {
+    first_skip_node_ = item->next_skip_node;
+  }
+  if (item->next_skip_node != nullptr) {
+    item->next_skip_node->prev_skip_node = item->prev_skip_node;
+  } else {
+    last_skip_node_ = item->prev_skip_node;
+  }
+  item->prev_skip_node = nullptr;
+  item->next_skip_node = nullptr;
+  item->is_skip_node = false;
+}
+
+void HloRematInstructionList::MarkDead(HloRematItem* item) {
+  item->is_dead = true;
+  RemoveFromSkipList(item);
+  fallback_item_map_[item->instruction] = item;
 }
 
 void HloRematInstructionList::InsertAfterInstructions(
@@ -172,43 +235,35 @@ void HloRematInstructionList::InsertBefore(HloRematItem* item,
                                            HloRematItem* before) {
   VLOG(3) << "InsertBefore: " << item->instruction->name() << " before "
           << before->instruction->name();
-  // Always place new nodes on express lane for the ease of implementation.
-  item->is_skip_node = true;
-  // Find the next express node starting from 'before'. Set up the node's
-  // express pointers.
-  HloRematItem* cursor = before;
-  while (cursor != nullptr && !cursor->is_skip_node) {
-    cursor = cursor->next;
-  }
-  CHECK(cursor == nullptr || cursor->is_skip_node);
-  if (cursor == nullptr) {
-    //
-    // last_skip_node_<---+                              : express lane
-    //                    |
-    //           ...<->`item`<-> .. <-> `cursor`(null)   : slow lane
-    //
-    // Reached the end. Set the prev_express to last_skip_node, and reset
-    // last_skip.
-    item->prev_skip_node = last_skip_node_;
-    item->next_skip_node = nullptr;
-    last_skip_node_ = item;
-  } else {
-    //
-    //     <-+------------+----------------+--------->   : express lane
-    //       |            |                |
-    // prev_express..<->`item`<-> .. <-> `cursor` <-> ...: slow lane
-    //
-    // Reached the next skip node, sets up express pointers accordingly.
-    CHECK(cursor->is_skip_node);
-    item->prev_skip_node = cursor->prev_skip_node;
-    if (item->prev_skip_node != nullptr) {
-      item->prev_skip_node->next_skip_node = item;
+  if (!item->denylisted && !item->is_dead && !item->pinned_by_overwrite &&
+      item->rematerializable != 0) {
+    item->is_skip_node = true;
+    // Find the next express node starting from 'before'. Set up the node's
+    // express pointers.
+    HloRematItem* cursor = before;
+    while (cursor != nullptr && !cursor->is_skip_node) {
+      cursor = cursor->next;
     }
-    item->next_skip_node = cursor;
-    cursor->prev_skip_node = item;
-  }
-  if (first_skip_node_ == cursor) {
-    first_skip_node_ = item;
+    CHECK(cursor == nullptr || cursor->is_skip_node);
+    if (cursor == nullptr) {
+      item->prev_skip_node = last_skip_node_;
+      if (last_skip_node_ != nullptr) {
+        last_skip_node_->next_skip_node = item;
+      }
+      item->next_skip_node = nullptr;
+      last_skip_node_ = item;
+    } else {
+      CHECK(cursor->is_skip_node);
+      item->prev_skip_node = cursor->prev_skip_node;
+      if (item->prev_skip_node != nullptr) {
+        item->prev_skip_node->next_skip_node = item;
+      }
+      item->next_skip_node = cursor;
+      cursor->prev_skip_node = item;
+    }
+    if (first_skip_node_ == cursor) {
+      first_skip_node_ = item;
+    }
   }
   // Insert new item into linked list.
   item->prev = before->prev;
