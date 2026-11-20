@@ -252,7 +252,6 @@ xla_cc_test(
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
-        "@com_google_googletest//:gmock",
         "@com_google_googletest//:gtest_main",
     ],
 )
