@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/hlo/transforms/copy_removal.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
+#include "xla/layout_util.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/dump.h"
 #include "xla/service/hlo_buffer.h"
@@ -889,6 +890,50 @@ absl::Status StripControlDependenciesFrom(HloInstruction* instruction) {
   return absl::OkStatus();
 }
 
+// Returns true if `use` reads read only array `value` through unrooted
+// forwarders without control dependencies, aliasing, views, or control flow.
+bool CanPreserveReadOnlyUse(
+    const HloValue& value, const HloUse& use,
+    const absl::flat_hash_set<const HloInstruction*>& replace_all,
+    const HloDataflowAnalysis& dataflow, const AliasInfo* alias_info,
+    std::optional<int64_t> view_color) {
+  const HloInstruction* u = use.instruction;
+  if (!use.operand_index.empty() || u->opcode() == HloOpcode::kBitcast ||
+      u->IsCustomCall(kPinCustomCallTarget) ||
+      u->opcode() == HloOpcode::kAsyncUpdate ||
+      u->opcode() == HloOpcode::kAsyncDone) {
+    return false;
+  }
+  for (const HloInstruction* c = u->operand(use.operand_number);
+       c != value.defining_instruction(); c = c->operand(0)) {
+    if (c->IsRoot() || c->HasControlDependencies() || replace_all.contains(c) ||
+        (c->opcode() != HloOpcode::kGetTupleElement &&
+         (c->opcode() != HloOpcode::kBitcast ||
+          LayoutUtil::MemorySpace(c->shape()) !=
+              LayoutUtil::MemorySpace(c->operand(0)->shape())))) {
+      return false;
+    }
+  }
+  bool aliases = absl::c_any_of(u->called_computations(), [&](const auto* c) {
+    return dataflow.call_graph().GetNode(c).context() ==
+           CallContext::kControlFlow;
+  });
+  if (view_color.has_value()) {
+    ShapeUtil::ForEachSubshape(u->shape(), [&](const Shape& s, auto) {
+      aliases |= s.IsArray() && s.has_layout() &&
+                 LayoutUtil::MemorySpace(s) == *view_color;
+    });
+  }
+  for (const auto& [idx, set] : dataflow.GetInstructionValueSet(u)) {
+    aliases |= absl::c_linear_search(set.values(), &value);
+  }
+  for (const auto& [op_idx, out_idx] :
+       alias_info->GetInPlaceInputOutputPairs(u)) {
+    aliases |= op_idx == HloOperandIndex{use.operand_number, {}};
+  }
+  return !aliases;
+}
+
 }  // namespace
 
 // We add copies for all phi indices of the true and false computation
@@ -1651,13 +1696,13 @@ absl::Status CopyInsertion::AddSpecialCaseCopies(
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                         HloAliasAnalysis::Run(module, alias_info_));
   ABSL_ASSIGN_OR_RETURN(
-      HloInstructionMap<ShapeTree<bool>> instructions_to_copy,
+      SpecialCaseCopies instructions_to_copy,
       ComputeSpecialCaseCopies(call_graph, execution_threads, module,
                                *alias_analysis, custom_buffer_analysis));
   return InsertSpecialCaseCopies(instructions_to_copy);
 }
 
-absl::StatusOr<HloInstructionMap<ShapeTree<bool>>>
+absl::StatusOr<CopyInsertion::SpecialCaseCopies>
 CopyInsertion::ComputeSpecialCaseCopies(
     const CallGraph& call_graph,
     const absl::flat_hash_set<absl::string_view>& execution_threads,
@@ -1665,10 +1710,12 @@ CopyInsertion::ComputeSpecialCaseCopies(
     CustomBufferAnalysisFn custom_buffer_analysis) {
   // Identify which shape indices of which instructions need to be copied. Store
   // these results in 'instructions_to_copy'.
-  HloInstructionMap<ShapeTree<bool>> instructions_to_copy;
-  auto add_index_to_copy = [&instructions_to_copy, &call_graph](
-                               HloInstruction* instruction,
-                               const ShapeIndex& index) {
+  SpecialCaseCopies copies;
+  HloInstructionMap<ShapeTree<bool>>& instructions_to_copy = copies.to_copy;
+  absl::flat_hash_set<const HloInstruction*> replace_all;
+  auto add_index_to_copy = [&](HloInstruction* instruction,
+                               const ShapeIndex& index,
+                               bool preserve_read_only = false) {
     if (IsWhileLoopCopyDisabled(instruction, call_graph)) {
       return;
     }
@@ -1698,23 +1745,42 @@ CopyInsertion::ComputeSpecialCaseCopies(
       it = it_added.first;
     }
     *it->second.mutable_element(index) = true;
+    if (!preserve_read_only) {
+      replace_all.insert(instruction);
+    }
   };
+  if (custom_buffer_analysis) {
+    custom_buffer_analysis(module, alias_analysis,
+                           [&](HloInstruction* i, const ShapeIndex& idx) {
+                             add_index_to_copy(i, idx);
+                           });
+  }
 
   // Iterate through values of all constants and entry parameters. These values
   // are special because they are held in read-only buffers. If any of these
   // values share a buffer with other values (for example, the init value of a
-  // while is a constant) then copy the value at its definition and replace all
-  // its uses with the copy.
+  // while is a constant) then copy the value at its definition and replace its
+  // aliasing uses with the copy.
   // Also, locate all input-output aliasing violations for operations that
   // cannot be done in place. Such aliasing can be created when some copies are
   // removed too aggressively by CopyRemoval.
-  for (const HloValue* value : alias_analysis.dataflow_analysis().values()) {
+  const HloDataflowAnalysis& dataflow = alias_analysis.dataflow_analysis();
+  std::vector<const HloValue*> isolated_read_only;
+  for (const HloValue* value : dataflow.values()) {
     const HloBuffer& buffer = alias_analysis.GetBufferContainingValue(*value);
+    bool isolated = false;
     if (buffer.values().size() > 1 && ValueIsReadOnly(*value)) {
       VLOG(2) << "Value " << value->ToShortString()
               << " is read only, but its buffer contains more than one value. "
                  "Copying.";
-      add_index_to_copy(value->defining_instruction(), value->defining_index());
+      HloInstruction* def = value->defining_instruction();
+      add_index_to_copy(def, value->defining_index(),
+                        /*preserve_read_only=*/true);
+      isolated = value->shape().IsArray() && !replace_all.contains(def) &&
+                 instructions_to_copy.find(def) != instructions_to_copy.end();
+      if (isolated) {
+        isolated_read_only.push_back(value);
+      }
     }
 
     for (const HloValue* value2 : buffer.values()) {
@@ -1736,6 +1802,13 @@ CopyInsertion::ComputeSpecialCaseCopies(
               use.operand_number == 0) {
             continue;
           }
+          if (isolated &&
+              (use.instruction->operand(use.operand_number) ==
+                   value->defining_instruction() ||
+               CanPreserveReadOnlyUse(*value, use, replace_all, dataflow,
+                                      alias_info_, view_color_))) {
+            continue;
+          }
           if (!alias_analysis.dataflow_analysis().CanShareOperandBufferWithUser(
                   /*operand=*/use.instruction->mutable_operand(
                       use.operand_number),
@@ -1754,11 +1827,6 @@ CopyInsertion::ComputeSpecialCaseCopies(
         }
       }
     }
-  }
-
-  if (custom_buffer_analysis) {
-    VLOG(2) << "Running custom buffer analysis";
-    custom_buffer_analysis(module, alias_analysis, add_index_to_copy);
   }
 
   // Identify copies which must be added at root instructions
@@ -1820,20 +1888,31 @@ CopyInsertion::ComputeSpecialCaseCopies(
                   << computation->name()
                   << ") has constant or parameter value at index " << index
                   << ". Copying.";
-          add_index_to_copy(root, index);
+          add_index_to_copy(root, index, root == value->defining_instruction());
         }
       }
     }
   }
-  return instructions_to_copy;
+
+  for (const HloValue* value : isolated_read_only) {
+    HloInstruction* def = value->defining_instruction();
+    for (const HloUse& use : value->GetUses()) {
+      if (!replace_all.contains(def) &&
+          CanPreserveReadOnlyUse(*value, use, replace_all, dataflow,
+                                 alias_info_, view_color_)) {
+        copies.preserved_uses[def].push_back(
+            {use.instruction, use.operand_number, value->defining_index()});
+      }
+    }
+  }
+  return copies;
 }
 
 absl::Status CopyInsertion::InsertSpecialCaseCopies(
-    const HloInstructionMap<ShapeTree<bool>>& instructions_to_copy) {
-  for (const auto& pair : instructions_to_copy) {
-    HloInstruction* instruction = pair.first;
-    const ShapeTree<bool>& indices_to_copy = pair.second;
-
+    const SpecialCaseCopies& copies) {
+  HloModule* module = nullptr;
+  absl::flat_hash_set<absl::string_view> updated_threads;
+  for (const auto& [instruction, indices_to_copy] : copies.to_copy) {
     ShapeTree<HloInstruction*> copies_added(indices_to_copy.shape());
     std::vector<HloInstruction*> users = instruction->users();
     ABSL_ASSIGN_OR_RETURN(HloInstruction * deep_copy,
@@ -1845,8 +1924,39 @@ absl::Status CopyInsertion::InsertSpecialCaseCopies(
     if (instruction == instruction->parent()->root_instruction()) {
       instruction->parent()->set_root_instruction(deep_copy);
     }
+    HloComputation* comp = instruction->parent();
+    if (comp->parent() != nullptr && comp->parent()->has_schedule() &&
+        comp->parent()->schedule().is_computation_scheduled(comp)) {
+      module = comp->parent();
+      updated_threads.insert(comp->execution_thread());
+    }
+    auto it = copies.preserved_uses.find(instruction);
+    if (it == copies.preserved_uses.end()) {
+      continue;
+    }
+    absl::flat_hash_map<HloInstruction*, HloInstruction*> raw_bitcasts;
+    for (const SpecialCaseCopies::PreservedUse& use : it->second) {
+      if (HloInstruction* copy = copies_added.element(use.defining_index)) {
+        HloInstruction* raw = copy->mutable_operand(0);
+        HloInstruction* cur = use.user->mutable_operand(use.operand_number);
+        if (cur->opcode() == HloOpcode::kBitcast) {
+          HloInstruction*& bc = raw_bitcasts[cur];
+          if (bc == nullptr) {
+            bc = comp->AddInstruction(
+                cur->CloneWithNewOperands(cur->shape(), {raw}));
+          }
+          raw = bc;
+        }
+        ABSL_RETURN_IF_ERROR(
+            cur->ReplaceUseWith(use.user, use.operand_number, raw));
+        if (cur->IsDead() && !cur->IsRoot() && !cur->HasControlDependencies()) {
+          ABSL_RETURN_IF_ERROR(comp->RemoveInstruction(cur));
+        }
+      }
+    }
   }
-  return absl::OkStatus();
+  return module != nullptr ? module->schedule().Update(updated_threads)
+                           : absl::OkStatus();
 }
 
 static int64_t GetNumExistingCopies(
