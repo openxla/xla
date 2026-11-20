@@ -106,8 +106,17 @@ class CopyRemover {
   void RemoveCopyValue(ValueNode* copy_node, ValueNode* operand_node);
   bool LiveRangeBefore(const ValueNode& a, const ValueNode& b);
   void SpliceAfter(ValueNode* head, ValueNode* insert_after);
+  bool CanShareSameInstructionBuffer(const HloInstruction* copy,
+                                     const ValueNode* use_node,
+                                     const HloUse& use,
+                                     const HloValue& value) const;
+  bool SubstitutionBreaksSharing(const HloInstruction* copy, const HloUse& use,
+                                 const HloValue& value) const;
+  bool HasIllegalSameInstructionSharing(const HloInstruction* copy,
+                                        const ValueNode* src,
+                                        const ValueNode* dest) const;
   bool ValuesInterfere(const ValueNode* src, const ValueNode* dest,
-                       bool dest_spliced_into_src);
+                       bool dest_spliced_into_src, HloInstruction* elided_copy);
   void ForEachValueInRange(
       const ValueNode* start,
       absl::FunctionRef<void(const ValueNode*)> visitor) const;

@@ -4550,7 +4550,9 @@ ENTRY %main.13 (Arg_0.1: pred[], Arg_1.2: u8[300,451,3]) -> u8[300,451,3] {
   ASSERT_IS_OK(copy_insertion.Run(module.get()).status());
   VLOG(2) << module->ToString();
   HloInstruction* reverse = FindInstruction(module.get(), "reverse");
-  EXPECT_THAT(reverse->operand(0), op::Copy());
+  EXPECT_THAT(reverse->parent()->root_instruction(),
+              op::Tuple(op::Copy(op::Reverse())));
+  EXPECT_THAT(reverse->operand(0), op::Parameter());
 }
 
 TEST_F(CopyInsertionTest, InputOutputAliasCopy) {
@@ -7264,6 +7266,240 @@ ENTRY main {
   EXPECT_TRUE(copy_remover.TryElideCopy(c_root));
   ASSERT_OK(c_root->ReplaceAllUsesWith(c_root->mutable_operand(0)));
   EXPECT_FALSE(copy_remover.TryElideCopy(FindInstruction(module.get(), "c2")));
+}
+
+TEST_F(CopyInsertionTest, PreservesCopyForOutOfPlaceOpOnAliasedParameter) {
+  constexpr absl::string_view kPreSchedHlo = R"hlo(
+HloModule OutOfPlaceAliasedParam,
+  input_output_alias={ {0}: (0, {}, must-alias) }
+
+add_f32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT sum = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  p0 = f32[8,4]{1,0} parameter(0)
+  zero = f32[] constant(0)
+  red = f32[] reduce(p0, zero), dimensions={0,1}, to_apply=add_f32
+  tr = f32[4,8]{1,0} transpose(p0), dimensions={1,0}
+  bc = f32[8,4]{1,0} bitcast(tr)
+  ROOT out = (f32[8,4]{1,0}, f32[]) tuple(bc, red)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> pre_mod,
+                       ParseAndReturnVerifiedModule(kPreSchedHlo));
+  CopyInsertion copy_insertion(&alias_info_);
+  ASSERT_OK(copy_insertion.Run(pre_mod.get()).status());
+  // `red` and `tr` should read `p0` directly and only the result of the
+  // out-of-place transpose should be copied into `p0`'s aliased buffer.
+  EXPECT_EQ(CountCopies(*pre_mod), 1);
+  EXPECT_THAT(FindInstruction(pre_mod.get(), "red")->operand(0),
+              op::Parameter(0));
+  EXPECT_THAT(FindInstruction(pre_mod.get(), "tr")->operand(0),
+              op::Parameter(0));
+  EXPECT_THAT(pre_mod->entry_computation()->root_instruction()->operand(0),
+              op::Copy(op::Bitcast(op::Transpose())));
+
+  constexpr absl::string_view kPostSchedHlo = R"hlo(
+HloModule ScheduledOutOfPlaceAliasedParam, is_scheduled=true,
+  input_output_alias={ {0}: (0, {}, must-alias), {1}: (1, {}, must-alias) }
+
+ENTRY main {
+  p0 = f32[8,4]{1,0} parameter(0)
+  p1 = f32[8,4]{1,0} parameter(1)
+  c0 = f32[8,4]{1,0} copy(p0)
+  tr0 = f32[4,8]{1,0} transpose(c0), dimensions={1,0}
+  bc0 = f32[8,4]{1,0} bitcast(tr0)
+  c1 = f32[8,4]{1,0} copy(p1)
+  tr1 = f32[4,8]{1,0} transpose(c1), dimensions={1,0}
+  bc1 = f32[8,4]{1,0} bitcast(tr1)
+  ROOT out = (f32[8,4]{1,0}, f32[8,4]{1,0}) tuple(bc0, bc1)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> post_mod,
+                       ParseAndReturnVerifiedModule(kPostSchedHlo));
+  ASSERT_OK(copy_insertion.RemoveUnnecessaryCopies(post_mod.get()));
+  // Scheduled input copies protecting out-of-place transposes from aliasing
+  // their own input buffers must not be removed.
+  EXPECT_THAT(FindInstruction(post_mod.get(), "tr0")->operand(0),
+              op::Copy(op::Parameter(0)));
+  EXPECT_THAT(FindInstruction(post_mod.get(), "tr1")->operand(0),
+              op::Copy(op::Parameter(1)));
+}
+
+TEST_F(CopyInsertionTest,
+       PreservesCopyWhenSubstitutionIntroducesIllegalSharing) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule SubstitutionSharingHazards,
+  input_output_alias={ {3}: (3, {}, must-alias) }
+
+lt_f32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT cmp = pred[] compare(lhs, rhs), direction=LT
+}
+
+ENTRY main {
+  p0 = f32[8]{0} parameter(0)
+  p1 = f32[8]{0} parameter(1)
+  u = f32[2]{0} parameter(2)
+  p_sort = f32[8]{0} parameter(3)
+  z = s32[] constant(0)
+
+  // Constant copied into an in-place DUS cannot be overwritten in place.
+  k = f32[8]{0} constant({0, 1, 2, 3, 4, 5, 6, 7})
+  k_read = f32[8]{0} negate(k)
+  c_const = f32[8]{0} copy(k)
+  dus_const = f32[8]{0} dynamic-update-slice(c_const, u, z)
+
+  // Sort requires its shared operand to have no other users.
+  sort_read = f32[8]{0} negate(p_sort)
+  c_sort = f32[8]{0} copy(p_sort)
+  sorted = f32[8]{0} sort(c_sort), dimensions={0}, to_apply=lt_f32
+
+  // Self-update DUS cannot share operand 0 when operand 1 is the same buffer.
+  x_self = f32[8]{0} subtract(p0, p1)
+  c_self = f32[8]{0} copy(x_self)
+  dus_self = f32[8]{0} dynamic-update-slice(c_self, x_self, z)
+
+  ROOT out = (f32[8]{0}, f32[8]{0}, f32[8]{0}, f32[8]{0}, f32[8]{0})
+      tuple(k_read, dus_const, sort_read, sorted, dus_self)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info_));
+  DependencyHloOrdering ordering(module.get());
+  CopyRemover copy_remover(*module, *alias_analysis, &alias_info_, &ordering,
+                           /*execution_threads=*/{});
+  EXPECT_FALSE(
+      copy_remover.TryElideCopy(FindInstruction(module.get(), "c_const")));
+  EXPECT_FALSE(
+      copy_remover.TryElideCopy(FindInstruction(module.get(), "c_sort")));
+  EXPECT_FALSE(
+      copy_remover.TryElideCopy(FindInstruction(module.get(), "c_self")));
+}
+
+TEST_F(CopyInsertionTest, RedirectsForcedControlEdgeOffPreExistingElidedCopy) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule PreExistingCopyControlEdge
+
+ENTRY main {
+  p0 = f32[8]{0} parameter(0)
+  p1 = f32[8]{0} parameter(1)
+  u = f32[2]{0} parameter(2)
+  z = s32[] constant(0)
+  x = f32[8]{0} add(p0, p1)
+  reader = f32[8]{0} negate(x)
+  c0 = f32[8]{0} copy(x)
+  dus = f32[8]{0} dynamic-update-slice(c0, u, z)
+  ROOT out = (f32[8]{0}, f32[8]{0}) tuple(reader, dus)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  CopyInsertion copy_insertion(&alias_info_);
+  ASSERT_OK(copy_insertion.Run(module.get()).status());
+  EXPECT_EQ(CountCopies(*module), 0);
+  HloInstruction* reader = FindInstruction(module.get(), "reader");
+  HloInstruction* dus = FindInstruction(module.get(), "dus");
+  EXPECT_EQ(dus->operand(0), FindInstruction(module.get(), "x"));
+  EXPECT_THAT(dus->control_predecessors(), ::testing::ElementsAre(reader));
+}
+
+TEST_F(CopyInsertionTest, RelaysControlDependencyAcrossSubsequentlyElidedCopy) {
+  // Case 1: Pre-existing control predecessor and successor on an elided copy.
+  constexpr absl::string_view kRelayHlo = R"hlo(
+HloModule PreExistingEdgeOnElidedCopy
+
+ENTRY main {
+  p0 = f32[8]{0} parameter(0)
+  p1 = f32[8]{0} parameter(1)
+  u = f32[2]{0} parameter(2)
+  z = s32[] constant(0)
+  x = f32[8]{0} add(p0, p1)
+  reader = f32[8]{0} negate(x)
+  c = f32[8]{0} copy(x), control-predecessors={reader}
+  dus = f32[8]{0} dynamic-update-slice(c, u, z)
+  after = f32[8]{0} add(p0, p0), control-predecessors={c}
+  ROOT out = (f32[8]{0}, f32[8]{0}, f32[8]{0}) tuple(reader, dus, after)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kRelayHlo));
+  CopyInsertion copy_insertion(&alias_info_);
+  ASSERT_OK(copy_insertion.RemoveUnnecessaryCopies(module.get()));
+  HloInstruction* x = FindInstruction(module.get(), "x");
+  HloInstruction* reader = FindInstruction(module.get(), "reader");
+  HloInstruction* dus = FindInstruction(module.get(), "dus");
+  HloInstruction* after = FindInstruction(module.get(), "after");
+  EXPECT_EQ(dus->operand(0), x);
+  DependencyHloOrdering post_ordering(module.get());
+  EXPECT_TRUE(post_ordering.ExecutesBefore(reader, dus));
+  EXPECT_TRUE(post_ordering.ExecutesBefore(reader, after));
+  EXPECT_TRUE(post_ordering.ExecutesBefore(x, after));
+
+  // Case 2: Eliding `c1` commits `reader ->ctrl c2` (updating the cached
+  // reachability map to mark `dus2` reachable from `reader`), and eliding `c2`
+  // afterwards must relay that edge onto `dus2`.
+  constexpr absl::string_view kTwoCopyHlo = R"hlo(
+HloModule TwoCopyChainRelay
+
+ENTRY main {
+  p0 = f32[8]{0} parameter(0)
+  p1 = f32[8]{0} parameter(1)
+  u = f32[2]{0} parameter(2)
+  z = s32[] constant(0)
+  x = f32[8]{0} add(p0, p1)
+  c1 = f32[8]{0} copy(x)
+  reader = f32[8]{0} negate(c1)
+  c2 = f32[8]{0} copy(x)
+  dus2 = f32[8]{0} dynamic-update-slice(c2, u, z)
+  ROOT out = (f32[8]{0}, f32[8]{0}) tuple(reader, dus2)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> two_copy_mod,
+                       ParseAndReturnVerifiedModule(kTwoCopyHlo));
+  ASSERT_OK(copy_insertion.RemoveUnnecessaryCopies(two_copy_mod.get()));
+  HloInstruction* reader2 = FindInstruction(two_copy_mod.get(), "reader");
+  HloInstruction* dus2 = FindInstruction(two_copy_mod.get(), "dus2");
+  EXPECT_EQ(dus2->operand(0), FindInstruction(two_copy_mod.get(), "x"));
+  EXPECT_EQ(reader2->operand(0), FindInstruction(two_copy_mod.get(), "x"));
+  DependencyHloOrdering two_copy_ordering(two_copy_mod.get());
+  EXPECT_TRUE(two_copy_ordering.ExecutesBefore(reader2, dus2));
+}
+
+TEST_F(CopyInsertionTest, DetectsInterceptionAcrossMergedMultiDefinitionUse) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule MultiDefSameInstructionUse, is_scheduled=true,
+  input_output_alias={ {0}: (0, {}, must-alias) }
+
+ENTRY main {
+  p0 = f32[8]{0} parameter(0)
+  p1 = f32[8]{0} parameter(1)
+  u = f32[2]{0} parameter(2)
+  z = s32[] constant(0)
+  c = f32[8]{0} copy(p0)
+  dus = f32[8]{0} dynamic-update-slice(c, u, z)
+  redef = f32[8]{0} negate(p1)
+  both = f32[8]{0} add(p0, redef)
+  ROOT out = (f32[8]{0}, f32[8]{0}, f32[8]{0}) tuple(redef, dus, both)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info_));
+  SequentialHloOrdering ordering(module->schedule());
+  CopyRemover copy_remover(*module, *alias_analysis, &alias_info_, &ordering,
+                           /*execution_threads=*/{});
+  // `both` uses both `p0` (defined before `dus`) and `redef` (defined after
+  // `dus`) from `p0`'s buffer; deduplicating `both`'s region entry must retain
+  // `p0` so `dus` is recognized as intercepting `p0 -> both`.
+  EXPECT_FALSE(copy_remover.TryElideCopy(FindInstruction(module.get(), "c")));
 }
 
 }  // namespace

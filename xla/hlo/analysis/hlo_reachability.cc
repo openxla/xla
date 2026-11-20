@@ -360,28 +360,63 @@ void HloReachabilityMap::UpdateReachabilityForMerge(
   tmp_indices_to_update_.clear();
 }
 
+void HloReachabilityMap::AddReachabilityEdges(
+    absl::Span<const std::pair<const HloInstruction*, const HloInstruction*>>
+        edges) {
+  DCHECK(tmp_worklist_.empty());
+  for (const auto& [pred, succ] : edges) {
+    if (BitSetFromIndex(GetIndex(succ))
+            .OrUpdate(BitSetFromIndex(GetIndex(pred)))) {
+      tmp_worklist_.push_back(reinterpret_cast<uintptr_t>(succ));
+    }
+  }
+  while (!tmp_worklist_.empty()) {
+    const auto* instruction =
+        reinterpret_cast<const HloInstruction*>(tmp_worklist_.back());
+    tmp_worklist_.pop_back();
+    BitSet bit_set = BitSetFromIndex(GetIndex(instruction));
+    for (const HloInstruction* user : instruction->users()) {
+      if (BitSetFromIndex(GetIndex(user)).OrUpdate(bit_set)) {
+        tmp_worklist_.push_back(reinterpret_cast<uintptr_t>(user));
+      }
+    }
+    for (const HloInstruction* succ : instruction->control_successors()) {
+      if (BitSetFromIndex(GetIndex(succ)).OrUpdate(bit_set)) {
+        tmp_worklist_.push_back(reinterpret_cast<uintptr_t>(succ));
+      }
+    }
+  }
+}
+
 void HloReachabilityMap::UpdateMultipleInstructions(
     absl::flat_hash_map<const HloInstruction*,
                         absl::flat_hash_set<const HloInstruction*>>
         to_update) {
-  while (!to_update.empty()) {
-    auto it = to_update.begin();
-    const HloInstruction* instruction = it->first;
-
+  DCHECK(tmp_worklist_.empty());
+  for (const auto& [instruction, operands] : to_update) {
     BitSet bit_set = BitSetFromIndex(GetIndex(instruction));
     bool changed = false;
     // NOLINTNEXTLINE the loop aggregation is order independent.
-    for (const HloInstruction* operand : it->second) {
-      BitSet operand_bit_set = BitSetFromIndex(GetIndex(operand));
-      changed |= bit_set.OrUpdate(operand_bit_set);
+    for (const HloInstruction* operand : operands) {
+      changed |= bit_set.OrUpdate(BitSetFromIndex(GetIndex(operand)));
     }
-    to_update.erase(it);
     if (changed) {
-      for (const HloInstruction* user : instruction->users()) {
-        to_update[user].insert(instruction);
+      tmp_worklist_.push_back(reinterpret_cast<uintptr_t>(instruction));
+    }
+  }
+  while (!tmp_worklist_.empty()) {
+    const auto* instruction =
+        reinterpret_cast<const HloInstruction*>(tmp_worklist_.back());
+    tmp_worklist_.pop_back();
+    BitSet bit_set = BitSetFromIndex(GetIndex(instruction));
+    for (const HloInstruction* user : instruction->users()) {
+      if (BitSetFromIndex(GetIndex(user)).OrUpdate(bit_set)) {
+        tmp_worklist_.push_back(reinterpret_cast<uintptr_t>(user));
       }
-      for (const HloInstruction* succ : instruction->control_successors()) {
-        to_update[succ].insert(instruction);
+    }
+    for (const HloInstruction* succ : instruction->control_successors()) {
+      if (BitSetFromIndex(GetIndex(succ)).OrUpdate(bit_set)) {
+        tmp_worklist_.push_back(reinterpret_cast<uintptr_t>(succ));
       }
     }
   }
