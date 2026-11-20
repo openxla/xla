@@ -106,6 +106,13 @@ TEST(ReadDynamicShapeMetadataTest, DynamicSizeExceedingBoundIsInvalid) {
               StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
+TEST(ReadDynamicShapeMetadataTest, NegativeDynamicSizeIsInvalid) {
+  Shape shape = ShapeUtil::MakeShape(F32, {64, 128}, {true, false});
+  EXPECT_THAT(ReadDynamicShapeMetadata(MakeMetadata({-1, 128}), shape,
+                                       PjRtDynamicShapeKind::kPrefix),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
 TEST(ReadDynamicShapeMetadataTest, InsufficientMetadataIsInvalid) {
   Shape shape = ShapeUtil::MakeShape(F32, {64, 128}, {true, false});
   EXPECT_THAT(ReadDynamicShapeMetadata(MakeMetadata({24}), shape,
