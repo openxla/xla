@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/client/executable_build_options.h"
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/computation_layout.h"
@@ -263,7 +264,7 @@ class ExecutionOutput {
 class Executable {
  public:
   // The hlo_module parameter may be nullptr, if the given executable type
-  // doesn't need it for execution.
+  // doesn't need it for execution or keeps it itself (see `shared_module()`).
   explicit Executable(std::shared_ptr<HloModule> hlo_module)
       : hlo_module_(std::move(hlo_module)) {}
   virtual ~Executable() = default;
@@ -331,29 +332,40 @@ class Executable {
       const ServiceExecutableRunOptions* run_options,
       std::vector<ExecutionInput> arguments);
 
+  // Returns the HloModule the executable was compiled from. CHECK-fails if the
+  // executable doesn't have one (see `has_module()`).
   HloModule& module() const {
-    CHECK(hlo_module_ != nullptr);
-    return *hlo_module_;
+    HloModule* hlo_module = module_ptr();
+    CHECK(hlo_module != nullptr);
+    return *hlo_module;
   }
-  std::shared_ptr<HloModule> shared_module() const { return hlo_module_; }
 
-  bool has_module() const { return hlo_module_ != nullptr; }
+  // Returns the HloModule the executable was compiled from, or nullptr if the
+  // executable doesn't have one.
+  //
+  // Subclasses that keep their module themselves override this together with
+  // `module_ptr()`.
+  virtual std::shared_ptr<HloModule> shared_module() const {
+    return hlo_module_;
+  }
 
-  const HloModuleConfig& module_config() const {
-    CHECK(hlo_module_ != nullptr);
-    return hlo_module_->config();
+  bool has_module() const { return module_ptr() != nullptr; }
+
+  // The config of the module the executable was compiled from. The default
+  // implementation reads it from the module and CHECK-fails if the executable
+  // doesn't have one.
+  virtual const HloModuleConfig& module_config() const {
+    return module().config();
   }
 
   // The shape (including layout) that results from this execution. This is the
   // shape of the DeviceAddressBase result value in ExecuteOnStream above.
   virtual Shape result_shape() const {
-    CHECK(hlo_module_ != nullptr);
-    return hlo_module_->config().entry_computation_layout().result_shape();
+    return module().config().entry_computation_layout().result_shape();
   }
 
   virtual ComputationLayout compute_computation_layout() const {
-    CHECK(hlo_module_ != nullptr);
-    return hlo_module_->compute_computation_layout();
+    return module().compute_computation_layout();
   }
 
   virtual absl::string_view name() const {
@@ -361,6 +373,20 @@ class Executable {
       return module().name();
     }
     return "<unknown executable>";
+  }
+
+  // The input/output aliasing of the entry computation. The default
+  // implementation reads it from the module and CHECK-fails if the executable
+  // doesn't have one.
+  virtual const HloInputOutputAliasConfig& input_output_alias_config() const {
+    return module().input_output_alias_config();
+  }
+
+  // The parameters of the entry computation that may be donated. The default
+  // implementation reads them from the module and CHECK-fails if the
+  // executable doesn't have one.
+  virtual const HloBufferDonorConfig& buffer_donor_config() const {
+    return module().buffer_donor_config();
   }
 
   // Returns the size of the executable in bytes. Returns -1 if this query is
@@ -440,6 +466,12 @@ class Executable {
         "ExecutableAbiVersion is not supported by this executable.");
   }
 
+ protected:
+  // Returns the module, or nullptr if the executable doesn't have one. Same as
+  // `shared_module().get()`, but doesn't copy the `std::shared_ptr`.
+  // Subclasses that override `shared_module()` must override this too.
+  virtual HloModule* module_ptr() const { return hlo_module_.get(); }
+
  private:
   // HloModule this was compiled from. BufferAssignment keeps pointers to
   // HloInstructions owned by the HloModule so we need to keep the HloModule
@@ -448,10 +480,6 @@ class Executable {
   // This member may be nullptr, if the given executable type doesn't need it
   // for execution.
   std::shared_ptr<HloModule> hlo_module_;
-
-  // Execution count, used to generate a unique filename for each dumped
-  // execution.
-  int64_t execution_count_ = 0;
 
   // A map from kernel name to relevant kernel stats.
   ModuleStats module_stats_;
