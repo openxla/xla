@@ -948,6 +948,66 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
   return true;
 }
 
+// Resolves `(inst, index)` through bitcast and tuple indirections.
+std::pair<const HloInstruction*, ShapeIndex> ResolveInPlaceBuffer(
+    const HloInstruction* inst, ShapeIndex index) {
+  while (true) {
+    auto [next, next_idx] = FollowTupleIndirection(inst, index);
+    if (next_idx.empty() && next->opcode() == HloOpcode::kBitcast) {
+      next = next->operand(0);
+    }
+    if (next == inst && next_idx == index) {
+      return {next, std::move(next_idx)};
+    }
+    inst = next;
+    index = std::move(next_idx);
+  }
+}
+
+bool ShapeIndicesOverlap(const ShapeIndex& a, const ShapeIndex& b) {
+  size_t n = std::min(a.size(), b.size());
+  return absl::MakeSpan(a).first(n) == absl::MakeSpan(b).first(n);
+}
+
+bool ValueSharesBuffer(
+    const HloInstruction* inst, ShapeIndex index,
+    const std::pair<const HloInstruction*, ShapeIndex>& target) {
+  auto [base, idx] = ResolveInPlaceBuffer(inst, std::move(index));
+  return (base == target.first && ShapeIndicesOverlap(idx, target.second)) ||
+         (idx.empty() && base->opcode() == HloOpcode::kTuple &&
+          absl::c_any_of(base->operands(), [&](const HloInstruction* op) {
+            return ValueSharesBuffer(op, {}, target);
+          }));
+}
+
+// Walks GTE projections on tuple uses so disjoint tuple slots do not alias.
+bool OperandUseSharesInPlaceBuffer(
+    const HloInstruction* user, int64_t operand_number,
+    const std::pair<const HloInstruction*, ShapeIndex>& target,
+    const HloInstruction* fused_tuple = nullptr, ShapeIndex prefix = {}) {
+  const HloInstruction* op = user->operand(operand_number);
+  if (fused_tuple == nullptr) {
+    if (user->opcode() == HloOpcode::kGetTupleElement) {
+      return ValueSharesBuffer(op, {user->tuple_index()}, target);
+    }
+    if (user->opcode() != HloOpcode::kFusion || !op->shape().IsTuple()) {
+      return ValueSharesBuffer(op, {}, target);
+    }
+    fused_tuple = user->fused_parameter(operand_number);
+  }
+  return (fused_tuple == user->fused_expression_root() &&
+          ValueSharesBuffer(op, prefix, target)) ||
+         absl::c_any_of(fused_tuple->users(), [&](const HloInstruction* u) {
+           if (u->opcode() != HloOpcode::kGetTupleElement) {
+             return ValueSharesBuffer(op, prefix, target);
+           }
+           ShapeIndex next = prefix;
+           next.push_back(u->tuple_index());
+           return OperandUseSharesInPlaceBuffer(user, operand_number, target, u,
+                                                std::move(next));
+         });
+}
+
 }  // namespace
 
 /*static*/ bool InstructionFusion::IsEmbeddedComputation(
@@ -981,19 +1041,35 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
     VLOG(4) << "in/out pair: " << operand_number << " "
             << pair.first.operand_index.ToString() << " "
             << pair.second.ToString();
+    const HloInstruction* in_place_operand = consumer->operand(operand_number);
+    auto in_place_buffer =
+        ResolveInPlaceBuffer(in_place_operand, pair.first.operand_index);
     // Check if the consumer also has an additional operand that has the same
     // value as the in-place buffer. If so, it's unsafe to fuse.
     for (int i = 0; i < consumer->operand_count(); ++i) {
       if (i != operand_number &&
-          consumer->operand(operand_number) == consumer->operand(i)) {
+          (in_place_operand == consumer->operand(i) ||
+           OperandUseSharesInPlaceBuffer(consumer, i, in_place_buffer))) {
         return FusionDecision::Forbid(
             "The consumer is an in-place operation that has an additional "
             "operand that has the same value as the in-place buffer");
       }
     }
-    if (consumer->operand(operand_number) == producer ||
-        absl::c_find(producer->operands(), consumer->operand(operand_number)) !=
-            producer->operands().end()) {
+    bool producer_uses_in_place_buffer =
+        in_place_operand == producer ||
+        ValueSharesBuffer(producer, {}, in_place_buffer);
+    for (int64_t i = 0; i < producer->operand_count(); ++i) {
+      if (!OperandUseSharesInPlaceBuffer(producer, i, in_place_buffer)) {
+        continue;
+      }
+      if (producer != in_place_operand &&
+          producer->operand(i) != in_place_operand) {
+        return FusionDecision::Forbid(
+            "Producer aliases the consumer in place buffer.");
+      }
+      producer_uses_in_place_buffer = true;
+    }
+    if (producer_uses_in_place_buffer) {
       VLOG(4) << "Found producer that uses the same operand of "
                  "an in-place consumer";
       auto get_real_operand = [](const HloInstruction* op,
@@ -1033,36 +1109,49 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
       // If the producer has only elementwise ops or bitcasts, we can fuse.
       if (producer_nonelementwise_ops.empty()) {
         if (consumer->opcode() != HloOpcode::kFusion) {
-          return FusionDecision::Allow();
+          if (producer != in_place_operand && is_nonelementwise_op(consumer)) {
+            return FusionDecision::Forbid(
+                "Producer reads the consumer in place buffer.");
+          }
+          continue;
         }
         // If the consumer fusion has both elementwise and non-elementwise ops,
         // and ops of the two groups access the same buffer of the producer, we
         // have a potential conflict even if all the ops in the producer are
         // elementwise.
-        auto inplace_instr_and_index = FollowTupleIndirection(
+        auto [root, root_idx] = FollowTupleIndirection(
             consumer->fused_expression_root(), pair.second);
+        while (producer == in_place_operand && root_idx.empty() &&
+               alias_info->IsNoOpForAliasAnalysis(root)) {
+          auto next = FollowTupleIndirection(root->operand(0), {});
+          root = next.first;
+          root_idx = std::move(next.second);
+        }
         auto consumer_nonelementwise_ops =
             ExtractInstructions(consumer, [&](const HloInstruction* inst) {
-              // Exclude instructions which are same as inplace fusion roots.
               return is_nonelementwise_op(inst) &&
-                     inst != inplace_instr_and_index.first;
+                     !(producer == in_place_operand &&
+                       (inst == root || inst->opcode() == HloOpcode::kTuple));
             });
         auto* fused_computation = consumer->fused_instructions_computation();
         std::unique_ptr<HloReachabilityMap> reachability =
             HloReachabilityMap::Build(fused_computation);
-        auto inplace_consumer_parameter =
-            fused_computation->parameter_instruction(
-                consumer->operand_index(producer));
-        bool inplace_conflict_after_fusion = absl::c_any_of(
-            consumer_nonelementwise_ops, [&](const HloInstruction* instr) {
-              return reachability->IsReachable(inplace_consumer_parameter,
-                                               instr);
-            });
-        return inplace_conflict_after_fusion
-                   ? FusionDecision::Forbid(
-                         "Non-elementwise ops in consumer lead to inplace "
-                         "conflict after fusion.")
-                   : FusionDecision::Allow();
+        for (int64_t i = 0; i < consumer->operand_count(); ++i) {
+          const HloInstruction* op = consumer->operand(i);
+          if (op != producer && !(op->opcode() == HloOpcode::kGetTupleElement &&
+                                  op->operand(0) == producer)) {
+            continue;
+          }
+          const HloInstruction* p = fused_computation->parameter_instruction(i);
+          if (absl::c_any_of(consumer_nonelementwise_ops,
+                             [&](const HloInstruction* inst) {
+                               return reachability->IsReachable(p, inst);
+                             })) {
+            return FusionDecision::Forbid(
+                "Non-elementwise ops in consumer lead to inplace conflict.");
+          }
+        }
+        continue;
       }
       auto dus_ops =
           ExtractInstructions(consumer, HloOpcode::kDynamicUpdateSlice);
@@ -1071,7 +1160,7 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
       // TODO(akuegel): Are there other ops than dynamic update slice where we
       // have a special emitter if it can be done in-place?
       if (dus_ops.empty()) {
-        return FusionDecision::Allow();
+        continue;
       }
       if (dus_ops.size() > 1) {
         return FusionDecision::Forbid("multiple dus ops, bailing.");
@@ -1079,10 +1168,11 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
       auto dus = dus_ops[0];
       auto producer_nonelementwise = producer_nonelementwise_ops[0];
       if (producer_nonelementwise->opcode() == HloOpcode::kSlice) {
-        if (producer_nonelementwise->shape() != dus->operand(1)->shape()) {
+        if (producer_nonelementwise->shape() != dus->operand(1)->shape() ||
+            get_real_operand(producer, producer_nonelementwise->operand(0)) !=
+                get_real_operand(consumer, dus->operand(0))) {
           return FusionDecision::Forbid(
-              "Slice op has a different shape than the update shape of the "
-              "dus op, bailing.");
+              "Slice shape or base buffer differs from DUS.");
         }
         for (int i = 0; i < dus->shape().dimensions().size(); ++i) {
           const HloInstruction* dus_operand =
@@ -1101,13 +1191,14 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
               "Fusing slice into DUS will also fuse another non-elementwise "
               "op with shared operand as DUS.");
         }
-        return FusionDecision::Allow();
+        continue;
       }
       if (producer_nonelementwise->opcode() == HloOpcode::kDynamicSlice) {
-        if (producer_nonelementwise->shape() != dus->operand(1)->shape()) {
+        if (producer_nonelementwise->shape() != dus->operand(1)->shape() ||
+            get_real_operand(producer, producer_nonelementwise->operand(0)) !=
+                get_real_operand(consumer, dus->operand(0))) {
           return FusionDecision::Forbid(
-              "Dynamic slice op has a different shape than the update shape "
-              "of the dus op, bailing.");
+              "Dynamic slice shape or base buffer differs from DUS.");
         }
         for (int i = 0; i < dus->shape().dimensions().size(); ++i) {
           const HloInstruction* ds_operand = get_real_operand(
@@ -1128,7 +1219,7 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
               "Fusing DS into DUS will also fuse another non-elementwise op "
               "with shared operand as DUS.");
         }
-        return FusionDecision::Allow();
+        continue;
       }
       return FusionDecision::Forbid(
           "unrecognized inplace update non-elementwise output pair");

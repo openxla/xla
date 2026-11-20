@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <memory>
 #include <optional>
+#include <utility>
 
 #include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/alias_info.h"
@@ -29,6 +30,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/hlo/transforms/copy_insertion.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
@@ -1120,6 +1122,7 @@ TEST_F(InstructionFusionTest, DontFuseProducerIfInplaceConflict) {
 namespace {
 
 using ::testing::HasSubstr;
+using ::testing::UnorderedElementsAre;
 
 TEST_F(InstructionFusionTest,
        InPlaceOpShouldNotFuseWithSliceTruncated64BitIndex) {
@@ -1247,6 +1250,176 @@ TEST_F(InstructionFusionTest, FuseMultiOperandProducerOnceConsumersMerge) {
   HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, op::Fusion(op::Parameter(), op::Parameter()))
       << module->ToString();
+}
+
+TEST_F(InstructionFusionTest, InPlaceDusBitcastLoopAvoidsFullBufferCopies) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(R"hlo(
+  HloModule m, input_output_alias={{}: (0, {}, may-alias)}
+  cond {
+    s = (s32[], f32[4,8]) parameter(0)
+    ROOT c = pred[] compare(s#0, s32[] constant(3)), direction=LT
+  }
+  body {
+    s = (s32[], f32[4,8]) parameter(0)
+    ds = f32[1,8] dynamic-slice(s#1, s#0, s32[] constant(0)), dynamic_slice_sizes={1,8}
+    ni = s32[] add(s#0, s32[] constant(1))
+    dus = f32[32] dynamic-update-slice(f32[32] bitcast(f32[2,16] bitcast(s#1)),
+        f32[8] bitcast(f32[1,8] negate(ds)), s32[] multiply(ni, s32[] constant(8)))
+    ROOT next = (s32[], f32[4,8]) tuple(ni, f32[4,8] bitcast(dus))
+  }
+  ENTRY main {
+    init = (s32[], f32[4,8]) tuple(s32[] constant(0), f32[4,8] parameter(0))
+    loop = (s32[], f32[4,8]) while(init), condition=cond, body=body
+    ROOT r = f32[4,8] get-tuple-element(loop), index=1
+  })hlo"));
+  HloComputation* b = FindEmbeddedBody(m.get(), "body");
+  EXPECT_THAT(InstructionFusion::ShouldFuseInPlaceOp(
+                  b->GetInstructionWithName("ds"),
+                  b->GetInstructionWithName("dus"), &alias_info_, {})
+                  .Explain(),
+              HasSubstr("aliases the consumer in place"));
+  ASSERT_OK(InstructionFusion(InstructionFusion::IsExpensive, &alias_info_,
+                              /*may_duplicate=*/false)
+                .Run(m.get()));
+  ASSERT_OK(CopyInsertion(&alias_info_).Run(m.get()));
+  for (const HloComputation* c : m->computations()) {
+    for (const HloInstruction* inst : c->instructions()) {
+      EXPECT_FALSE(inst->opcode() == HloOpcode::kCopy &&
+                   !ShapeUtil::IsEffectiveScalar(inst->shape()));
+    }
+  }
+}
+
+TEST_F(InstructionFusionTest, InPlaceDusRejectsProducerReadingBitcastOfBase) {
+  for (absl::string_view hlo : {R"hlo(
+  HloModule ds_prod, input_output_alias={{}: (0, {}, may-alias)}
+  ENTRY main {
+    x = f32[4,8] parameter(0)
+    i = s32[] parameter(1)
+    p = f32[8] dynamic-slice(f32[32] bitcast(x), i), dynamic_slice_sizes={8}
+    ROOT d = f32[4,8] dynamic-update-slice(
+        x, f32[1,8] bitcast(f32[8] negate(p)), i, s32[] constant(0))
+  })hlo",
+                                R"hlo(
+  HloModule elem_prod, input_output_alias={{}: (0, {}, may-alias)}
+  ENTRY main {
+    x = f32[8] parameter(0)
+    p = f16[2,4] convert(f32[2,4] bitcast(x))
+    ROOT d = f32[8] dynamic-update-slice(x, f32[4] bitcast(p), s32[] parameter(1))
+  })hlo"}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                         ParseAndReturnVerifiedModule(hlo));
+    HloComputation* e = m->entry_computation();
+    EXPECT_THAT(InstructionFusion::ShouldFuseInPlaceOp(
+                    e->GetInstructionWithName("p"), e->root_instruction(),
+                    &alias_info_, {})
+                    .Explain(),
+                HasSubstr("aliases the consumer in place"));
+    ASSERT_OK(InstructionFusion(InstructionFusion::IsExpensive, &alias_info_,
+                                /*may_duplicate=*/false)
+                  .Run(m.get()));
+    EXPECT_THAT(
+        e->root_instruction()->operands(),
+        UnorderedElementsAre(op::Parameter(0), op::Parameter(1), op::Fusion()));
+    ASSERT_OK(CopyInsertion(&alias_info_).Run(m.get()));
+    EXPECT_EQ(Count(*m, HloOpcode::kCopy), 0);
+  }
+}
+
+TEST_F(InstructionFusionTest, InPlaceOpBitcastSiblingAndSliceShapeChecks) {
+  for (auto [hlo, reason] : {std::pair{R"hlo(
+  HloModule dus_sibling
+  ENTRY main {
+    x = s32[3,3] parameter(0)
+    p = s32[] add(s32[] parameter(1), s32[] constant(1))
+    ROOT d = s32[9] dynamic-update-slice(s32[9] bitcast(x), s32[9] bitcast(x), p)
+  })hlo",
+                                       "additional operand"},
+                             std::pair{R"hlo(
+  HloModule nested_tuple_sibling
+  c {
+    d = f32[8] dynamic-update-slice(f32[8] parameter(0), f32[4] parameter(2), s32[] constant(0))
+    ROOT o = (f32[8], ((f32[8]))) tuple(d, ((f32[8])) parameter(1))
+  }
+  ENTRY main {
+    x = f32[8] parameter(0)
+    p = f32[4] negate(f32[4] parameter(1))
+    ROOT f = (f32[8], ((f32[8]))) fusion(
+        x, ((f32[8])) tuple((f32[8]) tuple(f32[8] bitcast(x))), p), kind=kLoop, calls=c
+  })hlo",
+                                       "additional operand"},
+                             std::pair{R"hlo(
+  HloModule rank_mismatch
+  c { ROOT d = f32[4,8] dynamic-update-slice(f32[4,8] bitcast(f32[32] parameter(0)),
+          f32[1,8] bitcast(f32[8] parameter(1)), s32[] parameter(2), s32[] constant(0)) }
+  ENTRY main {
+    x = f32[32] parameter(0)
+    i = s32[] parameter(1)
+    p = f32[8] dynamic-slice(x, i), dynamic_slice_sizes={8}
+    ROOT f = f32[4,8] fusion(x, p, i), kind=kLoop, calls=c
+  })hlo",
+                                       "shape or base buffer differs"},
+                             std::pair{R"hlo(
+  HloModule base_shape_mismatch
+  c { ROOT d = f32[4,8] dynamic-update-slice(f32[4,8] bitcast(f32[8,4] parameter(0)),
+          f32[2,2] parameter(1), s32[] constant(1), s32[] constant(0)) }
+  ENTRY main {
+    x = f32[8,4] parameter(0)
+    p = f32[2,2] slice(x), slice={[1:3], [0:2]}
+    ROOT f = f32[4,8] fusion(x, p), kind=kLoop, calls=c
+  })hlo",
+                                       "shape or base buffer differs"}}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                         ParseAndReturnVerifiedModule(hlo));
+    HloComputation* e = m->entry_computation();
+    EXPECT_THAT(InstructionFusion::ShouldFuseInPlaceOp(
+                    e->GetInstructionWithName("p"), e->root_instruction(),
+                    &alias_info_, {})
+                    .Explain(),
+                HasSubstr(reason));
+  }
+}
+
+TEST_F(InstructionFusionTest, InPlaceDusAllowsSharedBitcastAndDisjointTuple) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> sh,
+                       ParseAndReturnVerifiedModule(R"hlo(
+  HloModule shared_bc, input_output_alias={{}: (0, {}, may-alias)}
+  ENTRY main {
+    bc = f32[32] bitcast(f32[4,8] parameter(0))
+    i = s32[] parameter(1)
+    ds = f32[8] dynamic-slice(bc, i), dynamic_slice_sizes={8}
+    ROOT dus = f32[32] dynamic-update-slice(bc, f32[8] negate(ds), i)
+  })hlo"));
+  ASSERT_OK(InstructionFusion(InstructionFusion::IsExpensive, &alias_info_,
+                              /*may_duplicate=*/false)
+                .Run(sh.get()));
+  EXPECT_THAT(sh->entry_computation()->root_instruction(),
+              op::Fusion(op::Bitcast(op::Parameter()), op::Parameter()));
+  ASSERT_OK(CopyInsertion(&alias_info_).Run(sh.get()));
+  EXPECT_EQ(Count(*sh, HloOpcode::kCopy), 0);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> tup,
+                       ParseAndReturnVerifiedModule(R"hlo(
+  HloModule tuple_inplace
+  c {
+    p0 = (f32[8], f32[8]) parameter(0)
+    ROOT d = f32[8] dynamic-update-slice(
+        p0#0, f32[4] add(f32[4] parameter(1), f32[4] parameter(2)), s32[] constant(1))
+  }
+  ENTRY main {
+    t = (f32[8], f32[8]) parameter(0)
+    r0 = f32[1,4] slice(f32[2,4] bitcast(t#0)), slice={[0:1], [0:4]}
+    r1 = f32[1,4] slice(f32[2,4] bitcast(t#1)), slice={[0:1], [0:4]}
+    ROOT f = f32[8] fusion(t, f32[4] bitcast(r0), f32[4] bitcast(r1)), kind=kLoop, calls=c
+  })hlo"));
+  auto decide = [&](absl::string_view name) {
+    return InstructionFusion::ShouldFuseInPlaceOp(
+        tup->entry_computation()->GetInstructionWithName(name),
+        tup->entry_computation()->root_instruction(), &alias_info_, {});
+  };
+  EXPECT_THAT(decide("r0").Explain(), HasSubstr("aliases the consumer"));
+  EXPECT_TRUE(decide("r1").IsAllowed());
 }
 
 }  // namespace
