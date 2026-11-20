@@ -371,26 +371,17 @@ TEST(CustomCallThunkTest, ForwardsLogicalDeviceInfoToAllRuntimeStages) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({}, executor->device_ordinal(),
                                        &allocator);
-  CommandBufferRequests command_buffer_requests;
-  Thunk::PrepareParams prepare_params;
-  prepare_params.collective_params = &collective_params;
-  prepare_params.executor = executor;
-  prepare_params.buffer_allocations = &buffer_allocations;
-  prepare_params.command_buffer_requests = &command_buffer_requests;
-  ASSERT_OK(thunk->Prepare(prepare_params));
+  TestThunkParams thunk_params(executor, &buffer_allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options)
+      .WithCommandBufferTraceStream(stream.get())
+      .WithCollectiveParams(&collective_params);
+  ASSERT_OK(thunk->Prepare(thunk_params.PrepareParams()));
   EXPECT_EQ(handler_calls, 1);
 
-  Thunk::InitializeParams initialize_params;
-  initialize_params.stream = stream.get();
-  initialize_params.buffer_allocations = &buffer_allocations;
-  initialize_params.collective_params = &collective_params;
-  ASSERT_OK(thunk->Initialize(initialize_params));
+  ASSERT_OK(thunk->Initialize(thunk_params.InitializeParams()));
   EXPECT_EQ(handler_calls, 2);
 
-  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
-      run_options, buffer_allocations, stream.get(), stream.get(),
-      &collective_params, /*collective_cliques=*/nullptr,
-      /*collective_memory=*/nullptr);
+  Thunk::ExecuteParams execute_params = thunk_params.ExecuteParams();
   ASSERT_OK(thunk->ExecuteOnStream(execute_params));
   EXPECT_EQ(handler_calls, 3);
 
