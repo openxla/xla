@@ -19,6 +19,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <optional>
@@ -2742,6 +2743,83 @@ TEST_F(HloDataflowAnalysisTest, OptimizePhiInNonSingletonValueSets) {
   const HloValue& val2 = analysis.GetValueDefinedAt(constant2);
 
   EXPECT_THAT(param_set.values(), UnorderedElementsAre(&val1, &val2));
+}
+
+TEST_F(HloDataflowAnalysisTest, PhiValueIdsDoNotDependOnAddresses) {
+  // The instructions of a computation that only a custom call reaches share
+  // one worklist priority. The ids of the phi values of two loops in such a
+  // computation follow the order in which the worklist visits the loops, and
+  // the buffer assignment numbers its logical buffers by those ids.
+  const char* kModule = R"hlo(
+    HloModule PhiValueIdsDoNotDependOnAddresses
+
+    body_a {
+      body_a_param = s32[] parameter(0)
+      body_a_one = s32[] constant(1)
+      ROOT body_a_root = s32[] add(body_a_param, body_a_one)
+    }
+
+    condition_a {
+      condition_a_param = s32[] parameter(0)
+      ROOT condition_a_root = pred[] constant(false)
+    }
+
+    body_b {
+      body_b_param = s32[] parameter(0)
+      body_b_one = s32[] constant(1)
+      ROOT body_b_root = s32[] add(body_b_param, body_b_one)
+    }
+
+    condition_b {
+      condition_b_param = s32[] parameter(0)
+      ROOT condition_b_root = pred[] constant(false)
+    }
+
+    embedded {
+      embedded_param = s32[] parameter(0)
+      ROOT embedded_root = s32[] negate(embedded_param)
+    }
+
+    ENTRY entry {
+      param = s32[] parameter(0)
+      ROOT custom_call = s32[] custom-call(param), custom_call_target="foo", called_computations={embedded}
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kModule));
+
+  // The loops are added here and not parsed, so that the one at the higher
+  // address gets the lower unique id: an order by address then differs from
+  // the order by unique id.
+  HloComputation* embedded = FindComputation(module.get(), "embedded");
+  HloInstruction* init = embedded->parameter_instruction(0);
+  std::unique_ptr<HloInstruction> while_a = HloInstruction::CreateWhile(
+      init->shape(), FindComputation(module.get(), "condition_a"),
+      FindComputation(module.get(), "body_a"), init);
+  std::unique_ptr<HloInstruction> while_b = HloInstruction::CreateWhile(
+      init->shape(), FindComputation(module.get(), "condition_b"),
+      FindComputation(module.get(), "body_b"), init);
+  if (std::less<HloInstruction*>()(while_a.get(), while_b.get())) {
+    std::swap(while_a, while_b);
+  }
+  HloInstruction* first = embedded->AddInstruction(std::move(while_a));
+  HloInstruction* second = embedded->AddInstruction(std::move(while_b));
+  embedded->set_root_instruction(
+      embedded->AddInstruction(HloInstruction::CreateBinary(
+          init->shape(), HloOpcode::kAdd, first, second)));
+  ASSERT_LT(first->unique_id(), second->unique_id());
+  ASSERT_TRUE(std::less<HloInstruction*>()(second, first));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloDataflowAnalysis> analysis,
+                       HloDataflowAnalysis::Run(*module, /*ssa_form=*/true));
+
+  ASSERT_TRUE(analysis->ValueIsDefinedAt(first));
+  ASSERT_TRUE(analysis->ValueIsDefinedAt(second));
+  const HloValue& first_value = analysis->GetValueDefinedAt(first);
+  const HloValue& second_value = analysis->GetValueDefinedAt(second);
+  EXPECT_TRUE(first_value.is_phi());
+  EXPECT_TRUE(second_value.is_phi());
+  EXPECT_LT(first_value.id(), second_value.id());
 }
 
 // Values flow through a while loop whose state tuple is wider than the operand
