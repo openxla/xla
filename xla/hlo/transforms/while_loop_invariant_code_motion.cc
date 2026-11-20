@@ -37,11 +37,13 @@ limitations under the License.
 #include "xla/hlo/transforms/compile_time_cap.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
+#include "xla/layout.h"
 #include "xla/map_util.h"
 #include "xla/service/memory_annotations.h"
 #include "xla/service/while_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/side_effect_util.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
 
@@ -49,6 +51,22 @@ namespace xla {
 
 using absl::flat_hash_map;
 using absl::flat_hash_set;
+
+namespace {
+bool IsHoistableLayoutChangingCopy(const HloInstruction& inst) {
+  if (inst.opcode() != HloOpcode::kCopy || inst.has_backend_config() ||
+      inst.get_frontend_attribute(kXlaComputeTypeAttr) == kXlaComputeTypeHost) {
+    return false;
+  }
+  const Shape& src = inst.operand(0)->shape();
+  const Shape& dst = inst.shape();
+  return src.IsArrayExcludingBuffer() && src.has_layout() && dst.has_layout() &&
+         src.layout().memory_space() == Layout::kDefaultMemorySpace &&
+         dst.layout().memory_space() == Layout::kDefaultMemorySpace &&
+         Shape::Equal().IgnoreLayout()(src, dst) &&
+         src.layout() != dst.layout();
+}
+}  // namespace
 
 // Returns true if `instruction` is worth hoisting only if it lets us hoist some
 // instruction using it. The rationale is that hoisting these instructions will
@@ -66,6 +84,8 @@ bool WhileLoopInvariantCodeMotion::NotWorthHoistingIndividually(
     case HloOpcode::kConstant:
       return !hoist_constants_;
 
+    case HloOpcode::kCopy:
+      return !hoist_reshapes_ || !IsHoistableLayoutChangingCopy(instruction);
     case HloOpcode::kReshape:
       return !hoist_reshapes_;
 
@@ -190,8 +210,13 @@ WhileLoopInvariantCodeMotion::TryHoistingInvariantInstructionsFromWhileBody(
       continue;
     }
 
-    if (!hoist_other_ && instruction->opcode() != HloOpcode::kConstant &&
-        instruction->opcode() != HloOpcode::kReshape) {
+    if (instruction->opcode() == HloOpcode::kCopy) {
+      if ((!hoist_other_ && !hoist_reshapes_) ||
+          !IsHoistableLayoutChangingCopy(*instruction)) {
+        continue;
+      }
+    } else if (!hoist_other_ && instruction->opcode() != HloOpcode::kConstant &&
+               instruction->opcode() != HloOpcode::kReshape) {
       continue;
     }
 

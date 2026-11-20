@@ -2003,6 +2003,7 @@ cc_library(
     deps = [
         ":compile_time_cap",
         "//xla:shape_util",
+        "//xla:side_effect_util",
         "//xla:util",
         "//xla/hlo/analysis:while_loop_analysis",
         "//xla/hlo/ir:hlo",

@@ -1310,5 +1310,60 @@ ENTRY entry {
               absl_testing::IsOkAndHolds(true));
 }
 
+TEST_F(WhileLoopInvariantCodeMotionTest, HoistsLayoutChangingCopy) {
+  constexpr const char* kHlo = R"hlo(
+HloModule m
+body {
+  p = (f32[8,128]{1,0}, f32[8,128]{0,1}) parameter(0)
+  inv = get-tuple-element(p), index=0
+  ROOT r = tuple(inv, f32[8,128]{0,1} copy(inv))
+}
+cond {
+  p = (f32[8,128]{1,0}, f32[8,128]{0,1}) parameter(0)
+  ROOT c = pred[] constant(true)
+}
+ENTRY e {
+  p = (f32[8,128]{1,0}, f32[8,128]{0,1}) parameter(0)
+  ROOT w = while(p), condition=cond, body=body
+})hlo";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kHlo));
+  EXPECT_THAT(WhileLoopInvariantCodeMotion{}.Run(m.get()),
+              absl_testing::IsOkAndHolds(false));
+  WhileLoopInvariantCodeMotion pass(/*hoist_constants=*/false,
+                                    /*hoist_reshapes=*/true,
+                                    /*hoist_other=*/false);
+  EXPECT_THAT(pass.Run(m.get()), absl_testing::IsOkAndHolds(true));
+  HloInstruction* loop = nullptr;
+  FindOnlyWhileInstruction(m->entry_computation(), &loop);
+  EXPECT_THAT(m->entry_computation()->instructions(),
+              Contains(op::Copy(op::GetTupleElement(op::Parameter(0), 0))));
+  EXPECT_THAT(loop->while_body()->instructions(), Each(Not(op::Copy())));
+}
+
+TEST_F(WhileLoopInvariantCodeMotionTest, DoesNotHoistIneligibleCopies) {
+  constexpr const char* kHlo = R"hlo(
+HloModule m
+body {
+  p = (f32[8,128]{1,0}, f32[8,128]{1,0:S(1)}, f32[8,128]{1,0}, f32[8,128]{0,1:S(1)}, f32[8,128]{0,1}, f32[8,128]{0,1}, f32[8,128]{0,1}) parameter(0)
+  inv = get-tuple-element(p), index=0
+  inv_s1 = get-tuple-element(p), index=1
+  host = f32[8,128]{0,1} copy(inv), frontend_attributes={_xla_compute_type="host"}
+  cfg = f32[8,128]{0,1} copy(inv), backend_config="x"
+  ROOT r = tuple(inv, inv_s1, f32[8,128]{1,0} negate(f32[8,128]{1,0} copy(inv)), f32[8,128]{0,1:S(1)} copy(inv), f32[8,128]{0,1} copy(inv_s1), host, cfg)
+}
+cond {
+  p = (f32[8,128]{1,0}, f32[8,128]{1,0:S(1)}, f32[8,128]{1,0}, f32[8,128]{0,1:S(1)}, f32[8,128]{0,1}, f32[8,128]{0,1}, f32[8,128]{0,1}) parameter(0)
+  ROOT c = pred[] constant(true)
+}
+ENTRY e {
+  p = (f32[8,128]{1,0}, f32[8,128]{1,0:S(1)}, f32[8,128]{1,0}, f32[8,128]{0,1:S(1)}, f32[8,128]{0,1}, f32[8,128]{0,1}, f32[8,128]{0,1}) parameter(0)
+  ROOT w = while(p), condition=cond, body=body
+})hlo";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kHlo));
+  WhileLoopInvariantCodeMotion pass(/*hoist_constants=*/false,
+                                    /*hoist_reshapes=*/true);
+  EXPECT_THAT(pass.Run(m.get()), absl_testing::IsOkAndHolds(false));
+}
+
 }  // namespace
 }  // namespace xla
