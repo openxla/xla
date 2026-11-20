@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/tests/multi_process_gpu_test_base.h"
+#include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -41,8 +42,6 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
-#include "xla/stream_executor/rocm/rocm_compute_capability.h"
-#include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/xla.pb.h"
@@ -64,14 +63,8 @@ TEST_F(AllReduceMultiProcessE2ETest, OneShotAllReduce2Processes) {
                                                      ->IsAtLeastAmpere()) {
     GTEST_SKIP() << "One-shot all-reduce requires Ampere+ for CUDA.";
   }
-  // On ROCm, DeviceDescription::runtime_version() reports the HIP runtime
-  // version (populated from hipRuntimeGetVersion()), not the ROCm release
-  // version. ROCm 10.0 ships HIP runtime 7.15, so gate on HIP >= 7.15 to skip
-  // ROCm releases prior to 10.0.
-  if (const se::RocmComputeCapability* rocm_cc =
-          desc.gpu_compute_capability().rocm_compute_capability();
-      rocm_cc != nullptr &&
-      desc.runtime_version() < stream_executor::SemanticVersion(7, 15, 0)) {
+  if (desc.gpu_compute_capability().IsRocm() &&
+      !gpu::IsRocmSymmetricMemorySupported(desc)) {
     GTEST_SKIP() << "One-shot all-reduce requires ROCm 10.0+ (HIP runtime "
                     "7.15+).";
   }

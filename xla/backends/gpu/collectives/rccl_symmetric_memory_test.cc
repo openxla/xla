@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/rccl_symmetric_memory.h"
 
 #include <cstddef>
-#include <initializer_list>
 #include <memory>
 #include <string>
 
@@ -33,7 +32,6 @@ namespace {
 
 namespace se = stream_executor;
 
-using ::absl_testing::IsOk;
 using ::absl_testing::StatusIs;
 using ::testing::HasSubstr;
 
@@ -130,24 +128,6 @@ TEST_F(RcclSymmetricMemoryTest, CreateSucceeds) {
   // A successful Create() always yields a usable (non-null) window; a null or
   // non-LSA window would have failed the ncclGetPeerDevicePointer probe.
   EXPECT_NE(symm_mem->win(), nullptr);
-}
-
-// Create() reads NCCL_CUMEM_ENABLE once per process, so the parsing is tested
-// directly here instead of through the environment. No GPU needed.
-TEST(NcclCuMemEnabledStatusTest, AcceptsEnabledValues) {
-  EXPECT_THAT(internal::NcclCuMemEnabledStatus("1"), IsOk());
-  EXPECT_THAT(internal::NcclCuMemEnabledStatus("2"), IsOk());
-}
-
-TEST(NcclCuMemEnabledStatusTest, RejectsDisabledValues) {
-  for (const char* raw : std::initializer_list<const char*>{
-           nullptr, "", "0", "-1", "not-a-number"}) {
-    SCOPED_TRACE(raw == nullptr ? "unset" : raw);
-    absl::Status status = internal::NcclCuMemEnabledStatus(raw);
-    EXPECT_THAT(status, StatusIs(absl::StatusCode::kFailedPrecondition));
-    EXPECT_THAT(std::string(status.message()),
-                HasSubstr("NCCL_CUMEM_ENABLE=1"));
-  }
 }
 
 // Verifies that addr() returns exactly the pointer and size that were

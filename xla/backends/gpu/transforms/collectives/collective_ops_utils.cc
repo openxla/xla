@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -49,7 +50,6 @@ limitations under the License.
 #include "xla/side_effect_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/semantic_version.h"
-#include "xla/tsl/util/env_var.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -366,29 +366,21 @@ bool IsLsaPossible(const GpuTopology& gpu_topology) {
   }
   const se::DeviceDescription& device_description =
       gpu_topology.gpu_target_config().device_description;
-  const se::GpuComputeCapability& cc =
-      device_description.gpu_compute_capability();
   // CUDA devices support load-store accessible (LSA) symmetric memory.
-  if (cc.IsCuda()) {
+  if (device_description.gpu_compute_capability().IsCuda()) {
     return true;
   }
-  // ROCm: LSA / GIN symmetric memory needs the RCCL symmetric-memory window
-  // APIs, which first ship with ROCm 10.0, and RCCL's cuMem allocator, which is
-  // only on when NCCL_CUMEM_ENABLE >= 1 (on ROCm it defaults to 0). Without
-  // cuMem, comm->symmetricSupport is false and RcclSymmetricMemory::Create
-  // fails; since the kLoadStoreAccessible choice is final (the thunk has no
-  // run-time fallback), the emitter must see "no" here to fall back to the
-  // rendezvous path.
-  if (cc.IsRocm()) {
-    int64_t cumem_enable = 0;
-    return device_description.runtime_version() >=
-               kMinRocmSymmetricMemoryHipVersion &&
-           tsl::ReadInt64FromEnvVar("NCCL_CUMEM_ENABLE", /*default_val=*/0,
-                                    &cumem_enable)
-               .ok() &&
-           cumem_enable >= 1;
-  }
-  return false;
+  // On ROCm, RcclSymmetricMemory::Create also needs RCCL's cuMem allocator,
+  // which is only on when NCCL_CUMEM_ENABLE >= 1 (it defaults to 0).
+  return IsRocmSymmetricMemorySupported(device_description) &&
+         IsNcclCuMemEnabled();
+}
+
+bool IsRocmSymmetricMemorySupported(
+    const se::DeviceDescription& device_description) {
+  return device_description.gpu_compute_capability().IsRocm() &&
+         device_description.runtime_version() >=
+             kMinRocmSymmetricMemoryHipVersion;
 }
 
 int64_t GetCollectiveKernelDomainSize(

@@ -19,10 +19,8 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "rocm/include/rccl/rccl.h"
-#include "rocm/rocm_config.h"  // IWYU pragma: keep  (defines TF_ROCM_VERSION)
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/stream_executor/device_address.h"
@@ -81,15 +79,6 @@ class RcclSymmetricMemory final : public SymmetricMemory {
   stream_executor::DeviceAddressBase addr_;
   std::shared_ptr<tsl::Executor> executor_;
 };
-
-namespace internal {
-
-// Returns OK when `nccl_cumem_enable` (the raw NCCL_CUMEM_ENABLE value, or
-// nullptr when unset) enables RCCL's cuMem allocator, and therefore symmetric
-// window support. Exposed for testing; Create() reads the environment once.
-absl::Status NcclCuMemEnabledStatus(const char* nccl_cumem_enable);
-
-}  // namespace internal
 
 }  // namespace xla::gpu
 
