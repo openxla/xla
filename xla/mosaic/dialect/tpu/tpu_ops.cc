@@ -59,6 +59,7 @@ std::optional<CoreType> getRefCoreType(TypedValue<MemRefType> value) {
 struct TpuDialectBindings {
   using DMASemaphoreType = tpu::DMASemaphoreType;
   using EnqueueIndirectDMAOp = tpu::EnqueueIndirectDMAOp;
+  using Float8EXMYType = tpu::Float8EXMYType;
   using MemorySpace = tpu::MemorySpace;
   using MemorySpaceAttr = tpu::MemorySpaceAttr;
   using PackSubelementsOp = tpu::PackSubelementsOp;
