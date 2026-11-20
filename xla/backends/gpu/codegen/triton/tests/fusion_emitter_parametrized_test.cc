@@ -31,7 +31,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
-#include "xla/backends/gpu/codegen/triton/support_legacy.h"
 #include "xla/backends/gpu/codegen/triton/test_utils.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/comparison_util.h"
@@ -172,6 +171,58 @@ std::string ElementwiseTestParamsToString(
       absl::StrReplaceAll(HloOpcodeString(opcode), {{"-", "_"}}));
 }
 
+// Unary elementwise ops to test for each element type.
+std::vector<HloOpcode> UnaryElementwiseOpsToTest(PrimitiveType element_type) {
+  std::vector<HloOpcode> ret = {HloOpcode::kConvert};
+  if (element_type == PrimitiveType::PRED) {
+    ret.push_back(HloOpcode::kNot);
+    return ret;
+  }
+  ret.push_back(HloOpcode::kAbs);
+  ret.push_back(HloOpcode::kNegate);
+  if (element_type == PrimitiveType::F32 ||
+      element_type == PrimitiveType::BF16 ||
+      element_type == PrimitiveType::F16 ||
+      element_type == PrimitiveType::F64) {
+    ret.insert(ret.end(), {
+                              HloOpcode::kAcos,  HloOpcode::kAcosh,
+                              HloOpcode::kAsin,  HloOpcode::kAsinh,
+                              HloOpcode::kAtanh, HloOpcode::kCbrt,
+                              HloOpcode::kCeil,  HloOpcode::kCos,
+                              HloOpcode::kCosh,  HloOpcode::kErf,
+                              HloOpcode::kExp,   HloOpcode::kExpm1,
+                              HloOpcode::kFloor, HloOpcode::kLog,
+                              HloOpcode::kLog1p, HloOpcode::kRoundNearestEven,
+                              HloOpcode::kRsqrt, HloOpcode::kSin,
+                              HloOpcode::kSinh,  HloOpcode::kSqrt,
+                              HloOpcode::kTan,   HloOpcode::kTanh,
+                          });
+  }
+  return ret;
+}
+
+// Binary elementwise ops to test for each element type.
+std::vector<HloOpcode> BinaryElementwiseOpsToTest(PrimitiveType element_type) {
+  if (element_type == PrimitiveType::PRED) {
+    return {HloOpcode::kAnd, HloOpcode::kOr, HloOpcode::kXor,
+            HloOpcode::kCompare};
+  }
+  std::vector<HloOpcode> ret = {HloOpcode::kAdd,      HloOpcode::kCompare,
+                                HloOpcode::kMaximum,  HloOpcode::kMinimum,
+                                HloOpcode::kMultiply, HloOpcode::kSubtract};
+  if (element_type == PrimitiveType::F32 ||
+      element_type == PrimitiveType::BF16 ||
+      element_type == PrimitiveType::F16 ||
+      element_type == PrimitiveType::F64) {
+    ret.push_back(HloOpcode::kAtan2);
+    ret.push_back(HloOpcode::kPower);
+    if (element_type != PrimitiveType::F16) {
+      ret.push_back(HloOpcode::kDivide);
+    }
+  }
+  return ret;
+}
+
 using UnaryElementwiseTest = ElementwiseTest;
 
 TEST_P(UnaryElementwiseTest, ElementwiseFusionExecutesCorrectly) {
@@ -288,62 +339,44 @@ ENTRY e {
 
 INSTANTIATE_TEST_SUITE_P(
     ElementwiseTestSuitePRED, UnaryElementwiseTest,
-    ::testing::Combine(
-        ::testing::Values(PRED),
-        ::testing::ValuesIn(
-            legacy_triton::
-                TritonSupportedUnaryElementwiseUpToFloatNormalization(PRED)),
-        ::testing::Values(3e-2)),
+    ::testing::Combine(::testing::Values(PRED),
+                       ::testing::ValuesIn(UnaryElementwiseOpsToTest(PRED)),
+                       ::testing::Values(3e-2)),
     ElementwiseTestParamsToString);
 
 INSTANTIATE_TEST_SUITE_P(
     ElementwiseTestSuiteS8, UnaryElementwiseTest,
-    ::testing::Combine(
-        ::testing::Values(S8),
-        ::testing::ValuesIn(
-            legacy_triton::
-                TritonSupportedUnaryElementwiseUpToFloatNormalization(S8)),
-        ::testing::Values(3e-2)),
+    ::testing::Combine(::testing::Values(S8),
+                       ::testing::ValuesIn(UnaryElementwiseOpsToTest(S8)),
+                       ::testing::Values(3e-2)),
     ElementwiseTestParamsToString);
 
 INSTANTIATE_TEST_SUITE_P(
     ElementwiseTestSuiteS16, UnaryElementwiseTest,
-    ::testing::Combine(
-        ::testing::Values(S16),
-        ::testing::ValuesIn(
-            legacy_triton::
-                TritonSupportedUnaryElementwiseUpToFloatNormalization(S16)),
-        ::testing::Values(1e-3)),
+    ::testing::Combine(::testing::Values(S16),
+                       ::testing::ValuesIn(UnaryElementwiseOpsToTest(S16)),
+                       ::testing::Values(1e-3)),
     ElementwiseTestParamsToString);
 
 INSTANTIATE_TEST_SUITE_P(
     ElementwiseTestSuiteS32, UnaryElementwiseTest,
-    ::testing::Combine(
-        ::testing::Values(S32),
-        ::testing::ValuesIn(
-            legacy_triton::
-                TritonSupportedUnaryElementwiseUpToFloatNormalization(S32)),
-        ::testing::Values(1e-3)),
+    ::testing::Combine(::testing::Values(S32),
+                       ::testing::ValuesIn(UnaryElementwiseOpsToTest(S32)),
+                       ::testing::Values(1e-3)),
     ElementwiseTestParamsToString);
 
 INSTANTIATE_TEST_SUITE_P(
     ElementwiseTestSuiteF16, UnaryElementwiseTest,
-    ::testing::Combine(
-        ::testing::Values(F16),
-        ::testing::ValuesIn(
-            legacy_triton::
-                TritonSupportedUnaryElementwiseUpToFloatNormalization(F16)),
-        ::testing::Values(2e-4)),
+    ::testing::Combine(::testing::Values(F16),
+                       ::testing::ValuesIn(UnaryElementwiseOpsToTest(F16)),
+                       ::testing::Values(2e-4)),
     ElementwiseTestParamsToString);
 
 INSTANTIATE_TEST_SUITE_P(
     ElementwiseTestSuiteF32, UnaryElementwiseTest,
-    ::testing::Combine(
-        ::testing::Values(F32),
-        ::testing::ValuesIn(
-            legacy_triton::
-                TritonSupportedUnaryElementwiseUpToFloatNormalization(F32)),
-        ::testing::Values(1e-6)),
+    ::testing::Combine(::testing::Values(F32),
+                       ::testing::ValuesIn(UnaryElementwiseOpsToTest(F32)),
+                       ::testing::Values(1e-6)),
     ElementwiseTestParamsToString);
 
 using BinaryElementwiseTest = ElementwiseTest;
@@ -472,9 +505,7 @@ bool HloOpcodeIsComparison(HloOpcode opcode) {
   return opcode == HloOpcode::kCompare;
 }
 std::vector<HloOpcode> TestedBinaryElementwise(PrimitiveType element_type) {
-  std::vector<HloOpcode> ret =
-      legacy_triton::TritonSupportedBinaryElementwiseUpToFloatNormalization(
-          element_type);
+  std::vector<HloOpcode> ret = BinaryElementwiseOpsToTest(element_type);
   // Comparison requires an additional property.
   ret.erase(std::remove_if(ret.begin(), ret.end(), HloOpcodeIsComparison),
             ret.end());
@@ -600,8 +631,7 @@ TEST_P(SelectTest, SelectFusionExecutesCorrectly) {
   PrimitiveType data_type1, data_type2;
   std::tie(data_type1, data_type2) = GetParam();
   for (const PrimitiveType type : {data_type1, data_type2}) {
-    if (!legacy_triton::IsTritonSupportedDataType(type,
-                                                  GetCudaComputeCapability())) {
+    if (!IsTritonSupportedDataType(type, GetCudaComputeCapability())) {
       GTEST_SKIP() << absl::Substitute(
           "Unsupported data type: $0",
           primitive_util::LowercasePrimitiveTypeName(type));
@@ -701,8 +731,7 @@ class ConstantTest : public TritonTest,
 
 TEST_P(ConstantTest, ConstantFusionExecutesCorrectly) {
   const PrimitiveType data_type = GetParam();
-  if (!legacy_triton::IsTritonSupportedDataType(data_type,
-                                                GetCudaComputeCapability())) {
+  if (!IsTritonSupportedDataType(data_type, GetCudaComputeCapability())) {
     GTEST_SKIP() << absl::Substitute(
         "Unsupported data type: $0",
         primitive_util::LowercasePrimitiveTypeName(data_type));
@@ -803,8 +832,7 @@ TEST_P(ConvertTest, ConvertFusionExecutesCorrectly) {
   PrimitiveType data_type1, data_type2;
   std::tie(data_type1, data_type2) = GetParam();
   for (const PrimitiveType type : {data_type1, data_type2}) {
-    if (!legacy_triton::IsTritonSupportedDataType(type,
-                                                  GetCudaComputeCapability())) {
+    if (!IsTritonSupportedDataType(type, GetCudaComputeCapability())) {
       GTEST_SKIP() << absl::Substitute(
           "Unsupported data type: $0",
           primitive_util::LowercasePrimitiveTypeName(type));
