@@ -15,16 +15,20 @@ limitations under the License.
 
 #include "xla/service/collective_combiner_utils.h"
 
-#include <gtest/gtest.h>
-
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "absl/status/status.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/xla_data.pb.h"
 
@@ -37,6 +41,48 @@ std::unique_ptr<HloModule> CreateModule(const std::string& hlo_string) {
     return nullptr;
   }
   return std::move(module_or_status.value());
+}
+
+TEST(CollectiveCombinerUtilsTest, CombinesSmallerCandidatesAfterSizeLimit) {
+  auto module = CreateModule(R"hlo(
+    HloModule test_module
+    ENTRY main {
+      p0 = f32[2] parameter(0)
+      p1 = f32[6] parameter(1)
+      p2 = f32[2] parameter(2)
+      p3 = f32[1] parameter(3)
+      small0 = f32[2] copy(p0)
+      large = f32[6] copy(p1)
+      small1 = f32[2] copy(p2)
+      tail = f32[1] copy(p3)
+      ROOT result = (f32[2], f32[6], f32[2], f32[1])
+        tuple(small0, large, small1, tail)
+    }
+  )hlo");
+  ASSERT_NE(module, nullptr);
+  std::vector<std::vector<std::string>> groups;
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      CombineInstructionsByKey<int>(
+          module->entry_computation(),
+          [](const HloInstruction* instruction) -> std::optional<int> {
+            if (instruction->opcode() == HloOpcode::kCopy) {
+              return 0;
+            }
+            return std::nullopt;
+          },
+          [&](absl::Span<HloInstruction* const> instructions) {
+            std::vector<std::string> names;
+            for (const HloInstruction* instruction : instructions) {
+              names.emplace_back(instruction->name());
+            }
+            groups.push_back(std::move(names));
+            return absl::OkStatus();
+          },
+          /*combine_threshold_bytes=*/30, /*combine_threshold_count=*/2));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(groups, (std::vector<std::vector<std::string>>{{"small0", "small1"},
+                                                           {"large", "tail"}}));
 }
 
 TEST(CollectiveCombinerUtilsTest, MergeFrontendAttributesEmpty) {

@@ -155,7 +155,8 @@ absl::StatusOr<bool> CombineInstructionsByKey(
 
       if (to_combine_bytes + instruction_bytes > combine_threshold_bytes) {
         VLOG(1) << "Combined size threshold exceeded.";
-        break;
+        // Leave this candidate for the next group and try smaller ones.
+        continue;
       }
 
       // We can't combine dependent instructions.
