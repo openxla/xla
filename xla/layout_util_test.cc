@@ -19,8 +19,12 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/test_helpers.h"
@@ -770,6 +774,356 @@ INSTANTIATE_TEST_SUITE_P(IsUntiledLayoutTests, IsUntiledLayoutTest,
                              {{{24, 128}, {Tile({8, 128})}, true},
                               {{4, 256}, {Tile({1, 128})}, true},
                               {{2, 3, 4}, {Tile({8, 128})}, false}}));
+
+TEST_F(LayoutUtilTest, ValidateBitPlanesFp6AndS64Layouts) {
+  using ::absl_testing::IsOk;
+  using ::absl_testing::StatusIs;
+
+  const std::vector<BitPlane> fp6_2d_planes = {
+      BitPlane(0, 4, {Tile({8, 1})}),
+      BitPlane(4, 2, {Tile({16, 1})}),
+  };
+  const std::vector<BitPlane> fp6_1d_planes = {
+      BitPlane(0, 4, {Tile({128}), Tile({8, 1})}),
+      BitPlane(4, 2, {Tile({128}), Tile({16, 1})}),
+  };
+
+  // Valid FP6 2D compact, multi-strip, match-dim, planar, and 1D layouts.
+  EXPECT_THAT(ShapeUtil::MakeValidatedShapeWithDenseLayout(
+                  F6E3M2FN, {16, 128}, {1, 0}, {Tile({16, 128})}, 1, 0, 0, {},
+                  fp6_2d_planes),
+              IsOk());
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          F6E2M3FN, {256, 128}, {1, 0}, {Tile({256, 128}), Tile({16, 128})}, 1,
+          0, 0, {}, fp6_2d_planes),
+      IsOk());
+  EXPECT_THAT(ShapeUtil::MakeValidatedShapeWithDenseLayout(
+                  F6E3M2FN, {20, 128}, {1, 0},
+                  {Tile({Tile::kMatchDimension, 128}), Tile({16, 128})}, 1, 0,
+                  0, {}, fp6_2d_planes),
+              IsOk());
+  EXPECT_THAT(ShapeUtil::MakeValidatedShapeWithDenseLayout(
+                  F6E3M2FN, {256, 128}, {1, 0}, {Tile({256, 128})}, 1, 0, 0, {},
+                  fp6_2d_planes),
+              IsOk());
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          F6E3M2FN, {130}, {0}, {Tile({2048})}, 1, 0, 0, {}, fp6_1d_planes),
+      IsOk());
+  EXPECT_THAT(ShapeUtil::MakeValidatedShapeWithDenseLayout(
+                  F6E3M2FN, {4096}, {0}, {Tile({32768}), Tile({2048})}, 1, 0, 0,
+                  {}, fp6_1d_planes),
+              IsOk());
+  // MSB-first offsets and padded odd/sub-byte widths (U4 in 4b+2b).
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          F6E3M2FN, {16, 128}, {1, 0}, {Tile({16, 128})}, 1, 0, 0, {},
+          {BitPlane(4, 2, {Tile({16, 1})}), BitPlane(0, 4, {Tile({8, 1})})}),
+      IsOk());
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          U4, {16, 128}, {1, 0}, {Tile({16, 128})}, 1, 0, 0, {}, fp6_2d_planes),
+      IsOk());
+
+  // Valid S64/U64 whole-tensor split (empty outer tiles) and per-tile splits.
+  const std::vector<BitPlane> s64_2d_planes = {
+      BitPlane(0, 32, {Tile({8, 128})}),
+      BitPlane(32, 32, {Tile({8, 128})}),
+  };
+  EXPECT_THAT(ShapeUtil::MakeValidatedShapeWithDenseLayout(
+                  S64, {10, 130}, {1, 0}, {}, 1, 0, 0, {}, s64_2d_planes),
+              IsOk());
+  EXPECT_THAT(ShapeUtil::MakeValidatedShapeWithDenseLayout(
+                  U64, {10, 130}, {1, 0}, {}, 1, 0, 0, {},
+                  {BitPlane(0, 32, {Tile({Tile::kMatchDimension, 128})}),
+                   BitPlane(32, 32, {Tile({Tile::kMatchDimension, 128})})}),
+              IsOk());
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          S64, {100}, {0}, {}, 1, 0, 0, {},
+          {BitPlane(0, 32, {Tile({1024})}), BitPlane(32, 32, {Tile({1024})})}),
+      IsOk());
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          S64, {}, {}, {}, 1, 0, /*memory_space=*/1, {},
+          {BitPlane(0, 32, {Tile({128})}), BitPlane(32, 32, {Tile({128})})}),
+      IsOk());
+  EXPECT_THAT(ShapeUtil::MakeValidatedShapeWithDenseLayout(
+                  C64, {10, 130}, {1, 0}, {}, 1, 0, 0, {}, s64_2d_planes),
+              IsOk());
+  EXPECT_THAT(ShapeUtil::MakeValidatedShapeWithDenseLayout(
+                  F6E3M2FN, {2, 8, 128}, {2, 1, 0},
+                  {Tile({Tile::kCombineDimension, 16, 128})}, 1, 0, 0, {},
+                  fp6_2d_planes),
+              IsOk());
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          S64, {2, 5, 130}, {2, 1, 0}, {}, 1, 0, 0, {},
+          {BitPlane(0, 32, {Tile({Tile::kCombineDimension, 8, 128})}),
+           BitPlane(32, 32, {Tile({Tile::kCombineDimension, 8, 128})})}),
+      IsOk());
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          S64, {100}, {0}, {},
+          /*tail_padding_alignment_in_elements=*/128, 0, 0, {},
+          {BitPlane(0, 32, {Tile({1})}), BitPlane(32, 32, {Tile({1})})}),
+      IsOk());
+  EXPECT_THAT(ShapeUtil::MakeValidatedShapeWithDenseLayout(
+                  S64, {16, 128}, {1, 0}, {Tile({16, 128}), Tile({1, 128})}, 1,
+                  0, 0, {}, {BitPlane(0, 32), BitPlane(32, 32)}),
+              IsOk());
+
+  // 0D scalar in S(1) must still validate bit_planes, and non-empty bit_planes
+  // on a 2D shape in S(1) skips the AUTO early return so minor_to_major size
+  // validation still rejects an empty minor_to_major.
+  EXPECT_THAT(ShapeUtil::MakeValidatedShapeWithDenseLayout(
+                  S64, {}, {}, {}, 1, 0, /*memory_space=*/1, {},
+                  {BitPlane(0, 64, {Tile({128})})}),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("at least 2 planes")));
+  Shape auto_with_bp = ShapeUtil::MakeShape(F6E3M2FN, {16, 128});
+  auto_with_bp.mutable_layout()->clear_minor_to_major();
+  auto_with_bp.mutable_layout()->set_memory_space(1);
+  auto_with_bp.mutable_layout()->add_bit_planes(BitPlane(0, 4, {Tile({8, 1})}));
+  auto_with_bp.mutable_layout()->add_bit_planes(
+      BitPlane(4, 2, {Tile({16, 1})}));
+  EXPECT_THAT(
+      LayoutUtil::ValidateLayoutInShape(auto_with_bp),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("layout minor_to_major field contains 0 elements")));
+
+  // Invalid cases: E(n) + BP, single plane, overlap, gap below/above elem_bits,
+  // incomplete coverage, non-dividing outer subtile, 'd' in tiles.back(),
+  // non-dividing plane tile, '*'/'d' in plane.tiles with outer tiles, and
+  // non-strip-aligned L(n).
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          F6E3M2FN, {16, 128}, {1, 0}, {Tile({16, 128})}, 1,
+          /*element_size_in_bits=*/6, 0, {}, fp6_2d_planes),
+      StatusIs(
+          absl::StatusCode::kInvalidArgument,
+          HasSubstr(
+              "cannot specify both element_size_in_bits (6) and bit_planes")));
+  EXPECT_THAT(ShapeUtil::MakeValidatedShapeWithDenseLayout(
+                  U4, {16, 128}, {1, 0}, {Tile({16, 128})}, 1, 0, 0, {},
+                  {BitPlane(0, 4, {Tile({8, 1})})}),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("at least 2 planes")));
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          F6E3M2FN, {16, 128}, {1, 0}, {Tile({16, 128})}, 1, 0, 0, {},
+          {BitPlane(0, 4, {Tile({8, 1})}), BitPlane(3, 3, {Tile({16, 1})})}),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("overlapping bit ranges [0, 4) and [3, 6)")));
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          F6E3M2FN, {16, 128}, {1, 0}, {Tile({16, 128})}, 1, 0, 0, {},
+          {BitPlane(0, 2, {Tile({16, 1})}), BitPlane(4, 2, {Tile({16, 1})})}),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("contiguous from bit 0 (gap between [0, 2) and "
+                         "[4, 6))")));
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          F6E3M2FN, {16, 128}, {1, 0}, {Tile({16, 128})}, 1, 0, 0, {},
+          {BitPlane(0, 6, {Tile({16, 1})}), BitPlane(100, 2, {Tile({16, 1})})}),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("contiguous from bit 0 (gap between [0, 6) and "
+                         "[100, 102))")));
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          F6E3M2FN, {16, 128}, {1, 0}, {Tile({16, 128})}, 1, 0, 0, {},
+          {BitPlane(0, 2, {Tile({16, 1})}), BitPlane(2, 2, {Tile({16, 1})})}),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("must cover all 6 bits of element type "
+                         "(covered up to 4)")));
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          F6E3M2FN, {256, 128}, {1, 0}, {Tile({20, 128}), Tile({16, 128})}, 1,
+          0, 0, {}, fp6_2d_planes),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("subtile dimension 16 does not evenly divide "
+                         "parent dimension 20")));
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          F6E3M2FN, {20, 128}, {1, 0}, {Tile({Tile::kMatchDimension, 128})}, 1,
+          0, 0, {}, fp6_2d_planes),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("kMatchDimension ('d') is not allowed in the "
+                         "innermost outer tile")));
+  EXPECT_THAT(ShapeUtil::MakeValidatedShapeWithDenseLayout(
+                  F6E3M2FN, {8, 128}, {1, 0}, {Tile({8, 128})}, 1, 0, 0, {},
+                  fp6_2d_planes),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("subtile dimension 16 does not evenly divide "
+                                 "parent dimension 8")));
+  EXPECT_THAT(ShapeUtil::MakeValidatedShapeWithDenseLayout(
+                  F6E3M2FN, {16, 128}, {1, 0}, {Tile({16, 128})}, 1, 0, 0, {},
+                  {BitPlane(0, 4, {Tile({Tile::kMatchDimension, 1})}),
+                   BitPlane(4, 2, {Tile({16, 1})})}),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must be strictly positive (no '*' or 'd')")));
+  EXPECT_THAT(
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          F6E3M2FN, {16, 128}, {1, 0}, {Tile({16, 128})},
+          /*tail_padding_alignment_in_elements=*/100, 0, 0, {}, fp6_2d_planes),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("tail_padding_alignment_in_elements (100) "
+                         "must be a multiple of the innermost tile "
+                         "element count (2048)")));
+}
+
+TEST_F(LayoutUtilTest, ClearTilesAndBitOffsetForBitPlane) {
+  Shape fp6_1d = ShapeUtil::MakeShapeWithDenseLayout(
+      F6E3M2FN, {130}, {0}, {Tile({2048})}, 1, 0, 0, {},
+      {BitPlane(0, 4, {Tile({128}), Tile({8, 1})}),
+       BitPlane(4, 2, {Tile({128}), Tile({16, 1})})});
+  // Index 129 wraps to (row=1, lane=1) -> plane 1 bit 8192 + (1*16 + 1)*2 =
+  // 8226 (byte 1028), while index 127 sits at (row=0, lane=127) -> plane 1 bit
+  // 8192 + (127*16 + 0)*2 = 12256 (byte 1532).
+  EXPECT_EQ(LayoutUtil::BitOffsetForBitPlane(fp6_1d, {129}, 1), 8226);
+  EXPECT_EQ(LayoutUtil::BitOffsetForBitPlane(fp6_1d, {127}, 1), 12256);
+
+  Shape s64_2d = ShapeUtil::MakeShapeWithDenseLayout(
+      S64, {10, 130}, {1, 0}, {}, 1, 0, 0, {},
+      {BitPlane(0, 32, {Tile({8, 128})}), BitPlane(32, 32, {Tile({8, 128})})});
+  // Plane 0 pads [10, 130] to [16, 256] = 4096 elements = 16384 bytes.
+  EXPECT_EQ(LayoutUtil::BitOffsetForBitPlane(s64_2d, {0, 0}, 0), 0);
+  EXPECT_EQ(LayoutUtil::BitOffsetForBitPlane(s64_2d, {0, 0}, 1), 16384 * 8);
+
+  LayoutUtil::ClearTiles(&fp6_1d);
+  EXPECT_TRUE(fp6_1d.layout().tiles().empty());
+  EXPECT_TRUE(fp6_1d.layout().bit_planes().empty());
+}
+
+TEST_F(LayoutUtilTest, PhysicalDimensionsAndResolveTileStep) {
+  using absl_testing::IsOk;
+  using absl_testing::StatusIs;
+
+  Shape split_shape = ShapeUtil::MakeShapeWithDenseLayout(
+      F32, {10, 20}, {0, 1}, {}, /*tail_padding_alignment_in_elements=*/1,
+      /*element_size_in_bits=*/0, /*memory_space=*/0, {SplitConfig(0, {6})});
+  // minor_to_major={0, 1} puts logical dim 1 (major, split at 6 -> max 14)
+  // before logical dim 0 (minor, size 10).
+  EXPECT_THAT(LayoutUtil::PhysicalDimensions(split_shape), ElementsAre(14, 10));
+
+  Shape unbounded_shape =
+      ShapeUtil::MakeShape(F32, {Shape::kUnboundedSize, 128});
+  *unbounded_shape.mutable_layout() = LayoutUtil::MakeLayout({1, 0});
+  EXPECT_THAT(LayoutUtil::PhysicalDimensions(unbounded_shape),
+              ElementsAre(Shape::kUnboundedSize, 128));
+
+  // Pad 1D shape [20] to 2D and resolve kMatchDimension against (16, 128).
+  const std::vector<int64_t> sub_tile_dims = {16, 128};
+  absl::StatusOr<LayoutUtil::ResolvedTileStep> step =
+      LayoutUtil::ResolveTileStep({20}, Tile({Tile::kMatchDimension, 128}),
+                                  sub_tile_dims);
+  ASSERT_THAT(step, IsOk());
+  EXPECT_EQ(step->leading_pad_dims, 1);
+  EXPECT_EQ(step->suffix_start, 0);
+  EXPECT_THAT(step->padded_suffix, ElementsAre(1, 20));
+  EXPECT_THAT(step->effective_tile_dims, ElementsAre(16, 128));
+  EXPECT_THAT(step->next_shape, ElementsAre(1, 1, 16, 128));
+
+  // Combine ('*') + zero-sized dimension handling.
+  absl::StatusOr<LayoutUtil::ResolvedTileStep> zero_step =
+      LayoutUtil::ResolveTileStep(
+          {2, 0, 128},
+          Tile({Tile::kCombineDimension, Tile::kMatchDimension, 128}),
+          sub_tile_dims);
+  ASSERT_THAT(zero_step, IsOk());
+  EXPECT_THAT(zero_step->effective_tile_dims, ElementsAre(16, 128));
+  EXPECT_THAT(zero_step->next_shape, ElementsAre(0, 1, 16, 128));
+
+  // Unbounded dimension combining, kMatchDimension, and next_shape propagation.
+  absl::StatusOr<LayoutUtil::ResolvedTileStep> unbounded_step =
+      LayoutUtil::ResolveTileStep(
+          {2, Shape::kUnboundedSize, 128},
+          Tile({Tile::kCombineDimension, Tile::kMatchDimension, 128}),
+          sub_tile_dims);
+  ASSERT_THAT(unbounded_step, IsOk());
+  EXPECT_THAT(unbounded_step->effective_tile_dims, ElementsAre(16, 128));
+  EXPECT_THAT(unbounded_step->next_shape,
+              ElementsAre(Shape::kUnboundedSize, 1, 16, 128));
+
+  // Error branches: empty tile, trailing '*', non-positive dim, and overflow.
+  using ::testing::HasSubstr;
+  EXPECT_THAT(LayoutUtil::ResolveTileStep({16, 128}, Tile(), {}),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("layout has empty tile dimensions")));
+  EXPECT_THAT(LayoutUtil::ResolveTileStep(
+                  {16, 128}, Tile({16, Tile::kCombineDimension}), {}),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("tile cannot end with kCombineDimension")));
+  EXPECT_THAT(LayoutUtil::ResolveTileStep({16, 128}, Tile({0, 128}), {}),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must be positive")));
+  EXPECT_THAT(
+      LayoutUtil::ResolveTileStep({std::numeric_limits<int64_t>::max(), 2},
+                                  Tile({Tile::kCombineDimension, 16}), {}),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("combined tile dimension overflows")));
+  EXPECT_THAT(LayoutUtil::ResolveTileStep(
+                  {std::numeric_limits<int64_t>::max(), 128},
+                  Tile({Tile::kMatchDimension, 128}), sub_tile_dims),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("kMatchDimension tile size overflows")));
+}
+
+TEST_F(LayoutUtilTest, ValidateBitPlanesRejectsOverflow) {
+  using absl_testing::StatusIs;
+  using ::testing::HasSubstr;
+
+  // Combining SplitConfig with bit_planes is rejected.
+  Shape split_shape = ShapeUtil::MakeShape(S64, {20, 128});
+  Layout split_bp_layout(
+      {1, 0}, /*tiles=*/{}, PRIMITIVE_TYPE_INVALID, PRIMITIVE_TYPE_INVALID,
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/0, {SplitConfig(0, {6})}, /*physical_shape=*/nullptr,
+      /*dynamic_shape_metadata_prefix_bytes=*/0,
+      {BitPlane(0, 32, {Tile({8, 128})}), BitPlane(32, 32, {Tile({8, 128})})});
+  EXPECT_THAT(
+      LayoutUtil::ValidateLayoutForShape(split_bp_layout, split_shape),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("cannot specify both split_configs and bit_planes")));
+
+  // Total bit_width across disjoint planes overflows int64_t.
+  Shape scalar_shape = ShapeUtil::MakeShape(F6E3M2FN, {16, 128});
+  Layout overflow_width_layout(
+      {1, 0}, {Tile({16, 128})}, PRIMITIVE_TYPE_INVALID, PRIMITIVE_TYPE_INVALID,
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/0, /*split_configs=*/{}, /*physical_shape=*/nullptr,
+      /*dynamic_shape_metadata_prefix_bytes=*/0,
+      {BitPlane(0, 6, {Tile({8, 1})}),
+       BitPlane(6, std::numeric_limits<int64_t>::max() - 6, {Tile({16, 1})})});
+  EXPECT_THAT(
+      LayoutUtil::ValidateLayoutForShape(overflow_width_layout, scalar_shape),
+      StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("overflows")));
+
+  // Static tensor with outer tiles whose total bit count overflows int64_t.
+  Shape large_shape = ShapeUtil::MakeShape(F6E3M2FN, {1LL << 31, 1LL << 30});
+  Layout outer_tiled_bp(
+      {1, 0}, {Tile({16, 128})}, PRIMITIVE_TYPE_INVALID, PRIMITIVE_TYPE_INVALID,
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/0, /*split_configs=*/{}, /*physical_shape=*/nullptr,
+      /*dynamic_shape_metadata_prefix_bytes=*/0,
+      {BitPlane(0, 4, {Tile({8, 1})}), BitPlane(4, 2, {Tile({16, 1})})});
+  EXPECT_THAT(LayoutUtil::ValidateLayoutForShape(outer_tiled_bp, large_shape),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("bit count overflows")));
+
+  // Static tensor with empty outer tiles whose per-plane bit sum overflows.
+  Shape large_s64 = ShapeUtil::MakeShape(S64, {1LL << 29, 1LL << 29});
+  Layout whole_tensor_bp(
+      {1, 0}, {}, PRIMITIVE_TYPE_INVALID, PRIMITIVE_TYPE_INVALID,
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/0, /*split_configs=*/{}, /*physical_shape=*/nullptr,
+      /*dynamic_shape_metadata_prefix_bytes=*/0,
+      {BitPlane(0, 32, {Tile({8, 128})}), BitPlane(32, 32, {Tile({8, 128})})});
+  EXPECT_THAT(LayoutUtil::ValidateLayoutForShape(whole_tensor_bp, large_s64),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("bit count overflows")));
+}
 
 void BM_MakeDescendingLayout(::testing::benchmark::State& state) {
   const int64_t num_dims = state.range(0);

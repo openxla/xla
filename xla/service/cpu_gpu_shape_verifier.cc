@@ -33,6 +33,12 @@ absl::Status CpuGpuShapeVerifier::Preprocess(HloInstruction* hlo) {
   ABSL_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
       hlo->shape(), [&](const Shape& shape, const ShapeIndex&) {
         if (shape.has_layout()) {
+          if (!shape.layout().bit_planes().empty()) {
+            return absl::InvalidArgumentError(absl::StrFormat(
+                "The XLA CPU/GPU backend does not support bit-plane layouts: "
+                "%s",
+                hlo->ToString()));
+          }
           if (!primitive_util::IsSubByteNonPredType(shape.element_type()) &&
               shape.layout().element_size_in_bits() != 0) {
             return absl::InvalidArgumentError(absl::StrFormat(

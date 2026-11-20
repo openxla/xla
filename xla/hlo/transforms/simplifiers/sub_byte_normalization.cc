@@ -53,11 +53,11 @@ bool UpdateLayout(Layout* layout, PrimitiveType type,
     case SubByteNormalization::REMOVE_ELEMENT_SIZE:
       return set_element_size(0);
     case SubByteNormalization::SET_ELEMENT_SIZE:
-      if (primitive_util::IsSubByteNonPredType(type)) {
+      if (primitive_util::IsSubByteNonPredType(type) &&
+          layout->bit_planes().empty()) {
         return set_element_size(primitive_util::BitWidth(type));
-      } else {
-        return set_element_size(0);
       }
+      return set_element_size(0);
   }
 }
 

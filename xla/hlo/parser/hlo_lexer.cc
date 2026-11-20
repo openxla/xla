@@ -168,6 +168,8 @@ TokKind HloLexer::LexToken(uint64_t skip_mask) {
         return TokKind::kPlus;
       case '~':
         return TokKind::kTilde;
+      case '@':
+        return TokKind::kAt;
       case '[':
         return TokKind::kLsquare;
       case ']':
@@ -770,6 +772,8 @@ std::string TokKindToString(TokKind kind) {
       return "kDecimal";
     case TokKind::kDots:
       return "kDots";
+    case TokKind::kAt:
+      return "kAt";
   }
 }
 

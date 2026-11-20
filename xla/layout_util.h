@@ -18,6 +18,7 @@ limitations under the License.
 #ifndef XLA_LAYOUT_UTIL_H_
 #define XLA_LAYOUT_UTIL_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -25,6 +26,7 @@ limitations under the License.
 
 #include "absl/base/macros.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/layout.h"
 #include "xla/printer.h"
@@ -37,6 +39,25 @@ namespace xla {
 // Namespaced collection of (static) Layout utilities.
 class LayoutUtil {
  public:
+  // Result of resolving a single `Tile` step against the trailing dimensions of
+  // an expanded physical shape.
+  struct ResolvedTileStep {
+    // Number of leading unit dimensions prepended when the tile rank exceeded
+    // the input shape rank.
+    size_t leading_pad_dims = 0;
+    // Index in the (possibly padded) shape where the tiled suffix begins.
+    size_t suffix_start = 0;
+    // Raw suffix of the (possibly 1-padded) shape before merging '*'.
+    std::vector<int64_t> padded_suffix;
+    // Resolved positive tile sizes (with `Tile::kMatchDimension` ('d') resolved
+    // against `sub_tile_dims`).
+    std::vector<int64_t> effective_tile_dims;
+    // Expanded shape after replacing the suffix with
+    // `[CeilOfRatio(combined_dims[j], effective_tile_dims[j])...,
+    //   effective_tile_dims[j]...]`.
+    std::vector<int64_t> next_shape;
+  };
+
   LayoutUtil(const LayoutUtil&) = delete;
   LayoutUtil& operator=(const LayoutUtil&) = delete;
 
@@ -51,7 +72,8 @@ class LayoutUtil {
       int64_t element_size_in_bits = 0, int64_t memory_space = 0,
       absl::Span<const SplitConfig> split_configs = {},
       std::optional<Shape> physical_shape = std::nullopt,
-      int64_t dynamic_shape_metadata_prefix_bytes = 0);
+      int64_t dynamic_shape_metadata_prefix_bytes = 0,
+      absl::Span<const BitPlane> bit_planes = {});
 
   // Similar to MakeLayout, but take indices in reverse order.
   static Layout MakeLayoutFromMajorToMinor(
@@ -109,7 +131,8 @@ class LayoutUtil {
   // Clears the layout on all Shapes within the given ProgramShape.
   static void ClearLayout(ProgramShape* program_shape);
 
-  // Clears the tiling fields from the shape and/or all of its subshapes.
+  // Clears the tiles and bit_planes fields from the shape and/or all of its
+  // subshapes.
   static void ClearTiles(Shape* shape);
 
   // Returns whether the given Shape is an array and has a dense in-memory
@@ -271,6 +294,14 @@ class LayoutUtil {
   static std::vector<int64_t> DelinearizeIndexForNestedTiling(
       const Shape& shape, int64_t linear_index);
 
+  // Returns the bit offset (from the start of the array payload, excluding any
+  // dynamic shape metadata prefix) of the `plane_index`-th bit-plane slice for
+  // the logical element at `indices`. Requires
+  // `!shape.layout().bit_planes().empty()`.
+  static int64_t BitOffsetForBitPlane(const Shape& shape,
+                                      absl::Span<const int64_t> indices,
+                                      int64_t plane_index);
+
   // If the shape has a layout, returns the contained memory space.  Otherwise,
   // returns Layout::kDefaultMemorySpace.
   static int64_t MemorySpace(const Shape& shape);
@@ -297,6 +328,19 @@ class LayoutUtil {
 
   // Returns a shape's split config if present.
   static std::optional<SplitConfig> GetSplitConfig(const Shape& shape);
+
+  // Returns the physical major-to-minor dimensions of array `shape` (using
+  // `MaxSplitSize` for bounded dimensions and preserving `kUnboundedSize`).
+  // Requires `shape.IsArray()`.
+  static std::vector<int64_t> PhysicalDimensions(const Shape& shape);
+
+  // Treats `current_shape` as left-padded with 1s if needed to match `tile`'s
+  // rank, merges `Tile::kCombineDimension` ('*'), resolves
+  // `Tile::kMatchDimension` ('d') against `sub_tile_dims`, and returns the
+  // expanded `next_shape`.
+  static absl::StatusOr<ResolvedTileStep> ResolveTileStep(
+      absl::Span<const int64_t> current_shape, const Tile& tile,
+      absl::Span<const int64_t> sub_tile_dims);
 
   // Returns true if the layout tiling is equivalent to having no tiles at all.
   // This is not a complete check and may return false for some unusual tilings

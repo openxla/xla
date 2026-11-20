@@ -52,6 +52,19 @@ class PjRtLayout {
              "or `kMatchDimension` in tile dimensions, but got "
           << xla_layout_;
     }
+    for (const auto& plane : xla_layout_.bit_planes()) {
+      for (const auto& tile : plane.tiles()) {
+        CHECK(absl::c_none_of(tile.dimensions(),
+                              [](int64_t d) {
+                                return d == xla::Tile::kCombineDimension ||
+                                       d == xla::Tile::kMatchDimension;
+                              }))
+            << "Runtime buffers must not have layouts with "
+               "`kCombineDimension` or `kMatchDimension` in bit-plane tile "
+               "dimensions, but got "
+            << xla_layout_;
+      }
+    }
   }
 
   PjRtLayout(PjRtLayout& other) = delete;

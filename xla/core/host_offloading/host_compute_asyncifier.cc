@@ -57,6 +57,7 @@ void RemoveTilesAndMemorySpaces(HloComputation* computation) {
           }
           Layout* layout = subshape->mutable_layout();
           layout->clear_tiles();
+          layout->clear_bit_planes();
           layout->set_memory_space(Layout::kDefaultMemorySpace);
         });
   }

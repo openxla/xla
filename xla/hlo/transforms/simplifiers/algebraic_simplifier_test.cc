@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -14120,6 +14121,56 @@ TEST_F(SimplifyNoOpBitcastConvertTest,
               GmockMatch(m::Bitcast()));
 }
 
+TEST_F(SimplifyNoOpBitcastConvertTest,
+       DoNotSimplifyBitcastConvertInvolvingBitPlanes) {
+  constexpr absl::string_view kFp6ModuleStr = R"hlo(
+    HloModule fp6_bp
+
+    ENTRY test {
+      p0 = u8[16,128]{1,0} parameter(0)
+      ROOT out = f6e2m3fn[16,128]{1,0:T(16,128)BP(4:(8,1))(2:(16,1))}
+          bitcast-convert(p0)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> fp6_m,
+                       ParseAndReturnVerifiedModule(kFp6ModuleStr));
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(fp6_m.get()),
+              absl_testing::IsOkAndHolds(false));
+  EXPECT_EQ(fp6_m->entry_computation()->root_instruction()->opcode(),
+            HloOpcode::kBitcastConvert);
+
+  constexpr absl::string_view kS64ToS32ModuleStr = R"hlo(
+    HloModule s64_bp_to_s32
+
+    ENTRY test {
+      p0 = s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))} parameter(0)
+      ROOT out = s32[16,128,2]{2,1,0} bitcast-convert(p0)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> s64_m,
+                       ParseAndReturnVerifiedModule(kS64ToS32ModuleStr));
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(s64_m.get()),
+              absl_testing::IsOkAndHolds(false));
+  EXPECT_EQ(s64_m->entry_computation()->root_instruction()->opcode(),
+            HloOpcode::kBitcastConvert);
+
+  constexpr absl::string_view kS32ToS64ModuleStr = R"hlo(
+    HloModule s32_to_s64_bp
+
+    ENTRY test {
+      p0 = s32[16,128,2]{2,1,0} parameter(0)
+      ROOT out = s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))}
+          bitcast-convert(p0)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> s32_m,
+                       ParseAndReturnVerifiedModule(kS32ToS64ModuleStr));
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(s32_m.get()),
+              absl_testing::IsOkAndHolds(false));
+  EXPECT_EQ(s32_m->entry_computation()->root_instruction()->opcode(),
+            HloOpcode::kBitcastConvert);
+}
+
 TEST_F(AlgebraicSimplifierTest, SimplifyBitcastConvertChain) {
   constexpr absl::string_view kModuleStr = R"(
     HloModule m
@@ -16981,6 +17032,117 @@ TEST_F(AlgebraicSimplifierTest, CanonicalizesMultiDimShuffleRotate) {
   EXPECT_EQ(shuffle->rotate().shifts(0), 3);
   EXPECT_EQ(shuffle->dimensions()[1], 1);
   EXPECT_EQ(shuffle->rotate().shifts(1), 3);
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       DoesNotHoistUnaryElementwiseAcrossWholeTensorBitPlaneBitcasts) {
+  constexpr absl::string_view kModuleStr = R"hlo(
+    HloModule bit_plane_bitcast_unary
+
+    ENTRY main {
+      p0 = s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))} parameter(0)
+      bc_in = s64[16,128]{1,0} bitcast(p0)
+      neg = s64[16,128]{1,0} negate(bc_in)
+      ROOT bc_out = s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))} bitcast(neg)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  options.set_is_layout_sensitive(true);
+  AlgebraicSimplifier simplifier(options);
+  EXPECT_THAT(simplifier.Run(m.get()), absl_testing::IsOkAndHolds(false));
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Bitcast(m::Negate(m::Bitcast(m::Parameter(0))))));
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       DoesNotSwapCopyBitcastCopyAcrossBitPlaneLayouts) {
+  constexpr absl::string_view kModuleStr = R"hlo(
+    HloModule swap_copy_bitcast_copy_bit_planes
+
+    ENTRY main {
+      p0 = s64[16,128]{0,1} parameter(0)
+      c0 = s64[16,128]{1,0} copy(p0)
+      bc = s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))} bitcast(c0)
+      ROOT c1 = s64[16,128]{0,1} copy(bc)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  options.set_is_layout_sensitive(true);
+  AlgebraicSimplifier simplifier(options);
+  EXPECT_THAT(simplifier.Run(m.get()), absl_testing::IsOkAndHolds(false));
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Copy(m::Bitcast(m::Copy(m::Parameter(0))))));
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       DoesNotReplaceBitPlaneCopyOrTransposeWithBitcast) {
+  constexpr absl::string_view kModuleStr = R"hlo(
+    HloModule bit_plane_copy_and_transpose
+
+    ENTRY main {
+      p0 = s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))} parameter(0)
+      copied = s64[16,128]{1,0} copy(p0)
+      transposed = s64[128,16]{0,1} transpose(p0), dimensions={1,0}
+      ROOT out = (s64[16,128]{1,0}, s64[128,16]{0,1}) tuple(copied, transposed)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  options.set_is_layout_sensitive(true);
+  options.set_enable_reshape_is_bitcast(true);
+  AlgebraicSimplifier simplifier(options);
+  EXPECT_THAT(simplifier.Run(m.get()), absl_testing::IsOkAndHolds(false));
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Tuple(m::Copy(m::Parameter(0)),
+                                  m::Transpose(m::Parameter(0)))));
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       DoesNotFoldBitPlaneRelayoutCopyIntoBitcastReshape) {
+  constexpr absl::string_view kModuleStr = R"hlo(
+    HloModule bit_plane_copy_reshape
+
+    ENTRY main {
+      p0 = s64[2,8,128]{2,1,0:BP(32:(8,128))(32:(8,128))} parameter(0)
+      r0 = s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))} reshape(p0)
+      ROOT c0 = s64[16,128]{1,0:T(8,128)BP(32:(8,128))(32:(8,128))} copy(r0)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  options.set_is_layout_sensitive(true);
+  options.set_enable_reshape_is_bitcast(true);
+  AlgebraicSimplifier simplifier(options);
+  EXPECT_THAT(simplifier.Run(m.get()), absl_testing::IsOkAndHolds(false));
+  EXPECT_EQ(m->entry_computation()->root_instruction()->opcode(),
+            HloOpcode::kCopy);
+}
+
+TEST_F(AlgebraicSimplifierTest, DoesNotRewriteBitPlaneBitcastConvertToBitcast) {
+  constexpr absl::string_view kModuleStr = R"hlo(
+    HloModule bit_plane_bitcast_convert
+
+    ENTRY main {
+      p0 = u8[16,128]{1,0:T(16,128)BP(4:(8,1))(4:(8,1))} parameter(0)
+      ROOT bc = f6e2m3fn[16,128]{1,0:T(16,128)BP(4:(8,1))(4:(8,1))}
+          bitcast-convert(p0)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  options.set_is_layout_sensitive(true);
+  options.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
+  AlgebraicSimplifier simplifier(options);
+  EXPECT_THAT(simplifier.Run(m.get()), absl_testing::IsOkAndHolds(false));
+  EXPECT_EQ(m->entry_computation()->root_instruction()->opcode(),
+            HloOpcode::kBitcastConvert);
 }
 
 }  // namespace
