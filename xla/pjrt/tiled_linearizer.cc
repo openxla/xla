@@ -43,6 +43,8 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "third_party/gloop/util/gtl/c_memcpy.h"
+#include "third_party/gloop/util/gtl/c_memset.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/layout.h"
@@ -224,11 +226,11 @@ void RepackFromSparseCoreLayout(absl::Span<const uint32_t> input,
                                 absl::Span<uint8_t> output) {
   const size_t output_bytes = output.size();
   if constexpr (kPackingFactor <= 4) {
-    std::memcpy(output.data(), input.data(), output_bytes);
+    gtl::c_memcpy(output, input, output_bytes);
   } else {
     constexpr int kBitsPerElement = 32 / kPackingFactor;
     const size_t num_elements = output_bytes;
-    std::memset(output.data(), 0, output_bytes);
+    gtl::c_memset_n(output, 0, output_bytes);
     const uint8_t* input_bytes = reinterpret_cast<const uint8_t*>(input.data());
     for (size_t i = 0; i < num_elements; ++i) {
       size_t byte_idx = (i * kBitsPerElement) / CHAR_BIT;
@@ -441,7 +443,7 @@ void RepackToHostLayout(absl::Span<const uint32_t> input,
                   staging_buffer, partial_bytes_remaining);
     }
   } else {
-    std::memcpy(output.data(), input.data(), output.size());
+    gtl::c_memcpy(output, input, output.size());
   }
 }
 
@@ -621,7 +623,7 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
   }
 
   if (prefix_size > 0) {
-    std::memset(dest.data(), pad_byte, prefix_size);
+    gtl::c_memset_n(dest, pad_byte, prefix_size);
   }
 
   std::optional<Buffer> scratch;

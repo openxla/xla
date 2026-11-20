@@ -57,6 +57,7 @@ limitations under the License.
 #include "llvm/Support/MathExtras.h"
 #include "riegeli/bytes/cord_reader.h"
 #include "riegeli/bytes/string_reader.h"
+#include "third_party/gloop/util/gtl/c_memcpy.h"
 #include "tsl/platform/context.h"
 #include "tsl/profiler/lib/connected_traceme.h"
 #include "tsl/profiler/lib/context_types.h"
@@ -1646,7 +1647,7 @@ absl::Status CommonPjRtClient::Delinearize(absl::Span<const uint8_t> input_data,
     if (primitive_util::IsSubByteNonPredType(shape.element_type())) {
       primitive_util::UnpackIntN(shape.element_type(), input_span, output_span);
     } else if (output_size > 0) {
-      std::memcpy(output_span.data(), input_span.data(), output_size);
+      gtl::c_memcpy(output_span, input_span, output_size);
     }
   }
 
