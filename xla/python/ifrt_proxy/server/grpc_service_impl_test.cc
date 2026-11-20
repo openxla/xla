@@ -108,8 +108,11 @@ GrpcServiceImpl::BackendFactory FakeBackendFactory(
   };
 }
 
-// Opens a session on `service` and closes it, which tears it down.
-::grpc::Status OpenAndCloseSession(GrpcServiceImpl& service) {
+// Opens a session on `service` and closes it, which tears it down. With
+// `leave_after`, the client instead leaves, as a dying client does, once it is
+// notified.
+::grpc::Status OpenAndCloseSession(GrpcServiceImpl& service,
+                                   absl::Notification* leave_after = nullptr) {
   ::grpc::ServerBuilder builder;
   builder.RegisterService(&service);
   std::unique_ptr<::grpc::Server> server = builder.BuildAndStart();
@@ -124,7 +127,12 @@ GrpcServiceImpl::BackendFactory FakeBackendFactory(
                       metadata.SerializeAsString());
   std::unique_ptr<::grpc::ClientReaderWriter<IfrtRequest, IfrtResponse>>
       stream = stub->IfrtSession(&context);
-  stream->WritesDone();
+  if (leave_after == nullptr) {
+    stream->WritesDone();
+  } else {
+    leave_after->WaitForNotification();
+    context.TryCancel();
+  }
   return stream->Finish();
 }
 
@@ -156,6 +164,32 @@ TEST(GrpcServiceImplDeathTest, SessionTeardownTimeoutCrashesProcess) {
   EXPECT_DEATH(RunSessionWhoseTeardownOutlastsTimeout(),
                "Teardown of IFRT session 1 did not finish within 1s; crashing "
                "so that the server can be restarted");
+}
+
+void RunSessionWhoseClientLeavesDuringEndlessCreation() {
+  absl::Notification creation_started;
+  absl::Notification never_notified;
+  GrpcServiceImpl::Options options;
+  options.session_teardown_timeout = absl::Seconds(1);
+  GrpcServiceImpl service(
+      [&](IfrtProxyVersion version, uint64_t session_id,
+          std::shared_ptr<HostBufferStore> host_buffer_store,
+          AttributeMap initialization_data)
+          -> absl::StatusOr<std::unique_ptr<BackendInterface>> {
+        creation_started.Notify();
+        never_notified.WaitForNotificationWithTimeout(absl::Seconds(30));
+        return std::make_unique<FakeBackend>([] {});
+      },
+      std::move(options));
+  (void)OpenAndCloseSession(service, &creation_started);
+}
+
+TEST(GrpcServiceImplDeathTest, CreationOutlivingDepartedClientCrashesProcess) {
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  EXPECT_DEATH(RunSessionWhoseClientLeavesDuringEndlessCreation(),
+               "Creating the backend of IFRT session 1 did not finish within "
+               "1s after its client left; crashing so that the server can be "
+               "restarted");
 }
 
 class GrpcIfrtServiceImplHostBufferTest
