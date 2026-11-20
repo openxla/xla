@@ -538,6 +538,17 @@ TEST(FfiTest, DeviceOrdinal) {
 
 namespace {
 
+static_assert(!internal::IsStageCompatibleCtx<
+              LogicalDeviceInfo, ExecutionStage::kInstantiate>::value);
+static_assert(internal::IsStageCompatibleCtx<LogicalDeviceInfo,
+                                             ExecutionStage::kPrepare>::value);
+static_assert(internal::IsStageCompatibleCtx<
+              LogicalDeviceInfo, ExecutionStage::kInitialize>::value);
+static_assert(internal::IsStageCompatibleCtx<LogicalDeviceInfo,
+                                             ExecutionStage::kExecute>::value);
+static_assert(internal::IsStageCompatibleCtx<LogicalDeviceInfo,
+                                             ExecutionStage::kRecord>::value);
+
 TEST(FfiTest, LogicalDeviceInfo) {
   auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
   auto handler = Ffi::Bind().Ctx<LogicalDeviceInfo>().Ctx().To(
@@ -565,19 +576,31 @@ TEST(FfiTest, LogicalDeviceInfo) {
   assignment(1, 1) = 6;
   assignment(1, 2) = 7;
   InvokeContext context;
-  context.logical_device_context =
-      InvokeContext::LogicalDeviceContext{&assignment, GlobalDeviceId(7)};
+  context.logical_device_context = InvokeContext::LogicalDeviceContext{
+      &assignment, DeviceAssignment::LogicalID{1, 2}};
   ASSERT_OK(Invoke(Api(), *handler, call_frame, context));
 }
 
 TEST(FfiTest, LogicalDeviceInfoUnavailableAtInstantiate) {
   auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
-  auto handler = Ffi::BindInstantiate().Ctx<LogicalDeviceInfo>().To(
-      [](LogicalDeviceInfo) { return Error::Success(); });
+  auto handler = Ffi::BindInstantiate().Ctx().To([](Context ctx) {
+    auto info = ctx.get<LogicalDeviceInfo>();
+    return info.has_value() ? Error::Success() : info.error();
+  });
   EXPECT_THAT(
       Invoke(Api(), *handler, call_frame, {}, ExecutionStage::kInstantiate),
-      StatusIs(absl::StatusCode::kInvalidArgument,
+      StatusIs(absl::StatusCode::kInternal,
                HasSubstr("requires an execution device assignment")));
+}
+
+TEST(FfiTest, LogicalDeviceInfoNullContext) {
+  XLA_FFI_LogicalDeviceInfo_Get_Args args = {};
+  args.struct_size = XLA_FFI_LogicalDeviceInfo_Get_Args_STRUCT_SIZE;
+  XLA_FFI_Error* error = Api()->XLA_FFI_LogicalDeviceInfo_Get(&args);
+  ASSERT_NE(error, nullptr);
+  Error status = internal::ErrorPolicy::TakeError(Api(), error);
+  EXPECT_EQ(status.errc(), ErrorCode::kInvalidArgument);
+  EXPECT_THAT(status.message(), HasSubstr("invocation context is null"));
 }
 
 TEST(FfiTest, LogicalDeviceInfoDeviceNotInAssignment) {
@@ -587,8 +610,8 @@ TEST(FfiTest, LogicalDeviceInfoDeviceNotInAssignment) {
   DeviceAssignment assignment(/*replica_count=*/1, /*computation_count=*/1);
   assignment(0, 0) = 4;
   InvokeContext context;
-  context.logical_device_context =
-      InvokeContext::LogicalDeviceContext{&assignment, GlobalDeviceId(7)};
+  context.logical_device_context = InvokeContext::LogicalDeviceContext{
+      &assignment, assignment.LogicalIdForDevice(GlobalDeviceId(7))};
   EXPECT_THAT(Invoke(Api(), *handler, call_frame, context),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("Device 7 doesn't appear")));

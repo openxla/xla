@@ -1447,6 +1447,8 @@ CpuExecutableLoadState::LoadRawExecutable(
   auto result = std::make_unique<CpuPjRtRawLoadedExecutable>(run_id);
   result->executable_ = absl::down_cast<PjRtCpuExecutable*>(&executable.get());
   result->raw_client_ = raw_client_;
+  result->logical_device_id_ = {device_and_assign.replica,
+                                device_and_assign.partition};
   ABSL_ASSIGN_OR_RETURN(
       std::shared_ptr<const DeviceAssignment> device_assignment,
       GetDeviceAssignment(&executable.get(), device_and_assign.process_index));
@@ -1455,6 +1457,7 @@ CpuExecutableLoadState::LoadRawExecutable(
     (*single_device_assignment)(0, 0) =
         device_and_assign.global_device_id.value();
     device_assignment = std::move(single_device_assignment);
+    result->logical_device_id_ = {0, 0};
   }
   int num_addressable_devices = 0;
   for (int r = 0; r < device_assignment->replica_count(); ++r) {
@@ -1582,8 +1585,6 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
 
   ExecutableRunOptions run_options;
   run_options.set_run_id(run_id_);
-  // Need to keep device_assignment alive until execution completes.
-  run_options.set_device_assignment(device_assignment_.get());
   run_options.set_rng_seed(options.seed);
 
   auto cpu_run_options = std::make_unique<cpu::CpuExecutableRunOptions>();
@@ -1631,6 +1632,13 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
   } else {
     run_options.set_device_ordinal(global_device_id_.value());
   }
+  // A process-index override can select a different logical device. Keep the
+  // assignment alive until execution completes, and resolve that device anew.
+  run_options.set_device_assignment(
+      device_assignment_.get(),
+      run_options.device_ordinal() == global_device_id_.value()
+          ? std::make_optional(logical_device_id_)
+          : std::nullopt);
   if (cpu_execute_context != nullptr &&
       cpu_execute_context->collectives() != nullptr) {
     cpu_run_options->set_collectives(cpu_execute_context->collectives());

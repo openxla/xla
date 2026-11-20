@@ -91,7 +91,7 @@ static XLA_FFI_InvokeContext CreateExecutionContext(
   if (context.logical_device_context.has_value()) {
     const auto& logical = *context.logical_device_context;
     result.logical_device_context = XLA_FFI_InvokeContext::LogicalDeviceContext{
-        logical.device_assignment, logical.device_id};
+        logical.device_assignment, logical.logical_device_id};
   }
   return result;
 }

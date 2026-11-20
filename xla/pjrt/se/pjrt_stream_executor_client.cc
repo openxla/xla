@@ -1492,7 +1492,9 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
                   ->backend()
                   .eigen_intra_op_thread_pool_device()
             : nullptr);
-    run_options.set_device_assignment(device_assignment.get());
+    run_options.set_device_assignment(
+        device_assignment.get(),
+        DeviceAssignment::LogicalID{replica, partition});
     run_options.set_run_id(run_id);
     run_options.set_rng_seed(seed);
     run_options.set_gpu_executable_run_options(std::move(gpu_run_options));

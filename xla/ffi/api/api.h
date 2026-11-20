@@ -1861,6 +1861,11 @@ struct LogicalDeviceInfo {
 };
 
 template <>
+struct internal::IsStageCompatibleCtx<LogicalDeviceInfo,
+                                      ExecutionStage::kInstantiate>
+    : std::false_type {};
+
+template <>
 struct CtxDecoding<LogicalDeviceInfo> {
   using Type = LogicalDeviceInfo;
 

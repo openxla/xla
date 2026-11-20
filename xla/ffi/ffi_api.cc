@@ -367,6 +367,11 @@ static XLA_FFI_Error* XLA_FFI_LogicalDeviceInfo_Get(
       "XLA_FFI_LogicalDeviceInfo_Get_Args",
       XLA_FFI_LogicalDeviceInfo_Get_Args_STRUCT_SIZE, args->struct_size));
 
+  if (args->ctx == nullptr) {
+    return new XLA_FFI_Error{
+        InvalidArgument("XLA FFI invocation context is null")};
+  }
+
   const std::optional<XLA_FFI_InvokeContext::LogicalDeviceContext>& logical =
       args->ctx->logical_device_context;
   if (!logical.has_value() || logical->device_assignment == nullptr) {
@@ -374,10 +379,10 @@ static XLA_FFI_Error* XLA_FFI_LogicalDeviceInfo_Get(
         "Logical device information requires an execution device assignment")};
   }
   const DeviceAssignment& assignment = *logical->device_assignment;
-  absl::StatusOr<DeviceAssignment::LogicalID> id =
-      assignment.LogicalIdForDevice(logical->device_id);
+  const absl::StatusOr<DeviceAssignment::LogicalID>& id =
+      logical->logical_device_id;
   if (!id.ok()) {
-    return new XLA_FFI_Error{std::move(id).status()};
+    return new XLA_FFI_Error{id.status()};
   }
   args->replica_id = id->replica_id;
   args->partition_id = id->computation_id;

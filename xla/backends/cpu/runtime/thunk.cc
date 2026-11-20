@@ -121,19 +121,33 @@ Thunk::CollectiveExecuteParams::Create(
           ? cpu_run_options->collectives()
           : in_process_collectives;
 
-  return CollectiveExecuteParams{run_options->run_id(), device_ordinal,
+  return CollectiveExecuteParams{run_options->run_id(),
+                                 device_ordinal,
                                  GlobalDeviceId(run_options->device_ordinal()),
-                                 run_options->device_assignment(), collectives};
+                                 run_options->device_assignment(),
+                                 collectives,
+                                 run_options->logical_device_id()};
 }
 
 Thunk::CollectiveExecuteParams::CollectiveExecuteParams(
     RunId run_id, int64_t local_device_ordinal, GlobalDeviceId global_device_id,
-    const DeviceAssignment* device_assignment, CpuCollectives* collectives)
+    const DeviceAssignment* device_assignment, CpuCollectives* collectives,
+    std::optional<DeviceAssignment::LogicalID> logical_id)
     : run_id(run_id),
       local_device_ordinal(local_device_ordinal),
       global_device_id(global_device_id),
       device_assignment(device_assignment),
-      collectives(collectives) {}
+      collectives(collectives) {
+  // Placement errors matter only when a handler requests logical device info.
+  if (device_assignment == nullptr) {
+    logical_device_id = absl::FailedPreconditionError(
+        "Logical device information requires an execution device assignment");
+  } else if (logical_id.has_value()) {
+    logical_device_id = *logical_id;
+  } else {
+    logical_device_id = device_assignment->LogicalIdForDevice(global_device_id);
+  }
+}
 
 absl::StatusOr<Thunk::CustomCallExecuteParams>
 Thunk::CustomCallExecuteParams::Create(

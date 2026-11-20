@@ -359,7 +359,8 @@ TEST(CustomCallThunkTest, ForwardsLogicalDeviceInfoToAllRuntimeStages) {
       {LocalDeviceId(executor->device_ordinal()), GlobalDeviceId(7)}});
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
-  run_options.mutable_run_options()->set_device_assignment(&assignment);
+  run_options.mutable_run_options()->set_device_assignment(
+      &assignment, DeviceAssignment::LogicalID{1, 2});
   run_options.mutable_run_options()->set_gpu_executable_run_options(
       &gpu_options);
   ASSERT_OK_AND_ASSIGN(
