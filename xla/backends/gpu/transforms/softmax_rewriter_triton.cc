@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/softmax_rewriter_triton.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -201,7 +202,7 @@ bool IsTriviallyConnectedProducerOf(
 // TilingSpace. We need to come up with a better solution.
 absl::StatusOr<HloFusionInstruction*> MakeFusionForDiamond(
     const DiamondDescriptor& diamond) {
-  auto [root, producer] = diamond;
+  auto [root, producer, split_reduction_producer] = diamond;
 
   std::string suggested_name = "triton_softmax";
   HloComputation::Builder builder(absl::StrCat(suggested_name, "_computation"));
@@ -216,6 +217,15 @@ absl::StatusOr<HloFusionInstruction*> MakeFusionForDiamond(
   param++;
 
   std::vector<HloInstruction*> parameters = {producer};
+  if (split_reduction_producer != nullptr &&
+      split_reduction_producer != producer) {
+    old_to_new_mapping[split_reduction_producer] =
+        builder.AddInstruction(HloInstruction::CreateParameter(
+            param, split_reduction_producer->shape(),
+            absl::StrCat("parameter_", param)));
+    param++;
+    parameters.push_back(split_reduction_producer);
+  }
 
   std::function<void(HloInstruction*)> create_computation =
       [&](HloInstruction* instr) -> void {
@@ -326,12 +336,29 @@ EstimateOptimizedHloRunTimeWithoutSoftMaxRewriterTriton(
   ABSL_RETURN_IF_ERROR(entry_computation->Accept(&cost_analysis));
 
   absl::Duration total_run_time = absl::ZeroDuration();
+  int64_t num_kernels = 0;
 
   GpuPerformanceModelOwning gpu_performance_model(device_info);
   for (const HloInstruction* instr : entry_computation->instructions()) {
-    total_run_time += gpu_performance_model.Get()
-                          .EstimateRunTimeForInstruction(instr, &cost_analysis)
-                          .exec_time;
+    absl::Duration exec_time =
+        gpu_performance_model.Get()
+            .EstimateRunTimeForInstruction(instr, &cost_analysis)
+            .exec_time;
+    if (exec_time > absl::ZeroDuration()) {
+      ++num_kernels;
+    }
+    total_run_time += exec_time;
+  }
+  // `exec_time` excludes kernel launch overhead. The fused alternative is a
+  // single Triton kernel, so charge the unfused alternative one
+  // `kKernelLaunchOverhead` for every additional kernel (instructions with
+  // zero estimated time, e.g. parameters and bitcasts, launch no kernel).
+  // Without this, launch-bound normalizations (e.g. small-batch decode RMSNorms
+  // whose kernels each run for only a few us) are wrongly considered cheaper
+  // when left unfused.
+  if (num_kernels > 1) {
+    total_run_time +=
+        (num_kernels - 1) * GpuPerformanceModelBase::kKernelLaunchOverhead;
   }
 
   return total_run_time;
@@ -506,8 +533,13 @@ FusionDecision ShouldFuseReduction(const HloInstruction& reduce,
   return FusionDecision::Allow();
 }
 
-DiamondMatchingDecision MatchesTritonCompatibleClosedReductionDiamondImpl(
-    HloInstruction* instr, const se::GpuComputeCapability& cc) {
+// Matches a closed reduction diamond rooted at `instr`. When
+// `allow_split_reduction` is true, two-stage tree reductions are also matched
+// and recorded in `DiamondDescriptor::split_reduction_producer`.
+std::variant<FusionDecision, DiamondDescriptor>
+MatchesTritonCompatibleClosedReductionDiamondImpl(
+    HloInstruction* instr, const se::GpuComputeCapability& cc,
+    bool allow_split_reduction) {
   if (!instr->IsElementwiseBinary()) {
     return FusionDecision::Forbid("Root is not elementwise binary.");
   }
@@ -576,6 +608,30 @@ DiamondMatchingDecision MatchesTritonCompatibleClosedReductionDiamondImpl(
     producer = ChooseOperandForFusionProcessing(producer);
   }
 
+  // Support two-stage tree reductions split by `TreeReductionRewriter` (e.g.
+  // 65536-wide RMSNorms split into `r1: [M, 256, 256] -> [M, 256]` followed by
+  // `r2: [M, 256] -> [M]`): keep `r1` as an external Stage-1 kernel and fuse
+  // Stage-2 `r2` into the normalization consumer without re-reading the full
+  // row across output blocks. `r1` must have no other users, and its input must
+  // be trivially connected to the same producer as the diamond root, so that
+  // only genuine split reductions of the normalized tensor are matched.
+  HloInstruction* matched_split_reduction = nullptr;
+  if (allow_split_reduction && producer->opcode() == HloOpcode::kReduce &&
+      HasOneUse(producer) && HasDefaultLayout(producer->shape())) {
+    HloInstruction* outer_producer = producer->mutable_operand(0);
+    while (IsTriviallyFusible(outer_producer, cc)) {
+      outer_producer = ChooseOperandForFusionProcessing(outer_producer);
+    }
+    if (HasDefaultLayout(outer_producer->shape()) &&
+        IsTriviallyConnectedProducerOf(outer_producer,
+                                       instr->mutable_operand(0), cc) &&
+        (outer_producer == instr->operand(0) ||
+         instr->operand(0)->user_count() == 1)) {
+      matched_split_reduction = producer;
+      producer = outer_producer;
+    }
+  }
+
   if (!HasDefaultLayout(producer->shape())) {
     return FusionDecision::Forbid("Producer has non-default layout.");
   }
@@ -595,7 +651,9 @@ DiamondMatchingDecision MatchesTritonCompatibleClosedReductionDiamondImpl(
   VLOG(2) << "broadcast: " << broadcast->ToString();
   VLOG(2) << "reduce: " << reduce->ToString();
 
-  return producer;
+  return DiamondDescriptor{
+      /*root=*/instr, /*producer=*/producer,
+      /*split_reduction_producer=*/matched_split_reduction};
 }
 
 }  // anonymous namespace
@@ -603,8 +661,14 @@ DiamondMatchingDecision MatchesTritonCompatibleClosedReductionDiamondImpl(
 DiamondMatchingDecision
 SoftmaxRewriterTriton::MatchesTritonCompatibleClosedReductionDiamond(
     HloInstruction* instr) const {
-  return MatchesTritonCompatibleClosedReductionDiamondImpl(
-      instr, device_info_.gpu_compute_capability());
+  std::variant<FusionDecision, DiamondDescriptor> decision =
+      MatchesTritonCompatibleClosedReductionDiamondImpl(
+          instr, device_info_.gpu_compute_capability(),
+          /*allow_split_reduction=*/false);
+  if (std::holds_alternative<DiamondDescriptor>(decision)) {
+    return std::get<DiamondDescriptor>(decision).producer;
+  }
+  return std::get<FusionDecision>(decision);
 }
 
 absl::StatusOr<std::vector<DiamondDescriptor>>
@@ -620,11 +684,12 @@ SoftmaxRewriterTriton::FindAllFusibleNormalizationDiamonds(
       continue;
     }
     for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
-      auto producer =
-          MatchesTritonCompatibleClosedReductionDiamondImpl(instr, cc);
-      if (std::holds_alternative<HloInstruction*>(producer)) {
-        DiamondDescriptor diamond{
-            /*root=*/instr, /*producer=*/std::get<HloInstruction*>(producer)};
+      std::variant<FusionDecision, DiamondDescriptor> decision =
+          MatchesTritonCompatibleClosedReductionDiamondImpl(
+              instr, cc, /*allow_split_reduction=*/true);
+      if (std::holds_alternative<DiamondDescriptor>(decision)) {
+        const DiamondDescriptor& diamond =
+            std::get<DiamondDescriptor>(decision);
         // We filter out the diamonds that cannot be tiled correctly.
         ABSL_ASSIGN_OR_RETURN(bool can_tile_diamond, CanTileDiamond(diamond));
         if (can_tile_diamond) {
@@ -632,13 +697,13 @@ SoftmaxRewriterTriton::FindAllFusibleNormalizationDiamonds(
         } else {
           VLOG(2) << "Cannot tile the diamond pattern described by "
                   << "instructions " << instr->ToString() << " and "
-                  << std::get<HloInstruction*>(producer)->ToString() << ".";
+                  << diamond.producer->ToString() << ".";
           continue;
         }
       } else {
         VLOG(2) << "Cannot match the diamond pattern for instruction "
                 << instr->ToString()
-                << ". Reason: " << std::get<FusionDecision>(producer).Explain();
+                << ". Reason: " << std::get<FusionDecision>(decision).Explain();
       }
     }
   }
