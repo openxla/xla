@@ -15,7 +15,7 @@
 
 load("@xla//third_party/rules_python/python:py_test.bzl", "py_test")
 load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal")
-load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
+load("//xla/tsl:tsl.bzl", "if_windows", "internal_visibility", "tsl_copts")
 load(
     "//xla/tsl/platform:build_config_root.bzl",
     "if_llvm_aarch32_available",
@@ -94,10 +94,32 @@ cc_library(
 )
 
 cc_library(
+    name = "page_committed_memory",
+    srcs = if_windows(
+        ["page_committed_memory_windows.cc"],
+        ["page_committed_memory_default.cc"],
+    ),
+    hdrs = ["page_committed_memory.h"],
+)
+
+xla_cc_test(
+    name = "page_committed_memory_test",
+    srcs = if_windows(
+        ["page_committed_memory_windows_test.cc"],
+        ["page_committed_memory_default_test.cc"],
+    ),
+    deps = [
+        ":page_committed_memory",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "contiguous_section_memory_manager",
     srcs = ["contiguous_section_memory_manager.cc"],
     hdrs = ["contiguous_section_memory_manager.h"],
     deps = [
+        ":page_committed_memory",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@llvm-project//llvm:ExecutionEngine",
@@ -105,6 +127,17 @@ cc_library(
         # TODO(basioli): This dependency increases the binary size significantly.
         # Consider reducing the dependency size, or use something alternative.
         "//xla:util",
+    ],
+)
+
+xla_cc_test(
+    name = "contiguous_section_memory_manager_test",
+    srcs = ["contiguous_section_memory_manager_test.cc"],
+    deps = [
+        ":contiguous_section_memory_manager",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:ExecutionEngine",
+        "@llvm-project//llvm:Support",
     ],
 )
 
