@@ -184,6 +184,9 @@ class HloRematInstructionList {
       HloRematItem* to_insert,
       absl::Span<HloRematItem* const> after_instructions);
 
+  // Unlinks 'item' from both lanes while retaining ownership in item_map_.
+  void RemoveItem(HloRematItem* item);
+
   void Denylist(const HloInstruction* inst) {
     GetItem(inst)->denylisted = true;
   }
