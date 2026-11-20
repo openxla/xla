@@ -49,6 +49,7 @@ namespace gpu {
 struct TiledRunTimeData {
   EstimateRunTimeData runtime_data;
   xla::xtile::BlockLevelParameters block_level_parameters;
+  int64_t num_blocks = 0;
 
   std::string ToString() const {
     return absl::StrCat("block_config: {", block_level_parameters.ToString(),

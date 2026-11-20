@@ -26,6 +26,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
+#include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 
 namespace xla::gpu {
@@ -213,6 +214,18 @@ TEST(CreateTmaDescriptorTest, BoxDimsAreAdjustedForSwizzleMode) {
       tma_desc, CreateTmaDescriptor(global_shape, tile_shape, tile_strides,
                                     layout, element_byte_size, swizzle_mode));
   EXPECT_EQ(tma_desc.box_dims()[0], 8);
+}
+
+TEST(IsTmaRecommendedBlockLevelTest, RequiresAtLeastNineBlocks) {
+  xtile::BlockLevelFusionConfig config;
+  config.set_num_warps(4);
+  config.set_num_stages(1);
+  xtile::Tile* tile = config.add_output_tiles();
+  tile->add_sizes(2);
+  tile->add_sizes(4);
+
+  EXPECT_FALSE(IsTmaRecommended(config, /*num_blocks=*/8));
+  EXPECT_TRUE(IsTmaRecommended(config, /*num_blocks=*/9));
 }
 
 }  // namespace

@@ -1261,7 +1261,8 @@ absl::StatusOr<std::optional<TiledRunTimeData>> EstimateTiledRunTimeDataImpl(
     return std::nullopt;
   }
 
-  return TiledRunTimeData{estimate_run_time_data, block_level_parameters};
+  return TiledRunTimeData{estimate_run_time_data, block_level_parameters,
+                          tiled_hlo_computation.num_output_tiles()};
 }
 
 // Returns the tile sizes to consider for the reduction dimension `dim`. This is

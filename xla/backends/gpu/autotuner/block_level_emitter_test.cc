@@ -490,5 +490,62 @@ ENTRY %main {
   EXPECT_FALSE(backend_.IsSupported(*instr));
 }
 
+TEST_F(TritonBlockLevelFusionEmitterBackendTest,
+       SkipsTmaForSmallGridReductions) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> small_module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule m
+%max {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %m = f32[] maximum(%a, %b)
+}
+%reduce_comp {
+  %p0 = f32[8,256]{1,0} parameter(0)
+  %c = f32[] constant(-inf)
+  ROOT %r = f32[8]{0} reduce(%p0, %c), dimensions={1}, to_apply=%max
+}
+ENTRY %main {
+  %p0 = f32[8,256]{1,0} parameter(0)
+  ROOT %fusion = f32[8]{0} fusion(%p0), kind=kInput, calls=%reduce_comp
+})"));
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<BackendConfig>> small_configs,
+      backend_.GetSupportedConfigs(
+          *small_module->entry_computation()->root_instruction()));
+  EXPECT_FALSE(small_configs.empty());
+  EXPECT_FALSE(AnyTmaAllowed(small_configs));
+}
+
+TEST_F(TritonBlockLevelFusionEmitterBackendTest,
+       SkipsTmaForSmallGridMultiOutputFusion) {
+  HloModuleConfig config = GetModuleConfigForTest();
+  config.mutable_debug_options()
+      .set_xla_gpu_experimental_enable_same_shape_multi_output_fusion(true);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> small_module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule m
+%f {
+  %p0 = f32[2,4]{1,0} parameter(0)
+  %p1 = f32[2,4]{1,0} parameter(1)
+  %add = f32[2,4]{1,0} add(%p0, %p1)
+  %sub = f32[2,4]{1,0} subtract(%p0, %p1)
+  ROOT %t = (f32[2,4]{1,0}, f32[2,4]{1,0}) tuple(%add, %sub)
+}
+ENTRY %main {
+  %p0 = f32[2,4]{1,0} parameter(0)
+  %p1 = f32[2,4]{1,0} parameter(1)
+  ROOT %fusion = (f32[2,4]{1,0}, f32[2,4]{1,0}) fusion(%p0, %p1),
+    kind=kLoop, calls=%f
+})",
+                                                    config));
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<BackendConfig>> small_configs,
+      backend_.GetSupportedConfigs(
+          *small_module->entry_computation()->root_instruction()));
+  EXPECT_FALSE(small_configs.empty());
+  EXPECT_FALSE(AnyTmaAllowed(small_configs));
+}
+
 }  // namespace gpu
 }  // namespace xla

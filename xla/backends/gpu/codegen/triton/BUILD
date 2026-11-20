@@ -891,6 +891,7 @@ xla_cc_test(
     deps = [
         ":tma_utils",
         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
+        "//xla/codegen/xtile:xtile_config_proto_cc",
         "//xla/stream_executor/gpu:tma_metadata",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
