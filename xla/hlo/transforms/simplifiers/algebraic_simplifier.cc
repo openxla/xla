@@ -433,6 +433,46 @@ bool ValidateTilingOfBitcast(
   return true;
 }
 
+std::optional<int64_t> GetClampedConstantIndex(const HloInstruction* index,
+                                               int64_t max_start) {
+  std::optional<int64_t> v = Match(index, m::ConstantScalar())
+                                 ? index->literal().GetFirstInteger()
+                                 : std::nullopt;
+  return v ? std::make_optional(std::clamp<int64_t>(*v, 0, max_start)) : v;
+}
+
+// Returns true if `dus` writes an unmodified slice back to the same offsets.
+bool IsIdentityDynamicUpdateSlice(const HloInstruction* dus) {
+  const HloInstruction* updated = dus->operand(0);
+  const HloInstruction* slice = dus->operand(1);
+  const bool is_slice = hlo_instruction_utils::IsUnstridedSlice(slice);
+  const Shape& shape = updated->shape();
+  if ((!is_slice && slice->opcode() != HloOpcode::kDynamicSlice) ||
+      slice->operand(0) != updated || !shape.IsArrayExcludingBuffer() ||
+      !shape.is_static() || !slice->shape().is_static() ||
+      ShapeUtil::IsZeroElementArray(shape) ||
+      !ShapeUtil::SameElementType(shape, slice->shape()) ||
+      !ShapeUtil::SameRank(shape, slice->shape()) ||
+      dus->operand_count() != 2 + shape.dimensions().size() ||
+      (!is_slice && slice->operand_count() != 1 + shape.dimensions().size())) {
+    return false;
+  }
+  for (int64_t d = 0; d < shape.dimensions().size(); ++d) {
+    const int64_t hi = shape.dimensions(d) - slice->shape().dimensions(d);
+    const HloInstruction* dus_idx = dus->operand(2 + d);
+    const HloInstruction* src_idx = is_slice ? dus_idx : slice->operand(1 + d);
+    if (hi < 0 || !ShapeUtil::IsScalar(dus_idx->shape()) ||
+        !ShapeUtil::IsScalar(src_idx->shape()) ||
+        (hi > 0 && (is_slice || src_idx != dus_idx) &&
+         GetClampedConstantIndex(dus_idx, hi) !=
+             (is_slice ? slice->slice_starts(d)
+                       : GetClampedConstantIndex(src_idx, hi).value_or(-1)))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Constructs the maps that take dims of A and dims of B to dims of AB, mapping
 // to -1 for dimensions not present in AB. For an example, consider we are
 // computing a dot whose operands have shapes [m,n,p] and [n,q]. Assuming we
@@ -8460,6 +8500,10 @@ absl::Status AlgebraicSimplifierVisitor::HandleDynamicUpdateSlice(
   // in the future.
   HloInstruction* updated = dynamic_update_slice->mutable_operand(0);
   HloInstruction* dus_update = dynamic_update_slice->mutable_operand(1);
+  if (IsIdentityDynamicUpdateSlice(dynamic_update_slice) &&
+      ReplaceInstructionIfCompatible(dynamic_update_slice, updated)) {
+    return absl::OkStatus();
+  }
   HloInstruction* pad_value;
   if (options_.enable_dynamic_update_slice_to_pad_replacement() &&
       Match(updated,
