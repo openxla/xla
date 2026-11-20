@@ -37,6 +37,8 @@ limitations under the License.
 #include "xla/hlo/transforms/compile_time_cap.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
+#include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/map_util.h"
 #include "xla/service/memory_annotations.h"
 #include "xla/service/while_util.h"
@@ -49,6 +51,28 @@ namespace xla {
 
 using absl::flat_hash_map;
 using absl::flat_hash_set;
+
+namespace {
+
+bool IsDefaultMemorySpaceArray(const Shape& shape) {
+  return shape.IsArrayExcludingBuffer() &&
+         LayoutUtil::MemorySpace(shape) == Layout::kDefaultMemorySpace;
+}
+
+bool IsHoistableLayoutCopy(const HloInstruction& copy) {
+  const Shape& src = copy.operand(0)->shape();
+  const Shape& dst = copy.shape();
+  return IsDefaultMemorySpaceArray(src) && IsDefaultMemorySpaceArray(dst) &&
+         src.has_layout() && dst.has_layout() &&
+         src.layout().minor_to_major().size() == src.dimensions().size() &&
+         dst.layout().minor_to_major().size() == dst.dimensions().size() &&
+         src.layout().split_configs().empty() &&
+         dst.layout().split_configs().empty() &&
+         Shape::Equal().IgnoreLayout()(src, dst) &&
+         src.layout() != dst.layout();
+}
+
+}  // namespace
 
 // Returns true if `instruction` is worth hoisting only if it lets us hoist some
 // instruction using it. The rationale is that hoisting these instructions will
@@ -66,6 +90,7 @@ bool WhileLoopInvariantCodeMotion::NotWorthHoistingIndividually(
     case HloOpcode::kConstant:
       return !hoist_constants_;
 
+    case HloOpcode::kCopy:
     case HloOpcode::kReshape:
       return !hoist_reshapes_;
 
@@ -190,8 +215,20 @@ WhileLoopInvariantCodeMotion::TryHoistingInvariantInstructionsFromWhileBody(
       continue;
     }
 
-    if (!hoist_other_ && instruction->opcode() != HloOpcode::kConstant &&
-        instruction->opcode() != HloOpcode::kReshape) {
+    const HloOpcode opcode = instruction->opcode();
+    if (!hoist_other_ &&
+        !(hoist_constants_ && opcode == HloOpcode::kConstant) &&
+        !(hoist_reshapes_ &&
+          (opcode == HloOpcode::kReshape || opcode == HloOpcode::kCopy ||
+           opcode == HloOpcode::kBitcast))) {
+      continue;
+    }
+    // Same layout copies isolate aliasing buffers; nondefault memory spaces
+    // encode placement scoped to the loop body.
+    if ((opcode == HloOpcode::kCopy && !IsHoistableLayoutCopy(*instruction)) ||
+        ((opcode == HloOpcode::kBitcast || opcode == HloOpcode::kReshape) &&
+         (!IsDefaultMemorySpaceArray(instruction->operand(0)->shape()) ||
+          !IsDefaultMemorySpaceArray(instruction->shape())))) {
       continue;
     }
 
@@ -231,7 +268,9 @@ WhileLoopInvariantCodeMotion::TryHoistingInvariantInstructionsFromWhileBody(
             }
           });
 
-      if (output_size > input_size * *hoist_size_inflation_ratio_) {
+      if (static_cast<double>(output_size) >
+          static_cast<double>(input_size) *
+              static_cast<double>(*hoist_size_inflation_ratio_)) {
         continue;
       }
     }

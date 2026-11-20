@@ -16,6 +16,10 @@ limitations under the License.
 #ifndef XLA_HLO_TRANSFORMS_WHILE_LOOP_INVARIANT_CODE_MOTION_H_
 #define XLA_HLO_TRANSFORMS_WHILE_LOOP_INVARIANT_CODE_MOTION_H_
 
+#include <cstdint>
+#include <functional>
+#include <optional>
+
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -48,9 +52,10 @@ class WhileLoopInvariantCodeMotion : public HloModulePass {
   // input(s) is larger than hoist_size_inflation_ratio. This is useful on
   // platforms on which it's important to prevent blow-ups in memory size.
   //
-  // If `hoist_reshapes` is true, then reshapes are allowed to be hoisted out of
-  // while loop body by themselves. Otherwise, they are only hoisted out if they
-  // enable other non-trivial computations to be hoisted out.
+  // If `hoist_reshapes` is true, reshapes and default memory space layout
+  // changing copies are hoisted by themselves, along with any default memory
+  // space bitcasts feeding them. Otherwise, they are only hoisted if they
+  // enable other nontrivial computations to be hoisted out.
   //
   // Setting `hoist_reshapes` to false can be useful when LICM is run in the
   // mid level HLO pipeline because the reshapes will often get fused with
