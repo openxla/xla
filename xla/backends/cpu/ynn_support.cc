@@ -385,6 +385,15 @@ bool IsElementwiseOpSupportedByYnn(const HloInstruction* hlo) {
     case 1:
       return YnnUnaryOperator(hlo->opcode()).ok();
     case 2:
+      // YNNPACK's 8-bit integer arithmetic saturates and its integer division
+      // rounds, while XLA's integer arithmetic wraps and its division
+      // truncates. Only maximum and minimum give the same results.
+      if ((hlo->shape().element_type() == S8 ||
+           hlo->shape().element_type() == U8) &&
+          hlo->opcode() != HloOpcode::kMaximum &&
+          hlo->opcode() != HloOpcode::kMinimum) {
+        return false;
+      }
       return YnnBinaryOperator(hlo->opcode()).ok();
     default:
       return false;
