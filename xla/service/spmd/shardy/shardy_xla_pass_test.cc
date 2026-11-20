@@ -1741,6 +1741,97 @@ TEST_P(ShardyXLATest, ComputeOnStartDoneReshardAg) {
       op::Sharding("{devices=[2,1,2]<=[2,2]T(1,0) last_tile_dim_replicate}"));
 }
 
+constexpr char kNestedComputationsOnSparseCoreHlo[] = R"(
+    HloModule module
+
+    %branch_0 (arg: f32[8]) -> f32[8] {
+      %arg = f32[8] parameter(0)
+      ROOT %negate = f32[8] negate(%arg)
+    }, execution_thread="sparsecore"
+
+    %branch_1 (arg: f32[8]) -> f32[8] {
+      ROOT %arg = f32[8] parameter(0)
+    }, execution_thread="sparsecore"
+
+    %condition (arg: (s32[], f32[8])) -> pred[] {
+      %arg = (s32[], f32[8]) parameter(0)
+      %i = s32[] get-tuple-element(%arg), index=0
+      %limit = s32[] constant(4)
+      ROOT %lt = pred[] compare(%i, %limit), direction=LT
+    }, execution_thread="sparsecore"
+
+    %body (arg: (s32[], f32[8])) -> (s32[], f32[8]) {
+      %arg = (s32[], f32[8]) parameter(0)
+      %i = s32[] get-tuple-element(%arg), index=0
+      %one = s32[] constant(1)
+      %next = s32[] add(%i, %one)
+      %x = f32[8] get-tuple-element(%arg), index=1
+      %double = f32[8] add(%x, %x)
+      ROOT %tuple = (s32[], f32[8]) tuple(%next, %double)
+    }, execution_thread="sparsecore"
+
+    %sparsecore (flag: pred[], x: f32[8]) -> f32[8] {
+      %flag = pred[] parameter(0)
+      %x = f32[8] parameter(1)
+      %conditional = f32[8] conditional(%flag, %x, %x), true_computation=%branch_0, false_computation=%branch_1
+      %zero = s32[] constant(0)
+      %init = (s32[], f32[8]) tuple(%zero, %conditional)
+      %while = (s32[], f32[8]) while(%init), condition=%condition, body=%body
+      ROOT %result = f32[8] get-tuple-element(%while), index=1
+    }, execution_thread="sparsecore"
+
+    ENTRY %main (flag: pred[], x: f32[8]) -> f32[8] {
+      %flag = pred[] parameter(0)
+      %x = f32[8] parameter(1), sharding={devices=[2]<=[2]}
+      ROOT %call = f32[8] call(%flag, %x), to_apply=%sparsecore
+    })";
+
+// Computations nested in a non-main thread stay there after the round trip.
+TEST_P(ShardyXLATest, NestedComputationsKeepExecutionThread) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> module,
+      ParseAndReturnVerifiedModule(kNestedComputationsOnSparseCoreHlo));
+  runShardyWithStablehloImport(module.get());
+
+  const HloInstruction* conditional =
+      FindInstruction(module.get(), HloOpcode::kConditional);
+  ASSERT_NE(conditional, nullptr);
+  EXPECT_EQ(conditional->parent()->execution_thread(), "sparsecore");
+  for (const HloComputation* branch : conditional->branch_computations()) {
+    EXPECT_EQ(branch->execution_thread(), "sparsecore") << branch->name();
+  }
+  const HloInstruction* xlaWhile =
+      FindInstruction(module.get(), HloOpcode::kWhile);
+  ASSERT_NE(xlaWhile, nullptr);
+  EXPECT_EQ(xlaWhile->parent()->execution_thread(), "sparsecore");
+  EXPECT_EQ(xlaWhile->while_condition()->execution_thread(), "sparsecore");
+  EXPECT_EQ(xlaWhile->while_body()->execution_thread(), "sparsecore");
+}
+
+// Without propagation, tuple args still trigger the MLIR round trip.
+TEST_P(ShardyXLATest, NestedComputationsKeepExecutionThreadWithoutPropagation) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> module,
+      ParseAndReturnVerifiedModule(kNestedComputationsOnSparseCoreHlo));
+  module->add_frontend_attribute(std::string(kUseTupleArgs), "t");
+  runShardyWithStablehloImport(module.get(),
+                               /*runSdyShardingPropagation=*/false);
+
+  const HloInstruction* conditional =
+      FindInstruction(module.get(), HloOpcode::kConditional);
+  ASSERT_NE(conditional, nullptr);
+  EXPECT_EQ(conditional->parent()->execution_thread(), "sparsecore");
+  for (const HloComputation* branch : conditional->branch_computations()) {
+    EXPECT_EQ(branch->execution_thread(), "sparsecore") << branch->name();
+  }
+  const HloInstruction* xlaWhile =
+      FindInstruction(module.get(), HloOpcode::kWhile);
+  ASSERT_NE(xlaWhile, nullptr);
+  EXPECT_EQ(xlaWhile->parent()->execution_thread(), "sparsecore");
+  EXPECT_EQ(xlaWhile->while_condition()->execution_thread(), "sparsecore");
+  EXPECT_EQ(xlaWhile->while_body()->execution_thread(), "sparsecore");
+}
+
 struct RecordedInspectSharding {
   int callCount = 0;
   std::optional<HloSharding> sharding;

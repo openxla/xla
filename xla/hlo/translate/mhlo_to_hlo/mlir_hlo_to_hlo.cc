@@ -1201,6 +1201,19 @@ class ConvertToHloModule {
       llvm::ArrayRef<std::optional<xla::OriginalValueProto>>
           arg_original_value_protos = {});
 
+  // Sets the execution thread of `computation` to that of `func`.
+  LogicalResult SetExecutionThreadFromFunction(
+      mlir::func::FuncOp func, xla::XlaComputationId computation) {
+    auto thread = func->getAttrOfType<mlir::StringAttr>(xla::kExecutionThread);
+    // An empty execution thread is the main thread.
+    absl::Status status = xla::internal::XlaBuilderFriend::SetExecutionThread(
+        &module_builder_, computation, thread ? thread.str() : "");
+    if (!status.ok()) {
+      return func.emitError(xla::ToStringRef(status.message()));
+    }
+    return success();
+  }
+
   std::optional<xla::OriginalValueProto> GetOriginalValue(mlir::Value value);
 
   // Lower a single `Block` to a `XlaComputation`
@@ -3834,6 +3847,12 @@ LogicalResult ExportXlaOp(AsyncStartOp op, OpLoweringContext ctx) {
     return success();
   }
 
+  // Runs on the thread of the enclosing function, like the wrapped computation.
+  auto thread = op->getParentOfType<mlir::func::FuncOp>()
+                    ->getAttrOfType<mlir::StringAttr>(xla::kExecutionThread);
+  std::string execution_thread =
+      thread ? thread.str() : xla::HloInstruction::kMainExecutionThread;
+
   // AllToAll
   if (auto all_to_all = dyn_cast<AllToAllOp>(collective)) {
     xla::XlaComputationId computation;
@@ -3849,8 +3868,7 @@ LogicalResult ExportXlaOp(AsyncStartOp op, OpLoweringContext ctx) {
         xla::ShapeUtil::MakeTupleShape({input_shape, output_shape});
     (*ctx.values)[op.getResult()] =
         xla::internal::XlaBuilderFriend::BuildAsyncStart(
-            ctx.builder, {operand}, xla::HloInstruction::kMainExecutionThread,
-            computation, start_shape);
+            ctx.builder, {operand}, execution_thread, computation, start_shape);
     return success();
   }
 
@@ -3869,8 +3887,7 @@ LogicalResult ExportXlaOp(AsyncStartOp op, OpLoweringContext ctx) {
         xla::ShapeUtil::MakeTupleShape({input_shape, output_shape});
     (*ctx.values)[op.getResult()] =
         xla::internal::XlaBuilderFriend::BuildAsyncStart(
-            ctx.builder, {operand}, xla::HloInstruction::kMainExecutionThread,
-            computation, start_shape);
+            ctx.builder, {operand}, execution_thread, computation, start_shape);
     return success();
   }
 
@@ -3889,8 +3906,7 @@ LogicalResult ExportXlaOp(AsyncStartOp op, OpLoweringContext ctx) {
         xla::ShapeUtil::MakeTupleShape({input_shape, output_shape});
     (*ctx.values)[op.getResult()] =
         xla::internal::XlaBuilderFriend::BuildAsyncStart(
-            ctx.builder, {operand}, xla::HloInstruction::kMainExecutionThread,
-            computation, start_shape);
+            ctx.builder, {operand}, execution_thread, computation, start_shape);
     return success();
   }
 
@@ -4101,6 +4117,11 @@ LogicalResult ExportXlaOp(mhlo::AsyncStartOp op, OpLoweringContext ctx) {
     xla::XlaComputationId computation;
     if (failed(ctx.converter->LowerRegionAsComputation(
             &all_reduce_op.getComputation(), computation))) {
+      return failure();
+    }
+    // The all-reduce-start is emitted in the caller, so its reducer runs there.
+    if (failed(ctx.converter->SetExecutionThreadFromFunction(
+            op->getParentOfType<mlir::func::FuncOp>(), computation))) {
       return failure();
     }
     if (operands.size() != 1) {
@@ -5375,6 +5396,12 @@ LogicalResult ConvertToHloModule::LowerStablehloCompositeCall(
           /*implicit_operands=*/{}))) {
     return failure();
   }
+  if (failed(SetExecutionThreadFromFunction(
+          module_.lookupSymbol<mlir::func::FuncOp>(
+              composite_op.getDecomposition()),
+          computation))) {
+    return failure();
+  }
 
   std::string composite_attributes;
   llvm::raw_string_ostream(composite_attributes)
@@ -5439,6 +5466,10 @@ LogicalResult ConvertToHloModule::LowerCompositeCall(
           /*arg_original_value_protos=*/{}, /*ret_shardings=*/{},
           /*computation=*/computation,
           /*implicit_operands=*/{}))) {
+    return failure();
+  }
+  if (failed(SetExecutionThreadFromFunction(
+          cast<mlir::func::FuncOp>(block.getParentOp()), computation))) {
     return failure();
   }
 
@@ -6304,7 +6335,9 @@ LogicalResult ConvertToHloModule::LowerRegionAsComputation(
           implicit_operands, implicit_results))) {
     return failure();
   }
-  return success();
+  // Nested computations run on the execution thread of their caller.
+  return SetExecutionThreadFromFunction(
+      region->getParentOfType<mlir::func::FuncOp>(), func);
 }
 
 // Runs the PrepareForExport pass on the ModuleOp.
