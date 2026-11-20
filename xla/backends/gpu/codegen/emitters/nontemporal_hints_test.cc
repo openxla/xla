@@ -13,12 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/codegen/emitters/nontemporal_hints.h"
+#include "xla/backends/gpu/codegen/emitters/nontemporal_hints.h"
 
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <string>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -33,6 +32,7 @@ limitations under the License.
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/kernel_api_builder.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
@@ -51,13 +51,17 @@ limitations under the License.
 #include "xla/service/logical_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/stream_executor/device_description.h"
+#include "xla/xla_data.pb.h"
 
-namespace xla::emitters {
+namespace xla::gpu {
 namespace {
 
 using ::testing::IsNull;
 using ::testing::NotNull;
+using ::xla::emitters::EmitKernelApi;
+using ::xla::emitters::kXlaContiguousOutputAttr;
+using ::xla::emitters::kXlaNotBroadcastAttr;
+using ::xla::emitters::kXlaStreamedOnceAttr;
 
 class NontemporalHintsTest : public HloHardwareIndependentTestBase {
  protected:
@@ -78,27 +82,6 @@ class NontemporalHintsTest : public HloHardwareIndependentTestBase {
                                Dataflow(module).get(), &ctx);
   }
 };
-
-stream_executor::DeviceDescription RocmDevice(absl::string_view gcn_arch_name) {
-  stream_executor::DeviceDescription d;
-  d.set_rocm_compute_capability(std::string(gcn_arch_name));
-  return d;
-}
-
-TEST(NontemporalHintTargets, PerTargetSelection) {
-  // gfx942: loads and stores; single-output stores; no loads when overwriting.
-  auto gfx942 = GetNontemporalHintTargets(RocmDevice("gfx942:sramecc+:xnack-"));
-  EXPECT_TRUE(gfx942.loads);
-  EXPECT_TRUE(gfx942.stores);
-  EXPECT_TRUE(gfx942.single_output_stores);
-  EXPECT_TRUE(gfx942.out_of_place_loads);
-  EXPECT_EQ(gfx942.stream_l2_multiple, 16);
-
-  // Other targets get no hints.
-  auto other = GetNontemporalHintTargets(RocmDevice("gfx90a:sramecc+:xnack"));
-  EXPECT_FALSE(other.loads);
-  EXPECT_FALSE(other.stores);
-}
 
 TEST_F(NontemporalHintsTest, ElementwiseOperandsAreStreamedOnce) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
@@ -852,4 +835,4 @@ TEST_F(ReadsLinesInPiecesTest, UndefinedMap) {
 }
 
 }  // namespace
-}  // namespace xla::emitters
+}  // namespace xla::gpu

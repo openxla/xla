@@ -66,6 +66,27 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "nontemporal_hint_targets",
+    srcs = ["nontemporal_hint_targets.cc"],
+    hdrs = ["nontemporal_hint_targets.h"],
+    deps = [
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/rocm:rocm_compute_capability",
+    ],
+)
+
+xla_cc_test(
+    name = "nontemporal_hint_targets_test",
+    srcs = ["nontemporal_hint_targets_test.cc"],
+    deps = [
+        ":nontemporal_hint_targets",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "lowering_utils",
     srcs = ["lowering_utils.cc"],
     hdrs = ["lowering_utils.h"],
@@ -227,6 +248,7 @@ cc_library(
     hdrs = ["passes.h"],
     deps = [
         ":atomic_rmw_utils",
+        ":nontemporal_hint_targets",
         ":passes_inc_gen",
         "//xla:shape_util",
         "//xla:util",
@@ -237,7 +259,6 @@ cc_library(
         "//xla/codegen/emitters:elemental_hlo_to_mlir",
         "//xla/codegen/emitters:implicit_arith_op_builder",
         "//xla/codegen/emitters:kernel_api_builder",
-        "//xla/codegen/emitters:nontemporal_hints",
         "//xla/codegen/emitters:utils",
         "//xla/codegen/emitters/ir:xla",
         "//xla/codegen/intrinsic:erf",

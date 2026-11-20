@@ -297,62 +297,6 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "nontemporal_hints",
-    srcs = ["nontemporal_hints.cc"],
-    hdrs = ["nontemporal_hints.h"],
-    deps = [
-        "//xla:shape_util",
-        "//xla/hlo/analysis:hlo_dataflow_analysis",
-        "//xla/hlo/analysis:indexing_analysis",
-        "//xla/hlo/analysis:interval",
-        "//xla/hlo/analysis:symbolic_map",
-        "//xla/hlo/ir:hlo",
-        "//xla/hlo/utils:hlo_traversal",
-        "//xla/service:hlo_value",
-        "//xla/stream_executor:device_description",
-        "//xla/stream_executor/rocm:rocm_compute_capability",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:FuncDialect",
-        "@llvm-project//mlir:IR",
-    ],
-)
-
-xla_cc_test(
-    name = "nontemporal_hints_test",
-    srcs = ["nontemporal_hints_test.cc"],
-    deps = [
-        ":nontemporal_hints",
-        "//xla:shape_util",
-        "//xla/codegen/emitters:kernel_api_builder",
-        "//xla/hlo/analysis:alias_info",
-        "//xla/hlo/analysis:hlo_dataflow_analysis",
-        "//xla/hlo/analysis:hlo_ordering",
-        "//xla/hlo/analysis:indexing_analysis",
-        "//xla/hlo/analysis:symbolic_map",
-        "//xla/hlo/ir:hlo",
-        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
-        "//xla/hlo/testlib:verified_hlo_module",
-        "//xla/service:buffer_assignment",
-        "//xla/service:buffer_value",
-        "//xla/service:logical_buffer",
-        "//xla/service/llvm_ir:llvm_util",
-        "//xla/stream_executor:device_description",
-        "@com_google_absl//absl/status:status_matchers",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_googletest//:gtest_main",
-        "@llvm-project//mlir:DLTIDialect",
-        "@llvm-project//mlir:FuncDialect",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:LLVMDialect",
-    ],
-)
-
-cc_library(
     name = "kernel_api_builder",
     srcs = ["kernel_api_builder.cc"],
     hdrs = ["kernel_api_builder.h"],

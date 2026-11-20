@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/codegen/emitters/nontemporal_hints.h"
+#include "xla/backends/gpu/codegen/emitters/nontemporal_hints.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -32,6 +32,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
@@ -45,26 +46,8 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/hlo_value.h"
 #include "xla/shape.h"
-#include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 
-namespace xla::emitters {
-
-NontemporalHintTargets GetNontemporalHintTargets(
-    const stream_executor::DeviceDescription& device) {
-  if (!device.gpu_compute_capability().IsRocm()) {
-    return {};
-  }
-  const stream_executor::RocmComputeCapability rcc =
-      device.rocm_compute_capability();
-  if (rcc.gfx9_mi300()) {
-    // Multi-output stores, and loads in kernels that overwrite an input, slowed
-    // MI300X down.
-    return {/*loads=*/true, /*stores=*/true, /*single_output_stores=*/true,
-            /*out_of_place_loads=*/true};
-  }
-  return {};
-}
+namespace xla::gpu {
 
 namespace {
 
@@ -560,7 +543,7 @@ absl::Status AnnotateNontemporalHintFacts(mlir::ModuleOp module,
 
   mlir::Builder builder(module.getContext());
   if (contiguous_output) {
-    entry->setAttr(kXlaContiguousOutputAttr, builder.getUnitAttr());
+    entry->setAttr(emitters::kXlaContiguousOutputAttr, builder.getUnitAttr());
   }
 
   const auto* fusion = DynCast<HloFusionInstruction>(&hlo_instruction);
@@ -575,16 +558,19 @@ absl::Status AnnotateNontemporalHintFacts(mlir::ModuleOp module,
        index < num_operands && index < static_cast<int64_t>(reads.size());
        ++index) {
     if (reads[index].streamed_once) {
-      entry.setArgAttr(index, kXlaStreamedOnceAttr, builder.getUnitAttr());
+      entry.setArgAttr(index, emitters::kXlaStreamedOnceAttr,
+                       builder.getUnitAttr());
     }
     if (reads[index].not_broadcast) {
-      entry.setArgAttr(index, kXlaNotBroadcastAttr, builder.getUnitAttr());
+      entry.setArgAttr(index, emitters::kXlaNotBroadcastAttr,
+                       builder.getUnitAttr());
     }
     if (reads[index].read_elsewhere) {
-      entry.setArgAttr(index, kXlaReadElsewhereAttr, builder.getUnitAttr());
+      entry.setArgAttr(index, emitters::kXlaReadElsewhereAttr,
+                       builder.getUnitAttr());
     }
   }
   return absl::OkStatus();
 }
 
-}  // namespace xla::emitters
+}  // namespace xla::gpu

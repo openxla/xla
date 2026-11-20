@@ -86,6 +86,7 @@ limitations under the License.
 #include "stablehlo/transforms/Passes.h"
 #include "tsl/platform/platform.h"
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
+#include "xla/backends/gpu/codegen/emitters/nontemporal_hints.h"
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/gpu_kernel_spec.h"
@@ -102,8 +103,8 @@ limitations under the License.
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/kernel_api_builder.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
-#include "xla/codegen/emitters/nontemporal_hints.h"
 #include "xla/codegen/emitters/transforms/lower_to_llvm_gpu.h"
+#include "xla/codegen/emitters/transforms/nontemporal_hint_targets.h"
 #include "xla/codegen/emitters/transforms/pass_pipelines.h"
 #include "xla/codegen/emitters/transforms/passes.h"
 #include "xla/codegen/ir_printing.h"
@@ -411,7 +412,7 @@ AsyncThunkSequence MlirKernelFusion::Emit(
   std::string discriminator = "MlirKernelFusion";
   if (NontemporalHintsEnabled(fusion, ir_emitter_context.gpu_device_info())) {
     absl::StrAppend(&discriminator, ",nontemporal_hints,read_elsewhere=");
-    for (bool read_elsewhere : emitters::ComputeReadElsewhere(
+    for (bool read_elsewhere : ComputeReadElsewhere(
              fusion,
              &ir_emitter_context.buffer_assignment().dataflow_analysis())) {
       discriminator += read_elsewhere ? '1' : '0';
@@ -594,9 +595,8 @@ void AnnotatePiecewiseReads(mlir::ModuleOp module,
         ShapeUtil::ByteSizeOfPrimitiveType(shape.element_type());
     for (const IndexingMap& map : it->second) {
       if (map.IsUndefined() ||
-          emitters::ReadsLinesInPieces(map, device.threads_per_warp(),
-                                       element_bytes,
-                                       ShapeUtil::ByteSizeOf(shape))) {
+          ReadsLinesInPieces(map, device.threads_per_warp(), element_bytes,
+                             ShapeUtil::ByteSizeOf(shape))) {
         entry.setArgAttr(i, emitters::kXlaPiecewiseReadsAttr,
                          builder.getUnitAttr());
         break;
@@ -630,7 +630,7 @@ absl::StatusOr<MlirKernelSource> MlirKernelFusion::EmitMlirSource(
 
   // Facts for the ROCm non-temporal hints.
   if (NontemporalHintsEnabled(fusion, device)) {
-    ABSL_RETURN_IF_ERROR(emitters::AnnotateNontemporalHintFacts(
+    ABSL_RETURN_IF_ERROR(AnnotateNontemporalHintFacts(
         source.module(), entry_function_name, fusion,
         buffer_assignment != nullptr ? &buffer_assignment->dataflow_analysis()
                                      : nullptr,
