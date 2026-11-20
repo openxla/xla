@@ -101,6 +101,10 @@ message OneDnnMatMulConfig {
   OneDnnTensorLayoutProto lhs = 9;
   OneDnnTensorLayoutProto rhs = 10;
   OneDnnTensorLayoutProto result = 11;
+
+  // Set by thunk emission from the final buffer assignment. An unset field
+  // keeps older serialized thunks on the uncached path.
+  bool weights_cache_eligible = 12;
 }
 
 message OneDnnWindowProto {
