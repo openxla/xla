@@ -63,7 +63,8 @@ std::vector<CppGenIntrinsicLibrary> GetCppGenLibraries(
   if (options.device_type != intrinsics::DeviceType::kIntelCpu &&
       options.device_type != intrinsics::DeviceType::kAmdCpu &&
       options.device_type != intrinsics::DeviceType::kArmCpu &&
-      options.device_type != intrinsics::DeviceType::kSystemZCpu) {
+      options.device_type != intrinsics::DeviceType::kSystemZCpu &&
+      options.device_type != intrinsics::DeviceType::kPowerPcCpu) {
     return libraries;
   }
   if (!::llvm_ir::kAtanLlIr.empty()) {

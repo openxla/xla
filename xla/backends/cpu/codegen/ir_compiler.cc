@@ -414,6 +414,8 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
     device_type = xla::codegen::intrinsics::DeviceType::kArmCpu;
   } else if (target_triple.isSystemZ()) {
     device_type = xla::codegen::intrinsics::DeviceType::kSystemZCpu;
+  } else if (target_triple.isPPC()) {
+    device_type = xla::codegen::intrinsics::DeviceType::kPowerPcCpu;
   } else {
     LOG(FATAL) << "Unsupported CPU type: " << target_triple.str();
   }
