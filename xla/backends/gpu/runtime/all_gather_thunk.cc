@@ -198,8 +198,6 @@ absl::Status AllGatherThunk::RunCollective(const ExecuteParams& params,
                                            se::Stream& stream,
                                            Communicator& comm) {
   int device_ordinal = stream.parent()->device_ordinal();
-  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
-                        params.TakeLaunchEvent(this, &stream));
 
   ABSL_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
@@ -208,9 +206,6 @@ absl::Status AllGatherThunk::RunCollective(const ExecuteParams& params,
   if (use_symmetric_memory() && clique_key.is_local()) {
     XLA_VLOG_DEVICE(3, device_ordinal)
         << "AllGather: using one-sided mode (Put+Signal)";
-    if (launch_event != nullptr) {
-      ABSL_RETURN_IF_ERROR(stream.RecordEvent(launch_event));
-    }
     return RunOneSidedAllGather(device_buffers, stream, clique_key, params,
                                 comm);
   }
@@ -224,15 +219,14 @@ absl::Status AllGatherThunk::RunCollective(const ExecuteParams& params,
       const std::optional<RankId> rank =
           clique_key.rank(params.collective_params->global_device_id);
 
-      if (launch_event != nullptr) {
-        ABSL_RETURN_IF_ERROR(stream.RecordEvent(launch_event));
-      }
       return gxl_nccl_comm->RunAllGatherGxl(
           &stream, device_buffers[0].element_type,
           device_buffers[0].source_buffer, device_buffers[0].destination_buffer,
           device_buffers[0].element_count, rank.value().value());
     }
   }
+  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                        params.TakeLaunchEvent(this, &stream));
   return xla::gpu::RunAllGather(device_buffers, stream, comm, launch_event);
 }
 

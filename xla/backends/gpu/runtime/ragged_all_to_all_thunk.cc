@@ -1133,9 +1133,6 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
       ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                              config_.config.operand_element_type));
 
-  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
-                        params.TakeLaunchEvent(this, &stream));
-
   RaggedAllToAllStreamState* state =
       per_device_states_.Find(stream.parent()->device_ordinal());
   TF_RET_CHECK(state != nullptr);
@@ -1143,9 +1140,6 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
   auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
   if (config_.enable_gxl && gpu_comm->gxl_communicator() != nullptr) {
     GxlCommunicator* gxl_nccl_comm = gpu_comm->gxl_communicator();
-    if (launch_event != nullptr) {
-      ABSL_RETURN_IF_ERROR(stream.RecordEvent(launch_event));
-    }
     return gxl_nccl_comm->RunRaggedAllToAllGxl(
         &stream, device_buffers[0].element_type,
         device_buffers[0].source_buffer, device_buffers[1].destination_buffer,
@@ -1213,6 +1207,8 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
         const RaggedAllToAllCostWeights cost_weights =
             RaggedAllToAllComputeCostWeights(device_description,
                                              config_.fabric_cost_weight);
+        ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                              params.TakeLaunchEvent(this, &stream));
         return RunDeviceRaggedAllToAllKernel(
             &stream, element_type, dev_comm, input_sym, output_sym,
             device_buffers[2].source_buffer, device_buffers[3].source_buffer,
@@ -1235,16 +1231,20 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
           FindOutputSymmetricMemory(params.collective_memory, clique_key,
                                     device_buffers[1].destination_buffer));
       auto [output_sym_mem, output_sym_offset] = output_sym;
+      ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                            params.TakeLaunchEvent(this, &stream));
       return RunOneShotRaggedAllToAllWithNccl(
           clique_key, stream, state->rank, gpu_comm, state->sym_mem_kernel,
           output_sym_mem, output_sym_offset, config_.num_total_updates,
           config_.num_input_rows, config_.num_row_elements, device_buffers,
           launch_event);
     }
-    case RaggedAllToAllKernelStrategy::kPeerAccess:
+    case RaggedAllToAllKernelStrategy::kPeerAccess: {
       TF_RET_CHECK(state->participants != nullptr)
           << "RaggedAllToAllThunk::RunCollective: participants were not "
              "exchanged during Initialize";
+      ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                            params.TakeLaunchEvent(this, &stream));
       return RunOneShotRaggedAllToAll(
           clique_key, stream, state->rank,
           state->barrier_signal_buffer
@@ -1254,13 +1254,9 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
           config_.num_total_updates, config_.num_input_rows,
           config_.num_row_elements, device_buffers, *state->participants,
           launch_event);
+    }
     case RaggedAllToAllKernelStrategy::kNone:
       break;
-  }
-
-  // Copies and send/recv have no config to carry the event, so record here.
-  if (launch_event != nullptr) {
-    ABSL_RETURN_IF_ERROR(stream.RecordEvent(launch_event));
   }
 
   SymmetricMemory* output_sym_mem = nullptr;

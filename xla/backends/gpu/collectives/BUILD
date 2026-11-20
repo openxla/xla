@@ -1247,6 +1247,7 @@ cc_library(
         "//xla/stream_executor:event",
         "//xla/stream_executor:kernel_args",
         "//xla/stream_executor:memory_allocation",
+        "//xla/stream_executor:semantic_version",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_event",

@@ -67,6 +67,7 @@ limitations under the License.
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/kernel_args.h"
 #include "xla/stream_executor/memory_allocation.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/executor.h"
@@ -135,7 +136,9 @@ ncclResult_t LaunchNcclAllReduce(const void* sendbuff, void* recvbuff,
   if ((disable_rma || launch_event != nullptr) &&
       GetRuntimeNcclVersion() >= 23200) {
     ncclCollConfig_t config = NCCL_COLLCONFIG_INITIALIZER;
-    if (disable_rma) config = MakeNonCollectiveMemoryConfig();
+    if (disable_rma) {
+      config = MakeNonCollectiveMemoryConfig();
+    }
     config.launchCompletionEvent = launch_event;
     return ncclAllReduceConfig(sendbuff, recvbuff, count, datatype, op, comm,
                                stream, &config);
@@ -153,7 +156,9 @@ ncclResult_t LaunchNcclBroadcast(const void* sendbuff, void* recvbuff,
   if ((disable_rma || launch_event != nullptr) &&
       GetRuntimeNcclVersion() >= 23200) {
     ncclCollConfig_t config = NCCL_COLLCONFIG_INITIALIZER;
-    if (disable_rma) config = MakeNonCollectiveMemoryConfig();
+    if (disable_rma) {
+      config = MakeNonCollectiveMemoryConfig();
+    }
     config.launchCompletionEvent = launch_event;
     return ncclBroadcastConfig(sendbuff, recvbuff, count, datatype, root, comm,
                                stream, &config);
@@ -172,7 +177,9 @@ ncclResult_t LaunchNcclReduce(const void* sendbuff, void* recvbuff,
   if ((disable_rma || launch_event != nullptr) &&
       GetRuntimeNcclVersion() >= 23200) {
     ncclCollConfig_t config = NCCL_COLLCONFIG_INITIALIZER;
-    if (disable_rma) config = MakeNonCollectiveMemoryConfig();
+    if (disable_rma) {
+      config = MakeNonCollectiveMemoryConfig();
+    }
     config.launchCompletionEvent = launch_event;
     return ncclReduceConfig(sendbuff, recvbuff, count, datatype, op, root, comm,
                             stream, &config);
@@ -191,7 +198,9 @@ ncclResult_t LaunchNcclReduceScatter(
   if ((disable_rma || launch_event != nullptr) &&
       GetRuntimeNcclVersion() >= 23200) {
     ncclCollConfig_t config = NCCL_COLLCONFIG_INITIALIZER;
-    if (disable_rma) config = MakeNonCollectiveMemoryConfig();
+    if (disable_rma) {
+      config = MakeNonCollectiveMemoryConfig();
+    }
     config.launchCompletionEvent = launch_event;
     return ncclReduceScatterConfig(sendbuff, recvbuff, recvcount, datatype, op,
                                    comm, stream, &config);
@@ -210,7 +219,9 @@ ncclResult_t LaunchNcclAllGather(const void* sendbuff, void* recvbuff,
   if ((disable_rma || launch_event != nullptr) &&
       GetRuntimeNcclVersion() >= 23200) {
     ncclCollConfig_t config = NCCL_COLLCONFIG_INITIALIZER;
-    if (disable_rma) config = MakeNonCollectiveMemoryConfig();
+    if (disable_rma) {
+      config = MakeNonCollectiveMemoryConfig();
+    }
     config.launchCompletionEvent = launch_event;
     return ncclAllGatherConfig(sendbuff, recvbuff, sendcount, datatype, comm,
                                stream, &config);
@@ -398,7 +409,9 @@ bool NcclCommunicator::SupportsLaunchCompletion() const {
     return NCCL_VERSION_CODE >= 23200 &&
            ncclGetVersion(&version) == ncclSuccess && version >= 23200;
   }();
-  return supported;
+  return supported &&
+         stream_executor_->GetDeviceDescription().driver_version() >=
+             se::SemanticVersion{12, 3, 0};
 }
 
 std::optional<int> NcclCommunicator::LsaSize() const {

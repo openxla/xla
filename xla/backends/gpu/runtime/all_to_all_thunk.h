@@ -116,11 +116,13 @@ absl::Status RunAllToAll(bool has_split_dimension,
                          se::Stream& stream, Communicator& comm,
                          se::Event* launch_event = nullptr);
 
-absl::Status RunMemCpyAllToAll(
-    bool has_split_dimension, std::vector<DeviceBufferPair>& buffers,
-    se::Stream& stream, Communicator& comm, uint64_t receive_pointer_map[],
-    const GpuCliqueKey& clique_key, RankId rank, se::Event* event,
-    absl::Span<se::Event* const> events, se::Event* launch_event = nullptr);
+absl::Status RunMemCpyAllToAll(bool has_split_dimension,
+                               std::vector<DeviceBufferPair>& buffers,
+                               se::Stream& stream, Communicator& comm,
+                               uint64_t receive_pointer_map[],
+                               const GpuCliqueKey& clique_key, RankId rank,
+                               se::Event* event,
+                               absl::Span<se::Event* const> events);
 
 }  // namespace gpu
 }  // namespace xla

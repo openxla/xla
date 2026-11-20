@@ -225,8 +225,6 @@ absl::Status AllToAllThunk::RunCollective(const ExecuteParams& params,
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                              config_.config.operand_element_type));
-  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
-                        params.TakeLaunchEvent(this, &stream));
 
   if (IsAllReplicasLocal(params.collective_params->local_device_count,
                          config_.config.replica_groups,
@@ -239,11 +237,13 @@ absl::Status AllToAllThunk::RunCollective(const ExecuteParams& params,
         state->receive_pointer_map->address().opaque());
     std::optional<RankId> rank =
         clique_key.rank(params.collective_params->global_device_id);
-    return xla::gpu::RunMemCpyAllToAll(
-        config_.has_split_dimension, device_buffers, stream, comm,
-        receive_pointer_map, clique_key, *rank, state->event.get(),
-        state->events, launch_event);
+    return xla::gpu::RunMemCpyAllToAll(config_.has_split_dimension,
+                                       device_buffers, stream, comm,
+                                       receive_pointer_map, clique_key, *rank,
+                                       state->event.get(), state->events);
   }
+  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                        params.TakeLaunchEvent(this, &stream));
   return xla::gpu::RunAllToAll(config_.has_split_dimension, device_buffers,
                                stream, comm, launch_event);
 }
@@ -389,21 +389,18 @@ absl::Status SyncProgress(absl::string_view name,
   return absl::OkStatus();
 }
 
-absl::Status RunMemCpyAllToAll(
-    bool has_split_dimension, std::vector<DeviceBufferPair>& buffers,
-    se::Stream& stream, Communicator& comm, uint64_t receive_pointer_map[],
-    const GpuCliqueKey& clique_key, RankId rank, se::Event* event,
-    absl::Span<se::Event* const> events, se::Event* launch_event) {
+absl::Status RunMemCpyAllToAll(bool has_split_dimension,
+                               std::vector<DeviceBufferPair>& buffers,
+                               se::Stream& stream, Communicator& comm,
+                               uint64_t receive_pointer_map[],
+                               const GpuCliqueKey& clique_key, RankId rank,
+                               se::Event* event,
+                               absl::Span<se::Event* const> events) {
   int device_ordinal = stream.parent()->device_ordinal();
   XLA_VLOG_DEVICE(3, device_ordinal) << "Performing mem-copy-all-to-all";
   ABSL_ASSIGN_OR_RETURN(int32_t num_ranks, comm.NumRanks());
   ABSL_RETURN_IF_ERROR(SyncProgress("before memcpy all-to-all", clique_key,
                                     rank, num_ranks, stream, event, events));
-
-  // Copies go to the copy engines, so there is no block scheduler to wait for.
-  if (launch_event != nullptr) {
-    ABSL_RETURN_IF_ERROR(stream.RecordEvent(launch_event));
-  }
 
   // AllToAll can operate in two modes. Either it specifies a split dimension,
   // in which case inputs are split and outputs concatenated in that dimension
