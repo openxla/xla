@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -61,6 +62,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/literal_util.h"
 #include "xla/service/buffer_value.h"
+#include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -7351,6 +7353,69 @@ ENTRY main {
   EXPECT_TRUE(copy_remover.TryElideCopy(c_root));
   ASSERT_OK(c_root->ReplaceAllUsesWith(c_root->mutable_operand(0)));
   EXPECT_FALSE(copy_remover.TryElideCopy(FindInstruction(module.get(), "c2")));
+}
+
+TEST_F(CopyInsertionTest, PreservesDirectReadOnlyArrayUses) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> loop,
+                       ParseAndReturnVerifiedModule(R"hlo(
+HloModule loop
+cond { s = (f32[], f32[]) parameter(0) ROOT d = pred[] constant(false) }
+body { s = (f32[], f32[]) parameter(0)
+  a = f32[] get-tuple-element(s), index=0
+  b = f32[] get-tuple-element(s), index=1
+  ROOT r = tuple(f32[] negate(a), f32[] negate(b)) }
+ENTRY main {
+  c = f32[] constant(0)
+  bcast = f32[8] broadcast(c), dimensions={}
+  w = (f32[], f32[]) while(tuple(c, c)), condition=cond, body=body,
+      control-predecessors={bcast}
+  ROOT out = tuple(bcast, w)
+})hlo"));
+  InsertCopies(loop.get());
+  EXPECT_EQ(CountCopies(*loop), 2);
+  EXPECT_THAT(FindInstruction(loop.get(), "bcast"),
+              op::Broadcast(op::Constant()));
+  EXPECT_THAT(FindInstruction(loop.get(), "w")->operand(0),
+              op::Tuple(op::Copy(op::Constant()), op::Copy(op::Constant())));
+  CopyInsertion pass(&alias_info_, nullptr, /*view_color=*/5);
+  CopyInsertion::CustomBufferAnalysisFn mark_param =
+      [](HloModule* mod, const HloAliasAnalysis&,
+         std::function<void(HloInstruction*, const ShapeIndex&)> add_copy) {
+        add_copy(mod->entry_computation()->parameter_instruction(0), {});
+      };
+  for (bool use_callback : {false, true}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> mod,
+                         ParseAndReturnVerifiedModule(R"hlo(
+HloModule special_case
+fn { arg = f32[4] parameter(0) ROOT r = f32[4] negate(arg) }
+ENTRY main {
+  p = f32[4] parameter(0)
+  vw = f32[1]{0:S(5)} custom-call(p), custom_call_target="view"
+  dus = f32[4] dynamic-update-slice(p, vw, s32[] constant(0))
+  cc = f32[4] custom-call(p, p), custom_call_target="ip",
+      output_to_operand_aliasing={{}: (0, {})}
+  pin = b(f32[4]) custom-call(p), custom_call_target="Pin",
+      output_to_operand_aliasing={{}: (0, {})}
+  read = f32[4] negate(p)
+  bc = f32[2,2] bitcast(p)
+  call = f32[4] call(p), to_apply=fn
+  ROOT out = tuple(read, f32[2,2] negate(bc), f32[4] add(dus, call), cc)
+})hlo"));
+    ASSERT_OK(pass.AddSpecialCaseCopies(mod.get(), {},
+                                        use_callback ? mark_param : nullptr));
+    const HloInstruction* copy = FindInstruction(mod.get(), "bc")->operand(0);
+    const HloInstruction* param = FindInstruction(mod.get(), "p");
+    const HloInstruction* want = use_callback ? copy : param;
+    EXPECT_EQ(CountCopies(*mod), 1);
+    EXPECT_EQ(FindInstruction(mod.get(), "read")->operand(0), want);
+    EXPECT_THAT(FindInstruction(mod.get(), "cc"), op::CustomCall(copy, want));
+    for (absl::string_view op : {"dus", "vw", "pin", "bc", "call"}) {
+      EXPECT_EQ(FindInstruction(mod.get(), op)->operand(0), copy);
+    }
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> aliases,
+                         HloAliasAnalysis::Run(mod.get(), &alias_info_));
+    EXPECT_EQ(aliases->GetUniqueBufferAt(param).values().size(), 1);
+  }
 }
 
 }  // namespace

@@ -20,6 +20,7 @@ limitations under the License.
 #include <functional>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
@@ -34,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/hlo_value.h"
+#include "xla/shape.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 
@@ -119,9 +121,19 @@ class CopyInsertion : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads,
       HloModule* module, CustomBufferAnalysisFn custom_buffer_analysis);
 
+  // Shape indices of an instruction to copy, plus direct `(user, operand)` uses
+  // of a read only array instruction that stay on the original value.
+  struct SpecialCaseCopy {
+    explicit SpecialCaseCopy(const Shape& shape)
+        : indices(shape, /*init_value=*/false) {}
+    ShapeTree<bool> indices;
+    std::vector<std::pair<HloInstruction*, int64_t>> preserved_uses;
+  };
+  using SpecialCaseCopies = HloInstructionMap<SpecialCaseCopy>;
+
   // Records the shape indices that need special case copies without inserting
   // them. `alias_analysis` must be current for `module`.
-  absl::StatusOr<HloInstructionMap<ShapeTree<bool>>> ComputeSpecialCaseCopies(
+  absl::StatusOr<SpecialCaseCopies> ComputeSpecialCaseCopies(
       const CallGraph& call_graph,
       const absl::flat_hash_set<absl::string_view>& execution_threads,
       HloModule* module, const HloAliasAnalysis& alias_analysis,
@@ -129,7 +141,7 @@ class CopyInsertion : public HloModulePass {
 
   // Inserts the copies computed by ComputeSpecialCaseCopies.
   static absl::Status InsertSpecialCaseCopies(
-      const HloInstructionMap<ShapeTree<bool>>& instructions_to_copy);
+      const SpecialCaseCopies& instructions_to_copy);
 
   // Add copies for conditional instructions.
   virtual absl::Status AddCopiesForConditional(
