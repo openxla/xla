@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/service/matmul_indexing_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/util.h"
 
 namespace xla::gpu {
 namespace {
@@ -122,14 +123,27 @@ absl::StatusOr<PortToCanonicalDims> GetCanonicalDimensions(
   return result;
 }
 
+// Ranges of the dimensions of a port of the dot that a parameter is sliced to.
+struct SliceRanges {
+  std::vector<int64_t> starts;
+  std::vector<int64_t> sizes;
+
+  bool operator==(const SliceRanges& other) const {
+    return starts == other.starts && sizes == other.sizes;
+  }
+};
+
 // How the shape of an instruction gets to a port of the dot.
 struct PortPath {
   DotPort port;
-  // Maps the logical shape of the instruction to the shape of `port`.
+  // Maps the shape of the instruction to the shape of `port` before `slices`.
   ShapeTracker to_port;
+  // Slices between the instruction and `port`, if any.
+  std::optional<SliceRanges> slices;
 
   bool operator==(const PortPath& other) const {
-    return port == other.port && to_port == other.to_port;
+    return port == other.port && to_port == other.to_port &&
+           slices == other.slices;
   }
 };
 
@@ -165,6 +179,136 @@ absl::StatusOr<ShapeTracker> TrackFromDot(const HloInstruction& dot,
   return tracker;
 }
 
+// The `starts` and `sizes` of a slice of a shape with dimensions `unsliced`.
+struct SlicedShape {
+  std::vector<int64_t> unsliced;
+  std::vector<int64_t> starts;
+  std::vector<int64_t> sizes;
+};
+
+// Returns slice dimensions to represent slice(reshape(..)) rather than
+// reshape(slice(..)). Fails if the slice cannot be represented by a single
+// start/size pair per dimension.
+absl::StatusOr<SlicedShape> ReshapeSlicedDimensions(
+    const SlicedShape& slice, absl::Span<const int64_t> target_dims) {
+  SlicedShape result{
+      std::vector<int64_t>(target_dims.begin(), target_dims.end()),
+      std::vector<int64_t>(target_dims.size(), 0),
+      std::vector<int64_t>(target_dims.begin(), target_dims.end())};
+  // Groups of source and target dimensions with the same number of elements.
+  const auto groups = CommonFactors(slice.sizes, target_dims);
+  int64_t src_begin = 0;
+  for (int64_t group = 0; group + 1 < groups.size(); ++group) {
+    const int64_t dst_begin = groups[group].second;
+    const auto [src_end, dst_end] = groups[group + 1];
+    // Removed size-1 dimensions join the next group, e.g. [1,K,N] -> [K,N].
+    if (dst_begin == dst_end && group + 2 < groups.size()) {
+      continue;
+    }
+    absl::Span<const int64_t> src_sizes =
+        absl::MakeConstSpan(slice.sizes)
+            .subspan(src_begin, src_end - src_begin);
+    absl::Span<const int64_t> dst_sizes =
+        target_dims.subspan(dst_begin, dst_end - dst_begin);
+    for (int64_t i = 0; i < src_sizes.size(); ++i) {
+      const int64_t src = src_begin + i;
+      if (slice.unsliced[src] == slice.sizes[src]) {
+        continue;
+      }
+      // Only the major-most dimension of a group can be sliced.
+      if (Product(src_sizes.first(i)) != 1 || dst_sizes.empty()) {
+        return absl::UnimplementedError(
+            "The slice is not a range of a dimension after a reshape.");
+      }
+      // The major-most target dimension of the group that is not of size 1.
+      const auto it =
+          absl::c_find_if(dst_sizes, [](int64_t size) { return size != 1; });
+      const int64_t major_dst_offset =
+          it == dst_sizes.end() ? 0 : it - dst_sizes.begin();
+      const int64_t dst = dst_begin + major_dst_offset;
+      const int64_t minor_src = Product(src_sizes.subspan(i + 1));
+      const int64_t minor_dst =
+          Product(dst_sizes.subspan(major_dst_offset + 1));
+      if (result.unsliced[dst] != target_dims[dst] ||
+          (slice.starts[src] * minor_src) % minor_dst != 0 ||
+          (slice.unsliced[src] * minor_src) % minor_dst != 0) {
+        return absl::UnimplementedError(
+            "The slice is not a range of a dimension after a reshape.");
+      }
+      result.unsliced[dst] = slice.unsliced[src] * minor_src / minor_dst;
+      result.starts[dst] = slice.starts[src] * minor_src / minor_dst;
+    }
+    src_begin = src_end;
+  }
+  return result;
+}
+
+// Returns a new PortPath for `slice`. Recreates the ShapeTracker for the
+// unsliced shape and transforms the slice dimensions to represent a slice of
+// the dot operand: turns dot(bitcast(slice(p))) into dot(slice(bitcast(p))).
+absl::StatusOr<PortPath> PropagateSlice(const HloInstruction& slice,
+                                        const PortPath& path) {
+  if (!absl::c_all_of(slice.slice_strides(),
+                      [](int64_t stride) { return stride == 1; })) {
+    return absl::UnimplementedError("Only unit-stride slices are supported.");
+  }
+  if (path.port == DotPort::kOutput) {
+    // cuDNN builds plans for these graphs but fails to execute them.
+    return absl::UnimplementedError("Slices are not supported after the dot.");
+  }
+  const Shape& operand_shape = slice.operand(0)->shape();
+  absl::Span<const int64_t> operand_dims = operand_shape.dimensions();
+  absl::Span<const int64_t> slice_dims = slice.shape().dimensions();
+  SlicedShape sliced{{operand_dims.begin(), operand_dims.end()},
+                     slice.slice_starts(),
+                     {slice_dims.begin(), slice_dims.end()}};
+  ShapeTracker unsliced_to_port(operand_shape);
+  for (const ShapeTracker::Step& step : path.to_port.GetSteps()) {
+    switch (step.type) {
+      case ShapeTracker::Step::Type::kTranspose:
+        sliced = {Permute(sliced.unsliced, step.dimensions),
+                  Permute(sliced.starts, step.dimensions),
+                  Permute(sliced.sizes, step.dimensions)};
+        ABSL_RETURN_IF_ERROR(unsliced_to_port.AppendTranspose(step.dimensions));
+        break;
+      case ShapeTracker::Step::Type::kReshape: {
+        ABSL_ASSIGN_OR_RETURN(sliced,
+                              ReshapeSlicedDimensions(sliced, step.dimensions));
+        ABSL_RETURN_IF_ERROR(unsliced_to_port.AppendReshape(sliced.unsliced));
+        break;
+      }
+      case ShapeTracker::Step::Type::kBroadcast: {
+        // Broadcasted dimensions are not sliced.
+        SlicedShape broadcasted{step.dimensions,
+                                std::vector<int64_t>(step.dimensions.size(), 0),
+                                step.dimensions};
+        for (int64_t i = 0; i < step.broadcast_dimensions.size(); ++i) {
+          broadcasted.unsliced[step.broadcast_dimensions[i]] =
+              sliced.unsliced[i];
+          broadcasted.starts[step.broadcast_dimensions[i]] = sliced.starts[i];
+        }
+        sliced = std::move(broadcasted);
+        ABSL_RETURN_IF_ERROR(unsliced_to_port.AppendBroadcast(
+            sliced.unsliced, step.broadcast_dimensions));
+        break;
+      }
+      case ShapeTracker::Step::Type::kReduce:
+        return absl::UnimplementedError("Cannot slice a reduced tensor.");
+    }
+  }
+  PortPath result{
+      path.port, std::move(unsliced_to_port),
+      SliceRanges{std::move(sliced.starts), std::move(sliced.sizes)}};
+  if (path.slices.has_value()) {
+    // Slicing an already sliced port adds offsets.
+    for (int64_t dim = 0; dim < result.slices->starts.size(); ++dim) {
+      result.slices->starts[dim] += path.slices->starts[dim];
+    }
+    result.slices->sizes = path.slices->sizes;
+  }
+  return result;
+}
+
 // Records `path` for `hlo` and walks towards the parameters, stopping at
 // the dot. Instructions that cannot be walked through have to be parameters or
 // constants.
@@ -187,6 +331,11 @@ absl::Status TraceToPort(const HloInstruction& hlo, PortPath path,
   if (IsShapeOp(hlo)) {
     ABSL_RETURN_IF_ERROR(path.to_port.PrependInstruction(&hlo));
     return TraceToPort(*hlo.operand(0), std::move(path), dot, paths);
+  }
+  if (hlo.opcode() == HloOpcode::kSlice) {
+    ABSL_ASSIGN_OR_RETURN(PortPath operand_path, PropagateSlice(hlo, path),
+                          _ << "Unsupported slice: " << hlo.ToString());
+    return TraceToPort(*hlo.operand(0), std::move(operand_path), dot, paths);
   }
   if (IsElementwiseOrCopy(hlo)) {
     for (const HloInstruction* operand : hlo.operands()) {
@@ -276,14 +425,21 @@ void NormalizeStrides(bool has_batch_dimensions, CudnnTensorLayout& dims) {
 }
 
 // Returns the sizes of the three canonical dimensions of a port with dimensions
-// `port_dims`.
+// `port_dims`. If `virtual_batch_size` is not 1, M is split into
+// [virtual_batch_size, M / virtual_batch_size] and the outer part becomes the
+// batch dimension.
 std::vector<int64_t> CanonicalPortSizes(absl::Span<const int64_t> port_dims,
-                                        const CanonicalDims& canonical) {
+                                        const CanonicalDims& canonical,
+                                        int64_t virtual_batch_size) {
   std::vector<int64_t> sizes(canonical.size(), 1);
   for (int position = 0; position < canonical.size(); ++position) {
     for (int64_t dim : canonical[position]) {
       sizes[position] *= port_dims[dim];
     }
+  }
+  if (virtual_batch_size != 1) {
+    sizes[0] = virtual_batch_size;
+    sizes[1] /= virtual_batch_size;
   }
   return sizes;
 }
@@ -291,11 +447,12 @@ std::vector<int64_t> CanonicalPortSizes(absl::Span<const int64_t> port_dims,
 // Returns how each of the three canonical dimensions of the port that `to_port`
 // leads to iterates over the buffer of a tensor of shape `shape`.
 absl::StatusOr<std::vector<ShapeTracker::BufferView>> CanonicalViews(
-    const Shape& shape, ShapeTracker to_port, const CanonicalDims& canonical) {
+    const Shape& shape, ShapeTracker to_port, const CanonicalDims& canonical,
+    int64_t virtual_batch_size) {
   ABSL_RETURN_IF_ERROR(PrependPhysicalLayout(shape, to_port));
   // Transpose and reshape the port into its canonical rank-3 shape.
-  const std::vector<int64_t> sizes =
-      CanonicalPortSizes(to_port.output_shape().dimensions(), canonical);
+  const std::vector<int64_t> sizes = CanonicalPortSizes(
+      to_port.output_shape().dimensions(), canonical, virtual_batch_size);
   std::vector<int64_t> permutation;
   for (const std::vector<int64_t>& dims : canonical) {
     permutation.insert(permutation.end(), dims.begin(), dims.end());
@@ -311,12 +468,42 @@ absl::StatusOr<std::vector<ShapeTracker::BufferView>> CanonicalViews(
   return *std::move(views);
 }
 
+// Returns the size of the outer part of M of the LHS if it can be used as a
+// virtual batch dimension and 1 otherwise.
+absl::StatusOr<int64_t> FindVirtualBatchSize(
+    const HloComputation& computation, const PortPaths& paths,
+    const CanonicalDims& lhs_canonical) {
+  if (!lhs_canonical[0].empty()) {
+    return 1;
+  }
+  for (const HloInstruction* parameter : computation.parameter_instructions()) {
+    const PortPath& path = paths.at(parameter);
+    if (path.port != DotPort::kLhs) {
+      continue;
+    }
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<ShapeTracker::BufferView> views,
+        CanonicalViews(parameter->shape(), path.to_port, lhs_canonical,
+                       /*virtual_batch_size=*/1));
+    // Partly broadcasted dimensions are not split. The outer part has to be
+    // outer in memory too for cuDNN.
+    absl::Span<const int64_t> m_strides = views[1].strides();
+    if (m_strides.size() == 2 && !absl::c_linear_search(m_strides, 0) &&
+        m_strides[0] > m_strides[1]) {
+      return views[1].extents()[0];
+    }
+  }
+  return 1;
+}
+
 // Computes the layout of a tensor of shape `shape` that relates to a port of
 // the dot via `path`.
 absl::StatusOr<CudnnTensorLayout> ComputeTensorLayout(
-    const Shape& shape, const PortPath& path, const CanonicalDims& canonical) {
-  ABSL_ASSIGN_OR_RETURN(std::vector<ShapeTracker::BufferView> views,
-                        CanonicalViews(shape, path.to_port, canonical));
+    const Shape& shape, const PortPath& path, const CanonicalDims& canonical,
+    int64_t virtual_batch_size) {
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<ShapeTracker::BufferView> views,
+      CanonicalViews(shape, path.to_port, canonical, virtual_batch_size));
   CudnnTensorLayout layout;
   for (const ShapeTracker::BufferView& view : views) {
     if (absl::c_all_of(view.strides(), [](int64_t s) { return s == 0; })) {
@@ -332,6 +519,34 @@ absl::StatusOr<CudnnTensorLayout> ComputeTensorLayout(
       return absl::UnimplementedError(absl::StrCat(
           "Canonical dimension ", layout.sizes.size(),
           " is not a single strided dimension: ", path.to_port.DebugString()));
+    }
+  }
+  if (path.slices.has_value()) {
+    absl::Span<const int64_t> unsliced =
+        path.to_port.output_shape().dimensions();
+    std::vector<std::pair<int64_t, int64_t>> ranges;
+    ranges.reserve(canonical.size());
+    bool is_sliced = false;
+    for (int position = 0; position < canonical.size(); ++position) {
+      ranges.push_back({0, layout.sizes[position]});
+      for (int64_t dim : canonical[position]) {
+        const int64_t start = path.slices->starts[dim];
+        const int64_t size = path.slices->sizes[dim];
+        // Unsliced and broadcasted dimensions do not restrict the tensor.
+        if (layout.sizes[position] == 1 || size == unsliced[dim]) {
+          continue;
+        }
+        if (unsliced[dim] != layout.sizes[position]) {
+          return absl::UnimplementedError(
+              "Cannot slice a dimension that is not a whole canonical "
+              "dimension.");
+        }
+        ranges.back() = {start, start + size};
+        is_sliced = true;
+      }
+    }
+    if (is_sliced) {
+      layout.slices = std::move(ranges);
     }
   }
   NormalizeStrides(/*has_batch_dimensions=*/!canonical[0].empty(), layout);
@@ -352,6 +567,12 @@ absl::StatusOr<CuDnnGemmDimensions> CuDnnGemmDimensions::Create(
                         TraceDotPortsToFusionEdges(dot, *output));
   ABSL_RETURN_IF_ERROR(ValidateComputation(computation, paths));
 
+  // If the LHS NC dimension has been split, we can treat the outer part as a
+  // batch dimension if there isn't one already.
+  ABSL_ASSIGN_OR_RETURN(
+      const int64_t virtual_batch_size,
+      FindVirtualBatchSize(computation, paths, canonical.at(DotPort::kLhs)));
+
   // Compute sizes and strides.
   CuDnnGemmDimensions result;
   for (const HloInstruction* hlo : computation.instructions()) {
@@ -361,6 +582,11 @@ absl::StatusOr<CuDnnGemmDimensions> CuDnnGemmDimensions::Create(
     }
     const PortPath& path = it->second;
     const CanonicalDims& port_canonical = canonical.at(path.port);
+    // Virtual batch size is only used for the LHS and output.
+    const int64_t port_virtual_batch_size =
+        path.port == DotPort::kLhs || path.port == DotPort::kOutput
+            ? virtual_batch_size
+            : 1;
     result.ports_[hlo] = path.port;
     // The compiler sets the sizes of ops whose operands are broadcasts, which
     // cuDNN cannot infer because broadcasts are not part of the cuDNN graph.
@@ -370,13 +596,14 @@ absl::StatusOr<CuDnnGemmDimensions> CuDnnGemmDimensions::Create(
           path.port == DotPort::kOutput
               ? dot.shape()
               : dot.operand(static_cast<int>(path.port))->shape();
-      sizes->second =
-          CanonicalPortSizes(port_shape.dimensions(), port_canonical);
+      sizes->second = CanonicalPortSizes(
+          port_shape.dimensions(), port_canonical, port_virtual_batch_size);
     }
     if (hlo == output || hlo->opcode() == HloOpcode::kParameter) {
       ABSL_ASSIGN_OR_RETURN(
           result.tensor_layouts_[hlo],
-          ComputeTensorLayout(hlo->shape(), path, port_canonical));
+          ComputeTensorLayout(hlo->shape(), path, port_canonical,
+                              port_virtual_batch_size));
     }
   }
   return result;
