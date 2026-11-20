@@ -223,7 +223,8 @@ static Registry CreateRegistry() {
   REGISTER_LIBM_SYMBOL(nearbyint, double (*)(double));
   REGISTER_LIBM_SYMBOL(nextafter, double (*)(double, double));
   REGISTER_LIBM_SYMBOL(nexttoward, double (*)(double, long double));
-  REGISTER_LIBM_SYMBOL(pow, double (*)(double, double));
+  registry["powf"] = SymbolDef(BuiltinPowf);
+  registry["pow"] = SymbolDef(BuiltinPow);
   REGISTER_LIBM_SYMBOL(remainder, double (*)(double, double));
   REGISTER_LIBM_SYMBOL(remquo, double (*)(double, double, int*));
   REGISTER_LIBM_SYMBOL(rint, double (*)(double));

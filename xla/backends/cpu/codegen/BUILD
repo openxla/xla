@@ -90,7 +90,22 @@ cc_library(
     srcs = ["builtin_pow.cc"],
     hdrs = ["builtin_pow.h"],
     visibility = internal_visibility([":friends"]),
-    deps = ["@com_google_absl//absl/base:core_headers"],
+    deps = [
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
+        "@tsl//tsl/platform:denormal",
+    ],
+)
+
+xla_cc_test(
+    name = "builtin_pow_test",
+    srcs = ["builtin_pow_test.cc"],
+    deps = [
+        ":builtin_pow",
+        "@com_google_absl//absl/base",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:denormal",
+    ],
 )
 
 cc_library(

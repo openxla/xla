@@ -24,4 +24,13 @@ extern "C" float __powisf2(float a, int32_t b);
 // Raises F64 value a to the power of b.
 extern "C" double __powidf2(double a, int32_t b);
 
+namespace xla::cpu {
+
+// pow for compiled code. If the CPU reads subnormals as zero (DAZ), subnormal
+// operands become signed zero first, because glibc's pow is wrong in that mode.
+double BuiltinPow(double x, double y);
+float BuiltinPowf(float x, float y);
+
+}  // namespace xla::cpu
+
 #endif  // XLA_BACKENDS_CPU_CODEGEN_BUILTIN_POW_H_
