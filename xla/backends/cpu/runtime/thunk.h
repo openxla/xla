@@ -230,7 +230,7 @@ class Thunk {
 
     const DeviceAssignment* device_assignment = nullptr;
     CpuCollectives* collectives = nullptr;
-    absl::StatusOr<DeviceAssignment::LogicalID> logical_device_id;
+    std::optional<DeviceAssignment::LogicalID> logical_device_id;
 
     CollectiveExecuteParams(
         RunId run_id, int64_t local_device_ordinal,

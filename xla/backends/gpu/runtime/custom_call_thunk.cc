@@ -445,7 +445,8 @@ InvokeContext CustomCallThunk::BuildInvokeContext(
       custom_options};
   if (collective_params != nullptr) {
     context.logical_device_context = InvokeContext::LogicalDeviceContext{
-        collective_params->device_assn, collective_params->logical_device_id};
+        collective_params->device_assn, collective_params->global_device_id,
+        collective_params->logical_device_id};
   }
   return context;
 }

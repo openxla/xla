@@ -21,7 +21,6 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
-#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -128,15 +127,13 @@ CollectiveParams::CollectiveParams(
       p2p_max_nchannels(p2p_max_nchannels),
       local_device_count(local_device_count),
       collective_use_minimal_resource(collective_use_minimal_resource),
-      nccl_window_symmetric(nccl_window_symmetric) {
-  // Placement errors matter only when a handler requests logical device info.
-  if (device_assn == nullptr) {
-    logical_device_id = absl::FailedPreconditionError(
-        "Logical device information requires an execution device assignment");
-  } else if (logical_id.has_value()) {
-    logical_device_id = *logical_id;
-  } else {
-    logical_device_id = device_assn->LogicalIdForDevice(global_device_id);
+      nccl_window_symmetric(nccl_window_symmetric),
+      logical_device_id(logical_id) {
+  if (!logical_device_id && device_assn != nullptr) {
+    auto id = device_assn->LogicalIdForDevice(global_device_id);
+    if (id.ok()) {
+      logical_device_id = *id;
+    }
   }
 }
 

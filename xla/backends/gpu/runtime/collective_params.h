@@ -81,7 +81,7 @@ struct CollectiveParams {
   // Whether symmetric memory windows are cached on the GPU communicator (see
   // `xla_gpu_experimental_cache_nccl_window_in_communicator`).
   bool cache_nccl_window_in_communicator = false;
-  absl::StatusOr<DeviceAssignment::LogicalID> logical_device_id;
+  std::optional<DeviceAssignment::LogicalID> logical_device_id;
 
  private:
   CollectiveParams(

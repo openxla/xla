@@ -137,15 +137,13 @@ Thunk::CollectiveExecuteParams::CollectiveExecuteParams(
       local_device_ordinal(local_device_ordinal),
       global_device_id(global_device_id),
       device_assignment(device_assignment),
-      collectives(collectives) {
-  // Placement errors matter only when a handler requests logical device info.
-  if (device_assignment == nullptr) {
-    logical_device_id = absl::FailedPreconditionError(
-        "Logical device information requires an execution device assignment");
-  } else if (logical_id.has_value()) {
-    logical_device_id = *logical_id;
-  } else {
-    logical_device_id = device_assignment->LogicalIdForDevice(global_device_id);
+      collectives(collectives),
+      logical_device_id(logical_id) {
+  if (!logical_device_id && device_assignment != nullptr) {
+    auto id = device_assignment->LogicalIdForDevice(global_device_id);
+    if (id.ok()) {
+      logical_device_id = *id;
+    }
   }
 }
 
