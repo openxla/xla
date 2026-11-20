@@ -1090,6 +1090,43 @@ TEST(ShapeUtilTest, ReshapeIsBitcastIgnoreElementType) {
       /*ignore_element_type=*/false));
 }
 
+TEST(ShapeUtilTest, ReshapePreservesTiledLayout) {
+  auto make = [](absl::Span<const int64_t> dims, absl::Span<const int64_t> m2m,
+                 absl::Span<const Tile> tiles, int64_t bits = 0,
+                 int64_t space = 0, absl::Span<const SplitConfig> splits = {}) {
+    return ShapeUtil::MakeShapeWithDenseLayout(
+        S4, dims, m2m, tiles, /*tail_padding_alignment_in_elements=*/1, bits,
+        space, splits);
+  };
+  const Tile kSubtiles[] = {Tile({2, 8}), Tile({2, 1})};
+  const Tile kCombined[] = {Tile({Tile::kCombineDimension, 2, 8})};
+  EXPECT_TRUE(ShapeUtil::ReshapePreservesTiledLayout(
+      make({1, 16, 2, 8}, {3, 2, 1, 0}, kSubtiles, 4, /*space=*/0),
+      make({16, 2, 8}, {2, 1, 0}, kSubtiles, 4, /*space=*/1)));
+  EXPECT_TRUE(ShapeUtil::ReshapePreservesTiledLayout(
+      make({1, 4, 2, 8}, {3, 2, 1, 0}, kCombined),
+      make({4, 2, 8}, {2, 1, 0}, kCombined)));
+  EXPECT_FALSE(ShapeUtil::ReshapePreservesTiledLayout(
+      make({4, 1, 2, 8}, {3, 2, 1, 0}, kCombined),
+      make({4, 2, 8}, {2, 1, 0}, kCombined)));
+  EXPECT_FALSE(ShapeUtil::ReshapePreservesTiledLayout(
+      make({16, 1, 8}, {2, 1, 0}, {Tile({2, 8})}),
+      make({16, 8}, {1, 0}, {Tile({2, 8})})));
+  EXPECT_FALSE(ShapeUtil::ReshapePreservesTiledLayout(
+      make({1, 8, 8}, {2, 1, 0}, {Tile({2, 8})}),
+      make({8, 8}, {1, 0}, {Tile({4, 8})})));
+  EXPECT_FALSE(ShapeUtil::ReshapePreservesTiledLayout(
+      make({1, 8, 8}, {2, 1, 0}, kSubtiles, /*bits=*/4),
+      make({8, 8}, {1, 0}, kSubtiles, /*bits=*/0)));
+  EXPECT_FALSE(ShapeUtil::ReshapePreservesTiledLayout(
+      make({8, 8}, {1, 0}, kSubtiles, 0, 0, {SplitConfig(0, {4})}),
+      make({8, 8}, {1, 0}, kSubtiles, 0, 0, {SplitConfig(0, {4})})));
+  Shape no_layout = ShapeUtil::MakeShape(S4, {8, 8});
+  LayoutUtil::ClearLayout(&no_layout);
+  EXPECT_FALSE(ShapeUtil::ReshapePreservesTiledLayout(
+      no_layout, make({8, 8}, {1, 0}, kSubtiles)));
+}
+
 TEST(ShapeUtilTest, TransposeIsBitcastIgnoreElementType) {
   EXPECT_TRUE(ShapeUtil::TransposeIsBitcast(
       ShapeUtil::MakeShapeWithDenseLayout(F32, {10, 5}, {1, 0}),

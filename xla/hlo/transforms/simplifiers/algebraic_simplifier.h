@@ -482,6 +482,10 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   // Tries to convert slice(reverse(X)) into reverse(slice(X))
   absl::StatusOr<bool> TryToReorderSliceAndReverse(HloInstruction* slice);
 
+  // Returns true if `dus` writes an unmodified slice or dynamic-slice of its
+  // base operand back to the same offsets (ignoring size 1 reshapes/bitcasts).
+  bool IsIdentityDynamicUpdateSlice(const HloInstruction* dus) const;
+
   // Tries to simplify `(and (< a N) (< a K))` in cases where `N <= K` into
   // `(< a N)`. This is crucial for being able to figure out the loop trip
   // count.

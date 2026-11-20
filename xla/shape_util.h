@@ -902,6 +902,12 @@ class ShapeUtil {
                                const Shape& output_shape,
                                bool ignore_element_type = false);
 
+  // Returns whether static array shapes `input_shape` and `output_shape` have
+  // explicit layouts with matching layout metadata (ignoring minor_to_major and
+  // memory_space) and identical minor physical extents across all tiled dims.
+  static bool ReshapePreservesTiledLayout(const Shape& input_shape,
+                                          const Shape& output_shape);
+
   // Returns whether there is a bitcasting reshape or transpose from `a` to `b`.
   //
   // Precondition: Both input_shape and output_shape have explicit layouts.

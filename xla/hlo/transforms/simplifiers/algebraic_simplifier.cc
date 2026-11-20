@@ -434,6 +434,24 @@ bool ValidateTilingOfBitcast(
   return true;
 }
 
+absl::InlinedVector<int64_t, 8> GetNonUnitDims(const Shape& shape) {
+  absl::InlinedVector<int64_t, 8> dims;
+  for (int64_t d = 0; d < shape.dimensions().size(); ++d) {
+    if (shape.dimensions(d) > 1) {
+      dims.push_back(d);
+    }
+  }
+  return dims;
+}
+
+std::optional<int64_t> GetClampedConstantIndex(const HloInstruction* index,
+                                               int64_t max_start) {
+  std::optional<int64_t> val =
+      index->IsConstant() ? index->literal().GetFirstInteger() : std::nullopt;
+  return val ? std::optional<int64_t>(std::clamp<int64_t>(*val, 0, max_start))
+             : std::nullopt;
+}
+
 // Constructs the maps that take dims of A and dims of B to dims of AB, mapping
 // to -1 for dimensions not present in AB. For an example, consider we are
 // computing a dot whose operands have shapes [m,n,p] and [n,q]. Assuming we
@@ -8486,6 +8504,81 @@ absl::Status AlgebraicSimplifierVisitor::HandleDynamicSlice(
   return absl::OkStatus();
 }
 
+bool AlgebraicSimplifierVisitor::IsIdentityDynamicUpdateSlice(
+    const HloInstruction* dus) const {
+  const HloInstruction* updated = dus->operand(0);
+  const HloInstruction* update = dus->operand(1);
+  const int64_t rank = updated->shape().dimensions().size();
+  if (!updated->shape().IsArrayExcludingBuffer() ||
+      !updated->shape().is_static() || !update->shape().is_static() ||
+      ShapeUtil::IsZeroElementArray(update->shape()) ||
+      dus->operand_count() != 2 + rank ||
+      (rank > 0 && !ShapeUtil::IsScalar(dus->operand(2)->shape()))) {
+    return false;
+  }
+  auto unwrap = [this](const HloInstruction* inst) {
+    while (inst->opcode() == HloOpcode::kReshape ||
+           inst->opcode() == HloOpcode::kBitcast) {
+      const Shape& from = inst->operand(0)->shape();
+      const Shape& to = inst->shape();
+      if (!from.IsArrayExcludingBuffer() || !from.is_static() ||
+          !ShapeUtil::SameElementType(from, to) ||
+          ShapeUtil::IsZeroElementArray(from) ||
+          !ShapeUtil::InsertedOrDeleted1SizedDimensions(from, to) ||
+          (inst->opcode() == HloOpcode::kBitcast &&
+           (!ShapeUtil::ReshapePreservesTiledLayout(from, to) ||
+            !TargetReshapeIsBitcast(from, to)))) {
+        break;
+      }
+      inst = inst->operand(0);
+    }
+    return inst;
+  };
+
+  const HloInstruction* slice = unwrap(update);
+  const bool is_slice = slice->opcode() == HloOpcode::kSlice;
+  if (!is_slice && slice->opcode() != HloOpcode::kDynamicSlice) {
+    return false;
+  }
+  const Shape& src_shape = slice->operand(0)->shape();
+  const int64_t src_rank = src_shape.dimensions().size();
+  if (!src_shape.IsArrayExcludingBuffer() || !src_shape.is_static() ||
+      (is_slice ? !hlo_instruction_utils::IsUnstridedSlice(slice)
+                : (slice->operand_count() != 1 + src_rank ||
+                   (src_rank > 0 &&
+                    !ShapeUtil::IsScalar(slice->operand(1)->shape())))) ||
+      unwrap(updated) != unwrap(slice->operand(0))) {
+    return false;
+  }
+
+  // Unit dims have slice size 1 and clamp any start to 0; nonunit dims clamp
+  // to [0, dim - size] in both dynamic-slice and dynamic-update-slice.
+  const absl::InlinedVector<int64_t, 8> src_non1 = GetNonUnitDims(src_shape);
+  const absl::InlinedVector<int64_t, 8> dst_non1 =
+      GetNonUnitDims(updated->shape());
+  for (int64_t r = 0; r < src_non1.size(); ++r) {
+    const int64_t src_dim = src_non1[r];
+    const int64_t dst_dim = dst_non1[r];
+    const int64_t size = slice->shape().dimensions(src_dim);
+    const int64_t max_start = src_shape.dimensions(src_dim) - size;
+    if (size != update->shape().dimensions(dst_dim)) {
+      return false;
+    }
+    const HloInstruction* dus_idx = dus->operand(2 + dst_dim);
+    if (max_start > 0 && (is_slice || slice->operand(1 + src_dim) != dus_idx)) {
+      const std::optional<int64_t> slice_start =
+          is_slice
+              ? std::optional<int64_t>(slice->slice_starts(src_dim))
+              : GetClampedConstantIndex(slice->operand(1 + src_dim), max_start);
+      if (!slice_start.has_value() ||
+          GetClampedConstantIndex(dus_idx, max_start) != slice_start) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 absl::Status AlgebraicSimplifierVisitor::HandleDynamicUpdateSlice(
     HloInstruction* dynamic_update_slice) {
   // Skip optimizations for async dynamic update slices
@@ -8499,6 +8592,10 @@ absl::Status AlgebraicSimplifierVisitor::HandleDynamicUpdateSlice(
   // in the future.
   HloInstruction* updated = dynamic_update_slice->mutable_operand(0);
   HloInstruction* dus_update = dynamic_update_slice->mutable_operand(1);
+  if (IsIdentityDynamicUpdateSlice(dynamic_update_slice) &&
+      ReplaceInstructionIfCompatible(dynamic_update_slice, updated)) {
+    return absl::OkStatus();
+  }
   HloInstruction* pad_value;
   if (options_.enable_dynamic_update_slice_to_pad_replacement() &&
       Match(updated,

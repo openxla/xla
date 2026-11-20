@@ -1947,6 +1947,45 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
          check_input_unit_indices(output_shape, input_shape);
 }
 
+/* static */ bool ShapeUtil::ReshapePreservesTiledLayout(
+    const Shape& input_shape, const Shape& output_shape) {
+  if (!input_shape.IsArray() || !output_shape.IsArray() ||
+      !input_shape.is_static() || !output_shape.is_static() ||
+      !input_shape.has_layout() || !output_shape.has_layout()) {
+    return false;
+  }
+  Layout in_layout = input_shape.layout();
+  const Layout& out_layout = output_shape.layout();
+  in_layout.mutable_minor_to_major()->assign(
+      out_layout.minor_to_major().begin(), out_layout.minor_to_major().end());
+  if (!Layout::Equal().IgnoreMemorySpace()(in_layout, out_layout) ||
+      !in_layout.split_configs().empty() || in_layout.has_physical_shape() ||
+      in_layout.dynamic_shape_metadata_prefix_bytes() !=
+          out_layout.dynamic_shape_metadata_prefix_bytes()) {
+    return false;
+  }
+  // Each tile consumes `rank` minor dims and splits each uncombined dim into
+  // two, so `touched` counts how many shape minor dims the tile stack covers.
+  int64_t touched = 0;
+  int64_t generated = 0;
+  for (const Tile& tile : in_layout.tiles()) {
+    const int64_t rank = tile.dimensions().size();
+    const int64_t kept =
+        rank - absl::c_count(tile.dimensions(), Tile::kCombineDimension);
+    touched += std::max<int64_t>(0, rank - generated);
+    generated = std::max<int64_t>(0, generated - rank) + 2 * kept;
+  }
+  const int64_t in_rank = input_shape.dimensions().size();
+  const int64_t out_rank = output_shape.dimensions().size();
+  for (int64_t i = 0; i < std::min(touched, std::max(in_rank, out_rank)); ++i) {
+    if ((i < in_rank ? input_shape.dimensions_minor(i) : 1) !=
+        (i < out_rank ? output_shape.dimensions_minor(i) : 1)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static absl::Span<const int64_t> LayoutPerm(const Shape& s) {
   return s.layout().minor_to_major();
 }
