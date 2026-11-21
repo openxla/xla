@@ -384,20 +384,9 @@ CodegenDecision CanTritonHandleScan(
   if (!scan.shape().IsTuple()) {
     return CodegenDecision::Forbid("Scan must return a tuple.");
   }
-  if (scan.is_reverse()) {
-    return CodegenDecision::Forbid("Reverse scan is not supported in Triton.");
-  }
   if (scan.inputs().size() != 1 || scan.num_carries() != 1) {
     return CodegenDecision::Forbid(
         "Only single-input, single-carry scans are supported in Triton.");
-  }
-
-  int64_t rank = scan.inputs().front()->shape().dimensions().size();
-  if (scan.scan_dimension() != rank - 1) {
-    // TODO(b/469020791): Support scans over other dimensions. The tiled Triton
-    // scan computes wrong results for them.
-    return CodegenDecision::Forbid(
-        "Only scans over the last dimension are supported in Triton.");
   }
 
   if (!IsTritonSupportedComputation(*scan.to_apply(), gpu_version)) {
