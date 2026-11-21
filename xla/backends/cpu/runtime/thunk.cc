@@ -28,19 +28,19 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/backends/cpu/collectives/in_process_collectives.h"
 #include "xla/executable_run_options.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/cpu/cpu_executable_run_options.h"
+#include "xla/service/device_assignment.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace xla::cpu {
 
@@ -121,19 +121,31 @@ Thunk::CollectiveExecuteParams::Create(
           ? cpu_run_options->collectives()
           : in_process_collectives;
 
-  return CollectiveExecuteParams{run_options->run_id(), device_ordinal,
+  return CollectiveExecuteParams{run_options->run_id(),
+                                 device_ordinal,
                                  GlobalDeviceId(run_options->device_ordinal()),
-                                 run_options->device_assignment(), collectives};
+                                 run_options->device_assignment(),
+                                 collectives,
+                                 run_options->logical_device_id()};
 }
 
 Thunk::CollectiveExecuteParams::CollectiveExecuteParams(
     RunId run_id, int64_t local_device_ordinal, GlobalDeviceId global_device_id,
-    const DeviceAssignment* device_assignment, CpuCollectives* collectives)
+    const DeviceAssignment* device_assignment, CpuCollectives* collectives,
+    std::optional<DeviceAssignment::LogicalID> logical_id)
     : run_id(run_id),
       local_device_ordinal(local_device_ordinal),
       global_device_id(global_device_id),
       device_assignment(device_assignment),
-      collectives(collectives) {}
+      collectives(collectives),
+      logical_device_id(logical_id) {
+  if (!logical_device_id && device_assignment != nullptr) {
+    auto id = device_assignment->LogicalIdForDevice(global_device_id);
+    if (id.ok()) {
+      logical_device_id = *id;
+    }
+  }
+}
 
 absl::StatusOr<Thunk::CustomCallExecuteParams>
 Thunk::CustomCallExecuteParams::Create(

@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/executable_run_options.h"
 #include "xla/runtime/device_id.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/stream.h"
@@ -77,6 +78,7 @@ struct CollectiveParams {
   bool need_barrier = false;
   bool collective_use_minimal_resource;
   bool nccl_window_symmetric = false;
+  std::optional<DeviceAssignment::LogicalID> logical_device_id;
 
  private:
   CollectiveParams(
@@ -89,7 +91,8 @@ struct CollectiveParams {
       const absl::flat_hash_map<GlobalDeviceId, IncarnationId>* incarnations,
       int64_t collective_max_nchannels, int64_t p2p_max_nchannels,
       int local_device_count, bool collective_use_minimal_resource,
-      bool nccl_window_symmetric = false);
+      bool nccl_window_symmetric = false,
+      std::optional<DeviceAssignment::LogicalID> logical_id = std::nullopt);
 };
 
 // The type of a kernel argument used by a collective kernel.

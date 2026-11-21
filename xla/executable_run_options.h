@@ -19,11 +19,13 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
+#include "xla/service/device_assignment.h"
 
 // These classes are forward declared so that ExecutableRunOptions can be linked
 // into an XLA-compiled binary without having to link all of the pointed-to
@@ -51,7 +53,6 @@ namespace xla {
 class CustomOptions;
 
 class CliqueKey;
-class DeviceAssignment;
 class ExecutionProfile;
 class Shape;
 
@@ -194,9 +195,15 @@ class ExecutableRunOptions {
   ExecutionProfile* execution_profile() const;
   ExecutableRunOptions& set_execution_profile(ExecutionProfile* profile);
 
+  // A loaded executable can supply the current device's resolved coordinates.
+  // If omitted, the runtime resolves them from the assignment for this
+  // execution.
   ExecutableRunOptions& set_device_assignment(
-      const DeviceAssignment* device_assignment);
+      const DeviceAssignment* device_assignment,
+      std::optional<DeviceAssignment::LogicalID> logical_device_id =
+          std::nullopt);
   const DeviceAssignment* device_assignment() const;
+  std::optional<DeviceAssignment::LogicalID> logical_device_id() const;
 
   ExecutableRunOptions& set_rng_seed(int rng_seed);
   int rng_seed() const;
@@ -280,6 +287,7 @@ class ExecutableRunOptions {
   int local_device_count_ = 0;
   int physical_device_ordinal_ = -1;
   const DeviceAssignment* device_assignment_ = nullptr;
+  std::optional<DeviceAssignment::LogicalID> logical_device_id_;
   stream_executor::Stream* stream_ = nullptr;
   const Eigen::ThreadPoolDevice* intra_op_thread_pool_ = nullptr;
   ExecutionProfile* execution_profile_ = nullptr;

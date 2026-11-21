@@ -18,9 +18,12 @@ limitations under the License.
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "xla/service/device_assignment.h"
 
 namespace xla {
 
@@ -118,13 +121,20 @@ ExecutionProfile* ExecutableRunOptions::execution_profile() const {
 }
 
 ExecutableRunOptions& ExecutableRunOptions::set_device_assignment(
-    const DeviceAssignment* device_assignment) {
+    const DeviceAssignment* device_assignment,
+    std::optional<DeviceAssignment::LogicalID> logical_device_id) {
   device_assignment_ = device_assignment;
+  logical_device_id_ = logical_device_id;
   return *this;
 }
 
 const DeviceAssignment* ExecutableRunOptions::device_assignment() const {
   return device_assignment_;
+}
+
+std::optional<DeviceAssignment::LogicalID>
+ExecutableRunOptions::logical_device_id() const {
+  return logical_device_id_;
 }
 
 ExecutableRunOptions& ExecutableRunOptions::set_gpu_executable_run_options(

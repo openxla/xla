@@ -335,6 +335,7 @@ class CpuPjRtRawLoadedExecutable : public PjRtRawLoadedExecutable {
 
   const PjRtCpuExecutable* executable_;
   std::shared_ptr<const DeviceAssignment> device_assignment_;
+  DeviceAssignment::LogicalID logical_device_id_;
   size_t num_addressable_devices_;
   LocalDeviceId local_device_id_;
   GlobalDeviceId global_device_id_;

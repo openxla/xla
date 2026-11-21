@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_FFI_INVOKE_H_
 
 #include <cstdint>
+#include <optional>
 #include <variant>
 
 #include "absl/status/status.h"
@@ -27,6 +28,8 @@ limitations under the License.
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_state.h"
+#include "xla/runtime/device_id.h"
+#include "xla/service/device_assignment.h"
 #include "xla/tsl/concurrency/chain.h"
 
 // XLA FFI `Invoke` is an utility function that provides a way to call XLA FFI
@@ -76,6 +79,12 @@ namespace xla::ffi {
 // constructed from `xla::ExecuteRunOptions`, to give FFI handlers access to
 // XLA runtime internals.
 struct InvokeContext {
+  struct LogicalDeviceContext {
+    const DeviceAssignment* device_assignment;
+    GlobalDeviceId global_device_id;
+    std::optional<DeviceAssignment::LogicalID> logical_device_id;
+  };
+
   struct CpuContext {
     const Eigen::ThreadPoolDevice* intra_op_thread_pool = nullptr;
   };
@@ -120,6 +129,7 @@ struct InvokeContext {
   const xla::CustomOptions* custom_options = nullptr;
 
   const XLA_FFI_Extension* extension_start = nullptr;
+  std::optional<LogicalDeviceContext> logical_device_context;
 };
 
 // Invokes an XLA FFI handler with the given call frame and context. This is a
