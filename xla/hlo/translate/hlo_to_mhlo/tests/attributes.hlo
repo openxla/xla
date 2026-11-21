@@ -97,6 +97,32 @@ ENTRY %main.4 (Arg_0.1: bf16[2,2,2], Arg_1.2: bf16[2,2,2]) -> bf16[2,2,2] {
 
 // -----
 
+HloModule dot_algorithm_bf16_bf16_f32_x9, entry_computation_layout={(f32[2,2,2]{2,1,0}, f32[2,2,2]{2,1,0})->f32[2,2,2]{2,1,0}}
+
+// CHECK-LABEL: module @dot_algorithm_bf16_bf16_f32_x9
+// CHECK: mhlo.dot_general
+// CHECK-SAME: algorithm = #mhlo.dot_algorithm<lhs_precision_type = bf16, rhs_precision_type = bf16, accumulation_type = f32, lhs_component_count = 1, rhs_component_count = 1, num_primitive_operations = 9, allow_imprecise_accumulation = false>
+ENTRY %main.4 (Arg_0.1: f32[2,2,2], Arg_1.2: f32[2,2,2]) -> f32[2,2,2] {
+  %Arg_0.1 = f32[2,2,2] parameter(0)
+  %Arg_1.2 = f32[2,2,2] parameter(1)
+  ROOT %dot.3 = f32[2,2,2] dot(f32[2,2,2] %Arg_0.1, f32[2,2,2] %Arg_1.2), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}, algorithm=dot_bf16_bf16_f32_x9
+}
+
+// -----
+
+HloModule dot_algorithm_2d_default_bf16_bf16_f32_x9, entry_computation_layout={(f32[4,4]{1,0}, f32[4,4]{1,0})->f32[4,4]{1,0}}
+
+// CHECK-LABEL: module @dot_algorithm_2d_default_bf16_bf16_f32_x9
+// CHECK: mhlo.dot_general
+// CHECK-SAME: algorithm = #mhlo.dot_algorithm<lhs_precision_type = bf16, rhs_precision_type = bf16, accumulation_type = f32, lhs_component_count = 1, rhs_component_count = 1, num_primitive_operations = 9, allow_imprecise_accumulation = false>
+ENTRY %main.4 (Arg_0.1: f32[4,4], Arg_1.2: f32[4,4]) -> f32[4,4] {
+  %Arg_0.1 = f32[4,4] parameter(0)
+  %Arg_1.2 = f32[4,4] parameter(1)
+  ROOT %dot.3 = f32[4,4] dot(f32[4,4] %Arg_0.1, f32[4,4] %Arg_1.2), lhs_contracting_dims={1}, rhs_contracting_dims={0}, algorithm=dot_bf16_bf16_f32_x9
+}
+
+// -----
+
 HloModule dot_algorithm_tf32_tf32_f32, entry_computation_layout={(f32[2,2,2]{2,1,0}, f32[2,2,2]{2,1,0})->f32[2,2,2]{2,1,0}}
 
 // CHECK-LABEL: module @dot_algorithm_tf32_tf32_f32

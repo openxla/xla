@@ -123,6 +123,12 @@ bool DotIsDefault(const HloInstruction* instruction) {
       instruction->operand_count() > 2) {
     return false;
   }
+  // stablehlo.dot does not support an algorithm attribute, so dots with an
+  // explicit algorithm must be lowered to stablehlo.dot_general.
+  if (instruction->precision_config().algorithm() !=
+      PrecisionConfig::ALG_UNSET) {
+    return false;
+  }
   // If LHS/RHS has rank greater than 2, not default dot
   const auto& operands = instruction->operands();
   if (operands[0]->shape().dimensions().size() > 2 ||
@@ -965,10 +971,17 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
           stablehlo::ConvertPrecisionConfig(&precision_config, builder_)));
       if (instruction->precision_config().algorithm() !=
           PrecisionConfig::ALG_UNSET) {
-        attributes.push_back(builder_->getNamedAttr(
-            "algorithm",
+        mlir::stablehlo::DotAlgorithmAttr algorithm =
             stablehlo::ConvertDotAlgorithm(
-                instruction->precision_config().algorithm(), builder_)));
+                instruction->precision_config().algorithm(), builder_);
+        if (!algorithm) {
+          return InvalidArgument(
+              "Unsupported dot algorithm: %s (%d)",
+              PrecisionConfig::Algorithm_Name(
+                  instruction->precision_config().algorithm()),
+              static_cast<int>(instruction->precision_config().algorithm()));
+        }
+        attributes.push_back(builder_->getNamedAttr("algorithm", algorithm));
       }
       // Consider consolidating DotOps together.
       if (DotIsDefault(instruction)) {
