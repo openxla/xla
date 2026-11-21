@@ -615,6 +615,7 @@ xla_cc_test(
     name = "support_test",
     srcs = ["support_test.cc"],
     shard_count = 25,
+    tags = ["gpu",],
     deps = [
         ":support",
         ":support_test_base",
