@@ -1,0 +1,19 @@
+diff --git a/src/cpu/gemm/gemm.cpp b/src/cpu/gemm/gemm.cpp
+--- a/src/cpu/gemm/gemm.cpp
++++ b/src/cpu/gemm/gemm.cpp
+@@ -289,5 +289,6 @@
+ dnnl_status_t gemm_bf16bf16f32(const char *transa, const char *transb,
+         const dim_t *M, const dim_t *N, const dim_t *K, const float *alpha,
+-        const bfloat16_t *A, const dim_t *lda, const bfloat16_t *B,
+-        const dim_t *ldb, const float *beta, float *C, const dim_t *ldc) {
++        const dnnl::impl::bfloat16_t *A, const dim_t *lda,
++        const dnnl::impl::bfloat16_t *B, const dim_t *ldb, const float *beta,
++        float *C, const dim_t *ldc) {
+     dnnl_status_t status = check_gemm_input(transa, transb, M, N, K, A, lda, B,
+@@ -298,4 +299,4 @@
+     char *dummyOffsetC = nullptr;
+-    bfloat16_t *dummy_ao = nullptr;
+-    bfloat16_t *dummy_bo = nullptr;
++    dnnl::impl::bfloat16_t *dummy_ao = nullptr;
++    dnnl::impl::bfloat16_t *dummy_bo = nullptr;
+     float *dummy_co = nullptr;
