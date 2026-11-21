@@ -3289,7 +3289,9 @@ xla_cc_test(
     srcs = ["tuple_util_test.cc"],
     deps = [
         ":hlo_module_config",
+        ":hlo_value",
         ":tuple_util",
+        "//xla:shape_tree",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",

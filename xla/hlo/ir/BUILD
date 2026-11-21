@@ -703,6 +703,7 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla:tuple_tree",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
