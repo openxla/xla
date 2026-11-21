@@ -1244,7 +1244,6 @@ cc_library(
     ],
     hdrs = ["transpose_kernels.h"],
     deps = [
-        "//xla:compiler_macros",
         "@com_google_absl//absl/base:core_headers",
         "@highway//:hwy",
     ],
