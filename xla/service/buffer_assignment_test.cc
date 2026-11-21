@@ -879,6 +879,82 @@ TEST_F(BufferAssignmentTest, OOMFallbackToDefault) {
   EXPECT_EQ(assignment_fast->GetStats().total_allocation_bytes, 408);
 }
 
+// On the growing chain (temp buffers of 40, 80, 120, and 160 bytes),
+// FAST_MERGE packs forward into 400 bytes, while FAST_MULTI_SWEEP packs
+// backward into 280 bytes.
+TEST_F(BufferAssignmentTest, FastMultiSweepUsesLessMemoryThanFastMerge) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule test, is_scheduled=true
+
+    ENTRY main {
+      p = f32[] parameter(0)
+      c0 = f32[10] custom-call(p), custom_call_target="dummy"
+      c1 = f32[20] custom-call(c0), custom_call_target="dummy"
+      c2 = f32[30] custom-call(c1), custom_call_target="dummy"
+      c3 = f32[40] custom-call(c2), custom_call_target="dummy"
+      ROOT c4 = f32[1] custom-call(c3), custom_call_target="dummy"
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  using absl_testing::IsOkAndHolds;
+  using Algorithm = buffer_assignment::BufferAssignmentAlgorithmProto;
+  int limit_calls = 0;
+  auto temp_size = [&](Algorithm::Value algorithm,
+                       bool supports_fast_buffer_assignment = true,
+                       bool enable_fallback =
+                           false) -> absl::StatusOr<int64_t> {
+    limit_calls = 0;
+    BufferAssigner::Options opts;
+    opts.buffer_assignment_algorithm = algorithm;
+    opts.supports_fast_buffer_assignment = [=](LogicalBuffer::Color) {
+      return supports_fast_buffer_assignment;
+    };
+    if (enable_fallback) {
+      constexpr int64_t kSafetyMargin = int64_t{5} << 29;
+      opts.enable_fallback = true;
+      opts.fallback_algorithm = Algorithm::DEFAULT;
+      opts.color_memory_limit = [&](LogicalBuffer::Color) {
+        ++limit_calls;
+        return kSafetyMargin + 10;
+      };
+    }
+    absl::StatusOr<std::unique_ptr<BufferAssignment>> assignment =
+        BufferAssigner::Run(
+            module.get(),
+            std::make_unique<SequentialHloOrdering>(module->schedule()),
+            &BufferSizeBytes, &alias_info_,
+            [](LogicalBuffer::Color) { return 1; }, std::move(opts));
+    if (!assignment.ok()) {
+      return assignment.status();
+    }
+    return (*assignment)->temp_allocation_total_size();
+  };
+  EXPECT_THAT(temp_size(Algorithm::FAST_MERGE), IsOkAndHolds(400));
+  EXPECT_THAT(temp_size(Algorithm::FAST_MULTI_SWEEP), IsOkAndHolds(280));
+
+  // A 250-byte per-heap limit splits both into two heaps.
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_multiheap_size_constraint_per_heap(250);
+  EXPECT_THAT(temp_size(Algorithm::FAST_MERGE), IsOkAndHolds(400));
+  EXPECT_THAT(temp_size(Algorithm::FAST_MULTI_SWEEP), IsOkAndHolds(280));
+
+  // Colors without fast buffer assignment use DEFAULT.
+  EXPECT_THAT(temp_size(Algorithm::FAST_MULTI_SWEEP,
+                        /*supports_fast_buffer_assignment=*/false),
+              IsOkAndHolds(280));
+
+  // Exceeding the memory limit triggers fallback (FAST_MULTI_SWEEP, SPATIAL,
+  // TEMPORAL).
+  EXPECT_THAT(temp_size(Algorithm::FAST_MULTI_SWEEP,
+                        /*supports_fast_buffer_assignment=*/true,
+                        /*enable_fallback=*/true),
+              IsOkAndHolds(280));
+  EXPECT_EQ(limit_calls, 3);
+}
+
 // Thread-local allocations (the buffers of embedded computations, e.g. custom
 // call callees) are alloca-style and never part of the preallocated footprint,
 // so they must not count against the memory limit that decides whether to fall

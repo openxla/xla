@@ -125,6 +125,45 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "multi_sweep_heap",
+    srcs = ["multi_sweep_heap.cc"],
+    hdrs = ["multi_sweep_heap.h"],
+    deps = [
+        ":heap_simulator",
+        "//xla:util",
+        "//xla/service:hlo_value",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/numeric:int128",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "multi_sweep_heap_test",
+    srcs = ["multi_sweep_heap_test.cc"],
+    deps = [
+        ":heap_simulator",
+        ":multi_sweep_heap",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_value",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "free_chunks_manager",
     srcs = ["free_chunks_manager.cc"],
     hdrs = ["free_chunks_manager.h"],
