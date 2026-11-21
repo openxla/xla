@@ -53,8 +53,6 @@ namespace {
 // that's countered by the layout.
 absl::StatusOr<HloDotInstruction*> MakeDotWithSwappedOperands(
     HloInstruction* dot) {
-  HloComputation* computation = dot->parent();
-
   ABSL_ASSIGN_OR_RETURN(DotOperandDims lhs_dims,
                         DotOperandDims::FromDotOperand(dot, 0));
   ABSL_ASSIGN_OR_RETURN(DotOperandDims rhs_dims,
@@ -98,11 +96,9 @@ absl::StatusOr<HloDotInstruction*> MakeDotWithSwappedOperands(
     new_precision_config.mutable_operand_precision()->SwapElements(0, 1);
   }
 
-  return DynCast<HloDotInstruction>(computation->AddInstruction(
-      HloInstruction::CreateDot(new_dot_shape, dot->mutable_operand(1),
-                                dot->mutable_operand(0), new_dot_dims,
-                                new_precision_config),
-      &dot->metadata()));
+  return Cast<HloDotInstruction>(dot->AddInstruction(HloInstruction::CreateDot(
+      new_dot_shape, dot->mutable_operand(1), dot->mutable_operand(0),
+      new_dot_dims, new_precision_config)));
 }
 
 // Swaps operands of a dot instruction in a fusion. This is done by swapping the
