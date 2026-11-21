@@ -38,8 +38,8 @@ template <typename T>
 struct is_matching_integer_map<
     T, std::void_t<typename T::key_type, typename T::mapped_type>> {
   static constexpr bool value =
-      std::is_integral<typename T::key_type>::value &&
-      std::is_same<typename T::key_type, typename T::mapped_type>::value;
+      std::is_integral_v<typename T::key_type> &&
+      std::is_same_v<typename T::key_type, typename T::mapped_type>;
 };
 
 // Copies original arrays in the source original value to the destination
@@ -49,10 +49,10 @@ struct is_matching_integer_map<
 // means the caller lost track of which value an element holds, which is a bug
 // in the caller rather than a value that should be forgotten.
 template <typename MapType>
-typename std::enable_if<is_matching_integer_map<MapType>::value>::type
-CopyOriginalValue(const std::shared_ptr<OriginalValue>& src_original_value,
-                  const std::shared_ptr<OriginalValue>& dest_original_value,
-                  const MapType& old_to_new_tuple_idx) {
+std::enable_if_t<is_matching_integer_map<MapType>::value> CopyOriginalValue(
+    const std::shared_ptr<OriginalValue>& src_original_value,
+    const std::shared_ptr<OriginalValue>& dest_original_value,
+    const MapType& old_to_new_tuple_idx) {
   CHECK_NE(src_original_value, nullptr);
   CHECK_NE(dest_original_value, nullptr);
   for (const auto& [old_idx, new_idx] :
@@ -68,10 +68,9 @@ CopyOriginalValue(const std::shared_ptr<OriginalValue>& src_original_value,
 // Original arrays in the source original value are rearranged in the new
 // original value according to the given mapping of old to new tuple indices.
 template <typename MapType>
-typename std::enable_if<is_matching_integer_map<MapType>::value>::type
-CopyOriginalValue(const HloInstruction* src_instruction,
-                  HloInstruction* dest_instruction,
-                  const MapType& old_to_new_tuple_idx) {
+std::enable_if_t<is_matching_integer_map<MapType>::value> CopyOriginalValue(
+    const HloInstruction* src_instruction, HloInstruction* dest_instruction,
+    const MapType& old_to_new_tuple_idx) {
   const std::shared_ptr<OriginalValue> old_original_value =
       src_instruction->original_value();
   if (!old_original_value) {
