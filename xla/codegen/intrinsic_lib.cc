@@ -44,10 +44,8 @@ limitations under the License.
 #include "xla/codegen/intrinsic/cpp/cpp_gen_intrinsics.h"
 #include "xla/codegen/intrinsic/cpp/intrinsic_declarations.h"
 #include "xla/codegen/intrinsic/erf.h"
-#include "xla/codegen/intrinsic/exp.h"
 #include "xla/codegen/intrinsic/fptrunc.h"
 #include "xla/codegen/intrinsic/intrinsic.h"
-#include "xla/codegen/intrinsic/ldexp.h"
 #include "xla/codegen/intrinsic/log1p.h"
 #include "xla/codegen/intrinsic/rsqrt.h"
 #include "xla/codegen/intrinsic/string_interner.h"
@@ -131,6 +129,10 @@ IntrinsicFunctionLib::IntrinsicFunctionLib(const IntrinsicOptions& options)
        options.device_type == intrinsics::DeviceType::kSystemZCpu) &&
       AreCppGenIntrinsicsAvailable()) {
     intrinsic_functions_.push_back(
+        std::make_unique<IntrinsicAdapter<intrinsics::YnnExp>>());
+    intrinsic_functions_.push_back(
+        std::make_unique<IntrinsicAdapter<intrinsics::YnnExpm1>>());
+    intrinsic_functions_.push_back(
         std::make_unique<IntrinsicAdapter<intrinsics::YnnLog>>());
     intrinsic_functions_.push_back(
         std::make_unique<IntrinsicAdapter<intrinsics::YnnLog1p>>());
@@ -138,12 +140,6 @@ IntrinsicFunctionLib::IntrinsicFunctionLib(const IntrinsicOptions& options)
     intrinsic_functions_.push_back(
         std::make_unique<IntrinsicAdapter<intrinsics::Log1p>>());
   }
-  intrinsic_functions_.push_back(
-      std::make_unique<IntrinsicAdapter<intrinsics::Ldexp>>());
-  intrinsic_functions_.push_back(
-      std::make_unique<IntrinsicAdapter<intrinsics::Exp>>());
-  intrinsic_functions_.push_back(
-      std::make_unique<IntrinsicAdapter<intrinsics::Expm1>>());
   intrinsic_functions_.push_back(
       std::make_unique<IntrinsicAdapter<intrinsics::FpTrunc>>());
   intrinsic_functions_.push_back(

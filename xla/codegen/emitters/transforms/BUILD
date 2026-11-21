@@ -243,7 +243,6 @@ cc_library(
         "//xla/codegen/emitters:utils",
         "//xla/codegen/emitters/ir:xla",
         "//xla/codegen/intrinsic:erf",
-        "//xla/codegen/intrinsic:exp",
         "//xla/codegen/intrinsic:fptrunc",
         "//xla/codegen/intrinsic:log1p",
         "//xla/codegen/intrinsic:rsqrt",
