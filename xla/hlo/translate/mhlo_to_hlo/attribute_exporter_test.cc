@@ -428,7 +428,10 @@ TEST_F(AttributeExporterTest, ConvertOriginalValueSyntheticCall) {
   std::optional<xla::OriginalValueProto> proto = ConvertOriginalValue(attr);
   ASSERT_TRUE(proto.has_value());
   EXPECT_TRUE(proto->is_synthetic_call());
+  EXPECT_TRUE(proto->has_call_hierarchy());
+  EXPECT_EQ(proto->call_hierarchy(), "");
   EXPECT_EQ(proto->elements_size(), 0);
+  EXPECT_TRUE(xla::OriginalValue::FromProto(*proto)->is_synthetic_call());
 }
 
 TEST_F(AttributeExporterTest, ConvertOriginalValueWithElements) {
