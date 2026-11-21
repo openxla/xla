@@ -367,7 +367,6 @@ TEST_F(GpuExecutableTest, RunThunkPasses) {
         /*kernel_name=*/"test_kernel",
         /*kernel_arguments=*/emitters::KernelArguments({}),
         /*launch_dimensions=*/LaunchDimensions(),
-        /*cluster_dim=*/std::nullopt,
         /*shmem_bytes=*/0,
         /*tma_metadata=*/se::gpu::TmaMetadata(),
         /*devices_per_host=*/1);
@@ -447,7 +446,6 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
           constant_arg, temp_arg, parameter_arg, live_out_arg,
           zero_sized_temp_arg}),
       /*launch_dimensions=*/LaunchDimensions(),
-      /*cluster_dim=*/std::nullopt,
       /*shmem_bytes=*/0,
       /*tma_metadata=*/se::gpu::TmaMetadata(),
       /*devices_per_host=*/1);
@@ -554,7 +552,6 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicyIncludesPersistent) {
       emitters::KernelArguments(
           std::vector<emitters::KernelArgument>{persistent_arg, live_out_arg}),
       /*launch_dimensions=*/LaunchDimensions(),
-      /*cluster_dim=*/std::nullopt,
       /*shmem_bytes=*/0,
       /*tma_metadata=*/se::gpu::TmaMetadata(),
       /*devices_per_host=*/1);
@@ -742,7 +739,6 @@ TEST_F(GpuExecutableTest, ThunkChecksumPassAddsAllocation) {
                 ShapeUtil::MakeShape(F32, /*dimensions=*/{16}), slice),
         }),
         /*launch_dimensions=*/LaunchDimensions(),
-        /*cluster_dim=*/std::nullopt,
         /*shmem_bytes=*/0,
         /*tma_metadata=*/se::gpu::TmaMetadata(),
         /*devices_per_host=*/1);
@@ -848,7 +844,6 @@ TEST_F(GpuExecutableTest, DumpsMetadataListProto) {
         /*kernel_name=*/"test_kernel",
         /*kernel_arguments=*/emitters::KernelArguments({}),
         /*launch_dimensions=*/LaunchDimensions(),
-        /*cluster_dim=*/std::nullopt,
         /*shmem_bytes=*/0,
         /*tma_metadata=*/se::gpu::TmaMetadata(),
         /*devices_per_host=*/1);
@@ -910,7 +905,6 @@ TEST_F(GpuExecutableTest, ProtoConversion) {
       ThunkInfoWithId(123),
       /*kernel_name=*/"test_kernel", emitters::KernelArguments({}),
       LaunchDimensions(),
-      /*cluster_dim=*/std::nullopt,
       /*shmem_bytes=*/0, se::gpu::TmaMetadata(),
       /*devices_per_host=*/1);
 
@@ -976,7 +970,6 @@ TEST_F(GpuExecutableTest, FromProtoWithoutGpuTopology) {
           ThunkInfoWithId(123),
           /*kernel_name=*/"test_kernel", emitters::KernelArguments({}),
           LaunchDimensions(),
-          /*cluster_dim=*/std::nullopt,
           /*shmem_bytes=*/0, se::gpu::TmaMetadata(),
           /*devices_per_host=*/1));
   params.device_description = device_description;
@@ -1338,7 +1331,6 @@ TEST_F(GpuExecutableTest, GpuExecutableDump) {
         /*kernel_name=*/"test_kernel",
         /*kernel_arguments=*/emitters::KernelArguments({}),
         /*launch_dimensions=*/LaunchDimensions(),
-        /*cluster_dim=*/std::nullopt,
         /*shmem_bytes=*/0,
         /*tma_metadata=*/se::gpu::TmaMetadata(),
         /*devices_per_host=*/1);
@@ -1475,7 +1467,6 @@ TEST_F(GpuExecutableTest, ToProtoReturnsUnchangedThunkGraph) {
         /*kernel_name=*/"test_kernel_0",
         /*kernel_arguments=*/emitters::KernelArguments({}),
         /*launch_dimensions=*/LaunchDimensions(),
-        /*cluster_dim=*/std::nullopt,
         /*shmem_bytes=*/0,
         /*tma_metadata=*/se::gpu::TmaMetadata(),
         /*devices_per_host=*/1);
@@ -1484,7 +1475,6 @@ TEST_F(GpuExecutableTest, ToProtoReturnsUnchangedThunkGraph) {
         /*kernel_name=*/"test_kernel_1",
         /*kernel_arguments=*/emitters::KernelArguments({}),
         /*launch_dimensions=*/LaunchDimensions(),
-        /*cluster_dim=*/std::nullopt,
         /*shmem_bytes=*/0,
         /*tma_metadata=*/se::gpu::TmaMetadata(),
         /*devices_per_host=*/1);
@@ -1493,7 +1483,6 @@ TEST_F(GpuExecutableTest, ToProtoReturnsUnchangedThunkGraph) {
         /*kernel_name=*/"test_kernel_2",
         /*kernel_arguments=*/emitters::KernelArguments({}),
         /*launch_dimensions=*/LaunchDimensions(),
-        /*cluster_dim=*/std::nullopt,
         /*shmem_bytes=*/0,
         /*tma_metadata=*/se::gpu::TmaMetadata(),
         /*devices_per_host=*/1);
@@ -1502,7 +1491,6 @@ TEST_F(GpuExecutableTest, ToProtoReturnsUnchangedThunkGraph) {
         /*kernel_name=*/"test_kernel_3",
         /*kernel_arguments=*/emitters::KernelArguments({}),
         /*launch_dimensions=*/LaunchDimensions(),
-        /*cluster_dim=*/std::nullopt,
         /*shmem_bytes=*/0,
         /*tma_metadata=*/se::gpu::TmaMetadata(),
         /*devices_per_host=*/1);
@@ -1511,7 +1499,6 @@ TEST_F(GpuExecutableTest, ToProtoReturnsUnchangedThunkGraph) {
         /*kernel_name=*/"test_kernel_4",
         /*kernel_arguments=*/emitters::KernelArguments({}),
         /*launch_dimensions=*/LaunchDimensions(),
-        /*cluster_dim=*/std::nullopt,
         /*shmem_bytes=*/0,
         /*tma_metadata=*/se::gpu::TmaMetadata(),
         /*devices_per_host=*/1);
