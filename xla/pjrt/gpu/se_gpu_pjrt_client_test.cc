@@ -5017,6 +5017,7 @@ TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessSlicedBuffer) {
   Literal literal = LiteralUtil::CreateR1<int32_t>(std::vector<int32_t>(1024));
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> buf,
                        client->BufferFromHostLiteral(literal, device_space));
+  ASSERT_OK(buf->GetReadyFuture().Await());
   ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef raw,
                        PjRtRawBuffer::CreateRawAliasOfBuffer(buf.get()));
 
