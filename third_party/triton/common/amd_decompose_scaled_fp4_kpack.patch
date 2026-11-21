@@ -1,0 +1,18 @@
+// Upstream fix needed: DecomposeAMDScaledBlocked ignored lhs/rhs_k_pack for fp4.
+
+--- a/third_party/amd/lib/TritonAMDGPUTransforms/AccelerateAMDMatmul.cpp
++++ b/third_party/amd/lib/TritonAMDGPUTransforms/AccelerateAMDMatmul.cpp
+@@ -816,8 +816,11 @@
+         elemType == ScaleDotElemType::FP16)
+       return v;
+ 
+-    // 2) If it's non-scaled F8F4, we reuse the common path
+-    if (!scale) {
++    // 2) If it's non-scaled F8F4, or fp4 packed along the non-K dimension, we
++    // reuse the common path: the packed scaled upcast below unpacks fp4 along
++    // K only, while the common path unpacks along the packed dimension.
++    bool kPacked = opIdx == 0 ? dotOp.getLhsKPack() : dotOp.getRhsKPack();
++    if (!scale || (elemType == ScaleDotElemType::E2M1 && !kPacked)) {
+       return ttg::DecomposeScaledBlocked::scaleArg(rewriter, dotOp, opIdx,
+                                                    computeType);
+     }
