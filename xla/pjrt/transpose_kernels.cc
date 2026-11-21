@@ -24,7 +24,6 @@ limitations under the License.
 #include <utility>
 
 #include "absl/base/attributes.h"
-#include "xla/compiler_macros.h"
 #include "xla/pjrt/transpose_kernels_internal.h"
 
 // clang-format off
@@ -132,9 +131,7 @@ HWY_INLINE decltype(auto) GetFromPack(T&& t, Ts&&... ts) {
 template <class F, size_t... I, class... Ts>
 HWY_INLINE void ForEachIndexedImpl(F&& f, std::index_sequence<I...>,
                                    Ts&&... ts) {
-  (std::forward<F>(f)(std::integral_constant<int64_t, I>{},
-                      std::forward<Ts>(ts)),
-   ...);
+  (f(std::integral_constant<int64_t, I>{}, std::forward<Ts>(ts)), ...);
 }
 
 template <class F, class... Ts>
@@ -381,34 +378,46 @@ HWY_INLINE void WithGatheredParts(D d, const char* a, int64_t lda,
 }
 
 // Concatenates the even (0, 2, ...) or odd (1, 3, ...) 128 bit blocks of `lo`
-// (in the lower half) and `hi` (in the upper half), matching Highway's
-// `ConcatEven`/`ConcatOdd` parameter order.
+// (in the lower half) and `hi` (in the upper half) for a fixed size tag `D`
+// with a power of two block count, matching Highway's `ConcatEven`/`ConcatOdd`
+// parameter order.
 template <bool kOdd, class D>
 HWY_INLINE hn::VFromD<D> ConcatEvenOddBlocks(D d, hn::VFromD<D> hi,
                                              hn::VFromD<D> lo) {
-  if constexpr (d.MaxBytes() == 2 * kBlockBytes) {
+  constexpr size_t kBytes = d.MaxBytes();
+  static_assert(kBytes >= 2 * kBlockBytes && (kBytes & (kBytes - 1)) == 0);
+  // Require `Lanes(d) == MaxLanes(d)` so scalable tags whose runtime lane count
+  // can differ from `MaxLanes(d)` fail at compile time.
+  constexpr int kGroupPow2 =
+      std::min(d.Pow2(), (HWY_TARGET == HWY_RVV) ? HWY_MAX_POW2 : 0);
+  if constexpr (kGroupPow2 >= 0) {
+    static_assert((kBytes >> kGroupPow2) <= HWY_MIN_BYTES);
+  } else {
+    static_assert((kBytes << (-kGroupPow2)) <= HWY_MIN_BYTES);
+  }
+  if constexpr (kBytes == 2 * kBlockBytes) {
     if constexpr (kOdd) {
       return hn::ConcatUpperUpper(d, hi, lo);
     } else {
       return hn::ConcatLowerLower(d, hi, lo);
     }
   } else {
-    static_assert(d.MaxBytes() == 4 * kBlockBytes);
 #if HWY_MIN_BYTES >= 64 && HWY_ARCH_X86
-    // Emit vshufi32x4 directly: inside full kernels LLVM expands the Combine
-    // and ExtractBlock fallback into vpermt2q with live index vectors and
-    // triggers ZMM stack spills.
-    constexpr int kImm = kOdd ? 0xDD : 0x88;
-    return hn::VFromD<D>{_mm512_shuffle_i32x4(lo.raw, hi.raw, kImm)};
-#elif HWY_MIN_BYTES >= 64
-    constexpr int kBase = kOdd ? 1 : 0;
-    const hn::Half<D> d_half;
-    const auto lo_blocks = hn::Combine(d_half, hn::ExtractBlock<kBase + 2>(lo),
-                                       hn::ExtractBlock<kBase>(lo));
-    const auto hi_blocks = hn::Combine(d_half, hn::ExtractBlock<kBase + 2>(hi),
-                                       hn::ExtractBlock<kBase>(hi));
-    return hn::Combine(d, hi_blocks, lo_blocks);
+    if constexpr (kBytes == 4 * kBlockBytes) {
+      // Emit vshufi32x4 directly: LLVM expands the recursive Half fallback into
+      // extra vpermt2q, vextracti64x4, and vperm2i128 shuffles.
+      constexpr int kImm = kOdd ? 0xDD : 0x88;
+      return hn::VFromD<D>{_mm512_shuffle_i32x4(lo.raw, hi.raw, kImm)};
+    }
 #endif
+    const hn::Half<D> d_half;
+    const auto lo_lo = hn::LowerHalf(d_half, lo);
+    const auto lo_hi = hn::UpperHalf(d_half, lo);
+    const auto hi_lo = hn::LowerHalf(d_half, hi);
+    const auto hi_hi = hn::UpperHalf(d_half, hi);
+    const auto lo_blocks = ConcatEvenOddBlocks<kOdd>(d_half, lo_hi, lo_lo);
+    const auto hi_blocks = ConcatEvenOddBlocks<kOdd>(d_half, hi_hi, hi_lo);
+    return hn::Combine(d, hi_blocks, lo_blocks);
   }
 }
 
@@ -424,6 +433,34 @@ HWY_INLINE hn::VFromD<D> ConcatOddBlocks(D d, hn::VFromD<D> hi,
   return ConcatEvenOddBlocks</*kOdd=*/true>(d, hi, lo);
 }
 
+template <size_t kVecBytes, size_t kStripBytes, typename T>
+HWY_INLINE void TransposeOneColStrip(const char* HWY_RESTRICT a_s, int64_t lda,
+                                     char* HWY_RESTRICT b_s, int64_t ldb) {
+  using D = hn::FixedTag<uint8_t, kVecBytes>;
+  constexpr size_t kGroup = kBlockBytes / sizeof(T);
+  const D d;
+  auto finish = [&](auto... vecs) HWY_ATTR {
+    InterleaveWithinBlocksCPS<sizeof(T), 1, kBlockBytes>(
+        [&](auto... transposed)
+            HWY_ATTR { StoreRows(d, b_s, ldb, transposed...); },
+        vecs...);
+  };
+  if constexpr (kStripBytes == kBlockBytes) {
+    WithGatheredParts<kGroup, kBlockBytes>(d, a_s, lda, finish);
+  } else {
+    static_assert(kStripBytes == 2 * kBlockBytes);
+    constexpr int64_t kPairRows = (kVecBytes / kStripBytes) * kGroup;
+    WithGatheredParts<kGroup, kStripBytes>(
+        d, a_s, lda, [&](auto... p0) HWY_ATTR {
+          WithGatheredParts<kGroup, kStripBytes>(
+              d, a_s + kPairRows * lda, lda, [&](auto... p1) HWY_ATTR {
+                finish(ConcatEvenBlocks(d, p1, p0)...,
+                       ConcatOddBlocks(d, p1, p0)...);
+              });
+        });
+  }
+}
+
 // Transposes a bs x bs block with `kVecBytes` byte rows (32 or 64) as vertical
 // column strips of width `kStripBytes` (16 or 32), each emitting full
 // `kVecBytes` stores in ascending row order. Covers 256 bit square `(32, 32)`,
@@ -432,41 +469,25 @@ HWY_INLINE hn::VFromD<D> ConcatOddBlocks(D d, hn::VFromD<D> hi,
 template <size_t kVecBytes, size_t kStripBytes, typename T, int bs>
 HWY_FLATTEN void TransposeColStrips(const char* HWY_RESTRICT a, int64_t lda,
                                     char* HWY_RESTRICT b, int64_t ldb) {
-  using D = hn::FixedTag<uint8_t, kVecBytes>;
   static_assert(sizeof(T) * bs == kVecBytes);
   constexpr int kStrips = kVecBytes / kStripBytes;
   constexpr int kOutRows = bs / kStrips;
-  constexpr size_t kGroup = kBlockBytes / sizeof(T);
-  constexpr bool kRoll = kOutRows > 8;
-  const D d;
-  XLA_UNROLL_COUNT(kRoll ? 1 : kStrips)
-  for (int s = 0; s < kStrips; ++s) {
-    const char* a_s = a + s * static_cast<int64_t>(kStripBytes);
-    char* b_s = b + s * kOutRows * ldb;
-    if constexpr (kRoll) {
+  if constexpr (kOutRows > 8) {
+    HWY_UNROLL(1)
+    for (int s = 0; s < kStrips; ++s) {
+      const char* a_s = a + s * static_cast<int64_t>(kStripBytes);
+      char* b_s = b + s * kOutRows * ldb;
       XLA_HIDE_POINTER_FROM_OPTIMIZER(a_s);
       XLA_HIDE_POINTER_FROM_OPTIMIZER(b_s);
+      TransposeOneColStrip<kVecBytes, kStripBytes, T>(a_s, lda, b_s, ldb);
     }
-    auto finish = [&](auto... vecs) HWY_ATTR {
-      InterleaveWithinBlocksCPS<sizeof(T), 1, kBlockBytes>(
-          [&](auto... transposed)
-              HWY_ATTR { StoreRows(d, b_s, ldb, transposed...); },
-          vecs...);
-    };
-    if constexpr (kStripBytes == kBlockBytes) {
-      WithGatheredParts<kGroup, kBlockBytes>(d, a_s, lda, finish);
-    } else {
-      static_assert(kStripBytes == 2 * kBlockBytes);
-      constexpr int64_t kPairRows = (kVecBytes / kStripBytes) * kGroup;
-      WithGatheredParts<kGroup, kStripBytes>(
-          d, a_s, lda, [&](auto... p0) HWY_ATTR {
-            WithGatheredParts<kGroup, kStripBytes>(
-                d, a_s + kPairRows * lda, lda, [&](auto... p1) HWY_ATTR {
-                  finish(ConcatEvenBlocks(d, p1, p0)...,
-                         ConcatOddBlocks(d, p1, p0)...);
-                });
-          });
-    }
+  } else {
+    WithIndices<kStrips>([&](auto... s) HWY_ATTR {
+      (TransposeOneColStrip<kVecBytes, kStripBytes, T>(
+           a + s * static_cast<int64_t>(kStripBytes), lda,
+           b + s * kOutRows * ldb, ldb),
+       ...);
+    });
   }
 }
 
@@ -589,7 +610,7 @@ HWY_FLATTEN void TransposeMicroKernel512RowStrips(const char* HWY_RESTRICT a,
   static_assert(sizeof(T) * bs == row_bytes);
   constexpr int kRows = bs / 4;
   const D d;
-  XLA_UNROLL_COUNT(1)
+  HWY_UNROLL(1)
   for (int s = 0; s < 4; ++s) {
     const char* a_s = a + s * kRows * lda;
     char* b_s = b + s * static_cast<int64_t>(kBlockBytes);
@@ -780,17 +801,18 @@ HWY_FLATTEN void TransposeMicroKernel(const char* HWY_RESTRICT a, int64_t lda,
     [[maybe_unused]] const int64_t abs_ldb = std::abs(ldb);
 #endif
 #if HWY_MIN_BYTES >= 64
+    constexpr bool kIsX86 = HWY_ARCH_X86 != 0;
     constexpr bool kIsZen4 = HWY_TARGET == HWY_AVX3_ZEN4;
-    constexpr bool kIsSpr = HWY_TARGET <= HWY_AVX3_SPR;
+    constexpr bool kIsSpr = HWY_TARGET == HWY_AVX3_SPR;
     if constexpr (row_bytes == 4 * kBlockBytes) {
       if constexpr (sizeof(T) == 1) {
-        // Emit full 64 byte output rows via ColStrips when scattering or when
-        // 64 output rows overflow 8 way and 12 way L1D sets (|ldb| a multiple
-        // of 1024, or 512 on Intel), except when a 4096 byte aligned |lda|
-        // aliases all 64 input rows into one L1D set.
+        // Emit full 64 byte output rows via ColStrips when scattering or, on
+        // x86, when 64 output rows overflow 8 way and 12 way L1D sets (|ldb| a
+        // multiple of 1024, or 512 outside Zen 4), except when a 4096 byte
+        // aligned |lda| aliases all 64 input rows into one L1D set.
         constexpr int64_t kSetMask = kIsZen4 ? 1023 : 511;
         const bool l1d_conflict =
-            abs_ldb > 0 &&
+            kIsX86 && abs_ldb > 0 &&
             ((!kIsZen4 && (abs_ldb & 1023) == 0) ||
              ((abs_ldb & kSetMask) == 0 && (abs_lda & 4095) != 0));
         if (abs_ldb > abs_lda || l1d_conflict) {
@@ -800,7 +822,7 @@ HWY_FLATTEN void TransposeMicroKernel(const char* HWY_RESTRICT a, int64_t lda,
         }
       } else if constexpr (sizeof(T) == 2) {
         TransposeColStrips<64, 32, T, bs>(a, lda, b, ldb);
-      } else if constexpr (sizeof(T) == 4 && !kIsZen4) {
+      } else if constexpr (sizeof(T) == 4 && kIsX86 && !kIsZen4) {
         if (abs_lda <= kMaxOuterBlockSizeBytes &&
             abs_ldb <= kMaxOuterBlockSizeBytes) {
           TransposeColStrips<64, 32, T, bs>(a, lda, b, ldb);
@@ -867,14 +889,20 @@ HWY_FLATTEN void TransposeMacroKernel(const char* HWY_RESTRICT a, int64_t lda,
   // Keep macrokernel loops rolled for rows of at least 16 bytes (where outer_bs
   // is at most 4) to avoid runtime unroll remainder overhead; unroll j by 2
   // only for sub 16 byte bs == 2 kernels whose outer trip count is 8 to 32.
-  constexpr int kInnerUnroll =
-      (bs == 2 && sizeof(T) * bs < kBlockBytes) ? 2 : 1;
-  XLA_UNROLL_COUNT(1)
+  HWY_UNROLL(1)
   for (int i = 0; i < outer_bs_a; ++i) {
-    XLA_UNROLL_COUNT(kInnerUnroll)
-    for (int j = 0; j < outer_bs_b; ++j) {
-      TransposeMicroKernel<T, bs>(a + bs * j * lda + i * bs * sizeof(T), lda,
-                                  b + bs * i * ldb + j * bs * sizeof(T), ldb);
+    if constexpr (bs == 2 && sizeof(T) * bs < kBlockBytes) {
+      HWY_UNROLL(2)
+      for (int j = 0; j < outer_bs_b; ++j) {
+        TransposeMicroKernel<T, bs>(a + bs * j * lda + i * bs * sizeof(T), lda,
+                                    b + bs * i * ldb + j * bs * sizeof(T), ldb);
+      }
+    } else {
+      HWY_UNROLL(1)
+      for (int j = 0; j < outer_bs_b; ++j) {
+        TransposeMicroKernel<T, bs>(a + bs * j * lda + i * bs * sizeof(T), lda,
+                                    b + bs * i * ldb + j * bs * sizeof(T), ldb);
+      }
     }
   }
 }
