@@ -49,9 +49,6 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "tsl/platform/casts.h"
-#include "tsl/platform/hash.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -75,6 +72,9 @@ limitations under the License.
 #include "xla/tsl/util/sorted_range.h"
 #include "xla/tsl/util/tied_ref.h"
 #include "xla/util.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/hash.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 
@@ -122,6 +122,12 @@ struct ProcessGpuCliques {
   // Constructed GPU cliques, keyed by (Collectives*, GpuCliqueKey).
   absl::flat_hash_map<CliqueCacheKey, std::shared_ptr<LockableGpuClique>>
       cliques ABSL_GUARDED_BY(mu);
+
+  // Cliques whose communicator Abort() was skipped because a split still held
+  // their lock. Abort() frees the communicator, so it runs only after that
+  // lock is released, and only once. A later task-state update retries these
+  // cliques. An update with nothing deferred does not abort.
+  absl::flat_hash_set<CliqueCacheKey> deferred_aborts ABSL_GUARDED_BY(mu);
 
   // Cancellation tokens for GPU cliques that are pending construction. These
   // cancellation token allows XLA to safely cancel clique initialization if
@@ -277,6 +283,7 @@ void DestroyAcquiredCliques() {
   for (const CliqueCacheKey& key : ordered_cliques) {
     state.cliques.erase(key);
   }
+  state.deferred_aborts.clear();
 }
 
 }  // namespace internal
@@ -796,11 +803,6 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
       cancel = it->second;
     }
 
-    {  // At this point clique is no longer pending, it has a definitive state.
-      absl::MutexLock lock(state.mu);
-      state.pending_cliques.erase(CliqueCacheKey(collectives, clique_key));
-    }
-
     // Don't hold cliques.mu while creating the communicators, because creating
     // communicators can block.
     VLOG(5) << absl::StrFormat("[%s] [ranks=%s] Splitting communicators for %v",
@@ -808,6 +810,11 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
                                DeviceRanksToString(ranks), clique_key);
     auto split_comms = collectives->SplitCommunicatorsWithCancel(
         parent_comms, color, keys, config, ranks, cancel);
+
+    {  // At this point clique is no longer pending, it has a definitive state.
+      absl::MutexLock lock(state.mu);
+      state.pending_cliques.erase(CliqueCacheKey(collectives, clique_key));
+    }
 
     if (!split_comms.ok()) {
       return split_comms.status();
@@ -1055,6 +1062,7 @@ absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireClique(
                 // users we can delete it. It will be destroyed when `abandoned`
                 // gets out of scope, after we release `state.mu`.
                 state.cliques.erase(cache_key);
+                state.deferred_aborts.erase(cache_key);
                 to_lock->MarkAbandoned();
                 abandoned = std::move(to_lock);
 
@@ -1150,10 +1158,28 @@ bool CliqueKeyContainsIncarnation(
 
 // Aborts and invalidates all cliques that have been created via AcquireClique
 // and have a clique key matching the `should_abort` predicate.
+//
+// Calls still inside CreateCommunicatorsWithCancel or
+// SplitCommunicatorsWithCancel are not in `cliques` yet. Their tokens are
+// cancelled here so PollUntilDone can return. Those tokens stay in
+// `pending_cliques` until the call itself removes them.
+//
+// A clique that is locked is left in place and recorded in `deferred_aborts`.
+// Its communicators are not aborted until a later call can take the lock.
 static absl::Status AbortCliques(
     ProcessGpuCliques& state,
     absl::FunctionRef<bool(const GpuCliqueKey&)> should_abort)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu) {
+  // The in-progress init or split has no LockableGpuClique yet, and no
+  // communicators to Abort() here. Cancel() is an atomic store and does not
+  // require dropping `mu`.
+  for (auto& [cache_key, cancel] : state.pending_cliques) {
+    if (cancel != nullptr && should_abort(cache_key.second)) {
+      VLOG(1) << "Canceling pending GPU clique init " << cache_key.second;
+      cancel->Cancel();
+    }
+  }
+
   // Send cancellation signal to communicators in the cliques that are about
   // to be aborted, so that they can cancel pending collective operations.
   for (auto& [cache_key, lockable_clique] : state.cliques) {
@@ -1163,7 +1189,34 @@ static absl::Status AbortCliques(
     }
   }
 
-  // Abort cancelled cliques.
+  // Abort cliques that are not in the middle of a split. Communicator Abort()
+  // frees the communicator, so a locked clique is not aborted on this call:
+  // aborting it now and again after the split releases the lock would abort
+  // the same communicator twice. Record it and leave it in the map. The
+  // pending split token was already cancelled, so the split can return and
+  // drop the lock. A later task-state update aborts that clique once.
+  struct CliqueToAbort {
+    CliqueCacheKey key;
+    std::shared_ptr<LockableGpuClique> clique;
+    LockableGpuClique::Lock lock;
+  };
+  std::vector<CliqueToAbort> to_abort;
+  for (auto& [cache_key, lockable_clique] : state.cliques) {
+    if (!should_abort(cache_key.second)) {
+      VLOG(1) << "Not aborting GPU clique " << cache_key.second;
+      continue;
+    }
+    LockableGpuClique::Lock lock = lockable_clique->TryAcquire();
+    if (!lock) {
+      VLOG(1) << "Deferring abort of in-use GPU clique " << cache_key.second;
+      state.deferred_aborts.insert(cache_key);
+      continue;
+    }
+    state.deferred_aborts.erase(cache_key);
+    to_abort.push_back(
+        CliqueToAbort{cache_key, lockable_clique, std::move(lock)});
+  }
+
   absl::Status result;
   absl::Mutex result_mu;
   {
@@ -1171,16 +1224,11 @@ static absl::Status AbortCliques(
     // abort of one communicator may get blocked by a pending collective on a
     // different communicator.
     std::vector<std::unique_ptr<tsl::Thread>> threads;
-    for (auto& [cache_key, lockable_clique] : state.cliques) {
-      if (!should_abort(cache_key.second)) {
-        VLOG(1) << "Not aborting GPU clique " << cache_key.second;
-        continue;
-      }
-
-      auto abort = [&result, &result_mu, key = cache_key.second,
-                    lockable_clique = &lockable_clique]() {
+    for (CliqueToAbort& item : to_abort) {
+      auto abort = [&result, &result_mu, key = item.key.second,
+                    clique = item.clique]() {
         VLOG(1) << "Aborting GPU clique " << key;
-        if (absl::Status s = (*lockable_clique)->Abort(); !s.ok()) {
+        if (absl::Status s = clique->Abort(); !s.ok()) {
           LOG(ERROR) << "Error aborting GPU clique " << key << ": " << s;
           absl::MutexLock lock(result_mu);
           result = std::move(s);
@@ -1189,23 +1237,19 @@ static absl::Status AbortCliques(
         }
       };
 
-      VLOG(1) << "Launching thread to abort GPU clique " << cache_key.second;
+      VLOG(1) << "Launching thread to abort GPU clique " << item.key.second;
       threads.push_back(absl::WrapUnique(tsl::Env::Default()->StartThread(
           tsl::ThreadOptions(), "abort", abort)));
     }
   }  // threads' destructor will block until all threads finish.
 
-  // Garbage collect aborted collectives.
-  absl::erase_if(state.cliques, [&](const auto& kv) {
-    auto& [cache_key, _] = kv;
-    bool erase = should_abort(cache_key.second);
-    if (erase) {
-      VLOG(1) << "Removing GPU clique " << cache_key.second;
-    } else {
-      VLOG(1) << "Not removing GPU clique " << cache_key.second;
-    }
-    return erase;
-  });
+  for (CliqueToAbort& item : to_abort) {
+    // Release the lock before erasing. Destroying a locked Lockable fails its
+    // unlocked-destructor check.
+    { LockableGpuClique::Lock released = std::move(item.lock); }
+    VLOG(1) << "Removing GPU clique " << item.key.second;
+    state.cliques.erase(item.key);
+  }
 
   return result;
 }
@@ -1248,6 +1292,34 @@ static absl::Status AbortOnFailure(
         previous_state.size(), current_state.size());
   }
 
+  // Drop deferred keys whose clique was removed by another path.
+  std::vector<CliqueCacheKey> stale_deferred_aborts;
+  for (const CliqueCacheKey& cache_key : state.deferred_aborts) {
+    if (!state.cliques.contains(cache_key)) {
+      stale_deferred_aborts.push_back(cache_key);
+    }
+  }
+  for (const CliqueCacheKey& cache_key : stale_deferred_aborts) {
+    state.deferred_aborts.erase(cache_key);
+  }
+
+  // Finish cliques skipped earlier because their lock was held. This runs for
+  // every task-state update, including a restart, but only those cliques are
+  // candidates. Communicator Abort() still runs at most once: a clique stays
+  // in this set only until the lock can be taken. An update with nothing
+  // deferred does not abort.
+  absl::Status deferred_status = absl::OkStatus();
+  if (!state.deferred_aborts.empty()) {
+    std::vector<GpuCliqueKey> deferred_keys;
+    deferred_keys.reserve(state.deferred_aborts.size());
+    for (const CliqueCacheKey& cache_key : state.deferred_aborts) {
+      deferred_keys.push_back(cache_key.second);
+    }
+    deferred_status = AbortCliques(state, [&](const GpuCliqueKey& key) {
+      return absl::c_linear_search(deferred_keys, key);
+    });
+  }
+
   std::vector<IncarnationId> failed_incarnations;
   for (int i = 0; i < previous_state.size(); ++i) {
     const coordination::TaskInfo& previous = previous_state[i];
@@ -1258,7 +1330,8 @@ static absl::Status AbortOnFailure(
           previous.task_id(), current.task_id());
     }
     if (previous.state() != coordination::TaskState::CONNECTED) {
-      // A task that was not previously connected cannot fail.
+      // A task that was not previously connected is not a new failure.
+      // Deferred cliques were retried above.
       continue;
     }
     if (current.state() != coordination::TaskState::CONNECTED ||
@@ -1271,9 +1344,13 @@ static absl::Status AbortOnFailure(
   }
 
   if (!failed_incarnations.empty()) {
-    return AbortCliquesWithIncarnations(state, failed_incarnations);
+    absl::Status failure_status =
+        AbortCliquesWithIncarnations(state, failed_incarnations);
+    if (!failure_status.ok()) {
+      return failure_status;
+    }
   }
-  return absl::OkStatus();
+  return deferred_status;
 }
 
 absl::Status UpdateGlobalProcessInfo(absl::Span<coordination::TaskInfo> infos) {
