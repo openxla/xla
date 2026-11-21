@@ -15,13 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/gemm_fusion.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
@@ -1477,6 +1477,56 @@ ENTRY e {
   EXPECT_EQ(
       module->entry_computation()->root_instruction()->metadata().op_name(),
       "foo");
+}
+
+TEST_F(GemmFusionTest, KeepsFrontendAttributes) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"hlo(
+ENTRY e {
+  p0 = f32[32,32] parameter(0)
+  c0 = f16[32,32] convert(p0)
+  p1 = f16[32,32] parameter(1)
+  ROOT dot = f16[32,32] dot(c0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    frontend_attributes={_scheduling_group_id="1"}
+})hlo"));
+  EXPECT_THAT(GemmFusion(device_info_).Run(module.get()), IsOkAndHolds(true));
+  // The dot's replacement (the fusion, or a bitcast of it) and the fusion keep
+  // the dot's frontend attributes.
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->get_frontend_attribute("_scheduling_group_id"), "1");
+  int64_t fusions = 0;
+  for (const HloInstruction* instr :
+       module->entry_computation()->instructions()) {
+    if (instr->opcode() == HloOpcode::kFusion) {
+      ++fusions;
+      EXPECT_EQ(instr->get_frontend_attribute("_scheduling_group_id"), "1");
+    }
+  }
+  EXPECT_EQ(fusions, 1);
+}
+
+// The fusion's output shape differs from the epilogue's, so the dot's
+// replacement is a bitcast of the fusion. Both must keep the attributes.
+TEST_F(GemmFusionTest, KeepsFrontendAttributesOnBitcastReplacement) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"hlo(
+HloModule m
+
+ENTRY e {
+  p0 = f32[32,6] parameter(0)
+  p1 = f32[32,7] parameter(1)
+  d = f32[6,7] dot(p0, p1),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0},
+    frontend_attributes={_scheduling_group_id="1"}
+  b1 = f32[14,3] bitcast(d)
+  ROOT c1 = s8[14,3] convert(b1)
+})hlo"));
+  ASSERT_THAT(GemmFusion(device_info_).Run(module.get()), IsOkAndHolds(true));
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_THAT(root, GmockMatch(m::Bitcast(m::Fusion())));
+  EXPECT_EQ(root->get_frontend_attribute("_scheduling_group_id"), "1");
+  EXPECT_EQ(root->operand(0)->get_frontend_attribute("_scheduling_group_id"),
+            "1");
 }
 
 TEST_F(GemmFusionTest, ElementwiseAddIsFusedInEpilogue) {
