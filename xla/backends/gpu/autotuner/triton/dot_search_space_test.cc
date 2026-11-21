@@ -57,7 +57,6 @@ using ::testing::Ge;
 using ::testing::IsEmpty;
 using ::testing::Le;
 using ::testing::Lt;
-using ::testing::SizeIs;
 
 // Returns a matcher that verifies that each container element that matches
 // `filter` also matches `matcher`, and that there is at least one such element.
@@ -92,6 +91,10 @@ auto NumWarpsIs(MatcherType matcher) {
 template <typename MatcherType>
 auto NumCtasIs(MatcherType matcher) {
   return Field("num_ctas", &TritonGemmConfig::num_ctas, matcher);
+}
+template <typename MatcherType>
+auto IsTmaAllowedIs(MatcherType matcher) {
+  return Field("is_tma_allowed", &TritonGemmConfig::is_tma_allowed, matcher);
 }
 template <typename MatcherType>
 auto WavesPerEuIs(MatcherType matcher) {
@@ -586,6 +589,48 @@ TEST_F(DotSearchSpaceTest,
   EXPECT_THAT(
       ws_configs,
       Contains(Field(&TritonGemmConfig::is_warp_specialization_allowed, true)));
+
+  TritonGemmConfig tma_hint(/*block_m=*/128, /*block_n=*/128, /*block_k=*/64,
+                            /*num_stages=*/3, /*num_warps=*/4, /*num_ctas=*/1,
+                            /*is_tma_allowed=*/true);
+  std::vector<TritonGemmConfig> hinted_ws_configs =
+      search_space.GenerateAndOptimizeConfigs(
+          {tma_hint}, /*autotune_warp_specialization=*/true);
+  EXPECT_THAT(
+      hinted_ws_configs,
+      AllOf(Contains(Field(&TritonGemmConfig::is_warp_specialization_allowed,
+                           false)),
+            Contains(Field(&TritonGemmConfig::is_warp_specialization_allowed,
+                           true))));
+}
+
+TEST_F(DotSearchSpaceTest,
+       MixedPrecisionSplitKUsesOperandStorageBitwidthForSharedMemory) {
+  constexpr absl::string_view kModuleText = R"(
+    ENTRY e {
+      p0 = s8[6144,2048] parameter(0)
+      p0_cvt = bf16[6144,2048] convert(p0)
+      p1 = bf16[64,2048] parameter(1)
+      ROOT r = f32[6144,64] dot(p0_cvt, p1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={1}
+    })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleText));
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+  std::vector<TritonGemmConfig> configs = search_space.GenerateConfigs();
+
+  // Staging 8-bit LHS and 16-bit RHS elements, a 128x64 output tile needs
+  // 128 * 8 + 64 * 16 = 2048 bits per K element, so the 227 KiB budget holds a
+  // total K extent of 908: block_k = 256 with 4 stages (3 buffers of 256), and
+  // block_k = 64 up to the 5-stage cap. Sizing both operands by the 32-bit dot
+  // output instead would limit the K extent to 302.
+  EXPECT_THAT(configs,
+              AllOf(Each(NumCtasIs(Eq(1))),
+                    Contains(AllOf(BlockMIs(Eq(128)), BlockNIs(Eq(64)),
+                                   BlockKIs(Eq(256)), NumStagesIs(Eq(4)),
+                                   IsTmaAllowedIs(Eq(true)))),
+                    Contains(AllOf(BlockMIs(Eq(128)), BlockNIs(Eq(64)),
+                                   BlockKIs(Eq(64)), NumStagesIs(Eq(5))))));
 }
 
 TEST_F(DotSearchSpaceTest, CudaDoesNotGenerateWavesPerEuConfigs) {

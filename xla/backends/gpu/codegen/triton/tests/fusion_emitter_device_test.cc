@@ -17,6 +17,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -3144,6 +3145,124 @@ ENTRY main {
   EXPECT_EQ(result,
             LiteralUtil::CreateR1<float>(std::vector<float>(16, -1.0f)));
 }
+
+// `s8` weights converted to `bf16` (W8A16) in a 256x64 cluster tile split
+// along M into two 128x64 CTA tiles. The 2e-2 tolerance allows for bf16
+// rounding of the output (about 5 ulp at bf16's 2^-8 relative precision).
+TEST_F(TritonEmitterTest, TwoCtaClusterGemmExecutesCorrectly) {
+  if (auto cc = GpuComputeCapability().cuda_compute_capability();
+      !cc || !cc->IsAtLeastHopper()) {
+    GTEST_SKIP() << "CTA clusters require Hopper or newer CUDA GPUs.";
+  }
+
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule m
+
+fdot {
+  w = s8[512,256]{1,0} parameter(0)
+  w_bf16 = bf16[512,256]{1,0} convert(w)
+  x = bf16[64,256]{1,0} parameter(1)
+  ROOT dot = bf16[512,64]{1,0} dot(w_bf16, x),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1},
+    backend_config={sizes:[128]}
+}
+
+ENTRY main {
+  w = s8[512,256]{1,0} parameter(0)
+  x = bf16[64,256]{1,0} parameter(1)
+  ROOT fusion = bf16[512,64]{1,0} fusion(w, x),
+    kind=kCustom, calls=fdot, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["256","64"]}],
+          "num_warps":"4",
+          "num_ctas":2,
+          "num_stages":3,
+          "is_tma_allowed":true}}}
+})hlo";
+
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      kHloText, ErrorSpec{/*aabs=*/2e-2, /*arel=*/2e-2}));
+}
+
+// 256x64 cluster tiles are split along M into two 128x64 CTA tiles. With both
+// operands loaded straight from TMA descriptors, Triton can lower the dot to a
+// 2-CTA `tcgen05.mma.cta_group::2` on Blackwell.
+TEST_F(TritonEmitterTest, TwoCtaClusterBf16GemmSplitAlongMExecutesCorrectly) {
+  if (auto cc = GpuComputeCapability().cuda_compute_capability();
+      !cc || !cc->IsAtLeastHopper()) {
+    GTEST_SKIP() << "CTA clusters require Hopper or newer CUDA GPUs.";
+  }
+
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule m
+
+fdot {
+  w = bf16[512,256]{1,0} parameter(0)
+  x = bf16[64,256]{1,0} parameter(1)
+  ROOT dot = bf16[512,64]{1,0} dot(w, x),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1},
+    backend_config={sizes:[128]}
+}
+
+ENTRY main {
+  w = bf16[512,256]{1,0} parameter(0)
+  x = bf16[64,256]{1,0} parameter(1)
+  ROOT fusion = bf16[512,64]{1,0} fusion(w, x),
+    kind=kCustom, calls=fdot, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["256","64"]}],
+          "num_warps":"4",
+          "num_ctas":2,
+          "num_stages":4,
+          "is_tma_allowed":true}}}
+})hlo";
+
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      kHloText, ErrorSpec{/*aabs=*/2e-2, /*arel=*/2e-2}));
+}
+
+// 64x256 cluster tiles are split along N into two 64x128 CTA tiles, so the
+// LHS tile is shared (multicast) by both CTAs.
+TEST_F(TritonEmitterTest, TwoCtaClusterBf16GemmSplitAlongNExecutesCorrectly) {
+  if (auto cc = GpuComputeCapability().cuda_compute_capability();
+      !cc || !cc->IsAtLeastHopper()) {
+    GTEST_SKIP() << "CTA clusters require Hopper or newer CUDA GPUs.";
+  }
+
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule m
+
+fdot {
+  w = bf16[128,256]{1,0} parameter(0)
+  x = bf16[512,256]{1,0} parameter(1)
+  ROOT dot = bf16[128,512]{1,0} dot(w, x),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1},
+    backend_config={sizes:[128]}
+}
+
+ENTRY main {
+  w = bf16[128,256]{1,0} parameter(0)
+  x = bf16[512,256]{1,0} parameter(1)
+  ROOT fusion = bf16[128,512]{1,0} fusion(w, x),
+    kind=kCustom, calls=fdot, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["64","256"]}],
+          "num_warps":"4",
+          "num_ctas":2,
+          "num_stages":4,
+          "is_tma_allowed":true}}}
+})hlo";
+
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      kHloText, ErrorSpec{/*aabs=*/2e-2, /*arel=*/2e-2}));
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
