@@ -89,26 +89,6 @@ func.func @reduce_totalorder_combiner(%arg0: tensor<4x8xf32>) -> tensor<4xf32> {
 
 // -----
 
-// Only single-input, single-result reductions are supported.
-func.func @reduce_variadic(%arg0: tensor<4x8xf32>, %arg1: tensor<4x8xf32>) -> (tensor<4xf32>, tensor<4xf32>) {
-  // expected-error @+1 {{operation was not legalized to nv_tensor_ir dialect}}
-  %init = stablehlo.constant dense<0.000000e+00> : tensor<f32>
-  // expected-error @+2 {{failed to legalize operation 'stablehlo.reduce'}}
-  // expected-error @+1 {{'stablehlo.reduce' op operation was not legalized to nv_tensor_ir dialect}}
-  %0:2 = stablehlo.reduce(%arg0 init: %init), (%arg1 init: %init) across dimensions = [1] : (tensor<4x8xf32>, tensor<4x8xf32>, tensor<f32>, tensor<f32>) -> (tensor<4xf32>, tensor<4xf32>)
-   reducer(%lhs0: tensor<f32>, %rhs0: tensor<f32>) (%lhs1: tensor<f32>, %rhs1: tensor<f32>) {
-    // expected-error @+1 {{operation was not legalized to nv_tensor_ir dialect}}
-    %1 = stablehlo.add %lhs0, %rhs0 : tensor<f32>
-    // expected-error @+1 {{operation was not legalized to nv_tensor_ir dialect}}
-    %2 = stablehlo.add %lhs1, %rhs1 : tensor<f32>
-    // expected-error @+1 {{operation was not legalized to nv_tensor_ir dialect}}
-    stablehlo.return %1, %2 : tensor<f32>, tensor<f32>
-  }
-  return %0#0, %0#1 : tensor<4xf32>, tensor<4xf32>
-}
-
-// -----
-
 // The nv_tensor_ir dialect has no pad operation.
 func.func @unsupported_pad(%arg0: tensor<4xf32>, %arg1: tensor<f32>) -> tensor<6xf32> {
   // expected-error @+2 {{failed to legalize operation 'stablehlo.pad'}}

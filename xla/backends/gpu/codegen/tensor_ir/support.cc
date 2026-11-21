@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/tensor_ir/support.h"
 
+#include <vector>
+
 #include "absl/strings/str_cat.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -112,7 +114,9 @@ bool IsSupportedFusionOpcode(HloOpcode opcode) {
     case HloOpcode::kConstant:
     case HloOpcode::kIota:
     case HloOpcode::kCopy:
-    case HloOpcode::kConcatenate: {
+    case HloOpcode::kConcatenate:
+    case HloOpcode::kGetTupleElement:
+    case HloOpcode::kTuple: {
       return true;
     }
 
@@ -140,6 +144,7 @@ bool IsSupportedReductionOpcode(HloOpcode opcode) {
 
     // Miscellaneous operations.
     case HloOpcode::kParameter:
+    case HloOpcode::kTuple:
     case HloOpcode::kConstant: {
       return true;
     }
@@ -162,15 +167,19 @@ CodegenDecision CheckCompareInstruction(const HloInstruction& instr) {
 }
 
 CodegenDecision IsSupportedReductionInstruction(const HloInstruction& instr) {
-  if (!instr.shape().IsArray()) {
-    return CodegenDecision::Forbid(absl::StrCat("Unsupported non-array shape: ",
-                                                instr.shape().ToString()));
-  }
-  if (!IsSupportedPrimitiveType(instr.shape().element_type())) {
-    return CodegenDecision::Forbid(
-        absl::StrCat("Unsupported element type: ",
-                     primitive_util::LowercasePrimitiveTypeName(
-                         instr.shape().element_type())));
+  std::vector<const Shape*> shapes;
+  ShapeUtil::FlattenTupleShape(instr.shape(), shapes);
+
+  for (auto& shape : shapes) {
+    if (!shape->IsArray()) {
+      return CodegenDecision::Forbid(
+          absl::StrCat("Unsupported non-array shape: ", shape->ToString()));
+    }
+    if (!IsSupportedPrimitiveType(shape->element_type())) {
+      return CodegenDecision::Forbid(absl::StrCat(
+          "Unsupported element type: ",
+          primitive_util::LowercasePrimitiveTypeName(shape->element_type())));
+    }
   }
   if (!IsSupportedReductionOpcode(instr.opcode())) {
     return CodegenDecision::Forbid(
@@ -204,35 +213,29 @@ CodegenDecision IsInstructionSupportedForFusion(const HloInstruction& instr) {
         *instr.fused_instructions_computation());
   }
 
-  // The root of a multi-output fusion is a flat tuple of arrays. Only `kTuple`
-  // gets this exemption: the tuple's operands are checked as instructions of
-  // the computation, while any other tuple-shaped opcode is unsupported.
-  bool is_root_tuple = instr.opcode() == HloOpcode::kTuple && instr.IsRoot() &&
-                       !ShapeUtil::IsNestedTuple(instr.shape());
-  if (!is_root_tuple) {
-    if (!instr.shape().IsArray()) {
-      return CodegenDecision::Forbid(absl::StrCat(
-          "Unsupported non-array shape: ", instr.shape().ToString()));
-    }
-    if (!IsSupportedPrimitiveType(instr.shape().element_type())) {
+  std::vector<const Shape*> shapes;
+  ShapeUtil::FlattenTupleShape(instr.shape(), shapes);
+
+  for (auto& shape : shapes) {
+    if (!shape->IsArray()) {
       return CodegenDecision::Forbid(
-          absl::StrCat("Unsupported element type: ",
-                       primitive_util::LowercasePrimitiveTypeName(
-                           instr.shape().element_type())));
+          absl::StrCat("Unsupported non-array shape: ", shape->ToString()));
     }
-    if (!IsSupportedFusionOpcode(instr.opcode())) {
+    if (!IsSupportedPrimitiveType(shape->element_type())) {
       return CodegenDecision::Forbid(absl::StrCat(
-          "Unsupported instruction: ", HloOpcodeString(instr.opcode())));
+          "Unsupported element type: ",
+          primitive_util::LowercasePrimitiveTypeName(shape->element_type())));
     }
+  }
+
+  if (!IsSupportedFusionOpcode(instr.opcode())) {
+    return CodegenDecision::Forbid(absl::StrCat(
+        "Unsupported instruction: ", HloOpcodeString(instr.opcode())));
   }
 
   switch (instr.opcode()) {
     case HloOpcode::kReduce: {
       auto reduce = Cast<HloReduceInstruction>(&instr);
-      if (reduce->input_count() != 1) {
-        return CodegenDecision::Forbid(
-            absl::StrCat("Unsupported variadic reduction: ", instr.name()));
-      }
       for (const HloInstruction* init_value : reduce->init_values()) {
         if (DynCast<HloConstantInstruction>(init_value) == nullptr) {
           return CodegenDecision::Forbid(absl::StrCat(
