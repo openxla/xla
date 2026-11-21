@@ -1480,5 +1480,280 @@ TEST_F(HloLiveRangeTest, NestedAsyncViaCall) {
   EXPECT_LE(z_range.start, z_range.end);
 }
 
+TEST_F(HloLiveRangeTest, EarlyBoundOutputWithLateBoundInputDirectAsync) {
+  const std::string hlo_string = R"hlo(
+  HloModule EarlyBoundOutputDirectAsync, is_scheduled=true
+
+  %async_wrapped (p0: f32[4], p1: f32[4]) -> f32[4] {
+    %p0 = f32[4] parameter(0)
+    %p1 = f32[4] parameter(1)
+    ROOT %inner_add = f32[4] add(%p0, %p1)
+  }
+
+  ENTRY %main (a: f32[4], b: f32[4]) -> f32[4] {
+    %a = f32[4] parameter(0)
+    %b = f32[4] parameter(1)
+    %early_op = f32[4] negate(%a)
+    %async_start = ((f32[4]), f32[4], u32[]) async-start(%early_op),
+      calls=%async_wrapped
+    %late_op = f32[4] negate(%b)
+    %async_update = ((f32[4], f32[4]), f32[4], u32[]) async-update(
+      %async_start, %late_op)
+    %async_done = f32[4] async-done(%async_update)
+    ROOT %result = f32[4] negate(%async_done)
+  }
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(alias_analysis_,
+                       HloAliasAnalysis::Run(module_.get(), &alias_info_));
+  ASSERT_OK_AND_ASSIGN(hlo_live_range_,
+                       HloLiveRange::Run(module_->schedule(), *alias_analysis_,
+                                         module_->entry_computation()));
+  CheckSchedule();
+
+  HloComputation* async_wrapped =
+      module_->GetComputationWithName("async_wrapped");
+  ASSERT_NE(async_wrapped, nullptr);
+  const HloInstruction* inner_add =
+      async_wrapped->GetInstructionWithName("inner_add");
+  ASSERT_NE(inner_add, nullptr);
+
+  HloComputation* entry = module_->entry_computation();
+  const HloInstruction* async_start =
+      entry->GetInstructionWithName("async_start");
+  const HloInstruction* late_op = entry->GetInstructionWithName("late_op");
+  const HloInstruction* async_update =
+      entry->GetInstructionWithName("async_update");
+  ASSERT_NE(async_start, nullptr);
+  ASSERT_NE(late_op, nullptr);
+  ASSERT_NE(async_update, nullptr);
+
+  const auto& schedule_map = hlo_live_range_->instruction_schedule();
+  HloLiveRange::LogicalTime async_start_time = schedule_map.at(async_start);
+  HloLiveRange::LogicalTime late_op_time = schedule_map.at(late_op);
+  HloLiveRange::LogicalTime async_update_time = schedule_map.at(async_update);
+  LiveRangeBounds output_range = LiveRangeAt(inner_add);
+
+  EXPECT_LT(async_start_time, late_op_time);
+  EXPECT_LT(late_op_time, async_update_time);
+  EXPECT_EQ(output_range.start, async_start_time);
+}
+
+TEST_F(HloLiveRangeTest, EarlyBoundOutputWithLateBoundInputNestedCall) {
+  const std::string hlo_string = R"hlo(
+  HloModule EarlyBoundOutputNestedCall, is_scheduled=true
+
+  %sc_program (param_0: f32[4], param_1: f32[4]) -> f32[4] {
+    %param_0 = f32[4] parameter(0)
+    %param_1 = f32[4] parameter(1)
+    ROOT %sc_out = f32[4] add(%param_0, %param_1)
+  }
+
+  %async_wrapped (async_param_0: f32[4], async_param_1: f32[4]) -> f32[4] {
+    %async_param_0 = f32[4] parameter(0)
+    %async_param_1 = f32[4] parameter(1)
+    ROOT %call = f32[4] call(%async_param_0, %async_param_1),
+      to_apply=%sc_program
+  }
+
+  ENTRY %main (a: f32[4], b: f32[4]) -> f32[4] {
+    %a = f32[4] parameter(0)
+    %b = f32[4] parameter(1)
+    %early_op = f32[4] negate(%a)
+    %async_start = ((f32[4]), f32[4], u32[]) async-start(%early_op),
+      calls=%async_wrapped
+    %late_op = f32[4] negate(%b)
+    %async_update = ((f32[4], f32[4]), f32[4], u32[]) async-update(
+      %async_start, %late_op)
+    %async_done = f32[4] async-done(%async_update)
+    ROOT %result = f32[4] negate(%async_done)
+  }
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(alias_analysis_,
+                       HloAliasAnalysis::Run(module_.get(), &alias_info_));
+  ASSERT_OK_AND_ASSIGN(hlo_live_range_,
+                       HloLiveRange::Run(module_->schedule(), *alias_analysis_,
+                                         module_->entry_computation()));
+  CheckSchedule();
+
+  HloComputation* sc_program = module_->GetComputationWithName("sc_program");
+  ASSERT_NE(sc_program, nullptr);
+  const HloInstruction* sc_out = sc_program->GetInstructionWithName("sc_out");
+  ASSERT_NE(sc_out, nullptr);
+
+  HloComputation* entry = module_->entry_computation();
+  const HloInstruction* async_start =
+      entry->GetInstructionWithName("async_start");
+  const HloInstruction* late_op = entry->GetInstructionWithName("late_op");
+  const HloInstruction* async_update =
+      entry->GetInstructionWithName("async_update");
+  ASSERT_NE(async_start, nullptr);
+  ASSERT_NE(late_op, nullptr);
+  ASSERT_NE(async_update, nullptr);
+
+  const auto& schedule_map = hlo_live_range_->instruction_schedule();
+  HloLiveRange::LogicalTime async_start_time = schedule_map.at(async_start);
+  HloLiveRange::LogicalTime late_op_time = schedule_map.at(late_op);
+  HloLiveRange::LogicalTime async_update_time = schedule_map.at(async_update);
+  LiveRangeBounds output_range = LiveRangeAt(sc_out);
+
+  EXPECT_LT(async_start_time, late_op_time);
+  EXPECT_LT(late_op_time, async_update_time);
+  EXPECT_EQ(output_range.start, async_start_time);
+}
+
+TEST_F(HloLiveRangeTest, LateBoundOutputAtAsyncUpdateNotPulledBackToStart) {
+  const std::string hlo_string = R"hlo(
+  HloModule LateBoundOutputAtAsyncUpdate, is_scheduled=true
+
+  %async_wrapped (p0: f32[4], p1: f32[4]) -> f32[4] {
+    %p0 = f32[4] parameter(0)
+    %p1 = f32[4] parameter(1)
+    ROOT %inner_add = f32[4] add(%p0, %p1)
+  }
+
+  ENTRY %main (a: f32[4], b: f32[4]) -> f32[4] {
+    %a = f32[4] parameter(0)
+    %b = f32[4] parameter(1)
+    %early_op = f32[4] negate(%a)
+    %async_start = ((f32[4]), (), u32[]) async-start(%early_op),
+      calls=%async_wrapped
+    %late_op = f32[4] negate(%b)
+    %async_update = ((f32[4], f32[4]), f32[4], u32[]) async-update(
+      %async_start, %late_op)
+    %async_done = f32[4] async-done(%async_update)
+    ROOT %result = f32[4] negate(%async_done)
+  }
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(alias_analysis_,
+                       HloAliasAnalysis::Run(module_.get(), &alias_info_));
+  ASSERT_OK_AND_ASSIGN(hlo_live_range_,
+                       HloLiveRange::Run(module_->schedule(), *alias_analysis_,
+                                         module_->entry_computation()));
+  CheckSchedule();
+
+  HloComputation* async_wrapped =
+      module_->GetComputationWithName("async_wrapped");
+  ASSERT_NE(async_wrapped, nullptr);
+  const HloInstruction* inner_add =
+      async_wrapped->GetInstructionWithName("inner_add");
+  ASSERT_NE(inner_add, nullptr);
+
+  HloComputation* entry = module_->entry_computation();
+  const HloInstruction* async_start =
+      entry->GetInstructionWithName("async_start");
+  const HloInstruction* late_op = entry->GetInstructionWithName("late_op");
+  const HloInstruction* async_update =
+      entry->GetInstructionWithName("async_update");
+  ASSERT_NE(async_start, nullptr);
+  ASSERT_NE(late_op, nullptr);
+  ASSERT_NE(async_update, nullptr);
+
+  const auto& schedule_map = hlo_live_range_->instruction_schedule();
+  HloLiveRange::LogicalTime async_start_time = schedule_map.at(async_start);
+  HloLiveRange::LogicalTime late_op_time = schedule_map.at(late_op);
+  HloLiveRange::LogicalTime inner_add_time = schedule_map.at(inner_add);
+  HloLiveRange::LogicalTime async_update_time = schedule_map.at(async_update);
+  LiveRangeBounds output_range = LiveRangeAt(inner_add);
+
+  EXPECT_GT(output_range.start, async_start_time);
+  EXPECT_GT(output_range.start, late_op_time);
+  EXPECT_GE(output_range.start, inner_add_time);
+  EXPECT_LE(output_range.start, async_update_time);
+}
+
+TEST_F(HloLiveRangeTest,
+       PartialEarlyBoundTupleOutputClampsEachElementToBindingPoint) {
+  const std::string hlo_string = R"hlo(
+  HloModule PartialEarlyBoundTupleOutput, is_scheduled=true
+
+  %callee (c0: f32[4], c1: f32[4], c2: f32[4]) -> (f32[4], f32[4]) {
+    %c0 = f32[4] parameter(0)
+    %c1 = f32[4] parameter(1)
+    %c2 = f32[4] parameter(2)
+    %out0 = f32[4] add(%c0, %c1)
+    %out1 = f32[4] add(%c1, %c2)
+    ROOT %tuple = (f32[4], f32[4]) tuple(%out0, %out1)
+  }
+
+  %async_wrapped (p0: f32[4], p1: f32[4], p2: f32[4]) -> (f32[4], f32[4]) {
+    %p0 = f32[4] parameter(0)
+    %p1 = f32[4] parameter(1)
+    %p2 = f32[4] parameter(2)
+    ROOT %call = (f32[4], f32[4]) call(%p0, %p1, %p2), to_apply=%callee
+  }
+
+  ENTRY %main (a: f32[4], b: f32[4], c: f32[4]) -> f32[4] {
+    %a = f32[4] parameter(0)
+    %b = f32[4] parameter(1)
+    %c = f32[4] parameter(2)
+    %op0 = f32[4] negate(%a)
+    %async_start = ((f32[4]), (f32[4], ()), u32[]) async-start(%op0),
+      calls=%async_wrapped
+    %op1 = f32[4] negate(%b)
+    %async_update_1 = ((f32[4], f32[4]), (f32[4], f32[4]), u32[]) async-update(
+      %async_start, %op1)
+    %op2 = f32[4] negate(%c)
+    %async_update_2 = ((f32[4], f32[4], f32[4]), (f32[4], f32[4]), u32[])
+      async-update(%async_update_1, %op2)
+    %async_done = (f32[4], f32[4]) async-done(%async_update_2)
+    %g0 = f32[4] get-tuple-element(%async_done), index=0
+    %g1 = f32[4] get-tuple-element(%async_done), index=1
+    ROOT %result = f32[4] add(%g0, %g1)
+  }
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(alias_analysis_,
+                       HloAliasAnalysis::Run(module_.get(), &alias_info_));
+  ASSERT_OK_AND_ASSIGN(hlo_live_range_,
+                       HloLiveRange::Run(module_->schedule(), *alias_analysis_,
+                                         module_->entry_computation()));
+  CheckSchedule();
+
+  HloComputation* callee = module_->GetComputationWithName("callee");
+  ASSERT_NE(callee, nullptr);
+  const HloInstruction* out0 = callee->GetInstructionWithName("out0");
+  const HloInstruction* out1 = callee->GetInstructionWithName("out1");
+  ASSERT_NE(out0, nullptr);
+  ASSERT_NE(out1, nullptr);
+
+  HloComputation* entry = module_->entry_computation();
+  const HloInstruction* async_start =
+      entry->GetInstructionWithName("async_start");
+  const HloInstruction* op1 = entry->GetInstructionWithName("op1");
+  const HloInstruction* async_update_1 =
+      entry->GetInstructionWithName("async_update_1");
+  const HloInstruction* op2 = entry->GetInstructionWithName("op2");
+  const HloInstruction* async_update_2 =
+      entry->GetInstructionWithName("async_update_2");
+  ASSERT_NE(async_start, nullptr);
+  ASSERT_NE(op1, nullptr);
+  ASSERT_NE(async_update_1, nullptr);
+  ASSERT_NE(op2, nullptr);
+  ASSERT_NE(async_update_2, nullptr);
+
+  const auto& schedule_map = hlo_live_range_->instruction_schedule();
+  HloLiveRange::LogicalTime async_start_time = schedule_map.at(async_start);
+  HloLiveRange::LogicalTime op1_time = schedule_map.at(op1);
+  HloLiveRange::LogicalTime async_update_1_time =
+      schedule_map.at(async_update_1);
+  HloLiveRange::LogicalTime op2_time = schedule_map.at(op2);
+  HloLiveRange::LogicalTime async_update_2_time =
+      schedule_map.at(async_update_2);
+
+  EXPECT_LT(async_start_time, op1_time);
+  EXPECT_LT(op1_time, async_update_1_time);
+  EXPECT_LT(async_update_1_time, op2_time);
+  EXPECT_LT(op2_time, async_update_2_time);
+  EXPECT_EQ(LiveRangeAt(out0).start, async_start_time);
+  EXPECT_EQ(LiveRangeAt(out1).start, async_update_1_time);
+}
+
 }  // namespace
 }  // namespace xla
