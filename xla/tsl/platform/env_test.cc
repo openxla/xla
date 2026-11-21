@@ -45,6 +45,7 @@ namespace {
 using absl_testing::IsOk;
 using ::absl_testing::StatusIs;
 using ::testing::ElementsAre;
+using ::testing::HasSubstr;
 
 TEST(EnvTest, StartDetachedThread) {
   Env* env = Env::Default();
@@ -60,6 +61,51 @@ TEST(EnvTest, StartDetachedThread) {
   }
 
   counter.Wait();
+}
+
+// Consumes `depth * 64 KiB` of call stack without being optimized away.
+uint32_t TouchDeepStack(int depth, uint32_t seed) {
+  volatile uint8_t frame[64 * 1024];
+  frame[0] = static_cast<uint8_t>(seed);
+  frame[sizeof(frame) - 1] = static_cast<uint8_t>(depth);
+  uint32_t acc = seed + frame[0] + frame[sizeof(frame) - 1];
+  if (depth > 1) {
+    acc += TouchDeepStack(depth - 1, acc);
+  }
+  return acc + frame[0];
+}
+
+TEST(EnvTest, StartThreadHonorsStackSizeAndThreadName) {
+  Env* env = Env::Default();
+  ThreadOptions thread_options;
+  thread_options.stack_size = 4 * 1024 * 1024;
+
+  std::string observed_name;
+  bool found_name = false;
+  uint32_t stack_checksum = 0;
+  {
+    std::unique_ptr<Thread> thread(
+        env->StartThread(thread_options, "LargeStackWorker", [&]() {
+          found_name = env->GetCurrentThreadName(&observed_name);
+          // Consume ~2 MiB of stack, which exceeds Windows's default 1 MiB
+          // thread stack limit unless `thread_options.stack_size` is honored.
+          stack_checksum = TouchDeepStack(/*depth=*/32, /*seed=*/1);
+        }));
+  }
+  EXPECT_TRUE(found_name);
+  EXPECT_THAT(observed_name, HasSubstr("LargeStackWorker"));
+  EXPECT_GT(stack_checksum, 0u);
+
+  std::string detached_name;
+  bool found_detached_name = false;
+  absl::BlockingCounter done(1);
+  env->StartDetachedThread(thread_options, "NamedDetachedWorker", [&]() {
+    found_detached_name = env->GetCurrentThreadName(&detached_name);
+    done.DecrementCount();
+  });
+  done.Wait();
+  EXPECT_TRUE(found_detached_name);
+  EXPECT_FALSE(detached_name.empty());
 }
 
 TEST(EnvTest, FileOperations) {

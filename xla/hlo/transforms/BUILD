@@ -1242,6 +1242,7 @@ cc_library(
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
         "//xla/hlo/transforms/simplifiers:tuple_simplifier",
+        "//xla/hlo/utils:hlo_query",
         "//xla/service:call_graph",
         "//xla/service:dump",
         "//xla/service:hlo_buffer",
