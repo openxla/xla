@@ -146,6 +146,14 @@ TEST(OriginalValueTest, ProtoSerde) {
   EXPECT_TRUE(value_synthetic_from_proto->is_synthetic_call());
   EXPECT_EQ(*value_synthetic_from_proto, value_synthetic);
 
+  // Test synthetic call proto without explicit call_hierarchy field populated.
+  OriginalValueProto proto_synthetic_without_hierarchy;
+  proto_synthetic_without_hierarchy.set_is_synthetic_call(true);
+  std::shared_ptr<OriginalValue> value_synthetic_without_hierarchy =
+      OriginalValue::FromProto(proto_synthetic_without_hierarchy);
+  EXPECT_TRUE(value_synthetic_without_hierarchy->is_synthetic_call());
+  EXPECT_EQ(*value_synthetic_without_hierarchy, value_synthetic);
+
   // Test with empty tuple.
   OriginalValue value_empty = OriginalValue(Node::Tuple());
   OriginalValueProto proto_empty = value_empty.ToProto();
@@ -776,6 +784,42 @@ ENTRY main {
       CopyOriginalValue(root, dest, old_to_new),
       "Incompatible OriginalValue subtree when mapping from old_idx 0 to "
       "new_idx 0");
+}
+
+TEST_F(OriginalValueHloTest,
+       AddRecoveryComputationPreservesSyntheticCallAndCallHierarchy) {
+  const char* hlo_string = R"(
+HloModule test
+
+callee {
+  ROOT p = f32[] parameter(0)
+}
+
+ENTRY main {
+  p0 = f32[] parameter(0), origin={{"p0"}}
+  call_old = f32[] call(p0), to_apply=callee, origin={(),[""]}
+  call_new = f32[] call(p0), to_apply=callee
+  scoped_old = f32[] call(p0), to_apply=callee, origin={{"scoped_old"},["scoped_old#$"]}
+  ROOT scoped_new = f32[] call(p0), to_apply=callee
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  const HloInstruction* call_old = FindInstruction(module.get(), "call_old");
+  HloInstruction* call_new = FindInstruction(module.get(), "call_new");
+  const HloInstruction* scoped_old =
+      FindInstruction(module.get(), "scoped_old");
+  HloInstruction* scoped_new = FindInstruction(module.get(), "scoped_new");
+
+  module->mutable_original_value_recovery_table().AddRecoveryComputation(
+      call_old, call_new);
+  ASSERT_NE(call_new->original_value(), nullptr);
+  EXPECT_TRUE(call_new->original_value()->is_synthetic_call());
+
+  module->mutable_original_value_recovery_table().AddRecoveryComputation(
+      scoped_old, scoped_new);
+  ASSERT_NE(scoped_new->original_value(), nullptr);
+  ASSERT_TRUE(scoped_new->original_value()->call_hierarchy().has_value());
+  EXPECT_EQ(*scoped_new->original_value()->call_hierarchy(), "scoped_old#$");
 }
 
 }  // namespace

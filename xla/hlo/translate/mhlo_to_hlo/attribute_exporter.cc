@@ -728,6 +728,7 @@ std::optional<xla::OriginalValueProto> ConvertOriginalValue(
   original_value.set_is_synthetic_call(is_synthetic_call);
 
   if (is_synthetic_call) {
+    original_value.set_call_hierarchy("");
     if (!original_value_attr.getElements().empty()) {
       LOG(WARNING) << "Synthetic call has original arrays.\n";
     }

@@ -71,6 +71,7 @@ cc_library(
     deps = [
         "//xla:xla_data_proto_cc",
         "//xla/mlir_hlo",
+        "//xla/mlir_hlo:unregistered_attributes",
         "//xla/service/spmd/shardy:constants",
         "@com_google_absl//absl/log:check",
         "@llvm-project//llvm:Support",
