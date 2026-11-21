@@ -517,11 +517,14 @@ nanobind_pywrap_extension(
         "//xla/pjrt:status_casters",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/python/profiler:profile_data_lib",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:macros",
         "//xla/tsl/profiler/rpc:profiler_server_impl",
         "//xla/tsl/profiler/rpc/client:capture_profile",
         "//xla/tsl/profiler/rpc/client:profiler_client_impl",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@nanobind",
@@ -567,6 +570,22 @@ py_test(
         if_google([
             "//third_party/py/jax",
             "//pyglib:gfile",
+            "@absl_py//absl/testing:absltest",
+        ]),
+)
+
+py_test(
+    name = "profiler_capture_test",
+    srcs = ["profiler_capture_test.py"],
+    main = "profiler_capture_test.py",
+    strict_deps = True,
+    tags = [
+        "no_oss",
+        "optonly",
+    ],
+    deps =
+        if_google([
+            ":_profiler",
             "@absl_py//absl/testing:absltest",
         ]),
 )

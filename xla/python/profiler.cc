@@ -20,7 +20,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/casts.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -45,6 +47,7 @@ limitations under the License.
 #include "xla/python/profiler/profile_data_lib.h"
 #include "xla/python/profiler_utils.h"
 #include "xla/python/xplane_to_profile_instructions.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/profiler/rpc/client/capture_profile.h"
 #include "xla/tsl/profiler/rpc/profiler_server.h"
@@ -115,6 +118,66 @@ tensorflow::ProfileOptions DefaultPythonProfileOptions() {
   options.set_host_tracer_level(2);
   options.set_enable_hlo_proto(true);
   return options;
+}
+
+struct CudaProfilerSymbols {
+  using CuProfilerFn = int (*)();
+  absl::Status load_status;
+  CuProfilerFn start = nullptr;
+  CuProfilerFn stop = nullptr;
+};
+
+const CudaProfilerSymbols& GetCudaProfilerSymbols() {
+  static const CudaProfilerSymbols* const symbols = []() {
+    auto* result = new CudaProfilerSymbols();
+    tsl::Env* env = tsl::Env::Default();
+    void* handle = nullptr;
+    result->load_status = env->LoadDynamicLibrary("libcuda.so.1", &handle);
+    if (!result->load_status.ok()) {
+      return result;
+    }
+    void* start_sym = nullptr;
+    result->load_status =
+        env->GetSymbolFromLibrary(handle, "cuProfilerStart", &start_sym);
+    if (!result->load_status.ok()) {
+      return result;
+    }
+    void* stop_sym = nullptr;
+    result->load_status =
+        env->GetSymbolFromLibrary(handle, "cuProfilerStop", &stop_sym);
+    if (!result->load_status.ok()) {
+      return result;
+    }
+    result->start =
+        absl::bit_cast<CudaProfilerSymbols::CuProfilerFn>(start_sym);
+    result->stop = absl::bit_cast<CudaProfilerSymbols::CuProfilerFn>(stop_sym);
+    return result;
+  }();
+  return *symbols;
+}
+
+absl::Status RunCudaProfilerFn(absl::string_view fn_name,
+                               CudaProfilerSymbols::CuProfilerFn fn,
+                               const absl::Status& load_status) {
+  if (!load_status.ok()) {
+    return absl::UnavailableError(
+        absl::StrCat("CUDA driver library is not available for ", fn_name, ": ",
+                     load_status.message()));
+  }
+  constexpr int kCudaSuccess = 0;
+  constexpr int kCudaErrorInvalidContext = 201;
+  int cu_result = fn();
+  if (cu_result == kCudaSuccess) {
+    return absl::OkStatus();
+  }
+  if (cu_result == kCudaErrorInvalidContext) {
+    return absl::FailedPreconditionError(
+        absl::StrCat(fn_name,
+                     " failed with CUDA_ERROR_INVALID_CONTEXT (201); run a GPU "
+                     "computation on the calling thread first"));
+  }
+  return absl::InternalError(
+      absl::StrCat(fn_name, " failed with CUresult ", cu_result));
 }
 
 }  // namespace
@@ -465,6 +528,16 @@ NB_MODULE(_profiler, m) {
   m.def("set_metadata", &xla::profiler::SetProfilerMetadata, nb::arg("key"),
         nb::arg("value"));
   m.def("clear_metadata", &xla::profiler::ClearProfilerMetadata);
+  m.def("start_capture", []() {
+    const CudaProfilerSymbols& syms = GetCudaProfilerSymbols();
+    xla::ThrowIfError(
+        RunCudaProfilerFn("cuProfilerStart", syms.start, syms.load_status));
+  });
+  m.def("stop_capture", []() {
+    const CudaProfilerSymbols& syms = GetCudaProfilerSymbols();
+    xla::ThrowIfError(
+        RunCudaProfilerFn("cuProfilerStop", syms.stop, syms.load_status));
+  });
 
   m.def(
       "aggregate_profiled_instructions",
