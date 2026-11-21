@@ -36,6 +36,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/Location.h"
@@ -3136,6 +3137,103 @@ TEST_F(TpuOpsVerificationTest, ConcatenateOpRankMismatch) {
       builder().getContext(), std::nullopt, ValueRange{vec_1d, vec_2d},
       DictionaryAttr(), higher_rank->getPropertiesStorage(), RegionRange{},
       inferred)));
+}
+
+TEST_F(TpuOpsVerificationTest, BitcastOpFp6Uses8BitContainerWidth) {
+  Type f6e3m2 = Float6E3M2FNType::get(builder().getContext());
+  Type f6e2m3 = Float6E2M3FNType::get(builder().getContext());
+
+  // 1D and 2D bitcasts between 8-bit register containers succeed.
+  Value i8_1d = ConstantI8Vector(/*shape=*/{128}, /*values=*/{1});
+  auto i8_to_f6_1d = Create<BitcastOp>(VectorType::get({128}, f6e3m2), i8_1d);
+  EXPECT_THAT(VerifyOp(i8_to_f6_1d), absl_testing::IsOk());
+
+  auto f6_to_f6_1d =
+      Create<BitcastOp>(VectorType::get({128}, f6e2m3), i8_to_f6_1d);
+  EXPECT_THAT(VerifyOp(f6_to_f6_1d), absl_testing::IsOk());
+
+  // 2D cross-bitwidth bitcasts scale the second-minor dimension by 8 bits.
+  Value f32_2d = ConstantF32Vector(/*shape=*/{8, 128}, /*values=*/{1.0f});
+  auto f32_to_f6 =
+      Create<BitcastOp>(VectorType::get({32, 128}, f6e3m2), f32_2d);
+  EXPECT_THAT(VerifyOp(f32_to_f6), absl_testing::IsOk());
+
+  auto f6_to_bf16 = Create<BitcastOp>(
+      VectorType::get({16, 128}, builder().getBF16Type()), f32_to_f6);
+  EXPECT_THAT(VerifyOp(f6_to_bf16), absl_testing::IsOk());
+
+  // Shapes computed under a 6-bit register assumption (6 * 32 == 32 * 6) fail.
+  Value f32_bad_2d = ConstantF32Vector(/*shape=*/{6, 128}, /*values=*/{1.0f});
+  auto bad_2d =
+      Create<BitcastOp>(VectorType::get({32, 128}, f6e2m3), f32_bad_2d);
+  EXPECT_THAT(
+      VerifyOp(bad_2d),
+      StatusIs(_, HasSubstr("Expected input and output shapes are the same "
+                            "after multiplying the second-minor dimension")));
+
+  // 1D cross-bitwidth bitcast to FP6 is rejected.
+  Value f32_1d = ConstantF32Vector(/*shape=*/{32}, /*values=*/{1.0f});
+  auto bad_1d = Create<BitcastOp>(VectorType::get({128}, f6e3m2), f32_1d);
+  EXPECT_THAT(
+      VerifyOp(bad_1d),
+      StatusIs(
+          _, HasSubstr(
+                 "Not implemented: bitcast between different bitwidths on a 1D "
+                 "vector.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorLoadAndStoreFloat8EXMYFp6Container) {
+  MLIRContext* ctx = builder().getContext();
+  auto f6e3m2 = Float6E3M2FNType::get(ctx);
+  auto f6e2m3 = Float6E2M3FNType::get(ctx);
+  Type exmy_f6e3m2 = Float8EXMYType::get(ctx, f6e3m2);
+  Type exmy_f6e2m3 = Float8EXMYType::get(ctx, f6e2m3);
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+
+  Value memref_e3m2 = Create<memref::AllocaOp>(
+                          GetMemRefType({16, 128}, f6e3m2, MemorySpace::kVmem))
+                          .getMemref();
+  Value memref_e2m3 = Create<memref::AllocaOp>(
+                          GetMemRefType({16, 128}, f6e2m3, MemorySpace::kVmem))
+                          .getMemref();
+
+  auto valid_load = Create<VectorLoadOp>(
+      /*result=*/VectorType::get({16, 128}, exmy_f6e3m2),
+      /*base=*/memref_e3m2,
+      /*indices=*/ValueRange{c0, c0},
+      /*strides=*/builder().getDenseI32ArrayAttr({}),
+      /*mask=*/nullptr);
+  ASSERT_THAT(VerifyOp(valid_load), absl_testing::IsOk());
+
+  auto valid_store = Create<VectorStoreOp>(
+      /*valueToStore=*/valid_load.getResult(),
+      /*base=*/memref_e3m2,
+      /*indices=*/ValueRange{c0, c0},
+      /*strides=*/builder().getDenseI32ArrayAttr({}),
+      /*mask=*/nullptr);
+  EXPECT_THAT(VerifyOp(valid_store), absl_testing::IsOk());
+
+  auto mismatched_load = Create<VectorLoadOp>(
+      /*result=*/VectorType::get({16, 128}, exmy_f6e2m3),
+      /*base=*/memref_e3m2,
+      /*indices=*/ValueRange{c0, c0},
+      /*strides=*/builder().getDenseI32ArrayAttr({}),
+      /*mask=*/nullptr);
+  EXPECT_THAT(
+      VerifyOp(mismatched_load),
+      StatusIs(_,
+               HasSubstr("Expected base and result element type to match.")));
+
+  auto mismatched_store = Create<VectorStoreOp>(
+      /*valueToStore=*/valid_load.getResult(),
+      /*base=*/memref_e2m3,
+      /*indices=*/ValueRange{c0, c0},
+      /*strides=*/builder().getDenseI32ArrayAttr({}),
+      /*mask=*/nullptr);
+  EXPECT_THAT(
+      VerifyOp(mismatched_store),
+      StatusIs(_, HasSubstr("Expected base and valueToStore element type to "
+                            "match")));
 }
 
 }  // namespace
