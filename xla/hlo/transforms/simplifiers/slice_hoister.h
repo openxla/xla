@@ -25,16 +25,14 @@ limitations under the License.
 namespace xla {
 
 // An HLO pass that hoists slice operations through add operations.
-class SliceHoister : public HloModulePass {
+class SliceHoister : public HloComputationPass {
  public:
   SliceHoister() = default;
 
   absl::string_view name() const override { return "slice-hoister"; }
 
  protected:
-  absl::StatusOr<bool> RunImpl(
-      HloModule* module,
-      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
+  absl::StatusOr<bool> RunOnComputation(HloComputation* computation) override;
 };
 
 }  // namespace xla
