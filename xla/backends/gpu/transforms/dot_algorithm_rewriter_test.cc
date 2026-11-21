@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/filecheck.h"
@@ -546,6 +547,91 @@ TEST_F(DotAlgorithmRewriterTest, Fp8xNAccuracyAgainstF64Reference) {
         << tag;
   }
 }
+
+struct MultiplyForAlgorithmTestCase {
+  const char* name;
+  PrimitiveType lhs_type;
+  PrimitiveType rhs_type;
+  absl::StatusOr<HloInstruction*> (*multiply)(HloInstruction*, HloInstruction*);
+  float product_with_residual;
+};
+
+class DotAlgorithmMultiplyTest
+    : public DotAlgorithmRewriterTest,
+      public ::testing::WithParamInterface<MultiplyForAlgorithmTestCase> {};
+
+TEST_P(DotAlgorithmMultiplyTest, PreservesProductPrecision) {
+  const MultiplyForAlgorithmTestCase& test_case = GetParam();
+  for (std::pair<float, float> example :
+       {std::pair{129.0f, 16641.0f},
+        std::pair{129.03125f, test_case.product_with_residual}}) {
+    SCOPED_TRACE(example.first);
+    ASSERT_OK_AND_ASSIGN(
+        auto module,
+        ParseAndReturnVerifiedModule(absl::Substitute(
+            R"hlo(
+HloModule multiply_precision
+ENTRY main {
+  lhs = $0 parameter(0)
+  rhs = $1 parameter(1)
+  ROOT dot = f32[2] dot(lhs, rhs), lhs_batch_dims={0}, rhs_batch_dims={0}
+}
+)hlo",
+            ShapeUtil::MakeShape(test_case.lhs_type, {2}).ToString(),
+            ShapeUtil::MakeShape(test_case.rhs_type, {2}).ToString())));
+    ASSERT_OK_AND_ASSIGN(Literal lhs,
+                         LiteralUtil::CreateR1<float>({example.first, -128.0f})
+                             .Convert(test_case.lhs_type));
+    ASSERT_OK_AND_ASSIGN(Literal rhs,
+                         LiteralUtil::CreateR1<float>({129.0f, 130.0f})
+                             .Convert(test_case.rhs_type));
+    HloComputation* computation = module->entry_computation();
+    HloInstruction* dot = computation->root_instruction();
+    ASSERT_OK_AND_ASSIGN(
+        HloInstruction * product,
+        test_case.multiply(dot->mutable_operand(0), dot->mutable_operand(1)));
+    ASSERT_OK(computation->ReplaceInstruction(dot, product));
+    ASSERT_OK(module->Verify());
+    ASSERT_OK_AND_ASSIGN(Literal actual,
+                         HloEvaluator().Evaluate(*module, {&lhs, &rhs}));
+    // 129 * 129 = 16641 is exact in F32 but rounds to 16640 in BF16.
+    // The residual 0.03125 is discarded by the base BF16 algorithm and
+    // retained by the multi-term algorithms.
+    EXPECT_EQ(actual,
+              LiteralUtil::CreateR1<float>({example.second, -16640.0f}));
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Algorithms, DotAlgorithmMultiplyTest,
+    ::testing::Values(
+        MultiplyForAlgorithmTestCase{
+            "Bf16F32", F32, F32,
+            &DotAlgorithmRewriter::MakeMultiplyForBF16BF16F32, 16641.0f},
+        MultiplyForAlgorithmTestCase{
+            "Bf16Operands", BF16, BF16,
+            &DotAlgorithmRewriter::MakeMultiplyForBF16BF16F32, 16641.0f},
+        MultiplyForAlgorithmTestCase{
+            "Bf16Lhs", BF16, F32,
+            &DotAlgorithmRewriter::MakeMultiplyForBF16BF16F32, 16641.0f},
+        MultiplyForAlgorithmTestCase{
+            "Bf16Rhs", F32, BF16,
+            &DotAlgorithmRewriter::MakeMultiplyForBF16BF16F32, 16641.0f},
+        MultiplyForAlgorithmTestCase{
+            "Bf16X3", F32, F32,
+            &DotAlgorithmRewriter::MakeMultiplyForBF16BF16F32X3, 16645.03125f},
+        MultiplyForAlgorithmTestCase{
+            "Bf16X6", F32, F32,
+            &DotAlgorithmRewriter::MakeMultiplyForBF16BF16F32X6, 16645.03125f},
+        MultiplyForAlgorithmTestCase{
+            "Bf16X9", F32, F32,
+            &DotAlgorithmRewriter::MakeMultiplyForBF16BF16F32X9, 16645.03125f},
+        MultiplyForAlgorithmTestCase{
+            "Tf32X3", F32, F32,
+            &DotAlgorithmRewriter::MakeMultiplyForTF32TF32F32X3, 16645.03125f}),
+    [](const ::testing::TestParamInfo<MultiplyForAlgorithmTestCase>& info) {
+      return info.param.name;
+    });
 
 }  // namespace
 }  // namespace xla::gpu

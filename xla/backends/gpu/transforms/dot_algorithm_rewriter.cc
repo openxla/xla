@@ -264,6 +264,13 @@ absl::StatusOr<HloInstruction*> MakeMultiplyWithOperandPairs(
   std::vector<HloInstruction*> partial_products;
   partial_products.reserve(operand_pairs.size());
   for (auto [lhs, rhs] : operand_pairs) {
+    // Preserve the full BF16 product before accumulating in F32.
+    if (lhs->shape().element_type() == PrimitiveType::BF16) {
+      lhs = UpcastToF32(lhs);
+    }
+    if (rhs->shape().element_type() == PrimitiveType::BF16) {
+      rhs = UpcastToF32(rhs);
+    }
     ABSL_ASSIGN_OR_RETURN(HloInstruction * product, Mult(lhs, rhs));
     partial_products.push_back(product);
   }
@@ -408,17 +415,13 @@ DotAlgorithmRewriter::MakeMultiplyForBF16BF16F32(HloInstruction* lhs,
   TF_RET_CHECK(rhs->shape().element_type() == PrimitiveType::F32 ||
                rhs->shape().element_type() == PrimitiveType::BF16)
       << "Algorithm field set to BF16_BF16_F32, but the rhs isn't F32 or BF16.";
-  if (lhs->shape().element_type() == PrimitiveType::BF16 &&
-      rhs->shape().element_type() == PrimitiveType::BF16) {
-    ABSL_ASSIGN_OR_RETURN(auto result_bf16,
-                          MakeBinaryHlo(HloOpcode::kMultiply, lhs, rhs));
-    return UpcastToF32(result_bf16);
+  if (lhs->shape().element_type() == PrimitiveType::F32) {
+    lhs = RoundToBF16(lhs);
   }
-  auto lhs_bf16 = RoundToBF16(lhs);
-  auto rhs_bf16 = RoundToBF16(rhs);
-  ABSL_ASSIGN_OR_RETURN(auto result_bf16, MakeBinaryHlo(HloOpcode::kMultiply,
-                                                        lhs_bf16, rhs_bf16));
-  return UpcastToF32(result_bf16);
+  if (rhs->shape().element_type() == PrimitiveType::F32) {
+    rhs = RoundToBF16(rhs);
+  }
+  return Mult(UpcastToF32(lhs), UpcastToF32(rhs));
 }
 
 absl::StatusOr<HloInstruction*>
