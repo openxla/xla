@@ -38,11 +38,8 @@ std::optional<int> DType::byte_size() const {
     case kS4:
     case kU4:
     case kF4E2M1FN:
-    case kF6E2M3FN:
-    case kF6E3M2FN:
       // Smaller than a byte.
       return std::nullopt;
-    case kPred:
     case kS8:
     case kU8:
     case kF8E3M4:
@@ -54,6 +51,10 @@ std::optional<int> DType::byte_size() const {
     case kF8E4M3FNUZ:
     case kF8E5M2:
     case kF8E5M2FNUZ:
+      return 1;
+    case kPred:
+    case kF6E2M3FN:
+    case kF6E3M2FN:
       return 1;
     case kS16:
     case kU16:
@@ -91,10 +92,6 @@ std::optional<int> DType::bit_size() const {
     case kU4:
     case kF4E2M1FN:
       return 4;
-    case kF6E2M3FN:
-    case kF6E3M2FN:
-      return 6;
-    case kPred:
     case kS8:
     case kU8:
     case kF8E3M4:
@@ -106,6 +103,10 @@ std::optional<int> DType::bit_size() const {
     case kF8E4M3FNUZ:
     case kF8E5M2:
     case kF8E5M2FNUZ:
+      return 8;
+    case kPred:
+    case kF6E2M3FN:
+    case kF6E3M2FN:
       return 8;
     case kS16:
     case kU16:
