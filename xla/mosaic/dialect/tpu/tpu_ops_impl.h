@@ -96,9 +96,10 @@ FailureOr<bool> isGather(Operation& op, MemorySpaceT source_memory_space,
 // Op verifiers and return type inference, parameterized by `DialectBindings`,
 // which supplies the types and hooks they depend on as static members (see
 // `TpuDialectBindings` in tpu_ops.cc):
-//   - Type aliases: `DMASemaphoreType`, `EnqueueIndirectDMAOp`, `MemorySpace`,
-//     `MemorySpaceAttr`, `PackSubelementsOp`, `ReductionKind`,
-//     `SemaphoreType`, `TiledLayoutAttr` and `WaitIndirectDMAOp`.
+//   - Type aliases: `DMASemaphoreType`, `EnqueueIndirectDMAOp`,
+//     `Float8EXMYType`, `MemorySpace`, `MemorySpaceAttr`, `PackSubelementsOp`,
+//     `ReductionKind`, `SemaphoreType`, `TiledLayoutAttr` and
+//     `WaitIndirectDMAOp`.
 //   - Static hooks: `getTypeBitwidth`, `getElementTypeBitwidth`,
 //     `getMemRefType` and `HasMemorySpace`.
 // `MemorySpace` must provide `kAny`, `kHbm`, `kSmem`, `kVmem` and
@@ -107,6 +108,7 @@ template <typename DialectBindings>
 struct OpVerifiers : private DialectBindings {
   using typename DialectBindings::DMASemaphoreType;
   using typename DialectBindings::EnqueueIndirectDMAOp;
+  using typename DialectBindings::Float8EXMYType;
   using typename DialectBindings::MemorySpace;
   using typename DialectBindings::MemorySpaceAttr;
   using typename DialectBindings::PackSubelementsOp;
@@ -189,8 +191,14 @@ struct OpVerifiers : private DialectBindings {
   static LogicalResult verifyBitcastOp(BitcastOpT op) {
     auto in_ty = op.getInput().getType();
     auto out_ty = op.getOutput().getType();
-    auto in_bitwidth = getElementTypeBitwidth(in_ty);
-    auto out_bitwidth = getElementTypeBitwidth(out_ty);
+    auto get_vec_bitwidth = [](VectorType vty) -> unsigned {
+      if (isa<Float6E3M2FNType, Float6E2M3FNType>(vty.getElementType())) {
+        return 8;
+      }
+      return getElementTypeBitwidth(vty);
+    };
+    const unsigned in_bitwidth = get_vec_bitwidth(in_ty);
+    const unsigned out_bitwidth = get_vec_bitwidth(out_ty);
     if (in_bitwidth != out_bitwidth) {
       if (in_ty.getRank() < 2 || out_ty.getRank() < 2) {
         return op.emitError(
@@ -989,6 +997,17 @@ struct OpVerifiers : private DialectBindings {
                                             /*min_stride=*/1);
   }
 
+  static bool matchesVectorAndMemRefElementType(Type vec_elem_ty,
+                                                Type ref_elem_ty) {
+    if (vec_elem_ty == ref_elem_ty) {
+      return true;
+    }
+    if (auto exmy = dyn_cast<Float8EXMYType>(vec_elem_ty)) {
+      return exmy.getUnderlyingType() == ref_elem_ty;
+    }
+    return false;
+  }
+
   template <typename Op>
   static LogicalResult verifyStoreOp(Op op) {
     MemRefType ref_ty = op.getBase().getType();
@@ -997,7 +1016,8 @@ struct OpVerifiers : private DialectBindings {
       return op.emitOpError("Expected base memref to be in VMEM.");
     }
     VectorType value_ty = op.getValueToStore().getType();
-    if (value_ty.getElementType() != ref_ty.getElementType()) {
+    if (!matchesVectorAndMemRefElementType(value_ty.getElementType(),
+                                           ref_ty.getElementType())) {
       return op.emitOpError(
           "Expected base and valueToStore element type to match");
     }
@@ -1132,7 +1152,8 @@ struct OpVerifiers : private DialectBindings {
       return op.emitOpError("Expected base memref to be in VMEM.");
     }
     VectorType value_ty = op.getResult().getType();
-    if (value_ty.getElementType() != ref_ty.getElementType()) {
+    if (!matchesVectorAndMemRefElementType(value_ty.getElementType(),
+                                           ref_ty.getElementType())) {
       return op.emitOpError("Expected base and result element type to match.");
     }
     if (op.getMask()) {
