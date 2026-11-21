@@ -46,15 +46,15 @@ class TensorEvaluatorHasPartialPacket {
  public:
   template <typename TensorEvaluatorT, typename PacketT, typename IndexT>
   static auto functionExistsSfinae(
-      typename std::enable_if<
+      std::enable_if_t<
           unpacket_traits<PacketT>::masked_load_available &&
-          std::is_same<PacketT,
-                       decltype(std::declval<const TensorEvaluatorT>()
-                                    .template partialPacket<PacketT>(
-                                        std::declval<IndexT>(),
-                                        std::declval<typename unpacket_traits<
-                                            PacketT>::mask_t>()))>::value>::
-          type*) -> std::true_type;
+          std::is_same_v<PacketT,
+                         decltype(std::declval<const TensorEvaluatorT>()
+                                      .template partialPacket<PacketT>(
+                                          std::declval<IndexT>(),
+                                          std::declval<typename unpacket_traits<
+                                              PacketT>::mask_t>()))>>*)
+      -> std::true_type;
 
   template <typename TensorEvaluatorT, typename PacketT, typename IndexT>
   static auto functionExistsSfinae(...) -> std::false_type;
@@ -69,8 +69,8 @@ class TensorEvaluatorHasPartialPacket {
 // [from, to) range. If the mask bit is 1, element will be loaded/stored.
 template <typename Packet>
 EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE
-    typename std::enable_if<unpacket_traits<Packet>::masked_load_available,
-                            typename unpacket_traits<Packet>::mask_t>::type
+    std::enable_if_t<unpacket_traits<Packet>::masked_load_available,
+                     typename unpacket_traits<Packet>::mask_t>
     mask(int from, int to) {
   const Index packet_size = internal::unpacket_traits<Packet>::size;
   eigen_assert(0 <= from && to <= (packet_size + 1) && from < to);

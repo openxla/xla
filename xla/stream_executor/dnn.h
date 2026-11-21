@@ -107,10 +107,9 @@ inline void SetDim(std::vector<int64_t>* data, DimIndex dim, int64_t value) {
 // T should be a protobuf RepeatedField.
 template <typename T>
 inline absl::Span<const int64_t> AsInt64Slice(const T& repeated_field) {
-  using data_ty =
-      typename std::remove_reference<decltype(*repeated_field.data())>::type;
-  static_assert(std::is_integral<data_ty>::value &&
-                    std::is_signed<data_ty>::value && sizeof(data_ty) == 8,
+  using data_ty = std::remove_reference_t<decltype(*repeated_field.data())>;
+  static_assert(std::is_integral_v<data_ty> && std::is_signed_v<data_ty> &&
+                    sizeof(data_ty) == 8,
                 "repeated_field.data() must return a pointer to a signed "
                 "64-bit integer type.");
   return absl::Span<const int64_t>(
@@ -119,10 +118,9 @@ inline absl::Span<const int64_t> AsInt64Slice(const T& repeated_field) {
 }
 template <typename T>
 inline absl::Span<int64_t> AsInt64Slice(T* repeated_field) {
-  using data_ty =
-      typename std::remove_reference<decltype(*repeated_field->data())>::type;
-  static_assert(std::is_integral<data_ty>::value &&
-                    std::is_signed<data_ty>::value && sizeof(data_ty) == 8,
+  using data_ty = std::remove_reference_t<decltype(*repeated_field->data())>;
+  static_assert(std::is_integral_v<data_ty> && std::is_signed_v<data_ty> &&
+                    sizeof(data_ty) == 8,
                 "repeated_field->data() must return a pointer to a signed "
                 "64-bit integer type.");
   return absl::Span<int64_t>(
