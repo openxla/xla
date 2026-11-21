@@ -24,6 +24,7 @@ limitations under the License.
 #include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/LogicalResult.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/IR/ArithAttributes.h"
 #include "mlir/Dialect/Arith/IR/ArithDialect.h"
@@ -53,6 +54,7 @@ limitations under the License.
 #include "tensor_ir/Dialect/TensorIRAttrs.h"
 #include "xla/backends/gpu/codegen/tensor_ir/transforms/type_conversion.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 
 namespace mlir::nv_tensor_ir::xla {
 #define GEN_PASS_DEF_LEGALIZESTABLEHLOTOTENSORIRPASS
@@ -1232,29 +1234,67 @@ mlir::Value MaybeReshape(mlir::ConversionPatternRewriter& rewriter,
       /*dynamic_sizes=*/mlir::ValueRange{});
 }
 
-// Returns failure if `precision_config` requests anything other than DEFAULT.
+// Returns the operand precisions from the `precision_config` of a dot op.
 //
-// nv_tensor_ir.matmul carries neither a precision nor an algorithm attribute,
-// so precision_config and algorithm have nowhere to go. Rather than silently
-// dropping a request that changes the numerics, reject it. An all-DEFAULT
-// precision_config asks for nothing in particular and is accepted (and
-// dropped), which is what almost every dot carries.
-mlir::LogicalResult CheckDefaultPrecision(
-    mlir::Operation* op, std::optional<mlir::ArrayAttr> precision_config,
-    mlir::ConversionPatternRewriter& rewriter) {
+// The result always has two entries. Entry 0 is the lhs precision. Entry 1 is
+// the rhs precision. An entry is DEFAULT when one of these conditions is true:
+//   - `precision_config` has no value.
+//   - `precision_config` has no entry at this index.
+//   - The entry at this index is not a `stablehlo::PrecisionAttr`.
+//
+// Returns failure if `precision_config` has more than two entries.
+llvm::FailureOr<llvm::SmallVector<mlir::stablehlo::Precision>>
+extractPrecisionsFromDotOp(std::optional<mlir::ArrayAttr> precision_config) {
+  const unsigned expectedNumberAttrs = 2;
+
+  llvm::SmallVector<mlir::stablehlo::Precision> precisions(
+      expectedNumberAttrs, mlir::stablehlo::Precision::DEFAULT);
   if (!precision_config.has_value()) {
-    return mlir::success();
+    return precisions;
   }
-  for (mlir::Attribute precision : *precision_config) {
-    auto precision_attr =
-        mlir::dyn_cast<mlir::stablehlo::PrecisionAttr>(precision);
-    if (!precision_attr ||
-        precision_attr.getValue() != mlir::stablehlo::Precision::DEFAULT) {
-      return rewriter.notifyMatchFailure(
-          op, "nv_tensor_ir.matmul cannot express a non-default precision");
+  if (precision_config->size() > expectedNumberAttrs) {
+    return llvm::failure();
+  }
+
+  for (auto [idx, precision] : llvm::enumerate(*precision_config)) {
+    if (auto attr = mlir::dyn_cast<mlir::stablehlo::PrecisionAttr>(precision)) {
+      precisions[idx] = attr.getValue();
     }
   }
-  return mlir::success();
+
+  return precisions;
+}
+
+// Returns the input precision attribute for nv_tensor_ir.matmul.
+//
+// `lhs_type`, `rhs_type` and `result_type` are element types. `precisions`
+// holds the operand precisions from `extractPrecisionsFromDotOp`.
+//
+// Returns TF32 when all of these conditions are true:
+//   - `lhs_type`, `rhs_type` and `result_type` are f32.
+//   - No entry in `precisions` is HIGHEST.
+//   - tf32 support was enabled
+//
+// Otherwise, returns a null attribute.
+mlir::nv_tensor_ir::InputPrecisionAttr getTensorMatmulPrecisionAttr(
+    MLIRContext* ctx, Type lhs_type, Type rhs_type, Type result_type,
+    llvm::ArrayRef<mlir::stablehlo::Precision> precisions) {
+  if (lhs_type.isF32() && (lhs_type == rhs_type)) {
+    if (result_type.isF32()) {
+      auto isHighestPrecision =
+          llvm::any_of(precisions, [](mlir::stablehlo::Precision p) {
+            return p == mlir::stablehlo::Precision::HIGHEST;
+          });
+      bool isTF32enabled = tsl::tensor_float_32_execution_enabled();
+      // Every f32 dot now gets TF32 inputs unless the precision is HIGHEST
+      // and tf32 was enabled
+      if (!isHighestPrecision && isTF32enabled) {
+        return mlir::nv_tensor_ir::InputPrecisionAttr::get(
+            ctx, mlir::nv_tensor_ir::InputPrecision::TF32);
+      }
+    }
+  }
+  return nullptr;
 }
 
 // Lowers a dot onto nv_tensor_ir.matmul by reducing it to a canonical rank-3
@@ -1275,6 +1315,7 @@ mlir::LogicalResult LowerDotToMatmul(
     mlir::Operation* op, mlir::Value lhs_value, mlir::Value rhs_value,
     llvm::ArrayRef<int64_t> lhs_batch, llvm::ArrayRef<int64_t> rhs_batch,
     llvm::ArrayRef<int64_t> lhs_contract, llvm::ArrayRef<int64_t> rhs_contract,
+    llvm::ArrayRef<mlir::stablehlo::Precision> precisions,
     mlir::RankedTensorType result_type,
     mlir::ConversionPatternRewriter& rewriter) {
   auto lhs_type = mlir::dyn_cast<mlir::RankedTensorType>(lhs_value.getType());
@@ -1368,8 +1409,15 @@ mlir::LogicalResult LowerDotToMatmul(
   }
   matmul_shape.push_back(lhs_free_size);
   matmul_shape.push_back(rhs_free_size);
+
+  auto precisionAttr = getTensorMatmulPrecisionAttr(
+      op->getContext(), lhs_type.getElementType(), rhs_type.getElementType(),
+      result_type.getElementType(), precisions);
+
   mlir::Value matmul = mlir::nv_tensor_ir::MatmulOp::create(
-      rewriter, loc, result_type.clone(matmul_shape), lhs, rhs);
+      rewriter, loc, result_type.clone(matmul_shape), lhs, rhs,
+      /*acc=*/nullptr, /*left_triangle=*/nullptr, /*right_triangle=*/nullptr,
+      precisionAttr);
 
   rewriter.replaceOp(
       op, MaybeReshape(rewriter, loc, matmul, result_type.getShape()));
@@ -1393,9 +1441,14 @@ struct DotGeneralOpConversion
       return rewriter.notifyMatchFailure(
           op, "nv_tensor_ir.matmul cannot express a dot algorithm");
     }
-    if (mlir::failed(
-            CheckDefaultPrecision(op, op.getPrecisionConfig(), rewriter))) {
-      return mlir::failure();
+
+    // Note that if the algorithm fields are set, precision_config must be
+    // `DEFAULT`. However, we currently reject DotGeneralOps with the algorithm
+    // being set
+    auto precisions = extractPrecisionsFromDotOp(op.getPrecisionConfig());
+    if (mlir::failed(precisions)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to extract expected number of precision attributes");
     }
 
     mlir::stablehlo::DotDimensionNumbersAttr dimension_numbers =
@@ -1405,7 +1458,7 @@ struct DotGeneralOpConversion
                             dimension_numbers.getRhsBatchingDimensions(),
                             dimension_numbers.getLhsContractingDimensions(),
                             dimension_numbers.getRhsContractingDimensions(),
-                            result_type, rewriter);
+                            *precisions, result_type, rewriter);
   }
 };
 
@@ -1425,9 +1478,11 @@ struct DotOpConversion
     if (!result_type) {
       return rewriter.notifyMatchFailure(op, "failed to convert result type");
     }
-    if (mlir::failed(
-            CheckDefaultPrecision(op, op.getPrecisionConfig(), rewriter))) {
-      return mlir::failure();
+
+    auto precisions = extractPrecisionsFromDotOp(op.getPrecisionConfig());
+    if (mlir::failed(precisions)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to extract expected numnber of precision attributes");
     }
     auto lhs_type =
         mlir::dyn_cast<mlir::RankedTensorType>(adaptor.getLhs().getType());
@@ -1440,8 +1495,8 @@ struct DotOpConversion
     return LowerDotToMatmul(op, adaptor.getLhs(), adaptor.getRhs(),
                             /*lhs_batch=*/{}, /*rhs_batch=*/{},
                             llvm::ArrayRef<int64_t>(lhs_contract),
-                            llvm::ArrayRef<int64_t>(rhs_contract), result_type,
-                            rewriter);
+                            llvm::ArrayRef<int64_t>(rhs_contract), *precisions,
+                            result_type, rewriter);
   }
 };
 
