@@ -16954,5 +16954,105 @@ TEST_F(AlgebraicSimplifierTest, CanonicalizesMultiDimShuffleRotate) {
   EXPECT_EQ(shuffle->rotate().shifts(1), 3);
 }
 
+TEST_F(AlgebraicSimplifierTest, IdentityDynamicUpdateSlice) {
+  ASSERT_OK_AND_ASSIGN(auto ms, ParseAndReturnVerifiedModule(R"hlo(
+    HloModule m ENTRY e { x = s4[4,10,20] parameter(0)  dyn = s32[] parameter(1)
+      sl = s4[4,3,5] slice(x), slice={[0:4],[2:5],[15:20]}  c2 = s32[] constant(2)
+      c99 = s32[] constant(99)  ROOT d = s4[4,10,20] dynamic-update-slice(x, sl, dyn, c2, c99) })hlo"));
+  ASSERT_THAT(AlgebraicSimplifier(default_options_).Run(ms.get()),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(ms->entry_computation()->root_instruction(),
+              GmockMatch(m::Parameter(0)));
+
+  // Covers full dim, symbolic index, and distinct clamped constants (-5 vs -1).
+  constexpr absl::string_view kDyn = R"hlo(
+    HloModule m ENTRY e { x = f32[2,3,4] parameter(0)  i = s32[] parameter(1)
+      j = s32[] parameter(2)  a = s32[] constant(-5)  b = s32[] constant(-1)
+      ds = f32[2,2,2] dynamic-slice(x, i, i, a), dynamic_slice_sizes={2,2,2}
+      ROOT d = f32[2,3,4] dynamic-update-slice(x, ds, j, i, b) })hlo";
+  ASSERT_OK_AND_ASSIGN(auto before, ParseAndReturnVerifiedModule(kDyn));
+  ASSERT_OK_AND_ASSIGN(auto after, ParseAndReturnVerifiedModule(kDyn));
+  ASSERT_THAT(AlgebraicSimplifier(default_options_).Run(after.get()),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(after->entry_computation()->root_instruction(),
+              GmockMatch(m::Parameter(0)));
+  float qnan = 0.0f;
+  const uint32_t nan_bits = 0x7fc12345u;
+  std::memcpy(&qnan, &nan_bits, sizeof(qnan));
+  Literal x = LiteralUtil::CreateR3<float>(
+      {{{-0.0f, 1, 2, 3}, {4, qnan, 6, 7}, {8, 9, 10, 11}},
+       {{12, 13, 14, 15}, {16, 17, 18, 19}, {20, 21, 22, 23}}});
+  for (int32_t iv : {-5, 1, 50}) {
+    Literal il = LiteralUtil::CreateR0<int32_t>(iv);
+    ASSERT_OK_AND_ASSIGN(auto e,
+                         HloEvaluator().Evaluate(*before, {&x, &il, &il}));
+    ASSERT_OK_AND_ASSIGN(auto a,
+                         HloEvaluator().Evaluate(*after, {&x, &il, &il}));
+    EXPECT_EQ(std::memcmp(e.untyped_data(), a.untyped_data(), e.size_bytes()),
+              0);
+  }
+}
+
+TEST_F(AlgebraicSimplifierTest, IdentityDynamicUpdateSliceDegenerateReshapes) {
+  ASSERT_OK_AND_ASSIGN(auto m1, ParseAndReturnVerifiedModule(R"hlo(
+    HloModule m ENTRY e { x = f32[1,10,8] parameter(0)  i = s32[] parameter(1)
+      c = s32[] constant(0)  rx = f32[10,1,8] reshape(x)
+      ds = f32[1,1,8] dynamic-slice(x, c, i, c), dynamic_slice_sizes={1,1,8}
+      rds = f32[1,1,8] reshape(ds)  ROOT d = f32[10,1,8] dynamic-update-slice(rx, rds, i, c, c) })hlo"));
+  ASSERT_THAT(AlgebraicSimplifier(default_options_).Run(m1.get()),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(m1->entry_computation()->root_instruction(),
+              GmockMatch(m::Reshape(m::Parameter(0))));
+
+  AlgebraicSimplifierOptions opts = default_options_;
+  opts.set_is_layout_sensitive(true);
+  ASSERT_OK_AND_ASSIGN(auto m2, ParseAndReturnVerifiedModule(R"hlo(
+    HloModule m ENTRY e { x = bf16[1,16,2,8]{3,2,1,0:T(2,8)(2,1)S(1)} parameter(0)
+      bx = bf16[16,2,8]{2,1,0:T(2,8)(2,1)S(1)} bitcast(x)  c = s32[] constant(0)
+      sl = bf16[1,6,2,8]{3,2,1,0:T(2,8)(2,1)S(1)} slice(x), slice={[0:1],[0:6],[0:2],[0:8]}
+      bsl = bf16[6,2,8]{2,1,0:T(2,8)(2,1)S(1)} bitcast(sl)  ROOT d = bf16[16,2,8]{2,1,0:T(2,8)(2,1)S(1)} dynamic-update-slice(bx, bsl, c, c, c) })hlo"));
+  ASSERT_THAT(AlgebraicSimplifier(opts).Run(m2.get()),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(m2->entry_computation()->root_instruction(),
+              GmockMatch(m::Bitcast(m::Parameter(0))));
+  EXPECT_EQ(m2->entry_computation()->root_instruction()->shape().ToString(true),
+            "bf16[16,2,8]{2,1,0:T(2,8)(2,1)S(1)}");
+}
+
+TEST_F(AlgebraicSimplifierTest, IdentityDynamicUpdateSliceNotFolded) {
+  AlgebraicSimplifierOptions opts = default_options_;
+  opts.set_is_layout_sensitive(true);
+  for (
+      absl::string_view hlo : {
+          R"hlo(HloModule m ENTRY e { x = f32[10,8]{1,0} parameter(0)  c = s32[] constant(0)
+             s = f32[3,8]{1,0} slice(x), slice={[0:6:2],[0:8:1]}  ROOT d = f32[10,8]{1,0} dynamic-update-slice(x, s, c, c) })hlo",
+          R"hlo(HloModule m ENTRY e { x = f32[10,20]{1,0} parameter(0)  i = s32[] parameter(1)  j = s32[] parameter(2)
+             s = f32[3,5]{1,0} dynamic-slice(x, i, j), dynamic_slice_sizes={3,5}  ROOT d = f32[10,20]{1,0} dynamic-update-slice(x, s, j, i) })hlo",
+          R"hlo(HloModule m ENTRY e { x = f32[10,20]{1,0} parameter(0)  a = s32[] constant(100)  b = s32[] constant(4)
+             s = f32[3,5]{1,0} slice(x), slice={[5:8],[4:9]}  ROOT d = f32[10,20]{1,0} dynamic-update-slice(x, s, a, b) })hlo",
+          R"hlo(HloModule m ENTRY e { x = f32[1,10,8]{2,1,0} parameter(0)  bx = f32[10,8]{1,0} bitcast(x)  c = s32[] constant(0)
+             s = f32[1,4,1]{2,1,0} slice(x), slice={[0:1],[0:4],[0:1]}  bs = f32[1,4]{1,0} bitcast(s)  ROOT d = f32[10,8]{1,0} dynamic-update-slice(bx, bs, c, c) })hlo",
+          R"hlo(HloModule m ENTRY e { x = f32[1,4,4]{1,2,0} parameter(0)  bx = f32[4,4]{1,0} bitcast(x)  a = s32[] constant(1)  b = s32[] constant(0)
+             s = f32[1,2,2]{1,2,0} slice(x), slice={[0:1],[1:3],[0:2]}  bs = f32[2,2]{1,0} bitcast(s)  ROOT d = f32[4,4]{1,0} dynamic-update-slice(bx, bs, a, b) })hlo",
+          R"hlo(HloModule m ENTRY e { x = f32[16,1,8]{2,1,0:T(2,8)} parameter(0)  bx = f32[16,8]{1,0:T(2,8)} bitcast(x)  c = s32[] constant(0)
+             s = f32[6,1,8]{2,1,0:T(2,8)} slice(x), slice={[0:6],[0:1],[0:8]}  bs = f32[6,8]{1,0:T(2,8)} bitcast(s)  ROOT d = f32[16,8]{1,0:T(2,8)} dynamic-update-slice(bx, bs, c, c) })hlo",
+          R"hlo(HloModule m ENTRY e { x = f32[<=10,8]{1,0} parameter(0)  a = s32[] constant(2)  b = s32[] constant(1)
+             s = f32[1,4]{1,0} slice(x), slice={[2:3],[1:5]}  ROOT d = f32[<=10,8]{1,0} dynamic-update-slice(x, s, a, b) })hlo",
+          R"hlo(HloModule m ENTRY e { x = f32[10,8]{1,0} parameter(0), sharding={devices=[2,1]0,1}  c = s32[] constant(0)
+             s = f32[3,4]{1,0} slice(x), slice={[0:3],[0:4]}  ROOT d = f32[10,8]{1,0} dynamic-update-slice(x, s, c, c), sharding={replicated} })hlo",
+          R"hlo(HloModule m ENTRY e { x = f32[10,8]{1,0} parameter(0)  y = f32[10,8]{1,0} parameter(1)  c = s32[] constant(0)
+             s = f32[3,4]{1,0} slice(x), slice={[0:3],[0:4]}  ROOT d = f32[10,8]{1,0} dynamic-update-slice(x, s, c, c), control-predecessors={y} })hlo",
+          R"hlo(HloModule m ENTRY e { x = f32[10,20]{1,0} parameter(0)  a = s32[] constant(2)  b = s32[] constant(4)
+             s = f32[3,5]{1,0} slice(x), slice={[2:5],[4:9]}  ROOT d = f32[10,20]{0,1} dynamic-update-slice(x, s, a, b) })hlo",
+      }) {
+    const bool unverified = hlo.find("{0,1}") != absl::string_view::npos;
+    ASSERT_OK_AND_ASSIGN(auto m, unverified
+                                     ? ParseAndReturnUnverifiedModule(hlo)
+                                     : ParseAndReturnVerifiedModule(hlo));
+    EXPECT_THAT(AlgebraicSimplifier(opts).Run(m.get()),
+                absl_testing::IsOkAndHolds(false));
+  }
+}
+
 }  // namespace
 }  // namespace xla
