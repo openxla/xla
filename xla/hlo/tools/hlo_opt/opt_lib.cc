@@ -85,6 +85,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/batch_dot_simplification.h"
 #include "xla/hlo/transforms/simplifiers/bfloat16_conversion_folding.h"
 #include "xla/hlo/transforms/simplifiers/broadcast_canonicalizer.h"
+#include "xla/hlo/transforms/simplifiers/comparison_canonicalizer.h"
 #include "xla/hlo/transforms/simplifiers/conditional_canonicalizer.h"
 #include "xla/hlo/transforms/simplifiers/convert_mover.h"
 #include "xla/hlo/transforms/simplifiers/convert_operand_folder.h"
@@ -257,6 +258,7 @@ void OptProvider::RegisterAllHardwareIndependentPasses() {
   RegisterPass<CollectiveQuantizer>();
   RegisterPass<CollectiveTransformationReorder>();
   RegisterPass<CollectivesScheduleLinearizer>();
+  RegisterPass<ComparisonCanonicalizer>();
   RegisterPass<ComparisonExpander>();
   RegisterPass<ConditionalCanonicalizer>();
   RegisterPass<ControlDepRemover>();

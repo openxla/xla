@@ -150,6 +150,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/batch_dot_simplification.h"
 #include "xla/hlo/transforms/simplifiers/broadcast_canonicalizer.h"
+#include "xla/hlo/transforms/simplifiers/comparison_canonicalizer.h"
 #include "xla/hlo/transforms/simplifiers/conditional_canonicalizer.h"
 #include "xla/hlo/transforms/simplifiers/conditional_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/conditional_to_select.h"
@@ -627,6 +628,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // ComparisonExpander, as this rewrite requires a simple less-than comparator.
   pipeline.AddPass<PermutationSortExpander>();
 
+  pipeline.AddPass<ComparisonCanonicalizer>();
   pipeline.AddPass<ComparisonExpander>(
       /*expand_via_upcast=*/
       absl::Span<const std::pair<PrimitiveType, PrimitiveType>>{},

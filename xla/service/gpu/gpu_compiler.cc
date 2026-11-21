@@ -246,6 +246,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/all_gather_permuted_ds_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/all_reduce_folder.h"
 #include "xla/hlo/transforms/simplifiers/broadcast_canonicalizer.h"
+#include "xla/hlo/transforms/simplifiers/comparison_canonicalizer.h"
 #include "xla/hlo/transforms/simplifiers/conditional_canonicalizer.h"
 #include "xla/hlo/transforms/simplifiers/conditional_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/convert_mover.h"
@@ -890,6 +891,7 @@ absl::Status RunOptimizationPasses(
   // would do.
   pipeline.AddPass<PermutationSortExpander>();
 
+  pipeline.AddPass<ComparisonCanonicalizer>();
   if (debug_options.xla_gpu_enable_cub_radix_sort()) {
     pipeline.AddPass<SortRewriter>(gpu_target_config.device_description,
                                    is_deviceless, is_early_exit_with_layouts);
