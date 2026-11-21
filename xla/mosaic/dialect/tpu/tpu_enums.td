@@ -34,7 +34,8 @@ def TPU_CoreTypeEnum : EnumAttr<TPU_Dialect, TPU_CoreType, "core_type"> {
 
 def TPU_PipelineMode : I32EnumAttr<"PipelineMode", "Pipeline mode", [
   I32EnumAttrCase<"kSynchronous", 1, "synchronous">,
-  I32EnumAttrCase<"kDoubleBuffered", 2, "double_buffered">
+  I32EnumAttrCase<"kDoubleBuffered", 2, "double_buffered">,
+  I32EnumAttrCase<"kTripleBuffered", 3, "triple_buffered">
   ]> {
     let genSpecializedAttr = 0;
     let cppNamespace = "::mlir::tpu";
