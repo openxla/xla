@@ -1879,7 +1879,7 @@ TEST(StreamExecutorGpuClientTest, ShouldStageHostToDeviceTransfersSetToFalse) {
 // and D2H streams at that priority and runs executions on that compute stream.
 TEST(StreamExecutorGpuClientTest, ComputeStreamPrioritySetsStreamPriority) {
   GpuClientOptions options = GetTestGpuClientOptions();
-  options.compute_stream_priority = -1;
+  options.compute_stream_priorities = {-1};
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
                        GetStreamExecutorGpuClient(options));
   auto* raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
