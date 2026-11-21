@@ -312,6 +312,15 @@ class Stream {
     return absl::UnimplementedError("Not implemented");
   }
 
+  // `launch_completion_event` fires at last-block dispatch, not completion.
+  virtual absl::Status LaunchKernelWithCompletionEvent(
+      const ThreadDim& thread_dims, const BlockDim& block_dims,
+      const std::optional<ClusterDim>& cluster_dims, void* function,
+      absl::string_view name, void** args, int64_t shmem_bytes, bool use_pdl,
+      Event* launch_completion_event) {
+    return absl::UnimplementedError("Not implemented");
+  }
+
   // Returns a pointer to the resource of the given type, or nullptr if resource
   // of the given type is not attached to this stream.
   template <typename R>

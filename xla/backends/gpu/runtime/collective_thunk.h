@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/collective_thunk.pb.h"
@@ -48,6 +49,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -300,6 +302,12 @@ absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
 absl::StatusOr<std::vector<CollectiveThunk::Buffer>> GetCollectiveBuffers(
     const BufferAssignment& buffer_assignment, const HloInstruction* inst,
     Thunk::Kind kind, bool has_dynamic_root);
+
+// One call per buffer, the largest alone with the event after the other calls.
+absl::Status LaunchInGroups(
+    GpuCommunicator& comm, absl::Span<const DeviceBufferPair> buffers,
+    stream_executor::Event* launch_event,
+    absl::FunctionRef<absl::Status(int64_t, stream_executor::Event*)> launch);
 
 }  // namespace xla::gpu
 

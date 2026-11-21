@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_buffer_requests.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/ffi_kernel_registry.h"
+#include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/thunk_kind.pb.h"
@@ -55,6 +56,7 @@ limitations under the License.
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/service_executable_run_options.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/future.h"
@@ -454,6 +456,12 @@ class Thunk {
 
     // Execution scoped state shared between prepare, initialize and execute.
     ExecutionScopedState* execution_scoped_state = nullptr;
+
+    LaunchOrdering* launch_ordering = nullptr;
+
+    // Event the thunk records on its launch on stream, null without ordering.
+    absl::StatusOr<stream_executor::Event*> TakeLaunchEvent(
+        const Thunk* thunk, stream_executor::Stream* stream) const;
 
     bool mock_collectives = false;
     int64_t execution_id = 0;
