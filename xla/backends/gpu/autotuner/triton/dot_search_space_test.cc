@@ -57,7 +57,6 @@ using ::testing::Ge;
 using ::testing::IsEmpty;
 using ::testing::Le;
 using ::testing::Lt;
-using ::testing::SizeIs;
 
 // Returns a matcher that verifies that each container element that matches
 // `filter` also matches `matcher`, and that there is at least one such element.
@@ -586,6 +585,19 @@ TEST_F(DotSearchSpaceTest,
   EXPECT_THAT(
       ws_configs,
       Contains(Field(&TritonGemmConfig::is_warp_specialization_allowed, true)));
+
+  TritonGemmConfig tma_hint(/*block_m=*/128, /*block_n=*/128, /*block_k=*/64,
+                            /*num_stages=*/3, /*num_warps=*/4, /*num_ctas=*/1,
+                            /*is_tma_allowed=*/true);
+  std::vector<TritonGemmConfig> hinted_ws_configs =
+      search_space.GenerateAndOptimizeConfigs(
+          {tma_hint}, /*autotune_warp_specialization=*/true);
+  EXPECT_THAT(
+      hinted_ws_configs,
+      AllOf(Contains(Field(&TritonGemmConfig::is_warp_specialization_allowed,
+                           false)),
+            Contains(Field(&TritonGemmConfig::is_warp_specialization_allowed,
+                           true))));
 }
 
 TEST_F(DotSearchSpaceTest, CudaDoesNotGenerateWavesPerEuConfigs) {
