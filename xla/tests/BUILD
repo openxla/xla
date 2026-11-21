@@ -1980,6 +1980,7 @@ xla_test(
         "//xla:literal_util",
         "//xla:reference_util",
         "//xla:shape_util",
+        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder:xla_computation",
@@ -2439,6 +2440,7 @@ xla_test(
         ":xla_internal_test_main",  # fixdeps: keep
         "//xla:error_spec",
         "//xla:literal",
+        "//xla:types",
         "//xla/hlo/builder:xla_builder",
         "//xla/service",
         "//xla/tsl/platform:test",
