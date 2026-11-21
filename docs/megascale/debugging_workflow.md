@@ -394,52 +394,63 @@ that they occur during periods of very high network bandwidth utilization,
 meaning that network latency is what's likely driving their slowness. In this
 case, the maximum bandwidth of the profiled machine is 200 GiB/s.
 
-<section class="zippy" markdown="1">
-Step-by-step example
-
-1.  Use the [recv-done ops
-    query](https://openxla.org/xprof/megascale_viewer_sql#recv-done_ops) to list
-    all recv-done ops, then sort by duration column to find the longest ones.
-    **Note**: It could make sense to first use the "recv-done stats" query to
-    see statistics. If the main goal is reducing step time, then sorting by
-    `duration_ns_sum` would give us the ops that are driving step time the most.
-    We could then use the "recv-done ops" query and modify it to restrict the op
-    name in order to find the longest instances of that op.
-    ![recv-done ops sorted by duration](./images/megascale_network_usage_1.png)
-    In this case, we see that several instances of `recv-done.16` are more than
-    140 milliseconds long, which is very long given that the step time here is ~
-    740 milliseconds.
-2.  Click on the id of one of the instances to jump to it in the timeline. We
-    choose the one on TPU:0 to avoid scrolling.
-    ![long recv-done on TPU:0](./images/megascale_network_usage_2.png)
-3.  Switch to the "Current Selection" tab in the bottom panel. Here, you can see
-    some information about this recv-done instance. Now click on the
-    'recv-done.16 END' event under "Following Flows". This will show a line
-    going down to the respective megascale action graph trace.
-    ![megascale action graph arrow](./images/megascale_network_usage_3.png)
-4.  Scroll down to the action graph. Observe that it took ~ 158 milliseconds.
-    Some of this time was overlapped with TPU computation which is why the
-    recv-done (140 ms) is shorter than that duration. We see that the latency is
-    mostly driven by two slow network sends (accounting for 71 + 38 = 109
-    milliseconds) and two network receives. (accounting for 22 + 10 = 32
-    milliseconds)
-    ![megascale action graph](./images/megascale_network_usage_4.png)
-5.  Click on the slowest NetworkSend. Observe that the action took 71
-    milliseconds to transfer 1 MiB to one peer and to the same worker
-    (loopback). This is very slow.
-    ![network send action details](./images/megascale_network_usage_5.png)
-6.  Click on the slowest NetworkReceive. Observe that it took 93 milliseconds to
-    transfer 1 MiB. This is also very slow.
-    ![network receive action details](./images/megascale_network_usage_6.png)
-7.  Pin this line to the top of the page by clicking the pin icon which appears
-    when the mouse hovers near the track name (left hand side). This allows
-    viewing the network bandwidth utilization at the time that this action
-    graph was executing. Here, we observe that the (estimated) network bandwidth
-    utilization is close to or above the theoretical limit during the time that
-    the slow network sends and receives occur. This indicates that the slowdown
-    here is caused by network bandwidth bottleneck.
-    ![network bandwidth during collective execution](./images/megascale_network_usage_7.png)
-</section>
+<div>
+  <devsite-expandable>
+    <h4 class="showalways">Step-by-step example</h4>
+    <ul>
+      <li> Use the [recv-done ops
+      query](https://openxla.org/xprof/megascale_viewer_sql#recv-done_ops) to
+      list all recv-done ops, then sort by duration column to find the longest
+      ones. <b>Note</b>: It could make sense to first use the "recv-done stats"
+      query to see statistics. If the main goal is reducing step time, then
+      sorting by <pre>duration_ns_sum</pre> would give us the ops that are
+      driving step time the most. We could then use the "recv-done ops" query
+      and modify it to restrict the op name in order to find the longest
+      instances of that op.
+      <img src="./images/megascale_network_usage_1.png" alt="recv-done ops sorted by duration">
+      In this case, we see that several instances of `recv-done.16` are more
+      than 140 milliseconds long, which is very long given that the step time
+      here is ~740 milliseconds.
+      </li>
+      <li> Click on the id of one of the instances to jump to it in the
+      timeline. We choose the one on TPU:0 to avoid scrolling.
+      <img src="./images/megascale_network_usage_2.png" alt="long recv-done on TPU:0">
+      </li>
+      <li> Switch to the "Current Selection" tab in the bottom panel. Here, you
+      can see some information about this recv-done instance. Now click on the
+      'recv-done.16 END' event under "Following Flows". This will show a line
+      going down to the respective megascale action graph trace.
+      <img src="./images/megascale_network_usage_3.png" alt="megascale action graph arrow">
+      </li>
+      <li> Scroll down to the action graph. Observe that it took ~158
+      milliseconds. Some of this time was overlapped with TPU computation which
+      is why the recv-done (140 ms) is shorter than that duration. We see that
+      the latency is mostly driven by two slow network sends (accounting for 71
+      + 38 = 109 milliseconds) and two network receives. (accounting for 22 + 10
+      = 32 milliseconds)
+      <img src="./images/megascale_network_usage_4.png" alt="megascale action graph">
+      </li>
+      <li> Click on the slowest NetworkSend. Observe that the action took 71
+      milliseconds to transfer 1 MiB to one peer and to the same worker
+      (loopback). This is very slow.
+      <img src="./images/megascale_network_usage_5.png" alt="network send action details">
+      </li>
+      <li> Click on the slowest NetworkReceive. Observe that it took 93
+      milliseconds to transfer 1 MiB. This is also very slow.
+      <img src="./images/megascale_network_usage_6.png" alt="network receive action details">
+      </li>
+      <li> Pin this line to the top of the page by clicking the pin icon which
+      appears when the mouse hovers near the track name (left hand side). This
+      allows viewing the network bandwidth utilization at the time that this
+      action graph was executing. Here, we observe that the (estimated) network
+      bandwidth utilization is close to or above the theoretical limit during
+      the time that the slow network sends and receives occur. This indicates
+      that the slowdown here is caused by network bandwidth bottleneck.
+      <img src="./images/megascale_network_usage_7.png" alt="network bandwidth during collective execution">
+      </li>
+    </ul>
+  </devsite-expandable>
+</div>
 
 To mitigate bandwidth bound models, you can:
 
