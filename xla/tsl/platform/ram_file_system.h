@@ -57,7 +57,7 @@ class RamRandomAccessFile : public RandomAccessFile, public WritableFile {
  public:
   RamRandomAccessFile(std::string name, std::shared_ptr<std::string> cord)
       : name_(name), data_(cord) {}
-  ~RamRandomAccessFile() override {}
+  ~RamRandomAccessFile() override = default;
 
   absl::Status Name(absl::string_view* result) const override {
     *result = name_;
@@ -330,7 +330,7 @@ class RamFileSystem : public FileSystem {
     return absl::NotFoundError("");
   }
 
-  ~RamFileSystem() override {}
+  ~RamFileSystem() override = default;
 
  private:
   absl::Mutex mu_;
