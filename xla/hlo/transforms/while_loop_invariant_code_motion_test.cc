@@ -19,11 +19,16 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "absl/strings/substitute.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -33,8 +38,12 @@ limitations under the License.
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
+#include "xla/hlo/transforms/copy_insertion.h"
 #include "xla/hlo/utils/hlo_matchers.h"
+#include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/literal_util.h"
+#include "xla/service/hlo_verifier.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
@@ -1307,6 +1316,171 @@ ENTRY entry {
   EXPECT_TRUE(simplified_loop);
 
   EXPECT_THAT(RunFileCheck(m->ToString(), hlo_string),
+              absl_testing::IsOkAndHolds(true));
+}
+
+WhileLoopInvariantCodeMotion MakeReshapeLicm(float ratio = 1.0f) {
+  return WhileLoopInvariantCodeMotion(
+      /*hoist_constants=*/false, /*hoist_reshapes=*/true, /*hoist_other=*/false,
+      /*hoist_size_inflation_ratio=*/ratio, ShapeUtil::ArraySize);
+}
+
+TEST_F(WhileLoopInvariantCodeMotionTest,
+       HoistsLayoutCopyAndBitcastChainWithoutStandaloneBitcast) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule m, entry_computation_layout={
+  (f32[16,8,128]{2,1,0:T(8,128)}, f32[16,1024]{1,0:T(8,128)},
+   f32[128,128]{1,0:T(8,128)})->f32[16,1024]{1,0:T(8,128)}}
+body {
+  p = (f32[16,8,128]{2,1,0:T(8,128)}, f32[16,1024]{1,0:T(8,128)},
+       f32[128,128]{1,0:T(8,128)}) parameter(0)
+  inv = get-tuple-element(p), index=0
+  a0 = get-tuple-element(p), index=1
+  a1 = get-tuple-element(p), index=2
+  bc_in = f32[2,8,8,128]{3,2,1,0:T(8,128)} bitcast(inv)
+  cp = f32[2,8,8,128]{3,1,2,0:T(8,128)} copy(bc_in), origin={{"cp.1"}},
+    sharding={devices=[2,1,1,1]<=[2]}, frontend_attributes={_k="v"},
+    metadata={op_name="kv"}
+  bc_out = f32[16,1024]{1,0:T(8,128)} bitcast(cp)
+  bc_alone = f32[128,128]{1,0:T(8,128)} bitcast(inv)
+  n0 = add(a0, bc_out)
+  n1 = add(a1, bc_alone)
+  ROOT r = tuple(inv, n0, n1)
+}
+cond {
+  p = (f32[16,8,128]{2,1,0:T(8,128)}, f32[16,1024]{1,0:T(8,128)},
+       f32[128,128]{1,0:T(8,128)}) parameter(0)
+  ROOT c = pred[] constant(true)
+}
+ENTRY e {
+  p0 = f32[16,8,128]{2,1,0:T(8,128)} parameter(0)
+  p1 = f32[16,1024]{1,0:T(8,128)} parameter(1)
+  p2 = f32[128,128]{1,0:T(8,128)} parameter(2)
+  init = tuple(p0, p1, p2)
+  w = while(init), condition=cond, body=body,
+    origin={({"w.1" {0}}, {"w.1" {1}}, {"w.1" {2}})}
+  ROOT out = get-tuple-element(w), index=1
+})hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(kHlo));
+  EXPECT_THAT(WhileLoopInvariantCodeMotion{}.Run(m.get()),
+              absl_testing::IsOkAndHolds(false));
+  EXPECT_THAT(MakeReshapeLicm().Run(m.get()), absl_testing::IsOkAndHolds(true));
+
+  HloInstruction* loop = nullptr;
+  FindOnlyWhileInstruction(m->entry_computation(), &loop);
+  EXPECT_EQ(loop->shape().tuple_shapes().size(), 4);
+  EXPECT_EQ(absl::c_count_if(m->entry_computation()->instructions(),
+                             HloPredicateIsOp<HloOpcode::kBitcast>),
+            1);
+  EXPECT_THAT(
+      loop->while_body()->instructions(),
+      AllOf(Contains(op::Bitcast(op::GetTupleElement(op::Parameter(0), 3))),
+            Contains(op::Bitcast(op::GetTupleElement(op::Parameter(0), 0)))));
+  const HloInstruction* cp = FindInstruction(m.get(), HloOpcode::kCopy);
+  ASSERT_NE(cp, nullptr);
+  EXPECT_THAT(cp, op::Copy(op::Bitcast(op::Parameter(0))));
+  EXPECT_TRUE(LayoutUtil::Equal(
+      cp->shape().layout(),
+      LayoutUtil::MakeLayout({3, 1, 2, 0}, {Tile({8, 128})})));
+  EXPECT_EQ(cp->sharding(), HloSharding::IotaTile({2, 1, 1, 1}));
+  EXPECT_EQ(cp->metadata().op_name(), "kv");
+  EXPECT_EQ(cp->get_frontend_attribute("_k"), "v");
+  ASSERT_NE(cp->original_value(), nullptr);
+  EXPECT_EQ(cp->original_value()->ToString(), "{\"w.1#*/cp.1\"}");
+
+  AliasInfo alias_info;
+  EXPECT_OK(CopyInsertion(&alias_info).Run(m.get()).status());
+  EXPECT_OK(HloVerifier(/*layout_sensitive=*/true,
+                        /*allow_mixed_precision=*/false)
+                .Run(m.get())
+                .status());
+  FindOnlyWhileInstruction(m->entry_computation(), &loop);
+  EXPECT_THAT(loop->while_body()->instructions(), Each(Not(op::Copy())));
+}
+
+TEST_F(WhileLoopInvariantCodeMotionTest,
+       HoistsBitcastReshapeAndFiltersLayoutCopies) {
+  auto parse = [this](absl::string_view s, absl::string_view d,
+                      absl::string_view body_op = "") {
+    const std::string def =
+        body_op.empty() ? absl::Substitute("v = f32[8,128]$0 copy(inv)", d)
+                        : std::string(body_op);
+    return ParseAndReturnVerifiedModule(absl::Substitute(
+        R"hlo(
+HloModule m
+body {
+  p = (f32[8,128]$0, f32[8,128]$1) parameter(0)
+  inv = get-tuple-element(p), index=0
+  acc = get-tuple-element(p), index=1
+  $2
+  neg = negate(v)
+  next = add(acc, neg)
+  ROOT r = tuple(inv, next)
+}
+cond {
+  p = (f32[8,128]$0, f32[8,128]$1) parameter(0)
+  ROOT c = pred[] constant(true)
+}
+ENTRY e {
+  p = (f32[8,128]$0, f32[8,128]$1) parameter(0)
+  ROOT w = while(p), condition=cond, body=body
+})hlo",
+        s, d, def));
+  };
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> cp, parse("{1,0}", "{0,1}"));
+  EXPECT_THAT(MakeReshapeLicm().Run(cp.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> rs,
+      parse("{1,0}", "{1,0}",
+            "b = f32[1024]{0} bitcast(inv)\n  v = f32[8,128]{1,0} reshape(b)"));
+  EXPECT_THAT(MakeReshapeLicm().Run(rs.get()),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(rs->entry_computation()->instructions(),
+              Contains(op::Reshape(op::Bitcast(op::GetTupleElement()))));
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> bc,
+      parse("{1,0}", "{1,0}", "v = f32[8,128]{1,0} bitcast(inv)"));
+  EXPECT_THAT(MakeReshapeLicm().Run(bc.get()),
+              absl_testing::IsOkAndHolds(false));
+
+  const struct {
+    absl::string_view s, d, body_op;
+  } kRejected[] = {
+      {"{1,0:T(8,128)}", "{1,0:T(8,128)}", ""},
+      {"{1,0}", "{0,1:S(1)}", ""},
+      {"{1,0}", "{0,1:S(3)}", ""},
+      {"{1,0}", "{1,0:S(5)}", ""},
+      {"{1,0}", "{0,1:S(6)}", ""},
+      {"{1,0:S(1)}", "{0,1}", ""},
+      {"{1,0:S(1)}", "{0,1:S(1)}", ""},
+      {"{1,0:S(1)}", "{1,0:S(1)}", "v = f32[8,128]{1,0:S(1)} bitcast(inv)"},
+      {"{1,0:S(1)}", "{1,0:S(1)}", "v = f32[8,128]{1,0:S(1)} reshape(inv)"}};
+  for (const auto& [s, d, body_op] : kRejected) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m, parse(s, d, body_op));
+    EXPECT_THAT(MakeReshapeLicm().Run(m.get()),
+                absl_testing::IsOkAndHolds(false));
+    EXPECT_THAT(WhileLoopInvariantCodeMotion(/*hoist_constants=*/false,
+                                             /*hoist_reshapes=*/true,
+                                             /*hoist_other=*/true)
+                    .Run(m.get()),
+                absl_testing::IsOkAndHolds(false));
+  }
+
+  // {1,0:T(8,128)} is 4 KiB while {0,1:T(8,128)} pads dim 0 to 128 (64 KiB).
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> inf,
+                       parse("{1,0:T(8,128)}", "{0,1:T(8,128)}"));
+  EXPECT_THAT(MakeReshapeLicm(1.0f).Run(inf.get()),
+              absl_testing::IsOkAndHolds(false));
+  EXPECT_THAT(WhileLoopInvariantCodeMotion(/*hoist_constants=*/true,
+                                           /*hoist_reshapes=*/false,
+                                           /*hoist_other=*/false)
+                  .Run(inf.get()),
+              absl_testing::IsOkAndHolds(false));
+  EXPECT_THAT(MakeReshapeLicm(16.0f).Run(inf.get()),
               absl_testing::IsOkAndHolds(true));
 }
 
