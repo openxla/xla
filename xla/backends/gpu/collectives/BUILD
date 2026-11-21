@@ -380,6 +380,7 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/util:env_var",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:function_ref",
@@ -1276,6 +1277,11 @@ cc_library(
 xla_cc_test(
     name = "rccl_symmetric_memory_test",
     srcs = ["rccl_symmetric_memory_test.cc"],
+    # RcclSymmetricMemory::Create now requires NCCL_CUMEM_ENABLE=1 (on ROCm this
+    # env var defaults to 0, which disables the communicator's symmetricSupport
+    # and makes window registration silently non-symmetric). Set it explicitly
+    # so the symmetric-memory path is actually exercised.
+    env = {"NCCL_CUMEM_ENABLE": "1"},
     tags = [
         "gpu",
         "no-oneapi",
@@ -1304,15 +1310,24 @@ cc_library(
     ],
     visibility = ["//visibility:private"],
     deps = [
+        ":gpu_collectives",
         ":rccl_errors",
+        "//xla:future",
         "//xla:util",
+        "//xla/core/collectives:rank_id",
         "//xla/core/collectives:symmetric_memory",
         "//xla/stream_executor:device_address",
+        "//xla/tsl/concurrency:executor",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@local_config_rocm//rocm:rccl",  # buildcleaner: keep
+        "@local_config_rocm//rocm:rocm_config",
         "@local_config_rocm//rocm:rocm_headers",
     ],
 )

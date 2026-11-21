@@ -30,7 +30,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "rocm/include/rccl/rccl.h"
-#include "rocm/rocm_config.h"  // IWYU pragma: keep
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/core/collectives/communicator.h"
@@ -135,7 +134,7 @@ class RcclCommunicator : public GpuCommunicator {
  private:
   class RcclRegisteredBufferHandle;
 
-  RcclCommunicator(ncclComm_t comm, std::unique_ptr<tsl::Executor> executor,
+  RcclCommunicator(ncclComm_t comm, std::shared_ptr<tsl::Executor> executor,
                    std::shared_ptr<CancellationToken> cancel)
       : comm_(comm),
         executor_(std::move(executor)),
@@ -223,7 +222,7 @@ class RcclCommunicator : public GpuCommunicator {
   // ncclComm_t is accessed from multiple threads. Empirically, the lack of
   // thread safety only manifests as buggy behavior when using non-blocking
   // communicators.
-  std::unique_ptr<tsl::Executor> executor_;
+  std::shared_ptr<tsl::Executor> executor_;
 
   // Should all pending collectives cancel?
   std::shared_ptr<CancellationToken> cancel_;

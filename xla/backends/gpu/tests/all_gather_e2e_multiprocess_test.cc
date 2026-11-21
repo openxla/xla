@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/tests/multi_process_gpu_test_base.h"
+#include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -62,6 +62,11 @@ TEST_F(AllGatherMultiProcessE2ETest, OneShotAllGather2Processes) {
                                                      .cuda_compute_capability()
                                                      ->IsAtLeastAmpere()) {
     GTEST_SKIP() << "One-shot all-gather requires Ampere+ for CUDA.";
+  }
+  if (desc.gpu_compute_capability().IsRocm() &&
+      !gpu::IsRocmSymmetricMemorySupported(desc)) {
+    GTEST_SKIP() << "One-shot all-gather requires ROCm 10.0+ (HIP runtime "
+                    "7.15+).";
   }
 
   ASSERT_EQ(client()->addressable_device_count(), 1);

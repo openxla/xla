@@ -1893,6 +1893,10 @@ xla_test(
     backends = [
         "gpu",
     ],
+    # RCCL symmetric memory (NCCL windows) requires NCCL_CUMEM_ENABLE=1 on ROCm,
+    # where it defaults to 0. Without it the one-shot collective kernel path fails
+    # at runtime.
+    env = {"NCCL_CUMEM_ENABLE": "1"},
     deps = [
         ":multi_process_gpu_test_base",
         ":multi_process_gpu_test_main",
@@ -1902,6 +1906,7 @@ xla_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
@@ -1966,6 +1971,10 @@ xla_test(
     backends = [
         "gpu",
     ],
+    # RCCL symmetric memory (NCCL windows) requires NCCL_CUMEM_ENABLE=1 on ROCm,
+    # where it defaults to 0. Without it the one-shot collective kernel path fails
+    # at runtime.
+    env = {"NCCL_CUMEM_ENABLE": "1"},
     deps = [
         ":multi_process_gpu_test_base",
         ":multi_process_gpu_test_main",
@@ -1975,6 +1984,7 @@ xla_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
@@ -2007,6 +2017,10 @@ xla_test(
     backends = [
         "gpu",
     ],
+    # RCCL symmetric memory (NCCL windows) requires NCCL_CUMEM_ENABLE=1 on ROCm,
+    # where it defaults to 0. Without it the one-shot collective kernel path fails
+    # at runtime.
+    env = {"NCCL_CUMEM_ENABLE": "1"},
     deps = [
         ":multi_process_gpu_test_base",
         ":multi_process_gpu_test_main",
@@ -2016,6 +2030,7 @@ xla_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",

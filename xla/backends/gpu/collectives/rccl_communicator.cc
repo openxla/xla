@@ -36,7 +36,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "rocm/include/hip/hip_runtime.h"
 #include "rocm/include/rccl/rccl.h"
-#include "rocm/rocm_config.h"  // IWYU pragma: keep
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -589,7 +588,20 @@ absl::Status RcclCommunicator::LaunchRecv(se::DeviceAddressBase recv_buffer,
 absl::StatusOr<std::unique_ptr<SymmetricMemory>>
 RcclCommunicator::CreateSymmetricMemory(se::DeviceAddressBase addr,
                                         bool symmetric_window) {
-  return RcclSymmetricMemory::Create(comm_, addr);
+  // RCCL requires that all operations on comm_ - including symmetric window
+  // registration - run on the communicator's owning thread (executor_). We
+  // therefore create the symmetric memory on executor_ and pass executor_ to
+  // RcclSymmetricMemory so that window deregistration also runs on the same
+  // thread.
+  return ExecuteAwait<std::unique_ptr<SymmetricMemory>>(
+      [this, addr,
+       symmetric_window]() -> absl::StatusOr<std::unique_ptr<SymmetricMemory>> {
+        if (cancel_->IsCancelled()) {
+          return FailedPrecondition("RcclCommunicator aborted");
+        }
+        return RcclSymmetricMemory::Create(comm_, addr, executor_,
+                                           symmetric_window);
+      });
 }
 
 absl::StatusOr<std::unique_ptr<RegisteredMemory>>
