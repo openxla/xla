@@ -118,9 +118,12 @@ std::string SanitizeFunctionName(llvm::StringRef name) {
 // Supports vector.vector, vector.matrix, matrix.vector, and matrix.matrix.
 // Default operations have lhs_contracting dimension is 1 (or zero for vector)
 // and the rhs_contracting dimension is zero, and there are no batch dimensions.
+// Dots with an algorithm are not default, since stablehlo.dot has no algorithm.
 bool DotIsDefault(const HloInstruction* instruction) {
   if (instruction->opcode() != HloOpcode::kDot ||
-      instruction->operand_count() > 2) {
+      instruction->operand_count() > 2 ||
+      instruction->precision_config().algorithm() !=
+          PrecisionConfig::ALG_UNSET) {
     return false;
   }
   // If LHS/RHS has rank greater than 2, not default dot

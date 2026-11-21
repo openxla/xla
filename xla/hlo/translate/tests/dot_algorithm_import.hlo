@@ -1,0 +1,19 @@
+// RUN: hlo-translate -hlo-to-mlir %s | FileCheck %s
+// RUN: hlo-translate -hlo-to-mlir %s | hlo-translate -mlir-to-hlo | FileCheck %s --check-prefix=HLO
+
+// A 2-D dot with an algorithm imports as a stablehlo.dot_general, since
+// stablehlo.dot cannot carry the algorithm, and the algorithm survives the
+// HLO -> StableHLO -> HLO round trip.
+
+HloModule main, entry_computation_layout={(f32[4,8]{1,0}, f32[8,16]{1,0})->f32[4,16]{1,0}}
+
+// CHECK-LABEL: func.func @main
+// CHECK:       stablehlo.dot_general %arg0, %arg1
+// CHECK-SAME:  contracting_dims = [1] x [0]
+// CHECK-SAME:  algorithm = <lhs_precision_type = f32, rhs_precision_type = f32, accumulation_type = f32, lhs_component_count = 1, rhs_component_count = 1, num_primitive_operations = 1, allow_imprecise_accumulation = false>
+// HLO:         dot({{.*}}), lhs_contracting_dims={1}, rhs_contracting_dims={0}, algorithm=dot_f32_f32_f32
+ENTRY %main (lhs: f32[4,8], rhs: f32[8,16]) -> f32[4,16] {
+  %lhs = f32[4,8]{1,0} parameter(0)
+  %rhs = f32[8,16]{1,0} parameter(1)
+  ROOT %dot = f32[4,16]{1,0} dot(%lhs, %rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}, algorithm=dot_f32_f32_f32
+}
