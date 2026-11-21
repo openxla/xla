@@ -15,14 +15,13 @@ limitations under the License.
 #include "xla/backends/profiler/plugin/plugin_tracer.h"
 
 #include <any>
-#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "tsl/profiler/lib/profiler_interface.h"
 #include "tsl/profiler/protobuf/profiler_options.pb.h"
@@ -171,7 +170,6 @@ absl::Status PluginTracer::CollectData(XSpace* space) {
   RETURN_STATUS_IF_PLUGIN_PROFILER_ERROR(profiler_api_->collect_data(&args),
                                          profiler_api_);
   if (args.buffer_size_in_bytes > 0) {
-    std::vector<uint8_t> buffer(args.buffer_size_in_bytes);
     XSpace xspace;
     xspace.ParseFromArray(args.buffer, args.buffer_size_in_bytes);
     for (XPlane& tpu_plane : *xspace.mutable_planes()) {
@@ -183,7 +181,8 @@ absl::Status PluginTracer::CollectData(XSpace* space) {
 }
 
 absl::StatusOr<tsl::profiler::ConsumeResult> PluginTracer::Consume() {
-  if (profiler_api_->struct_size <
+  if (profiler_api_ == nullptr ||
+      profiler_api_->struct_size <
           PROFILER_STRUCT_SIZE(PLUGIN_Profiler_Api, consume_result_destroy) ||
       !profiler_api_->consume) {
     return absl::UnimplementedError("consume not implemented by plugin");
@@ -192,6 +191,7 @@ absl::StatusOr<tsl::profiler::ConsumeResult> PluginTracer::Consume() {
   args.struct_size = PLUGIN_Profiler_Consume_Args_STRUCT_SIZE;
   args.profiler = profiler_;
   args.result = nullptr;
+  args.estimated_size_bytes = 0;
 
   PLUGIN_Profiler_Error* error = profiler_api_->consume(&args);
   if (error != nullptr) {
@@ -217,12 +217,14 @@ absl::StatusOr<tsl::profiler::ConsumeResult> PluginTracer::Consume() {
 
   tsl::profiler::ConsumeResult result;
   result.data = std::move(handle);
+  result.estimated_size_bytes = args.estimated_size_bytes;
   return result;
 }
 
 absl::Status PluginTracer::Serialize(std::any data,
                                      tensorflow::profiler::XSpace* space) {
-  if (profiler_api_->struct_size <
+  if (profiler_api_ == nullptr ||
+      profiler_api_->struct_size <
           PROFILER_STRUCT_SIZE(PLUGIN_Profiler_Api, serialize) ||
       !profiler_api_->serialize) {
     return absl::UnimplementedError("serialize not implemented by plugin");
@@ -232,8 +234,10 @@ absl::Status PluginTracer::Serialize(std::any data,
     return absl::InvalidArgumentError(
         "Invalid data type passed to PluginTracer::Serialize");
   }
-  auto handle =
-      std::any_cast<std::shared_ptr<PLUGIN_Profiler_ConsumeResult>>(data);
+  std::shared_ptr<PLUGIN_Profiler_ConsumeResult> handle =
+      std::any_cast<std::shared_ptr<PLUGIN_Profiler_ConsumeResult>>(
+          std::move(data));
+  data.reset();
 
   PLUGIN_Profiler_Serialize_Args args;
   args.struct_size = PLUGIN_Profiler_Serialize_Args_STRUCT_SIZE;
@@ -244,6 +248,7 @@ absl::Status PluginTracer::Serialize(std::any data,
 
   PLUGIN_Profiler_Error* error = profiler_api_->serialize(&args);
   if (error != nullptr) {
+    handle.reset();
     std::unique_ptr<PLUGIN_Profiler_Error,
                     std::function<void(PLUGIN_Profiler_Error*)>>
         error_ptr(error, MakeErrorDeleter(profiler_api_));
@@ -252,17 +257,20 @@ absl::Status PluginTracer::Serialize(std::any data,
 
   if (args.serialized_bytes && args.serialized_size > 0) {
     tensorflow::profiler::XSpace plugin_space;
-    if (plugin_space.ParseFromArray(args.serialized_bytes,
-                                    args.serialized_size)) {
-      for (tensorflow::profiler::XPlane& tpu_plane :
-           *plugin_space.mutable_planes()) {
-        tensorflow::profiler::XPlane* plane = space->add_planes();
-        plane->Swap(&tpu_plane);
-      }
-    } else {
+    const bool parsed = plugin_space.ParseFromArray(args.serialized_bytes,
+                                                    args.serialized_size);
+    handle.reset();
+    if (!parsed) {
       return absl::InternalError(
           "Failed to parse XSpace from plugin serialized bytes");
     }
+    for (tensorflow::profiler::XPlane& tpu_plane :
+         *plugin_space.mutable_planes()) {
+      tensorflow::profiler::XPlane* plane = space->add_planes();
+      plane->Swap(&tpu_plane);
+    }
+  } else {
+    handle.reset();
   }
 
   return absl::OkStatus();

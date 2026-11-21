@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "tsl/profiler/lib/profiler_collection.h"
 #include "tsl/profiler/lib/profiler_factory.h"
+#include "tsl/profiler/lib/profiler_interface.h"
 #include "tsl/profiler/protobuf/profiler_options.pb.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/plugin/plugin_metadata.h"
@@ -112,13 +113,15 @@ PLUGIN_Profiler_Error* PLUGIN_Profiler_Consume(
   if (args == nullptr || args->profiler == nullptr) {
     return nullptr;
   }
-  auto status_or_result = args->profiler->impl->Consume();
-  if (!status_or_result.ok()) {
-    PLUGIN_PROFILER_RETURN_IF_ERROR(status_or_result.status());
+  auto consume_result = std::make_unique<PLUGIN_Profiler_ConsumeResult>();
+  PLUGIN_PROFILER_ASSIGN_OR_RETURN(consume_result->consume_result,
+                                   args->profiler->impl->Consume());
+  if (args->struct_size >= PROFILER_STRUCT_SIZE(PLUGIN_Profiler_Consume_Args,
+                                                estimated_size_bytes)) {
+    args->estimated_size_bytes =
+        consume_result->consume_result.estimated_size_bytes;
   }
-  auto res = std::make_unique<PLUGIN_Profiler_ConsumeResult>();
-  res->consume_result = std::move(status_or_result.value());
-  args->result = res.release();
+  args->result = consume_result.release();
   return nullptr;
 }
 
@@ -137,11 +140,21 @@ PLUGIN_Profiler_Error* PLUGIN_Profiler_Serialize(
       args->consume_result == nullptr) {
     return nullptr;
   }
+  tsl::profiler::ConsumeResult consumed =
+      std::move(args->consume_result->consume_result);
+  args->consume_result->consume_result = tsl::profiler::ConsumeResult{};
+
   tensorflow::profiler::XSpace space;
-  PLUGIN_PROFILER_RETURN_IF_ERROR(args->profiler->impl->Serialize(
-      std::move(args->consume_result->consume_result.data), &space));
+  PLUGIN_PROFILER_RETURN_IF_ERROR(
+      args->profiler->impl->Serialize(std::move(consumed.data), &space));
 
   const size_t profiler_data_size = space.ByteSizeLong();
+  if (profiler_data_size == 0) {
+    args->consume_result->buffer.reset();
+    args->serialized_bytes = nullptr;
+    args->serialized_size = 0;
+    return nullptr;
+  }
   args->consume_result->buffer =
       std::make_unique<std::vector<uint8_t>>(profiler_data_size);
   space.SerializeToArray(args->consume_result->buffer->data(),
