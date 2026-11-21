@@ -1261,6 +1261,7 @@ xla_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/runtime:multi_gpu_barrier",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_runner_interface",
         "//xla/stream_executor:platform",

@@ -32,7 +32,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "tsl/platform/cpu_info.h"
+#include "xla/layout.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/platform_util.h"
@@ -57,6 +57,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
+#include "tsl/platform/cpu_info.h"
 
 #define EIGEN_USE_THREADS
 #include "unsupported/Eigen/CXX11/Tensor"
@@ -134,7 +135,8 @@ class StreamExecutorAllocator : public tsl::Allocator {
   int64_t memory_space_;
 };
 
-// Creates a MultiDeviceAdapter with a BFC allocator for device memory (space 0)
+// Creates a MultiDeviceAdapter with a BFC allocator for device memory (space
+// 0), a passthrough StreamExecutor allocator for collective memory (space 7)
 // and a passthrough StreamExecutor allocator for host pinned memory (space 5).
 std::pair<std::vector<std::unique_ptr<se::Stream>>,
           std::shared_ptr<se::MultiDeviceAdapter>>
@@ -165,6 +167,17 @@ CreateGpuAllocators(const se::Platform* platform,
         absl::StrCat("XLA_backend_", ordinal, "_bfc"), opts);
     allocators.push_back(
         {std::move(bfc), stream_ptr, /*memory_space=*/0, ordinal});
+
+    // Passthrough allocator for the collective memory space. Buffer assignment
+    // colors buffers S(7) whenever symmetric-memory collectives are in play, or
+    // whenever the temp buffer uses the collective color (which happens for
+    // modules that span all visible devices), so this space must be backed even
+    // for runs that do not use collectives at all.
+    auto collective_alloc = std::make_shared<StreamExecutorAllocator>(
+        executor, static_cast<int64_t>(se::MemorySpace::kCollective));
+    allocators.push_back({std::move(collective_alloc), stream_ptr,
+                          /*memory_space=*/Layout::kCollectiveMemorySpace,
+                          ordinal});
 
     // Passthrough allocator for host memory space.
     auto host_alloc = std::make_shared<StreamExecutorAllocator>(
