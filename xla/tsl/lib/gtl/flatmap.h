@@ -105,7 +105,7 @@ class FlatMap {
     return *this;
   }
 
-  ~FlatMap() {}
+  ~FlatMap() = default;
 
   void swap(FlatMap& x) noexcept { rep_.swap(x.rep_); }
   void clear_no_resize() { rep_.clear_no_resize(); }

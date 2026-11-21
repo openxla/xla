@@ -469,7 +469,7 @@ struct NA {
   int64_t value;
   NA() : value(-1) {}
   explicit NA(int64_t v) : value(v) {}
-  NA(const NA& x) : value(x.value) {}
+  NA(const NA& x) : = default;
   bool operator==(const NA& x) const { return value == x.value; }
 };
 struct HashNA {

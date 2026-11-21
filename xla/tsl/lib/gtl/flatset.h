@@ -88,7 +88,7 @@ class FlatSet {
     return *this;
   }
 
-  ~FlatSet() {}
+  ~FlatSet() = default;
 
   void swap(FlatSet& x) noexcept { rep_.swap(x.rep_); }
   void clear_no_resize() { rep_.clear_no_resize(); }
