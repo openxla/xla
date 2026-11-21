@@ -90,11 +90,23 @@ absl::StatusOr<RaggedAllToAllLaunchParams> ComputeRaggedAllToAllLaunchParams(
     num_updates_per_block *= 2;
   }
 
+  int64_t blocks_per_group = num_updates_per_block;
+  if (num_updates_per_output == 1 && num_outputs > 0) {
+    // A single update can contain the entire activation for a peer. Give its
+    // copy multiple CTAs, even though there is just one set of offsets.
+    constexpr int64_t kVectorsPerBlock = 4 * kThreads;
+    constexpr int64_t kMaxBlocks = 128;
+    const int64_t vectors = num_input_rows * num_vectorized_row_elements;
+    blocks_per_group = std::clamp<int64_t>(
+        CeilOfRatio(vectors, num_outputs * kVectorsPerBlock), 1,
+        CeilOfRatio(kMaxBlocks, num_outputs));
+  }
+
   return RaggedAllToAllLaunchParams{
       vector_size_bytes,
       num_vectorized_row_elements,
       se::ThreadDim(kThreads, 1, 1),
-      se::BlockDim(num_outputs, num_block_clusters, num_updates_per_block),
+      se::BlockDim(num_outputs, num_block_clusters, blocks_per_group),
   };
 }
 

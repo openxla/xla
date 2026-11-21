@@ -161,19 +161,23 @@ CreateSymmetricMemory(
   return symmetric_memory;
 }
 
-using RaggedAllToAllKernelTest = ::testing::Test;
+using RaggedAllToAllKernelTest = ::testing::TestWithParam<int64_t>;
 
-TEST_F(RaggedAllToAllKernelTest, KernelWithArrayOfOutputPointers) {
+INSTANTIATE_TEST_SUITE_P(UpdatesPerPeer, RaggedAllToAllKernelTest,
+                         ::testing::Values(1, 2));
+
+TEST_P(RaggedAllToAllKernelTest, KernelWithArrayOfOutputPointers) {
   using T = float;
 
   auto* executor = GetGpuExecutor();
   ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   constexpr int64_t num_outputs = 2;
-  constexpr int64_t num_update_per_output = 2;
+  const int64_t num_update_per_output = GetParam();
   constexpr int64_t num_input_rows = 8;
-  constexpr int64_t num_row_elements = 2;
-  constexpr int64_t n = num_input_rows * num_row_elements;
+  // Include a partial final stripe for the one-update, multi-CTA copy.
+  const int64_t num_row_elements = num_update_per_output == 1 ? 1025 : 2;
+  const int64_t n = num_input_rows * num_row_elements;
 
   stream_executor::DeviceAddressHandle input_buffer(
       executor, executor->AllocateArray<T>(n));
@@ -193,6 +197,11 @@ TEST_F(RaggedAllToAllKernelTest, KernelWithArrayOfOutputPointers) {
   std::vector<int64_t> input_offsets = {1, 4, 0, 3};
   std::vector<int64_t> send_sizes = {2, 3, 1, 2};
   std::vector<int64_t> output_offsets = {0, 4, 1, 5};
+  if (num_update_per_output == 1) {
+    input_offsets = {4, 1};
+    send_sizes = {0, 5};
+    output_offsets = {2, 3};
+  }
 
   stream_executor::DeviceAddressHandle input_offsets_buffer =
       CreateDeviceBuffer(executor, input_offsets);
@@ -225,15 +234,16 @@ TEST_F(RaggedAllToAllKernelTest, KernelWithArrayOfOutputPointers) {
   EXPECT_EQ(output_results, expected_output_results);
 }
 
-TEST_F(RaggedAllToAllKernelTest, KernelWithSymmetricMemory) {
+TEST_P(RaggedAllToAllKernelTest, KernelWithSymmetricMemory) {
   using T = float;
 
   constexpr int64_t num_outputs = 2;
-  constexpr int64_t num_update_per_output = 2;
+  const int64_t num_update_per_output = GetParam();
   constexpr int64_t num_input_rows = 8;
-  constexpr int64_t num_row_elements = 2;
+  // Include a partial final stripe for the one-update, multi-CTA copy.
+  const int64_t num_row_elements = num_update_per_output == 1 ? 1025 : 2;
   constexpr size_t output_sym_offset = 1024;  // 1KB padding for output buffers
-  constexpr int64_t n = num_input_rows * num_row_elements;
+  const int64_t n = num_input_rows * num_row_elements;
 
   ASSERT_OK_AND_ASSIGN(
       se::Platform * platform,
@@ -297,6 +307,11 @@ TEST_F(RaggedAllToAllKernelTest, KernelWithSymmetricMemory) {
   std::vector<int64_t> input_offsets = {1, 4, 0, 3};
   std::vector<int64_t> send_sizes = {2, 3, 1, 2};
   std::vector<int64_t> output_offsets = {0, 4, 1, 5};
+  if (num_update_per_output == 1) {
+    input_offsets = {4, 1};
+    send_sizes = {0, 5};
+    output_offsets = {2, 3};
+  }
 
   stream_executor::DeviceAddressHandle input_offsets_buffer =
       CreateDeviceBuffer(executors[0], input_offsets);

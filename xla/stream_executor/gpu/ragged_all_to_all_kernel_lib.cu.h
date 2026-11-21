@@ -53,11 +53,11 @@ struct alignas(kSize) Vec {
 //  update_slice = input[input_offset: input_offset + send_size]
 //  output_ptrs[j][output_offset : output_offset + send_size] = update_slice
 //
-// `num_updates_per_block` blocks cooperate to process `num_updates_per_block`
-// updates. This is done to reduce imbalance in data transfer per block.
+// Blocks in a group stripe each update across their threads. For a single
+// update per peer, multiple blocks can cooperate on that one update.
 //
 // Launch parameters:
-//  - Block grid: (num_ranks, num_block_clusters, num_updates_per_block)
+//  - Block grid: (num_ranks, num_block_clusters, blocks_per_group)
 //  - Thread grid: (num_threads_per_update, 1, 1)
 template <typename T>
 __device__ void TransferDataToLsaPeer(
@@ -66,7 +66,9 @@ __device__ void TransferDataToLsaPeer(
     const int64_t* __restrict__ send_sizes_ptr,
     const int64_t* __restrict__ output_offsets_ptr,
     int64_t num_updates_per_replica, int64_t num_row_elements) {
-  int64_t num_updates_to_process = gridDim.z;
+  const int64_t blocks_per_group = gridDim.z;
+  const int64_t num_updates_to_process =
+      num_updates_per_replica == 1 ? 1 : blocks_per_group;
 
   for (int64_t i = 0; i < num_updates_to_process; ++i) {
     const int64_t update_idx =
@@ -82,12 +84,12 @@ __device__ void TransferDataToLsaPeer(
     const int64_t update_size = send_size * num_row_elements;
 
     int64_t offset_update_batch_idx = blockIdx.z + i;
-    if (offset_update_batch_idx >= num_updates_to_process) {
-      offset_update_batch_idx -= num_updates_to_process;
+    if (offset_update_batch_idx >= blocks_per_group) {
+      offset_update_batch_idx -= blocks_per_group;
     }
 
     for (int64_t j = threadIdx.x + offset_update_batch_idx * blockDim.x;
-         j < update_size; j += num_updates_to_process * blockDim.x) {
+         j < update_size; j += blocks_per_group * blockDim.x) {
       output_ptr[output_offset_start + j] = input_ptr[input_offset_start + j];
     }
   }
