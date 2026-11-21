@@ -102,24 +102,39 @@ std::optional<bool> FusionCanShareBufferHint(
   // Special case for ThreadBlockSpecialized fusions.
   if (analysis.emitter_fusion_kind() ==
       HloFusionAnalysis::EmitterFusionKind::kThreadBlockSpecialized) {
-    if (IsGpuFusionKind(*user, kPhasedBlockClusterFusionKind)) {
-      return false;
-    }
-    const auto* nested_fusion = DynCast<HloFusionInstruction>(output);
+    auto [inst, nested_index] = output->LatestNonGteAncestorAndIndex();
+    const auto* nested_fusion = DynCast<HloFusionInstruction>(inst);
     if (nested_fusion == nullptr || user->OperandIndices(operand).size() != 1) {
       return false;
     }
-    // Only allow sharing if the fusion parameter is used only by one nested
-    // fusion.
     const HloInstruction* fusion_param =
         user->fused_parameter(user->OperandIndices(operand)[0]);
-    if (fusion_param->user_count() != 1 ||
-        fusion_param->users()[0] != nested_fusion) {
+    if (!nested_fusion->IsUserOf(fusion_param)) {
       return false;
+    }
+    if (fusion_param->user_count() > 1) {
+      if (!IsGpuFusionKind(*user, kPhasedBlockClusterFusionKind)) {
+        return false;
+      }
+      // Phases execute sequentially in instruction post-order separated by
+      // barriers, so sharing `operand` with `nested_fusion`'s output is safe
+      // when no later phase still reads `fusion_param`.
+      for (const HloInstruction* instr :
+           llvm::reverse(user->fused_instructions_computation()
+                             ->MakeInstructionPostOrder())) {
+        if (instr == nested_fusion) {
+          // We reached the nested fusion and did not spot any later phase
+          // reading `fusion_param`. Move on to check the nested fusion.
+          break;
+        }
+        if (instr->IsUserOf(fusion_param)) {
+          return false;
+        }
+      }
     }
     // Check if the parameter in the nested fusion can be shared with the
     // output.
-    return FusionCanShareBufferHint(fusion_param, nested_fusion, {},
+    return FusionCanShareBufferHint(fusion_param, nested_fusion, nested_index,
                                     device_description);
   }
   const HloInstruction* non_bitcast_root = output;
@@ -293,12 +308,6 @@ std::optional<bool> GpuAliasInfo::MayAlias(const HloInstruction* operand,
                                            const ShapeIndex& user_index) const {
   const HloFusionInstruction* fusion = DynCast<HloFusionInstruction>(user);
   if (fusion != nullptr) {
-    if (IsGpuFusionKind(*fusion, kPhasedBlockClusterFusionKind)) {
-      // Phased block-cluster fusions execute sequential phases in one kernel;
-      // sharing an earlier phase's output buffer with an outer operand could
-      // overwrite inputs still read by later phases.
-      return false;
-    }
     if (GetCustomFusionConfigName(fusion) == kDynamicSliceFusionConfigName) {
       // DynamicSliceFusionRewriterV2 creates these fusions before CopyInsertion
       // without setting output_to_operand_aliasing, and
@@ -345,8 +354,6 @@ GpuAliasInfo::GetNonDefaultInPlaceInputOutputPairs(
     // (never via in-place DUS or scatter emitters). Return empty so AliasInfo
     // does not infer must-aliases from nested dynamic-update-slice sub-kernels,
     // which would alias buffers across phases or concurrently executing CTAs.
-    // TODO(b/579777515): Allow aliasing in phased block cluster fusions when
-    // possible. Rejecting aliasing can add extra copy operations.
     return std::vector<std::pair<HloOperandIndex, ShapeIndex>>{};
   }
   return std::nullopt;
