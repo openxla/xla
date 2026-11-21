@@ -105,6 +105,10 @@ static bool OperandsAndResultMustHaveRowMajorLayout(
   if (instr.opcode() == HloOpcode::kCustomCall) {
     return instr.custom_call_target() == "TopK";
   }
+  // The FFT thunk requires dim0-major operand and result layouts.
+  if (instr.opcode() == HloOpcode::kFft) {
+    return true;
+  }
   return false;
 }
 
