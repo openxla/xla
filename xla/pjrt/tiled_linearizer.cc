@@ -445,6 +445,110 @@ void RepackToHostLayout(absl::Span<const uint32_t> input,
   }
 }
 
+// Reorders 6-bit elements from 1-byte host strips of shape (16, kLaneCount)
+// (2048 bytes) into 3-sublane interleaved 2b/4b hardware strips (1536 bytes):
+// [sublane 0: 4b rows 0..7, sublane 1: 4b rows 8..15, sublane 2: 2b rows 0..15]
+template <int64_t kLaneCount>
+void Repack6BitToHardwareLayout(absl::Span<const uint8_t> source_buffer,
+                                absl::Span<uint8_t> target_bytes,
+                                bool set_padding_to_nan) {
+  static_assert(kLaneCount % 16 == 0, "ChunkLanes not a multiple of 16");
+  constexpr size_t kHostU32sPerStrip = 4 * kLaneCount;
+  constexpr size_t kHardwareU32sPerStrip = 3 * kLaneCount;
+  constexpr size_t kHardwareBytesPerStrip =
+      kHardwareU32sPerStrip * sizeof(uint32_t);
+  uint32_t staging_buffer[kHostU32sPerStrip];
+  uint32_t hw_staging[kHardwareU32sPerStrip];
+  constexpr size_t kBytesReadPerStrip = sizeof(staging_buffer);
+  const size_t input_bytes = source_buffer.size();
+  const size_t full_strips = input_bytes / kBytesReadPerStrip;
+  const size_t partial_bytes_remaining = input_bytes % kBytesReadPerStrip;
+  const bool is_alias = source_buffer.data() == target_bytes.data();
+
+#ifdef MEMORY_SANITIZER
+  set_padding_to_nan = true;
+#endif
+
+  auto write_hardware_strip = [&](size_t strip_idx,
+                                  const uint32_t* host_strip) {
+    const size_t byte_offset = kHardwareBytesPerStrip * strip_idx;
+    if (byte_offset >= target_bytes.size()) {
+      return;
+    }
+    const size_t remaining_target_bytes = target_bytes.size() - byte_offset;
+    if (remaining_target_bytes >= kHardwareBytesPerStrip) {
+      Repack6BitStripToHardwareLayoutHighway<kLaneCount>(
+          host_strip,
+          tsl::safe_reinterpret_cast<uint32_t*>(&target_bytes[byte_offset]));
+    } else {
+      Repack6BitStripToHardwareLayoutHighway<kLaneCount>(host_strip,
+                                                         hw_staging);
+      std::memcpy(&target_bytes[byte_offset], hw_staging,
+                  remaining_target_bytes);
+    }
+  };
+
+  for (size_t i = 0; i < full_strips; ++i) {
+    if (is_alias) {
+      std::memcpy(staging_buffer, &source_buffer[kBytesReadPerStrip * i],
+                  sizeof(staging_buffer));
+    }
+    const uint32_t* staging = is_alias
+                                  ? staging_buffer
+                                  : tsl::safe_reinterpret_cast<const uint32_t*>(
+                                        &source_buffer[kBytesReadPerStrip * i]);
+    write_hardware_strip(i, staging);
+  }
+  if (partial_bytes_remaining > 0) {
+    uint8_t* first_uninitialized_byte =
+        std::copy_n(&source_buffer[kBytesReadPerStrip * full_strips],
+                    partial_bytes_remaining,
+                    tsl::safe_reinterpret_cast<uint8_t*>(staging_buffer));
+    std::fill_n(first_uninitialized_byte,
+                kBytesReadPerStrip - partial_bytes_remaining,
+                set_padding_to_nan ? uint8_t{0xff} : uint8_t{0});
+    write_hardware_strip(full_strips, staging_buffer);
+  }
+}
+
+template <int64_t kLaneCount>
+void Repack6BitToHostLayout(absl::Span<const uint32_t> input,
+                            absl::Span<uint8_t> output) {
+  static_assert(kLaneCount % 16 == 0, "ChunkLanes not a multiple of 16");
+  constexpr size_t kHardwareU32sPerStrip = 3 * kLaneCount;
+  constexpr size_t kHostU32sPerStrip = 4 * kLaneCount;
+  constexpr size_t kBytesWrittenPerStrip = kHostU32sPerStrip * sizeof(uint32_t);
+  uint32_t staging_buffer[kHostU32sPerStrip];
+  uint32_t input_staging[kHardwareU32sPerStrip];
+  const size_t output_bytes = output.size();
+  const size_t full_writes = output_bytes / kBytesWrittenPerStrip;
+  const size_t partial_bytes_remaining = output_bytes % kBytesWrittenPerStrip;
+
+  auto get_strip_input = [&](size_t strip_idx) -> const uint32_t* {
+    const size_t offset = strip_idx * kHardwareU32sPerStrip;
+    if (offset + kHardwareU32sPerStrip <= input.size()) {
+      return &input[offset];
+    }
+    std::memset(input_staging, 0, sizeof(input_staging));
+    if (offset < input.size()) {
+      std::copy_n(&input[offset], input.size() - offset, input_staging);
+    }
+    return input_staging;
+  };
+
+  for (size_t i = 0; i < full_writes; ++i) {
+    Repack6BitStripToHostLayoutHighway<kLaneCount>(
+        get_strip_input(i), tsl::safe_reinterpret_cast<uint32_t*>(
+                                &output[kBytesWrittenPerStrip * i]));
+  }
+  if (partial_bytes_remaining > 0) {
+    Repack6BitStripToHostLayoutHighway<kLaneCount>(get_strip_input(full_writes),
+                                                   staging_buffer);
+    std::memcpy(&output[kBytesWrittenPerStrip * full_writes], staging_buffer,
+                partial_bytes_remaining);
+  }
+}
+
 struct LinearizerCache {
   LinearizerCache() : cache(1024) {}
   absl::Mutex mu;
@@ -475,7 +579,10 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
               ? device_shape.layout().tiles(1).dimension(
                     device_shape.layout().tiles(1).dimensions().size() - 1 -
                     minor)
-              : 1;
+              : ((device_shape.layout().element_size_in_bits() == 6 &&
+                  minor == 1)
+                     ? 16
+                     : 1);
       dim = RoundUpTo(std::max<int64_t>(dim_size, 1),
                       std::max<int64_t>(packing, 1));
     }
@@ -587,11 +694,12 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
   const int bits_per_pack = device_layout.element_size_in_bits() != 0
                                 ? device_layout.element_size_in_bits()
                                 : std::min<int64_t>(byte_width * 8, 32);
-  const int packing_factor = 32 / bits_per_pack;
+  const int packing_factor = bits_per_pack == 6 ? 16 : (32 / bits_per_pack);
   const bool has_subtile_packing =
-      packing_factor > 1 &&
-      (tiles.size() > 1 ||
-       (!tiles.empty() && tiles[0].dimensions().size() > 1));
+      bits_per_pack == 6 ||
+      (packing_factor > 1 &&
+       (tiles.size() > 1 ||
+        (!tiles.empty() && tiles[0].dimensions().size() > 1)));
   const uint8_t pad_byte = set_padding_to_nan ? kPadByte : uint8_t{0};
 
   TransposePlan::Options options;
@@ -617,7 +725,8 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
   // for `scratch` to support the transpose Execute below. It is then shrunk
   // when repacking into `dest`.
   if (has_subtile_packing && bits_per_pack < 8) {
-    elements_in_the_packed_data *= 8 / bits_per_pack;
+    elements_in_the_packed_data = CeilOfRatio<size_t>(
+        elements_in_the_packed_data * CHAR_BIT, bits_per_pack);
   }
 
   if (prefix_size > 0) {
@@ -667,11 +776,21 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
   // TODO (b/274171729): For SparseCore currently the data is being packed
   // linearly.
   if (has_subtile_packing) {
-    const auto lane_tile_dims =
-        (tiles.size() > 1 ? tiles[tiles.size() - 2] : tiles[0]).dimensions();
-    TF_RET_CHECK(!lane_tile_dims.empty());
+    int64_t lane_count = 128;
+    if (!(bits_per_pack == 6 && tiles.size() <= 1 &&
+          (tiles.empty() || tiles[0].dimensions().size() <= 1))) {
+      const auto lane_tile_dims =
+          (tiles.size() > 1 ? tiles[tiles.size() - 2] : tiles[0]).dimensions();
+      TF_RET_CHECK(!lane_tile_dims.empty());
+      lane_count = lane_tile_dims.back();
+    }
     ABSL_RETURN_IF_ERROR(TcLaneCountSwitch(
         [&](auto kTcLaneCount) {
+          if (bits_per_pack == 6) {
+            Repack6BitToHardwareLayout<kTcLaneCount>(
+                dst, dest.subspan(prefix_size), set_padding_to_nan);
+            return;
+          }
           ElementPackingFactorSwitch<void>(
               [&](auto kPackingFactor) {
                 if constexpr (kPackingFactor > 1) {
@@ -684,7 +803,7 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
               },
               packing_factor);
         },
-        lane_tile_dims.back()));
+        lane_count));
   }
 
   if (!dynamic_sizes.empty()) {
@@ -834,6 +953,19 @@ absl::Status
 #endif
   auto output = GetLiteralAsMutableSpan(literal);
   const auto tiles = device_layout.tiles();
+  if (device_layout.element_size_in_bits() == 6) {
+    int64_t lane_count = 128;
+    if (tiles.size() > 1) {
+      const auto lane_tile_dims = tiles[tiles.size() - 2].dimensions();
+      TF_RET_CHECK(!lane_tile_dims.empty());
+      lane_count = lane_tile_dims.back();
+    }
+    return TcLaneCountSwitch(
+        [&](auto kLaneCount) {
+          Repack6BitToHostLayout<kLaneCount>(values, output);
+        },
+        lane_count);
+  }
   if (tiles.size() <= 1) {
     // Transfer in host layout or 1D SparseCore layout. No subtile pack/unpack.
     RepackFromSparseCoreLayout<kPackingFactor>(values, output);
@@ -870,7 +1002,8 @@ absl::Status DelinearizeUsingTranspose(
           ? device_layout.element_size_in_bits()
           : ShapeUtil::ByteSizeOfPrimitiveType(literal_shape.element_type()) *
                 CHAR_BIT;
-  int packing_factor = 32 / element_size_in_bits;
+  int packing_factor =
+      element_size_in_bits == 6 ? 16 : (32 / element_size_in_bits);
 
   if (packing_factor <= 4 && HasLinearLayout(device_layout) &&
       Layout::Equal().MinorToMajorOnly()(device_layout,
@@ -947,17 +1080,32 @@ absl::Status DelinearizeUsingTranspose(
   Buffer unpacked_values;
   const auto tiles = device_shape.layout().tiles();
   const bool has_subtile_packing =
-      packing_factor > 1 &&
-      (tiles.size() > 1 ||
-       (!tiles.empty() && tiles[0].dimensions().size() > 1));
+      element_size_in_bits == 6 ||
+      (packing_factor > 1 &&
+       (tiles.size() > 1 ||
+        (!tiles.empty() && tiles[0].dimensions().size() > 1)));
   // TODO (b/274171729): For SparseCore currently the data is being packed
   // linearly.
   if (has_subtile_packing) {
-    const auto lane_tile_dims =
-        (tiles.size() > 1 ? tiles[tiles.size() - 2] : tiles[0]).dimensions();
-    TF_RET_CHECK(!lane_tile_dims.empty());
+    int64_t lane_count = 128;
+    if (!(element_size_in_bits == 6 && tiles.size() <= 1 &&
+          (tiles.empty() || tiles[0].dimensions().size() <= 1))) {
+      const auto lane_tile_dims =
+          (tiles.size() > 1 ? tiles[tiles.size() - 2] : tiles[0]).dimensions();
+      TF_RET_CHECK(!lane_tile_dims.empty());
+      lane_count = lane_tile_dims.back();
+    }
     ABSL_RETURN_IF_ERROR(TcLaneCountSwitch(
         [&](auto kTcLaneCount) {
+          if (element_size_in_bits == 6) {
+            const size_t num_strips =
+                CeilOfRatio<size_t>(values.size(), 3 * kTcLaneCount);
+            unpacked_values = Buffer(num_strips * 16 * kTcLaneCount);
+            Repack6BitToHostLayout<kTcLaneCount>(
+                values, unpacked_values.mutable_data<uint8_t>());
+            values = unpacked_values.const_data<uint32_t>();
+            return;
+          }
           ElementPackingFactorSwitch<void>(
               [&](auto kPackingFactor) {
                 if constexpr (kPackingFactor > 1) {
@@ -973,7 +1121,7 @@ absl::Status DelinearizeUsingTranspose(
               },
               packing_factor);
         },
-        lane_tile_dims.back()));
+        lane_count));
   } else if (const int bits_per_pack = 32 / packing_factor; bits_per_pack < 8) {
     ElementPackingFactorSwitch<void>(
         [&](auto kPackingFactor) {
