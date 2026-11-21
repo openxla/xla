@@ -2437,8 +2437,12 @@ struct ParallelState {
 }
 
 /* static */ int ShapeUtil::GetForEachIndexParallelThreadCount() {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+  return 1;
+#else
   ParallelState pstate(/*task_count=*/0);
   return pstate.pool->NumThreads();
+#endif
 }
 
 /* static */ Shape ShapeUtil::DeleteDimensions(
