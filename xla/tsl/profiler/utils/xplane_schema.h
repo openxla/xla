@@ -416,11 +416,13 @@ enum StatType {
   kEstimatedBytesAccessed,
   // Program name (distinct from kHloModule, e.g., for host runtime events).
   kProgramName,
+  kSrcSyncFlagId,
+  kDstSyncFlag0Id,
   // LINT.ThenChange(:last_stat_type)
 
   // LINT.IfChange(last_stat_type)
   // Change this to point to the last stat type when adding a new one.
-  kLastStatType = kProgramName,
+  kLastStatType = kDstSyncFlag0Id,
   // LINT.ThenChange(:stat_type_enum)
 };
 
