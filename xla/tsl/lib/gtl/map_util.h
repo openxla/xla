@@ -176,7 +176,7 @@ bool ReverseMap(const M& m, ReverseM* reverse) {
 // M::M(...) : m_(...), r_(ReverseMap<decltype(r_)>(m_)) {}
 template <typename ReverseM, typename M>
 ReverseM ReverseMap(const M& m) {
-  typename std::remove_const<ReverseM>::type reverse;
+  std::remove_const_t<ReverseM> reverse;
   ReverseMap(m, &reverse);
   return reverse;
 }

@@ -110,7 +110,7 @@ Array2D<bfloat16> GenerateLargeSizeMinCombinedOutput(
   Array2D<bfloat16> output(output_height, output_width, bfloat16(0.0));
 
   float half_range =
-      !std::is_signed<NativeT>::value
+      !std::is_signed_v<NativeT>
           ? 0.0f
           : (static_cast<float>(std::numeric_limits<NativeT>::max() -
                                 std::numeric_limits<NativeT>::min() + 1)) /
@@ -141,7 +141,7 @@ Array2D<bfloat16> GenerateLargeSizeMinCombinedOutput(
 template <typename NativeT>
 std::vector<bfloat16> GenerateMinCombinedOutput(const QuantizedRange& range) {
   float half_range =
-      !std::is_signed<NativeT>::value
+      !std::is_signed_v<NativeT>
           ? 0.0f
           : (static_cast<float>(std::numeric_limits<NativeT>::max() -
                                 std::numeric_limits<NativeT>::min() + 1)) /
