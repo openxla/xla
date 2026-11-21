@@ -17,7 +17,10 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include "mlir/IR/BuiltinTypeInterfaces.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/Location.h"
+#include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/layout.h"
 #include "xla/mosaic/dialect/tpu/tpu_dialect.h"
@@ -88,6 +91,22 @@ TEST(TiledLayoutTest, DynamicTileStridesTest) {
   EXPECT_EQ(dynamic_layout.getNumTrailingDimsWithContiguousTiles(
                 {10, ShapedType::kDynamic}),
             1);
+}
+
+TEST(TiledLayoutTest, NestedPaddingIsRejectedTest) {
+  MLIRContext ctx;
+  ctx.loadDialect<tpu::TPUDialect>();
+  int num_errors = 0;
+  ScopedDiagnosticHandler handler(&ctx, [&](Diagnostic&) {
+    ++num_errors;
+    return success();
+  });
+  auto emit_error = [&] { return emitError(UnknownLoc::get(&ctx)); };
+
+  // Unlike XIR, Mosaic TPU does not opt into nested padding.
+  EXPECT_FALSE(TiledLayoutAttr::getChecked(
+      emit_error, &ctx, {xla::Tile({8, 128}), xla::Tile({8, 129})}, {1, 1}));
+  EXPECT_EQ(num_errors, 1);
 }
 
 }  // namespace

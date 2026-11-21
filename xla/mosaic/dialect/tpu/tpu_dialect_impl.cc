@@ -259,15 +259,16 @@ FailureOr<SmallVector<int64_t>> getExpandedStrides(
     return SmallVector<int64_t>(tile_strides);
   }
   SmallVector<int64_t> strides(tile_strides);
-  // Expand front tile
+  // Expand front tile. A nested padding tile (if any) pads the first tile.
   const xla::Tile& first_tile = tiles.front();
   FAILUREOR_ASSIGN_OR_RETURN(
       SmallVector<int64_t> expanded_tile,
       getExpandedShape(first_tile.dimensions(), tiles.drop_front(),
-                       /*require_alignment=*/true));
+                       /*require_alignment=*/!hasNestedPadding(tiles)));
   const int64_t rank = tile_strides.size();
   strides.resize_for_overwrite(rank + expanded_tile.size());
-  int64_t first_tile_size = llvm::product_of(first_tile.dimensions());
+  // Tile strides are in units of the physical (possibly padded) tile size.
+  const int64_t physical_tile_size = llvm::product_of(expanded_tile);
   int64_t tile_size = 1;
   for (int64_t d = strides.size() - 1; d >= 0; --d) {
     if (d >= rank) {
@@ -276,16 +277,33 @@ FailureOr<SmallVector<int64_t>> getExpandedStrides(
       strides[d] = new_stride;
     } else {
       if (ShapedType::isStatic(strides[d])) {
-        strides[d] *= first_tile_size;
+        strides[d] *= physical_tile_size;
       }
     }
   }
   return strides;
 }
 
+bool isPaddingTile(const xla::Tile& prev_tile, const xla::Tile& tile) {
+  const ArrayRef<int64_t> prev_dims(prev_tile.dimensions().begin(),
+                                    prev_tile.dimensions().end());
+  const ArrayRef<int64_t> dims(tile.dimensions().begin(),
+                               tile.dimensions().end());
+  if (prev_dims.empty() || prev_dims.size() != dims.size()) {
+    return false;
+  }
+  return prev_dims.drop_back() == dims.drop_back() &&
+         dims.back() == prev_dims.back() + 1;
+}
+
+bool hasNestedPadding(const ArrayRef<xla::Tile> tiles) {
+  return tiles.size() >= 2 && isPaddingTile(tiles[0], tiles[1]);
+}
+
 LogicalResult verifyTiledLayout(function_ref<InFlightDiagnostic()> emitError,
                                 const llvm::ArrayRef<xla::Tile> tiles,
-                                const llvm::ArrayRef<int64_t> tile_strides) {
+                                const llvm::ArrayRef<int64_t> tile_strides,
+                                const bool allow_nested_padding) {
   if (tiles.empty()) {
     return success();
   }
@@ -302,13 +320,28 @@ LogicalResult verifyTiledLayout(function_ref<InFlightDiagnostic()> emitError,
   if (getUntiledRank(tiles, rank) != rank - first_tile_rank) {
     return emitError() << "Not implemented: Nested tiling across first tiles";
   }
-  // Check that nested tiles evenly divide previous tiles (so they don't add any
-  // padding or change the tile size)
+  // If allowed, the second tile may pad the first tile. All other nested tiles
+  // must evenly divide the (padded) tile before them (so they don't add any
+  // padding or change the tile size).
+  if (allow_nested_padding && hasNestedPadding(tiles)) {
+    if (failed(getExpandedShape(tiles[1].dimensions(), tiles.drop_front(2),
+                                /*require_alignment=*/true))) {
+      return emitError() << "Not implemented: Nested tiles must evenly divide "
+                         << "the padding tile " << tiles[1].ToString()
+                         << " but they do not (would add padding)";
+    }
+    return success();
+  }
   if (failed(getExpandedShape(first_tile.dimensions(), tiles.drop_front(),
                               /*require_alignment=*/true))) {
-    return emitError() << "Not implemented: Nested tiles must evenly divide "
-                       << "the first tile " << first_tile.ToString()
-                       << " but they do not (would add padding)";
+    InFlightDiagnostic diag = emitError();
+    diag << "Not implemented: Nested tiles must evenly divide the first tile "
+         << first_tile.ToString() << " but they do not (would add padding)";
+    if (allow_nested_padding) {
+      diag << ". Only a second tile that pads the minor dimension of the "
+              "first tile by one element is supported";
+    }
+    return diag;
   }
   return success();
 }
