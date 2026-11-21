@@ -153,8 +153,23 @@ bool IsTmaRecommended(const TritonGemmConfig& config) {
          config.block_k <= 256;
 }
 
-// Equivalent to the recommendation constructed for TritonGemmConfig.
-bool IsTmaRecommended(const xtile::BlockLevelFusionConfig& config) {
+namespace {
+
+// Non-GEMM fusions launching at most 8 blocks fit in a single thread-block
+// cluster and are launch-latency bound rather than bandwidth bound, so TMA
+// candidates add autotuning jitter without real speedup while blocking
+// multi-phase fusion.
+constexpr int64_t kMinBlocksForTma = 9;
+
+}  // namespace
+
+// Equivalent to the recommendation constructed for TritonGemmConfig, plus a
+// minimum grid size check for non-GEMM fusions.
+bool IsTmaRecommended(const xtile::BlockLevelFusionConfig& config,
+                      int64_t num_blocks) {
+  if (num_blocks < kMinBlocksForTma) {
+    return false;
+  }
   if (!(config.num_warps() <= 8 &&
         (config.num_stages() == 1 || config.num_stages() == 3 ||
          config.num_stages() == 4))) {
