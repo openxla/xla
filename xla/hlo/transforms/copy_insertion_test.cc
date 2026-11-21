@@ -61,7 +61,9 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/literal_util.h"
 #include "xla/service/buffer_value.h"
+#include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/hlo_value.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/test_benchmark.h"
@@ -7264,6 +7266,123 @@ ENTRY main {
   EXPECT_TRUE(copy_remover.TryElideCopy(c_root));
   ASSERT_OK(c_root->ReplaceAllUsesWith(c_root->mutable_operand(0)));
   EXPECT_FALSE(copy_remover.TryElideCopy(FindInstruction(module.get(), "c2")));
+}
+
+absl::Status VerifyReadOnlyIsolated(const HloModule& m, const AliasInfo* ai) {
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> aa,
+                        HloAliasAnalysis::Run(&m, ai));
+  for (const HloValue* v : aa->dataflow_analysis().values()) {
+    const HloInstruction* d = v->defining_instruction();
+    if ((d->opcode() == HloOpcode::kConstant ||
+         (d->opcode() == HloOpcode::kParameter &&
+          d->parent()->IsEntryComputation() &&
+          !m.input_output_alias_config().ParameterHasAlias(
+              d->parameter_number(), v->defining_index()))) &&
+        !v->shape().IsToken() && !v->shape().IsBuffer() &&
+        aa->GetBufferContainingValue(*v).values().size() != 1) {
+      return absl::InternalError(v->ToShortString());
+    }
+  }
+  return m.has_schedule() ? m.schedule().Verify() : absl::OkStatus();
+}
+
+TEST_F(CopyInsertionTest, SharedReadOnlyValuesAvoidDoubleCopyChains) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule m
+cond { s = (f32[8], f32[8], f32[8], f32[8]) parameter(0)
+  ROOT f = pred[] constant(false) }
+body { s = (f32[8], f32[8], f32[8], f32[8]) parameter(0)
+  a = f32[8] get-tuple-element(s), index=0
+  b = f32[8] get-tuple-element(s), index=1
+  d = f32[8] get-tuple-element(s), index=2
+  e = f32[8] get-tuple-element(s), index=3
+  ROOT r = tuple(f32[8] negate(a), f32[8] negate(b), f32[8] negate(d), f32[8] negate(e)) }
+tb { bp = f32[8] parameter(0)
+  k = f32[8] constant({1, 2, 3, 4, 5, 6, 7, 8})
+  ROOT t = tuple(k, k, f32[8] add(bp, k)) }
+fb { bp = f32[8] parameter(0)
+  ROOT t = tuple(f32[8] negate(bp), f32[8] add(bp, bp), f32[8] negate(bp)) }
+ENTRY main {
+  p = f32[8] parameter(1)
+  c = f32[8] constant({0, 0, 0, 0, 0, 0, 0, 0})
+  bp = f32[2,4] bitcast(p)
+  z = s32[] constant(0)
+  dus = f32[2,4] dynamic-update-slice(bp, f32[1,4] parameter(2), z, z)
+  w = (f32[8], f32[8], f32[8], f32[8]) while(tuple(c, c, p, p)), condition=cond, body=body
+  br = (f32[8], f32[8], f32[8]) conditional(pred[] parameter(0), p, p), true_computation=tb, false_computation=fb
+  ROOT out = tuple(f32[8] add(p, c), f32[2,4] exponential(bp), dus, w, br)
+})hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(kHlo));
+  InsertCopies(m.get());
+  ASSERT_OK(VerifyReadOnlyIsolated(*m, &alias_info_));
+  EXPECT_EQ(CountCopies(*m), 7);
+  const HloInstruction *wi = FindInstruction(m.get(), "w")->operand(0),
+                       *r = m->entry_computation()->root_instruction();
+  EXPECT_THAT(r->operand(0), op::Add(op::Parameter(1), op::Constant()));
+  EXPECT_THAT(r->operand(1), op::Exp(op::Bitcast(op::Parameter(1))));
+  EXPECT_THAT(
+      wi, op::Tuple(op::Copy(op::Constant()), op::Copy(op::Constant()),
+                    op::Copy(op::Parameter(1)), op::Copy(op::Parameter(1))));
+  EXPECT_NE(wi->operand(0), wi->operand(1));
+  EXPECT_NE(wi->operand(2), wi->operand(3));
+  EXPECT_THAT(m->GetComputationWithName("tb")->root_instruction(),
+              op::Tuple(op::Copy(op::Constant()), op::Copy(op::Constant()),
+                        op::Add(op::Parameter(0), op::Constant())));
+}
+
+TEST_F(CopyInsertionTest, ScheduledTupleViewAndCallbackSpecialCaseCopies) {
+  CopyInsertion pass(&alias_info_, nullptr, /*view_color=*/5);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(R"hlo(
+HloModule t, is_scheduled=true
+ENTRY main {
+  p = (f32[8], f32[4]) parameter(0)
+  u = f32[1] parameter(1)
+  z = s32[] constant(0)
+  e0 = f32[8] get-tuple-element(p), index=0
+  ec = f32[8] get-tuple-element(p), index=0, control-predecessors={z}
+  e1 = f32[4] get-tuple-element(p), index=1
+  r0 = f32[8] negate(e0)
+  rc = f32[8] negate(ec)
+  r1 = f32[4] negate(e1)
+  c2 = f32[8] copy(e0)
+  d1 = f32[8] dynamic-update-slice(e0, u, z)
+  d2 = f32[8] dynamic-update-slice(c2, u, z)
+  ROOT out = tuple(r0, rc, r1, d1, d2)
+})hlo"));
+  ASSERT_OK(pass.AddSpecialCaseCopies(m.get()));
+  ASSERT_OK(VerifyReadOnlyIsolated(*m, &alias_info_));
+  EXPECT_EQ(CountCopies(*m), 2);
+  auto gte0 = op::GetTupleElement(op::Parameter(0), 0);
+  EXPECT_THAT(FindInstruction(m.get(), "r0"), op::Negate(gte0));
+  EXPECT_THAT(FindInstruction(m.get(), "c2"), op::Copy(gte0));
+  EXPECT_EQ(FindInstruction(m.get(), "rc")->operand(0),
+            FindInstruction(m.get(), "ec"));
+
+  CopyInsertion::CustomBufferAnalysisFn mark_p0 =
+      [](HloModule* mod, const HloAliasAnalysis&, auto add) {
+        add(mod->entry_computation()->parameter_instruction(0), {});
+      };
+  for (bool cb : {false, true}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> vm,
+                         ParseAndReturnVerifiedModule(R"hlo(
+HloModule v
+ENTRY main {
+  b = f32[4] parameter(0)
+  z = s32[] constant(0)
+  vw = f32[1]{0:S(5)} custom-call(b, z), custom_call_target="view"
+  w = f32[1]{0:S(5)} custom-call(vw, f32[1] parameter(1)), custom_call_target="write", output_to_operand_aliasing={{}: (0, {})}
+  ROOT out = tuple(f32[4] negate(b), f32[4] dynamic-update-slice(b, w, z))
+})hlo"));
+    ASSERT_OK(pass.AddSpecialCaseCopies(vm.get(), {}, cb ? mark_p0 : nullptr));
+    ASSERT_OK(VerifyReadOnlyIsolated(*vm, &alias_info_));
+    EXPECT_EQ(CountCopies(*vm), 1);
+    const HloInstruction* r = vm->entry_computation()->root_instruction();
+    EXPECT_EQ(FindInstruction(vm.get(), "vw")->operand(0),
+              r->operand(1)->operand(0));
+    EXPECT_EQ(r->operand(0)->operand(0) == r->operand(1)->operand(0), cb);
+  }
 }
 
 }  // namespace

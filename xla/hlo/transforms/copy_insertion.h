@@ -20,6 +20,7 @@ limitations under the License.
 #include <functional>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
@@ -119,17 +120,27 @@ class CopyInsertion : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads,
       HloModule* module, CustomBufferAnalysisFn custom_buffer_analysis);
 
+  struct SpecialCaseCopies {
+    struct PreservedUse {
+      HloInstruction* user;
+      int64_t operand_number;
+      ShapeIndex defining_index;
+    };
+    HloInstructionMap<ShapeTree<bool>> to_copy;
+    HloInstructionMap<std::vector<PreservedUse>> preserved_uses;
+    bool empty() const { return to_copy.empty(); }
+  };
+
   // Records the shape indices that need special case copies without inserting
   // them. `alias_analysis` must be current for `module`.
-  absl::StatusOr<HloInstructionMap<ShapeTree<bool>>> ComputeSpecialCaseCopies(
+  absl::StatusOr<SpecialCaseCopies> ComputeSpecialCaseCopies(
       const CallGraph& call_graph,
       const absl::flat_hash_set<absl::string_view>& execution_threads,
       HloModule* module, const HloAliasAnalysis& alias_analysis,
       CustomBufferAnalysisFn custom_buffer_analysis);
 
   // Inserts the copies computed by ComputeSpecialCaseCopies.
-  static absl::Status InsertSpecialCaseCopies(
-      const HloInstructionMap<ShapeTree<bool>>& instructions_to_copy);
+  static absl::Status InsertSpecialCaseCopies(const SpecialCaseCopies& copies);
 
   // Add copies for conditional instructions.
   virtual absl::Status AddCopiesForConditional(
