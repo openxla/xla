@@ -441,6 +441,98 @@ TEST_F(CudaStreamTest, NestedCaptureFails) {
   EXPECT_THAT(handle1.EndCapture(), IsOk());
 }
 
+TEST_F(CudaStreamTest, Memcpy2DGather) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CudaStream> stream,
+                       CudaStream::Create(executor_,
+                                          /*priority=*/std::nullopt));
+
+  constexpr int kSrcElements = 16;
+  constexpr int kDstElements = 8;
+  DeviceAddress<uint32_t> src_buf =
+      executor_->AllocateArray<uint32_t>(kSrcElements, 0);
+  DeviceAddress<uint32_t> dst_buf =
+      executor_->AllocateArray<uint32_t>(kDstElements, 0);
+
+  std::array<uint32_t, kSrcElements> host_src = {
+      1, 2, 0, 0, 3, 4, 0, 0, 5, 6, 0, 0, 7, 8, 0, 0,
+  };
+  EXPECT_THAT(stream->MemcpyH2D(absl::MakeConstSpan(host_src), &src_buf),
+              IsOk());
+
+  EXPECT_THAT(stream->Memcpy2D(&dst_buf, /*dst_pitch=*/8, src_buf,
+                               /*src_pitch=*/16, /*width=*/8, /*height=*/4),
+              IsOk());
+
+  std::array<uint32_t, kDstElements> host_dst = {};
+  EXPECT_THAT(stream->MemcpyD2H(dst_buf, absl::MakeSpan(host_dst)), IsOk());
+  EXPECT_THAT(stream->BlockHostUntilDone(), IsOk());
+  EXPECT_THAT(host_dst, ElementsAre(1, 2, 3, 4, 5, 6, 7, 8));
+}
+
+TEST_F(CudaStreamTest, Memcpy2DScatter) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CudaStream> stream,
+                       CudaStream::Create(executor_,
+                                          /*priority=*/std::nullopt));
+
+  constexpr int kSrcElements = 8;
+  constexpr int kDstElements = 16;
+  DeviceAddress<uint32_t> src_buf =
+      executor_->AllocateArray<uint32_t>(kSrcElements, 0);
+  DeviceAddress<uint32_t> dst_buf =
+      executor_->AllocateArray<uint32_t>(kDstElements, 0);
+
+  std::array<uint32_t, kSrcElements> host_src = {
+      1, 2, 3, 4, 5, 6, 7, 8,
+  };
+  EXPECT_THAT(stream->MemcpyH2D(absl::MakeConstSpan(host_src), &src_buf),
+              IsOk());
+  EXPECT_THAT(stream->MemZero(&dst_buf, kDstElements * sizeof(uint32_t)),
+              IsOk());
+
+  EXPECT_THAT(stream->Memcpy2D(&dst_buf, /*dst_pitch=*/16, src_buf,
+                               /*src_pitch=*/8, /*width=*/8, /*height=*/4),
+              IsOk());
+
+  std::array<uint32_t, kDstElements> host_dst = {};
+  EXPECT_THAT(stream->MemcpyD2H(dst_buf, absl::MakeSpan(host_dst)), IsOk());
+  EXPECT_THAT(stream->BlockHostUntilDone(), IsOk());
+  EXPECT_THAT(host_dst,
+              ElementsAre(1, 2, 0, 0, 3, 4, 0, 0, 5, 6, 0, 0, 7, 8, 0, 0));
+}
+
+TEST_F(CudaStreamTest, Memcpy2DZeroDimensionIsNoOp) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CudaStream> stream,
+                       CudaStream::Create(executor_,
+                                          /*priority=*/std::nullopt));
+
+  constexpr int kSrcElements = 16;
+  constexpr int kDstElements = 8;
+  DeviceAddress<uint32_t> src_buf =
+      executor_->AllocateArray<uint32_t>(kSrcElements, 0);
+  DeviceAddress<uint32_t> dst_buf =
+      executor_->AllocateArray<uint32_t>(kDstElements, 0);
+
+  std::array<uint32_t, kSrcElements> host_src = {
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+  };
+  EXPECT_THAT(stream->MemcpyH2D(absl::MakeConstSpan(host_src), &src_buf),
+              IsOk());
+  EXPECT_THAT(stream->MemZero(&dst_buf, kDstElements * sizeof(uint32_t)),
+              IsOk());
+
+  EXPECT_THAT(stream->Memcpy2D(&dst_buf, /*dst_pitch=*/8, src_buf,
+                               /*src_pitch=*/16, /*width=*/0, /*height=*/4),
+              IsOk());
+  EXPECT_THAT(stream->Memcpy2D(&dst_buf, /*dst_pitch=*/8, src_buf,
+                               /*src_pitch=*/16, /*width=*/8, /*height=*/0),
+              IsOk());
+
+  std::array<uint32_t, kDstElements> host_dst = {};
+  EXPECT_THAT(stream->MemcpyD2H(dst_buf, absl::MakeSpan(host_dst)), IsOk());
+  EXPECT_THAT(stream->BlockHostUntilDone(), IsOk());
+  EXPECT_THAT(host_dst, Each(0));
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace stream_executor
