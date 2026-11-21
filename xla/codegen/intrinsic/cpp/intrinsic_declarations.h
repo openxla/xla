@@ -236,6 +236,29 @@ class Acos : public Intrinsic<Acos> {
   }
 };
 
+class YnnExp : public Intrinsic<YnnExp> {
+ public:
+  static constexpr absl::string_view kName = "exp";
+
+  static std::vector<std::vector<Type>> SupportedVectorTypes(
+      absl::string_view features) {
+    if (!AreCppGenIntrinsicsAvailable()) {
+      return {};
+    }
+    return {
+        {Type::S(xla::F32)},    {Type::V(xla::F32, 2)},  {Type::V(xla::F32, 4)},
+        {Type::V(xla::F32, 8)}, {Type::V(xla::F32, 16)}, {Type::S(xla::F64)},
+        {Type::V(xla::F64, 2)}, {Type::V(xla::F64, 4)},  {Type::V(xla::F64, 8)},
+    };
+  }
+
+  static absl::StatusOr<llvm::Function*> CreateDefinition(llvm::Module* module,
+                                                          Type type) {
+    return GetCppGenFunction(module, Name(type),
+                             UnaryFunctionType(module, type));
+  }
+};
+
 class YnnLog : public Intrinsic<YnnLog> {
  public:
   static constexpr absl::string_view kName = "log";
