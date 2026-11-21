@@ -49,7 +49,7 @@ class ConcreteAsyncValue;
 class SharedPtrAsyncValue;
 
 template <typename T>
-constexpr bool kMaybeBase = std::is_class<T>::value && !std::is_final<T>::value;
+constexpr bool kMaybeBase = std::is_class_v<T> && !std::is_final_v<T>;
 
 }  // namespace internal
 

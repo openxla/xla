@@ -67,20 +67,16 @@ struct is_complex<std::complex<double>> : true_type {};
 template <typename T>
 struct is_simple_type {
   static constexpr bool value =
-      std::is_trivial<T>::value || std::is_same<T, Eigen::half>::value ||
-      std::is_same<T, complex64>::value || std::is_same<T, complex128>::value ||
-      is_quantized<T>::value || std::is_same<T, bfloat16>::value ||
-      std::is_same<T, float4_e2m1fn>::value ||
-      std::is_same<T, float8_e3m4>::value ||
-      std::is_same<T, float8_e4m3>::value ||
-      std::is_same<T, float8_e4m3fn>::value ||
-      std::is_same<T, float8_e4m3fnuz>::value ||
-      std::is_same<T, float8_e4m3b11fnuz>::value ||
-      std::is_same<T, float8_e5m2>::value ||
-      std::is_same<T, float8_e5m2fnuz>::value ||
-      std::is_same<T, float8_e8m0fnu>::value || std::is_same<T, int4>::value ||
-      std::is_same<T, uint4>::value || std::is_same<T, int2>::value ||
-      std::is_same<T, uint2>::value;
+      std::is_trivial_v<T> || std::is_same_v<T, Eigen::half> ||
+      std::is_same_v<T, complex64> || std::is_same_v<T, complex128> ||
+      is_quantized<T>::value || std::is_same_v<T, bfloat16> ||
+      std::is_same_v<T, float4_e2m1fn> || std::is_same_v<T, float8_e3m4> ||
+      std::is_same_v<T, float8_e4m3> || std::is_same_v<T, float8_e4m3fn> ||
+      std::is_same_v<T, float8_e4m3fnuz> ||
+      std::is_same_v<T, float8_e4m3b11fnuz> || std::is_same_v<T, float8_e5m2> ||
+      std::is_same_v<T, float8_e5m2fnuz> || std::is_same_v<T, float8_e8m0fnu> ||
+      std::is_same_v<T, int4> || std::is_same_v<T, uint4> ||
+      std::is_same_v<T, int2> || std::is_same_v<T, uint2>;
 };
 
 }  // namespace tsl

@@ -186,7 +186,7 @@ struct XlaBuilderFriend {
 class XlaOp {
  public:
   XlaOp() : handle_(-1), builder_(nullptr) {
-    static_assert(std::is_trivially_destructible<XlaOp>::value,
+    static_assert(std::is_trivially_destructible_v<XlaOp>,
                   "XlaOp should be trivially destructible");
   }
   ~XlaOp() = default;
@@ -246,7 +246,7 @@ class XlaOp {
 class XlaComputationId {
  public:
   XlaComputationId() : handle_(-1) {
-    static_assert(std::is_trivially_destructible<XlaComputationId>::value,
+    static_assert(std::is_trivially_destructible_v<XlaComputationId>,
                   "XlaComputationId should be trivially destructible");
   }
   ~XlaComputationId() = default;
