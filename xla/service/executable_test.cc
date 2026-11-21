@@ -31,15 +31,16 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/hlo_execution_profile.h"
+#include "xla/service/hlo_module_executable.h"
 #include "xla/service/service_executable_run_options.h"
 
 namespace xla {
 namespace {
 
-class TestExecutable : public Executable {
+class TestExecutable : public HloModuleExecutable {
  public:
   explicit TestExecutable(std::shared_ptr<HloModule> module)
-      : Executable{std::move(module)} {}
+      : HloModuleExecutable{std::move(module)} {}
 
   absl::StatusOr<ExecutionOutput> ExecuteAsyncOnStream(
       const ServiceExecutableRunOptions* run_options,

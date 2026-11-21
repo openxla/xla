@@ -1261,12 +1261,23 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "hlo_module_executable",
+    srcs = ["hlo_module_executable.cc"],
+    hdrs = ["hlo_module_executable.h"],
+    deps = [
+        ":executable",
+        "//xla/hlo/ir:hlo",
+    ],
+)
+
 xla_cc_test(
     name = "executable_test",
     srcs = ["executable_test.cc"],
     deps = [
         ":executable",
         ":hlo_execution_profile",
+        ":hlo_module_executable",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "@com_google_absl//absl/status",

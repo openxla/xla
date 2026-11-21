@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/service/custom_call_status.h"
 #include "xla/service/executable.h"
 #include "xla/service/hlo_execution_profile.h"
+#include "xla/service/hlo_module_executable.h"
 #include "xla/service/hlo_profile_printer_data.pb.h"
 #include "xla/service/hlo_value.h"
 #include "xla/service/maybe_owning_device_address.h"
@@ -54,7 +55,7 @@ namespace cpu {
 //
 // Wraps a JIT-ed object that can be executed "on device". We JIT for the host
 // architecture, so JIT-ed code and host code share the same ABI.
-class CpuExecutable : public Executable {
+class CpuExecutable : public HloModuleExecutable {
  public:
   // Creates a CpuExecutable from a thunk sequence.
   static absl::StatusOr<std::unique_ptr<CpuExecutable>> Create(
