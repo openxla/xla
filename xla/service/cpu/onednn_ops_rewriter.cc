@@ -223,21 +223,30 @@ std::optional<HloInstruction*> MatchSoftmax(HloInstruction* instr, int* axis) {
   return left_producer;
 }
 
+// ---------------------------------------------------------------------------
+// Composable layer-norm pattern builders.
+// ---------------------------------------------------------------------------
+
+// Matches reduce(input, init) with an add reducer over exactly one dimension,
+// the innermost one.
+template <typename InputPattern, typename InitPattern>
+auto InnermostAddReduce(InputPattern input, InitPattern init) {
+  return m::Reduce(input, init).WithPredicate([](const HloInstruction* reduce) {
+    HloComputation* reducer = reduce->to_apply();
+    return (reducer->root_instruction()->opcode() == HloOpcode::kAdd &&
+            reduce->dimensions().size() == 1 &&
+            reduce->dimensions()[0] == reduce->shape().dimensions().size());
+  });
+}
+
 // Matches Mean(input) over the last dimension, i.e. an add reduction with zero
 // init over {rank - 1} divided by the size of that dimension. oneDNN layer
 // normalization only normalizes over the last dimension. The divisor must be
 // constant scalar.
-auto MeanPattern(HloInstruction** input) {
-  auto sum =
-      m::Reduce(m::Convert(m::Op(input)),
-                pu::OptionalConvert(m::ConstantScalar(0)))
-          .WithPredicate([](const HloInstruction* reduce) {
-            HloComputation* reducer = reduce->to_apply();
-            return (reducer->root_instruction()->opcode() == HloOpcode::kAdd &&
-                    reduce->dimensions().size() == 1 &&
-                    reduce->dimensions()[0] ==
-                        reduce->shape().dimensions().size());
-          });
+template <typename Pattern>
+auto Mean(Pattern x) {
+  auto sum = InnermostAddReduce(m::Convert(x),
+                                pu::OptionalConvert(m::ConstantScalar(0)));
   return m::Reshape(
       m::Convert(m::Divide(sum, m::Broadcast(m::Convert(m::ConstantScalar())))
                      .WithPredicate([](const HloInstruction* divide) {
@@ -260,6 +269,14 @@ auto Square(Pattern pattern) {
       });
 }
 
+// Matches variance + broadcast(eps), operands in any order, where eps is a
+// constant scalar captured in `epsilon`.
+template <typename Pattern>
+auto AddEpsilon(Pattern variance, HloInstruction** epsilon) {
+  return m::Add().WithBinaryOperandsAnyOrder(
+      m::Broadcast(m::ConstantScalar(epsilon)), variance);
+}
+
 // Matches a 1D [C] tensor broadcast along the last dimension, the only
 // scale/shift layout oneDNN layer normalization supports.
 auto LastDimBroadcast(HloInstruction** operand) {
@@ -276,76 +293,72 @@ auto LastDimBroadcast(HloInstruction** operand) {
 // formulations below.
 auto CenteredInput(HloInstruction** input, HloInstruction** mean_input) {
   return m::Subtract().WithBinaryOperandsAnyOrder(
-      m::Op(input), m::Broadcast(m::Reshape(MeanPattern(mean_input))));
+      m::Op(input), m::Broadcast(m::Reshape(Mean(m::Op(mean_input)))));
 }
 
-std::optional<bool> MatchTFKerasLayerNorm(HloInstruction* instr,
-                                          HloInstruction** src,
-                                          HloInstruction** scale,
-                                          HloInstruction** bias, float* eps) {
-  // Z = scale / sqrt(variance + eps)
-  // LN(X) = X*Z + Bias - Mean(X)*Z
-
+// Expanded form: LN(X) = X*Z + Bias - Mean(X)*Z, Z = scale * rsqrt(var + eps),
+// where the eps add is optional. Pattern found in TF/Keras models.
+bool MatchExpandedLayerNorm(HloInstruction* instr, HloInstruction** src,
+                            HloInstruction** scale, HloInstruction** bias,
+                            float* eps) {
   HloInstruction *src_a, *src_b, *src_c;
   HloInstruction *bias_node, *scaled_norm_a, *scaled_norm_b, *mean0_a,
       *sqrd_diff_mean, *scale_node, *sqrd_diff;
   HloInstruction* epsilon = nullptr;
 
-  // First Match X*Z + Bias - Mean(X)*Z
+  // First match X*Z + Bias - Mean(X)*Z.
   if (!Match(
           instr,
           m::Add().WithBinaryOperandsAnyOrder(
-              m::Multiply()
-                  .WithBinaryOperandsAnyOrder(
-                      m::Op(src),
-                      m::Op(&scaled_norm_a).WithOpcode(HloOpcode::kMultiply))
+              m::MultiplyAnyOrder(
+                  m::Op(src),
+                  m::Op(&scaled_norm_a).WithOpcode(HloOpcode::kMultiply))
                   .WithOneUser(),
               m::Subtract(
                   m::Op(&bias_node),
-                  m::Multiply().WithBinaryOperandsAnyOrder(
+                  m::MultiplyAnyOrder(
                       m::Broadcast(m::Reshape(m::Op(&mean0_a))),
                       m::Op(&scaled_norm_b).WithOpcode(HloOpcode::kMultiply)))
                   .WithOneUser()))) {
-    return std::nullopt;
+    return false;
   }
 
+  // Z must be the same instruction in both X*Z and Mean(X)*Z.
   if (scaled_norm_a != scaled_norm_b) {
-    return std::nullopt;
+    return false;
   }
 
   const Shape& src_shape = (*src)->shape();
   if (!IsSupportedType(src_shape.element_type())) {
-    return std::nullopt;
+    return false;
   }
 
   // OneDNN only supports 2 <= rank <= 5
   if (src_shape.dimensions().size() < 2 || src_shape.dimensions().size() > 5) {
-    return std::nullopt;
+    return false;
   }
 
-  // Get bias
   if (!Match(bias_node, LastDimBroadcast(bias))) {
-    return std::nullopt;
+    return false;
   }
 
-  // Match Z = scale / sqrt(variance + eps)
+  // Match Z = scale * rsqrt(variance + eps); the epsilon add is optional.
   if (!Match(scaled_norm_a,
-             m::Multiply().WithBinaryOperandsAnyOrder(
+             m::MultiplyAnyOrder(
                  m::Op(&scale_node),
                  m::Broadcast(m::Reshape(m::Rsqrt(m::AnyOf<HloInstruction>(
-                     m::Add().WithBinaryOperandsAnyOrder(
-                         m::Broadcast(m::ConstantScalar(&epsilon)),
-                         m::Op(&sqrd_diff_mean)),
+                     AddEpsilon(m::Op(&sqrd_diff_mean), &epsilon),
                      m::Op(&sqrd_diff_mean)))))))) {
-    return std::nullopt;
+    return false;
   }
 
-  // get epsilon
   if (epsilon != nullptr) {
     *eps = static_cast<float>(epsilon->literal().GetAsDouble({}).value());
   }
-  // get scale
-  if (!Match(scale_node, LastDimBroadcast(scale))) return std::nullopt;
+
+  if (!Match(scale_node, LastDimBroadcast(scale))) {
+    return false;
+  }
 
   // Match variance. tf.nn.moments emits one of two forms for variance
   //   (a) variance = Mean(D^2)
@@ -353,10 +366,10 @@ std::optional<bool> MatchTFKerasLayerNorm(HloInstruction* instr,
   //   (b) variance = Max(Mean(D^2) - Mean(D)^2, 0)
   //   (https://github.com/tensorflow/tensorflow/commit/b14991de0ee209b0cc4546e80fd81f6d71927d00)
 
-  if (Match(sqrd_diff_mean, MeanPattern(&sqrd_diff))) {
+  if (Match(sqrd_diff_mean, Mean(m::Op(&sqrd_diff)))) {
     // (a) Mean(D^2).
     if (!Match(sqrd_diff, Square(CenteredInput(&src_a, &src_b)))) {
-      return std::nullopt;
+      return false;
     }
   } else {
     // (b) Max(Mean(D^2) - Mean(D)^2, 0)
@@ -365,41 +378,47 @@ std::optional<bool> MatchTFKerasLayerNorm(HloInstruction* instr,
                                    pu::OptionalBroadcast(m::ConstantScalar(0)),
                                    m::Subtract(m::Op(&mean_sqrd_diff),
                                                m::Op(&sqrd_mean_diff))))) {
-      return std::nullopt;
+      return false;
     }
     HloInstruction *diff_a, *diff_b;
-    if (!Match(mean_sqrd_diff, MeanPattern(&sqrd_diff)) ||
+    if (!Match(mean_sqrd_diff, Mean(m::Op(&sqrd_diff))) ||
         !Match(sqrd_diff, Square(m::Op(&diff_a))) ||
-        !Match(sqrd_mean_diff, Square(MeanPattern(&diff_b)))) {
-      return std::nullopt;
+        !Match(sqrd_mean_diff, Square(Mean(m::Op(&diff_b))))) {
+      return false;
     }
     // Both reductions have to consume the very same mean-centered input,
     // otherwise this is not the two-pass variance of a single LayerNorm.
-    if (diff_a != diff_b) return std::nullopt;
-    if (!Match(diff_a, CenteredInput(&src_a, &src_b))) return std::nullopt;
+    if (diff_a != diff_b) {
+      return false;
+    }
+    if (!Match(diff_a, CenteredInput(&src_a, &src_b))) {
+      return false;
+    }
   }
 
   if (src_a != *src || src_b != *src) {
-    return std::nullopt;
+    return false;
   }
 
-  // Match mean from Bias - Mean(X)*Z
-  if (!Match(mean0_a, MeanPattern(&src_c))) {
-    return std::nullopt;
+  // Match the mean in Bias - Mean(X)*Z; it must be over the same source.
+  if (!Match(mean0_a, Mean(m::Op(&src_c)))) {
+    return false;
   }
 
   if (src_c != *src) {
-    return std::nullopt;
+    return false;
   }
 
   return true;
 }
 
-bool MatchFlaxLayerNorm(HloInstruction* instr, HloInstruction** src,
-                        HloInstruction** scale, HloInstruction** bias,
-                        float* eps, bool* is_bf16orfp16_convert,
-                        bool* is_producer_bf16orfp16,
-                        HloInstruction** convert_instr) {
+// Centered form: LN(X) = (X - E[X])*Z + Bias, Z = scale * rsqrt(var + eps),
+// var = max(c, E[X^2] - E[X]^2). Pattern found in Flax models.
+bool MatchCenteredLayerNorm(HloInstruction* instr, HloInstruction** src,
+                            HloInstruction** scale, HloInstruction** bias,
+                            float* eps, bool* is_bf16orfp16_convert,
+                            bool* is_producer_bf16orfp16,
+                            HloInstruction** convert_instr) {
   HloInstruction *prod_s, *hinge;
   HloInstruction *div0, *div1, *div_red;
   HloInstruction *mul_in0, *mul_in1, *main_pipe_mul_in0;
@@ -451,38 +470,33 @@ bool MatchFlaxLayerNorm(HloInstruction* instr, HloInstruction** src,
     return false;
   }
 
-  // NOLINTBEGIN
-  auto main_pipeline = m::Multiply().WithBinaryOperandsAnyOrder(
-      m::Op(),
-      m::Broadcast(
-          m::Reshape(
-              m::Broadcast(
-                  m::Rsqrt(
-                      m::Add()
+  // hinge = Z = scale * rsqrt(variance + eps), where the eps add is required
+  // and variance = Maximum(c, E[x^2] - E[x] * E[x]). The clamp operand c
+  // (normally 0) is not checked. scale is found by FindLayerNormScale above.
+  auto variance =
+      m::Reshape(
+          m::Maximum()
+              .WithBinaryOperandsAnyOrder(
+                  m::Broadcast(),
+                  m::Subtract(
+                      m::Op(&div0).WithOpcode(HloOpcode::kDivide),
+                      m::Multiply()
                           .WithBinaryOperandsAnyOrder(
-                              m::Broadcast(m::ConstantScalar(&epsilon)),
-                              m::Reshape(
-                                  m::Maximum()
-                                      .WithBinaryOperandsAnyOrder(
-                                          m::Broadcast(),
-                                          m::Subtract(
-                                              m::Op(&div0).WithOpcode(
-                                                  HloOpcode::kDivide),
-                                              m::Multiply()
-                                                  .WithBinaryOperandsAnyOrder(
-                                                      m::Op(&main_pipe_mul_in0),
-                                                      m::Op(&div1).WithOpcode(
-                                                          HloOpcode::kDivide))
-                                                  .WithOneUser())
-                                              .WithOneUser())
-                                      .WithOneUser())
-                                  .WithOneUser())
+                              m::Op(&main_pipe_mul_in0),
+                              m::Op(&div1).WithOpcode(HloOpcode::kDivide))
                           .WithOneUser())
                       .WithOneUser())
-                  .WithOneUser())
+              .WithOneUser())
+          .WithOneUser();
+  auto main_pipeline = m::MultiplyAnyOrder(
+      m::Op(),
+      m::Broadcast(
+          m::Reshape(m::Broadcast(
+                         m::Rsqrt(AddEpsilon(variance, &epsilon).WithOneUser())
+                             .WithOneUser())
+                         .WithOneUser())
               .WithOneUser())
           .WithOneUser());
-  // NOLINTEND
 
   if (!Match(hinge, main_pipeline)) {
     return false;
@@ -492,21 +506,15 @@ bool MatchFlaxLayerNorm(HloInstruction* instr, HloInstruction** src,
     return false;
   }
 
+  // E[x^2] = reduce_sum(x * x) / N. N is a broadcast shared with E[x]; its
+  // value is not checked.
   auto div_red_mul_src =
       m::Divide()
-          .WithOperand(0,
-                       m::Reduce(m::Multiply().WithBinaryOperandsAnyOrder(
-                                     pu::OptionalConvert(m::Op(&mul_in0)),
-                                     pu::OptionalConvert(m::Op(&mul_in1))),
-                                 m::Constant())
-                           .WithPredicate([](const HloInstruction* reduce) {
-                             HloComputation* reducer = reduce->to_apply();
-                             return (reducer->root_instruction()->opcode() ==
-                                         HloOpcode::kAdd &&
-                                     reduce->dimensions().size() == 1 &&
-                                     reduce->dimensions()[0] ==
-                                         reduce->shape().dimensions().size());
-                           }))
+          .WithOperand(
+              0, InnermostAddReduce(
+                     m::MultiplyAnyOrder(pu::OptionalConvert(m::Op(&mul_in0)),
+                                         pu::OptionalConvert(m::Op(&mul_in1))),
+                     m::Constant()))
           .WithOperand(1, m::Op(&broadcast0).WithOpcode(HloOpcode::kBroadcast))
           .WithOneUser();
 
@@ -518,19 +526,12 @@ bool MatchFlaxLayerNorm(HloInstruction* instr, HloInstruction** src,
     return false;
   }
 
+  // E[x] = reduce_sum(x) / N, with the same broadcast N as E[x^2].
   auto div_red_subgraph =
       m::Divide()
           .WithOperand(
-              0,
-              m::Reduce(pu::OptionalConvert(m::Op(&reduce_in0)), m::Constant())
-                  .WithPredicate([](const HloInstruction* reduce) {
-                    HloComputation* reducer = reduce->to_apply();
-                    return (reducer->root_instruction()->opcode() ==
-                                HloOpcode::kAdd &&
-                            reduce->dimensions().size() == 1 &&
-                            reduce->dimensions()[0] ==
-                                reduce->shape().dimensions().size());
-                  }))
+              0, InnermostAddReduce(pu::OptionalConvert(m::Op(&reduce_in0)),
+                                    m::Constant()))
           .WithOperand(1, m::Op(&broadcast1).WithOpcode(HloOpcode::kBroadcast));
 
   if (!Match(div1, div_red_subgraph)) {
@@ -555,7 +556,6 @@ bool MatchFlaxLayerNorm(HloInstruction* instr, HloInstruction** src,
   *src = prod_s;
   *scale = scale_gamma;
   *bias = shift;
-  // get epsilon
   if (epsilon != nullptr) {
     *eps = static_cast<float>(epsilon->literal().GetAsDouble({}).value());
   }
@@ -572,17 +572,16 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
     float eps = 1e-5;
     bool is_bf16orfp16_convert = false;
     bool is_producer_bf16orfp16 = false;
-    // Only MatchFlaxLayerNorm sets this; keep it well-defined for the read
-    // below when the TF/Keras matcher succeeds first.
+    // Only MatchCenteredLayerNorm sets this; keep it well-defined for the
+    // read below when the expanded matcher succeeds first.
     HloInstruction* convert_instr = nullptr;
 
-    bool found_ln =
-        MatchTFKerasLayerNorm(instr, &src, &scale, &bias, &eps).value_or(false);
+    bool found_ln = MatchExpandedLayerNorm(instr, &src, &scale, &bias, &eps);
 
     if (!found_ln) {
-      found_ln = MatchFlaxLayerNorm(instr, &src, &scale, &bias, &eps,
-                                    &is_bf16orfp16_convert,
-                                    &is_producer_bf16orfp16, &convert_instr);
+      found_ln = MatchCenteredLayerNorm(
+          instr, &src, &scale, &bias, &eps, &is_bf16orfp16_convert,
+          &is_producer_bf16orfp16, &convert_instr);
     }
 
     if (!found_ln) {
