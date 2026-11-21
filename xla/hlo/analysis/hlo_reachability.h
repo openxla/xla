@@ -115,9 +115,16 @@ class HloReachabilityMap {
   // (operands and control predecessors) of 'instruction' has changed.
   void UpdateReachabilityThroughInstruction(const HloInstruction* instruction);
 
-  // Bulk update reachabilities for multiple instructions. All works if new
-  // predecessors are added to the instructions, but not removed. to_update is a
-  // map from instruction to new predecessors.
+  // Updates reachability for a batch of newly added `(predecessor, successor)`
+  // edges in the computation. Only valid when predecessors are added, not
+  // removed.
+  void AddReachabilityEdges(
+      absl::Span<const std::pair<const HloInstruction*, const HloInstruction*>>
+          edges);
+
+  // Bulk updates reachability for multiple instructions. Only valid when new
+  // predecessors are added to instructions, not removed. `to_update` maps each
+  // instruction to its newly added predecessors.
   void UpdateMultipleInstructions(
       absl::flat_hash_map<const HloInstruction*,
                           absl::flat_hash_set<const HloInstruction*>>

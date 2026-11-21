@@ -451,6 +451,50 @@ TEST_F(HloReachabilityTest, UpdateMultipleInstructions) {
   EXPECT_FALSE(reachability->IsReachable(a, f));
 }
 
+TEST_F(HloReachabilityTest, AddReachabilityEdgesPropagatesAcrossChain) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule ChainedEdges
+
+ENTRY main {
+  a = f32[] constant(1.0)
+  b = f32[] constant(2.0)
+  c = f32[] constant(3.0)
+  c_user = f32[] negate(c)
+  d = f32[] constant(4.0)
+  d_user = f32[] negate(d)
+  unconnected = f32[] constant(5.0)
+  ROOT root = (f32[], f32[], f32[], f32[], f32[])
+      tuple(a, b, c_user, d_user, unconnected)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  HloComputation* entry = module->entry_computation();
+  HloInstruction* a = FindInstruction(module.get(), "a");
+  HloInstruction* b = FindInstruction(module.get(), "b");
+  HloInstruction* c = FindInstruction(module.get(), "c");
+  HloInstruction* c_user = FindInstruction(module.get(), "c_user");
+  HloInstruction* d = FindInstruction(module.get(), "d");
+  HloInstruction* d_user = FindInstruction(module.get(), "d_user");
+  HloInstruction* unconnected = FindInstruction(module.get(), "unconnected");
+
+  std::unique_ptr<HloReachabilityMap> reachability =
+      HloReachabilityMap::Build(entry);
+  ASSERT_OK(a->AddControlDependencyTo(b));
+  ASSERT_OK(b->AddControlDependencyTo(c));
+  ASSERT_OK(c_user->AddControlDependencyTo(d));
+  // Pass edges in reverse chain order to exercise multi-hop propagation.
+  reachability->AddReachabilityEdges({{c_user, d}, {b, c}, {a, b}});
+
+  EXPECT_TRUE(reachability->IsReachable(a, b));
+  EXPECT_TRUE(reachability->IsReachable(a, c));
+  EXPECT_TRUE(reachability->IsReachable(a, c_user));
+  EXPECT_TRUE(reachability->IsReachable(a, d));
+  EXPECT_TRUE(reachability->IsReachable(a, d_user));
+  EXPECT_FALSE(reachability->IsReachable(a, unconnected));
+  EXPECT_FALSE(reachability->IsReachable(d, a));
+}
+
 }  // namespace
 
 class HloReachabilityMapBitSetBenchmark {
