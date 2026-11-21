@@ -69,9 +69,8 @@ OverflowSafeMultiply(const int64_t x, const int64_t y) {
 // x and y must be signed integers.
 template <typename T>
 ABSL_ATTRIBUTE_ALWAYS_INLINE inline std::optional<T> OverflowSafeAdd(T x, T y) {
-  static_assert(std::is_signed<T>::value,
-                "Only implemented for signed numbers T.");
-  static_assert(std::is_integral<T>::value, "Only implemented for integers T.");
+  static_assert(std::is_signed_v<T>, "Only implemented for signed numbers T.");
+  static_assert(std::is_integral_v<T>, "Only implemented for integers T.");
 #if ABSL_HAVE_BUILTIN(__builtin_add_overflow)
   T result;
   if (ABSL_PREDICT_FALSE(__builtin_add_overflow(x, y, &result))) {

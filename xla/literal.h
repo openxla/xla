@@ -253,8 +253,8 @@ class LiteralBase {
   //
   // Precondition: must be an array.
   template <typename T>
-  typename std::enable_if<std::numeric_limits<T>::is_specialized, bool>::type
-  IsEqualAt(absl::Span<const int64_t> multi_index, T value) const {
+  std::enable_if_t<std::numeric_limits<T>::is_specialized, bool> IsEqualAt(
+      absl::Span<const int64_t> multi_index, T value) const {
     if (auto as_s64 = GetIntegralAsS64(multi_index)) {
       return *as_s64 == value;
     }

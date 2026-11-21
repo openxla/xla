@@ -88,7 +88,7 @@ constexpr PrimitiveType NativeToPrimitiveType() {
   // that this compile-time error only appears if this function is
   // instantiated with some concrete type that is not specialized
   // below.
-  static_assert(!std::is_same<NativeT, NativeT>::value,
+  static_assert(!std::is_same_v<NativeT, NativeT>,
                 "Cannot map native type to primitive type.");
   return PRIMITIVE_TYPE_INVALID;
 }

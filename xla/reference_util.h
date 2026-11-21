@@ -620,7 +620,7 @@ class ReferenceUtil {
   static void AssertSameSize2D(const Array2D<T1>& array1,
                                const Array2D<T2>& array2,
                                const Array2D<Ts>&... arrays) {
-    static_assert(std::is_same<T1, T2>::value, "Args must be same type.");
+    static_assert(std::is_same_v<T1, T2>, "Args must be same type.");
     CHECK_EQ(array1.n1(), array2.n1());
     CHECK_EQ(array1.n2(), array2.n2());
     AssertSameSize2D(array2, arrays...);
