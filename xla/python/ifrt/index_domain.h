@@ -32,12 +32,22 @@ namespace ifrt {
 
 // Domain of a multi-dimensional index space. Informally, it represents a slice
 // that is defined by the origin (lower inclusive bound) of the slice and the
-// shape of the slice.
+// shape of the slice. `origin` and `shape` always have the same number of
+// dimensions, and the cumulative product of non-zero upper-bound dimensions
+// (`origin.elements()[i] + shape.dims()[i]`) never exceeds
+// `Shape::kMaxNumElements`.
 class IndexDomain {
  public:
-  // General `IndexDomain` construction.
-  IndexDomain(Index origin, Shape shape)
-      : origin_(std::move(origin)), shape_(std::move(shape)) {}
+  // Constructs an `IndexDomain` from `origin` and `shape`. Returns
+  // `InvalidArgumentError` if `origin` and `shape` have different numbers of
+  // dimensions or if the cumulative product of non-zero upper-bound dimensions
+  // (`origin.elements()[i] + shape.dims()[i]`) exceeds
+  // `Shape::kMaxNumElements`.
+  static absl::StatusOr<IndexDomain> Create(Index origin, Shape shape);
+
+  // Constructs an `IndexDomain` from `origin` and `shape`. `CHECK`-fails if
+  // `Create(origin, shape)` returns an error.
+  IndexDomain(Index origin, Shape shape);
 
   // `IndexDomain` construction with a zeros origin.
   explicit IndexDomain(Shape shape)
@@ -84,12 +94,10 @@ class IndexDomain {
     return IndexDomain(origin_ - offset, shape_);
   }
   IndexDomain& operator+=(const Index& offset) {
-    origin_ += offset;
-    return *this;
+    return *this = *this + offset;
   }
   IndexDomain& operator-=(const Index& offset) {
-    origin_ -= offset;
-    return *this;
+    return *this = *this - offset;
   }
 
   // Returns the intersection of this `IndexDomain` with `other`. Returns an
@@ -98,8 +106,7 @@ class IndexDomain {
   absl::StatusOr<IndexDomain> Intersect(const IndexDomain& other) const;
 
   // Returns true if `other` is contained within this `IndexDomain`. Returns
-  // an error if `this` and `other` have different numbers of dimensions or
-  // negative shape dimensions.
+  // an error if `this` and `other` have different numbers of dimensions.
   absl::StatusOr<bool> Contains(const IndexDomain& other) const;
 
   template <typename Sink>
@@ -109,6 +116,10 @@ class IndexDomain {
   }
 
  private:
+  struct UncheckedTag {};
+  IndexDomain(UncheckedTag, Index origin, Shape shape)
+      : origin_(std::move(origin)), shape_(std::move(shape)) {}
+
   Index origin_;
   Shape shape_;
 };
