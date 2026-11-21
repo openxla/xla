@@ -1,0 +1,40 @@
+// RUN: fusion_to_triton %s | FileCheck %s
+// RUN: triton_test_correctness %s
+
+// High pad in a generic (non-GEMM) Triton fusion where most tiles lie entirely
+// in the padding (b/568080363). Propagating those tiles through the pad yields
+// operand offsets past the end of the operand (`pid mod 16` for a dimension of
+// size 4); the lowering of `xtile.extract` must mask these accesses so that no
+// memory outside the parameter buffers is touched, and `EmitPad` replaces the
+// loaded values with the padding value.
+
+triton_computation {
+  p0 = f32[4,4,16]{2,1,0} parameter(0)
+  p1 = f32[4,1,16]{2,1,0} parameter(1)
+  bitcast1 = f32[4,16]{1,0} bitcast(p1)
+  broadcast = f32[4,4,16]{2,1,0} broadcast(bitcast1), dimensions={1,2}
+  mul = f32[4,4,16]{2,1,0} multiply(p0, broadcast)
+  c0 = f32[] constant(0)
+  ROOT pad = f32[4,16,16]{2,1,0} pad(mul, c0), padding=0_0x0_12x0_0
+}
+
+// CHECK: xtile.entry_func @triton_fn(%arg0: memref<4x4x16xf32>, %arg1: memref<4x1x16xf32>, %arg2: memref<4x16x16xf32>
+// CHECK: xtile.extract %arg0
+// CHECK: xtile.extract %arg1
+// CHECK: arith.mulf
+// CHECK: arith.select
+// CHECK: xtile.insert {{.*}} into %arg2
+
+ENTRY main {
+  p0 = f32[4,4,16]{2,1,0} parameter(0)
+  p1 = f32[4,1,16]{2,1,0} parameter(1)
+  ROOT triton_fusion = f32[4,16,16]{2,1,0} fusion(p0, p1), kind=kCustom,
+    calls=triton_computation, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["1","1","16"]}],
+          "num_warps":"1",
+          "num_ctas":"1",
+          "num_stages":"1"}}}
+}
