@@ -314,10 +314,9 @@ TEST(PendingCliqueInitTest, TaskFailureCancelsInProgressInit) {
 }
 
 // A task failure during SplitCommunicatorsWithCancel must cancel the pending
-// token immediately. The parent lock is held until the split returns, so the
-// parent communicator stays alive across that call. Once the lock is released,
-// a later abort of the same already-failed task must abort the parent once.
-// No GPU and no NCCL are involved.
+// token and abort the parent once, even while parent_lock is still held. A
+// later abort of the same task must not abort that parent again. No GPU and
+// no NCCL are involved.
 TEST(PendingCliqueInitTest, TaskFailureCancelsInProgressSplit) {
   StubCommunicator::ResetAbortCount();
   BlockingInitCollectives collectives(
@@ -388,10 +387,10 @@ TEST(PendingCliqueInitTest, TaskFailureCancelsInProgressSplit) {
   ASSERT_NE(token, nullptr);
   EXPECT_TRUE(token->IsCancelled())
       << "Task failure did not cancel the pending clique split token.";
-  // The split has not returned, so the parent lock is still held.
-  const int aborts_while_locked = StubCommunicator::AbortCount();
-  EXPECT_EQ(aborts_while_locked, 0)
-      << "Parent communicator was aborted while the split still held its lock.";
+  // The split has not returned, so the parent lock is still held. Abort must
+  // still run once.
+  EXPECT_EQ(StubCommunicator::AbortCount(), 1)
+      << "Parent communicator was not aborted once while its lock was held.";
 
   collectives.Release();
   worker.join();
@@ -401,14 +400,13 @@ TEST(PendingCliqueInitTest, TaskFailureCancelsInProgressSplit) {
   EXPECT_EQ(acquire_result.status().code(), absl::StatusCode::kCancelled)
       << acquire_result.status();
 
-  // The task is already ERROR. Releasing the parent lock must still let a
-  // later abort reclaim that parent, once.
+  // The parent was already aborted and erased. A later abort of the same task
+  // must not abort it again.
   ASSERT_OK(AbortTaskCliques(
       /*failed_task_id=*/0,
       absl::DeadlineExceededError("simulated task death")));
-  EXPECT_EQ(StubCommunicator::AbortCount(), aborts_while_locked + 1)
-      << "Parent communicator was not aborted once after its lock was "
-         "released.";
+  EXPECT_EQ(StubCommunicator::AbortCount(), 1)
+      << "Parent communicator was aborted more than once.";
 }
 
 }  // namespace
