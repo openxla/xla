@@ -1323,9 +1323,10 @@ TEST(PjRtCpuClientTest, AcquireExternalDmaAccessIsUnimplemented) {
   TF_ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef raw_buffer,
                           PjRtRawBuffer::CreateRawAliasOfBuffer(buffer.get()));
 
-  auto access = raw_buffer->AcquireExternalDmaAccess();
-  ASSERT_TRUE(access.IsError());
-  EXPECT_THAT(access.GetError(), StatusIs(absl::StatusCode::kUnimplemented));
+  tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+      access = raw_buffer->AcquireExternalDmaAccess();
+  EXPECT_THAT(std::move(access).Await(),
+              StatusIs(absl::StatusCode::kUnimplemented));
 }
 
 TEST(PjRtCpuClientTest, SubByteLiteralToBufferRoundtrip) {

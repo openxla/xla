@@ -135,7 +135,7 @@ class StreamExecutorGpuRawClient : public PjRtStreamExecutorRawClient {
       std::vector<CommonPjRtClient::CrossHostTransferSpec> transfer_specs)
       override;
 
-  tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess>
+  tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
   AcquireExternalDmaAccess(
       LocalDeviceState* local_device, const PJRT_Memory* memory_space,
       tsl::AsyncValueRef<RawSEDeviceMemory> device_buffer) override;

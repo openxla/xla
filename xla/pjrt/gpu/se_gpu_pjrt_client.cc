@@ -1302,40 +1302,41 @@ absl::StatusOr<GpuDmaBufCache::ExportedDmaBuf> ExportDeviceBufferDmaBuf(
 
 }  // namespace
 
-tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess>
+tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
 StreamExecutorGpuRawClient::AcquireExternalDmaAccess(
     LocalDeviceState* local_device, const PJRT_Memory* memory_space,
     tsl::AsyncValueRef<RawSEDeviceMemory> device_buffer) {
   if (IsOnCpu(memory_space)) {
-    return tsl::MakeErrorAsyncValueRef(absl::InvalidArgumentError(
-        "External DMA is only supported for device memory, not host memory."));
+    return absl::InvalidArgumentError(
+        "External DMA is only supported for device memory, not host memory.");
   }
   auto* const gpu_executor =
       dynamic_cast<se::gpu::GpuExecutor*>(local_device->executor());
   if (gpu_executor == nullptr || !gpu_executor->is_dma_buf_supported()) {
-    return tsl::MakeErrorAsyncValueRef(absl::UnimplementedError(
-        "External DMA is not supported by this GPU device."));
+    return absl::UnimplementedError(
+        "External DMA is not supported by this GPU device.");
   }
 
-  tsl::AsyncValueRef<GpuExternalDmaAccess> result =
-      tsl::MakeUnconstructedAsyncValueRef<GpuExternalDmaAccess>();
-  device_buffer.AndThen(
-      [cache = dma_buf_cache_, gpu_executor, device_buffer, result]() mutable {
-        if (device_buffer.IsError()) {
-          result.SetError(device_buffer.GetError());
-          return;
-        }
-        const se::DeviceAddressBase mem = device_buffer->mem();
-        absl::StatusOr<GpuDmaBufCache::ExportedDmaBuf> exported =
-            ExportDeviceBufferDmaBuf(*cache, *gpu_executor, mem);
-        if (!exported.ok()) {
-          result.SetError(exported.status());
-          return;
-        }
-        result.emplace(std::move(device_buffer), std::move(exported->dma_buf),
-                       exported->offset, mem.size());
-      });
-  return result;
+  auto [promise, future] = tsl::MakePromise<
+      std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>();
+  device_buffer.AndThen([cache = dma_buf_cache_, gpu_executor, device_buffer,
+                         promise = std::move(promise)]() mutable {
+    if (device_buffer.IsError()) {
+      promise.Set(device_buffer.GetError());
+      return;
+    }
+    const se::DeviceAddressBase mem = device_buffer->mem();
+    absl::StatusOr<GpuDmaBufCache::ExportedDmaBuf> exported =
+        ExportDeviceBufferDmaBuf(*cache, *gpu_executor, mem);
+    if (!exported.ok()) {
+      promise.Set(std::move(exported).status());
+      return;
+    }
+    promise.Set(std::make_unique<GpuExternalDmaAccess>(
+        std::move(device_buffer), std::move(exported->dma_buf),
+        exported->offset, mem.size()));
+  });
+  return std::move(future);
 }
 
 // ==== End cross-host transfer implementations ==== //

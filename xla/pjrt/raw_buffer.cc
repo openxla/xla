@@ -50,7 +50,7 @@ namespace xla {
 namespace {
 
 // C function table of an external DMA access whose `access` is one of our own
-// tsl::AsyncValue<ExternalDmaAccess>.
+// tsl::AsyncValue<std::unique_ptr<ExternalDmaAccess>>.
 tsl::AsyncValue* BuiltinAccessValue(const PJRT_ExternalDmaAccess* access) {
   return static_cast<tsl::AsyncValue*>(access->access);
 }
@@ -80,7 +80,10 @@ const PJRT_ExternalDmaAccess_FunctionTable kBuiltinExternalDmaAccessVtable = {
             "ready."));
       }
       const PjRtRawBufferInterface::ExternalDmaInfo& info =
-          value->get<PjRtRawBufferInterface::ExternalDmaAccess>().info();
+          value
+              ->get<
+                  std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>()
+              ->info();
       *fd = info.fd;
       *offset = info.offset;
       *size = info.size;
@@ -423,21 +426,41 @@ const PJRT_RawBuffer_FunctionTable PjRtRawBuffer::kRawBufferVtable = {
     /*acquire_external_dma_access=*/
     +[](PJRT_RawBuffer* raw_buffer,
         PJRT_ExternalDmaAccess* access) -> PJRT_Error* {
-      tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess> cpp_access =
-          static_cast<PjRtRawBuffer*>(raw_buffer)->AcquireExternalDmaAccess();
-      CHECK(cpp_access) << "AcquireExternalDmaAccess returned a null ref.";
+      tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+          cpp_access = static_cast<PjRtRawBuffer*>(raw_buffer)
+                           ->AcquireExternalDmaAccess();
+      CHECK(cpp_access.IsValid())
+          << "AcquireExternalDmaAccess returned an invalid Future.";
+      auto av = tsl::MakeUnconstructedAsyncValueRef<
+          std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>();
+      std::move(cpp_access)
+          .OnReady([av = av.CopyRef()](
+                       absl::StatusOr<std::unique_ptr<
+                           PjRtRawBufferInterface::ExternalDmaAccess>>
+                           result) mutable {
+            if (!result.ok()) {
+              av.SetError(std::move(result).status());
+              return;
+            }
+            if (*result == nullptr) {
+              av.SetError(absl::InternalError(
+                  "AcquireExternalDmaAccess returned a null access."));
+              return;
+            }
+            av.emplace(std::move(*result));
+          });
       // The async value itself is the C handle; the caller takes our reference.
-      *access = {&kBuiltinExternalDmaAccessVtable, cpp_access.release()};
+      *access = {&kBuiltinExternalDmaAccessVtable, av.release()};
       return nullptr;
     },
 };
 
 PjRtRawBuffer::PjRtRawBuffer() { vtable = &kRawBufferVtable; }
 
-tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess>
+tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
 PjRtRawBuffer::AcquireExternalDmaAccess() {
-  return tsl::MakeErrorAsyncValueRef(absl::UnimplementedError(
-      "External DMA is not supported by this PjRtRawBuffer."));
+  return absl::UnimplementedError(
+      "External DMA is not supported by this PjRtRawBuffer.");
 }
 
 absl::StatusOr<PjRtDeviceEventRef>
@@ -539,35 +562,35 @@ absl::StatusOr<PjRtRawBufferRef> PjRtRawBufferInterface::Slice(int64_t offset,
   return tsl::TakeRef(static_cast<PjRtRawBuffer*>(sliced_c_buffer));
 }
 
-tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess>
+tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
 PjRtRawBufferInterface::AcquireExternalDmaAccess() {
+  // Same binary: call the C++ implementation directly without wrapping.
+  if (auto* cpp_buf = down_cast<PjRtRawBuffer>()) {
+    return cpp_buf->AcquireExternalDmaAccess();
+  }
   // Plugins built before this slot was appended have a shorter table.
   if (vtable->struct_size < PJRT_STRUCT_SIZE(PJRT_RawBuffer_FunctionTable,
                                              acquire_external_dma_access) ||
       vtable->acquire_external_dma_access == nullptr) {
-    return tsl::MakeErrorAsyncValueRef(absl::UnimplementedError(
-        "External DMA is not supported by this PJRT plugin."));
+    return absl::UnimplementedError(
+        "External DMA is not supported by this PJRT plugin.");
   }
   PJRT_ExternalDmaAccess c_access;
   PJRT_Error* error = vtable->acquire_external_dma_access(this, &c_access);
   if (error != nullptr) {
-    return tsl::MakeErrorAsyncValueRef(pjrt::PjrtErrorToStatus(error));
-  }
-  // Same binary: the plugin's async value is already an ExternalDmaAccess.
-  if (c_access.vtable == &kBuiltinExternalDmaAccessVtable) {
-    return tsl::AsyncValueRef<ExternalDmaAccess>(
-        tsl::TakeRef(BuiltinAccessValue(&c_access)));
+    return pjrt::PjrtErrorToStatus(error);
   }
 
   // The access is destroyed exactly once: right away on error, otherwise when
-  // the last reference to `result` is dropped.
+  // the returned `ExternalDmaAccess` is destroyed.
   PjRtDeviceEventPtr event(c_access.vtable->get_event(&c_access));
-  auto result = tsl::MakeUnconstructedAsyncValueRef<CApiExternalDmaAccess>();
-  event.AndThen([result, c_access, event]() mutable {
+  auto [promise, future] =
+      tsl::MakePromise<std::unique_ptr<ExternalDmaAccess>>();
+  event.AndThen([promise = std::move(promise), c_access, event]() mutable {
     if (auto error = event.GetErrorIfPresent();
         error.has_value() && !error->ok()) {
       c_access.vtable->destroy(&c_access);
-      result.SetError(*error);
+      promise.Set(*error);
       return;
     }
     ExternalDmaInfo info;
@@ -575,12 +598,12 @@ PjRtRawBufferInterface::AcquireExternalDmaAccess() {
                                                       &info.offset, &info.size);
         error != nullptr) {
       c_access.vtable->destroy(&c_access);
-      result.SetError(pjrt::PjrtErrorToStatus(error));
+      promise.Set(pjrt::PjrtErrorToStatus(error));
       return;
     }
-    result.emplace(info, c_access);
+    promise.Set(std::make_unique<CApiExternalDmaAccess>(info, c_access));
   });
-  return result;
+  return std::move(future);
 }
 
 absl::StatusOr<std::vector<PjRtRawBufferRef>>

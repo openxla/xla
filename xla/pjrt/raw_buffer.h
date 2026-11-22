@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -96,9 +97,9 @@ class PjRtRawBufferInterface : public PJRT_RawBuffer {
   };
 
   // One access to this buffer by an external DMA engine. PJRT cannot observe
-  // when such an engine is finished, so the access lasts as long as it is
-  // referenced: the memory stays at `info()` until the last reference is
-  // dropped. Backends subclass this and end the access in the destructor.
+  // when such an engine is finished, so the access lasts as long as the object
+  // is alive: the memory stays at `info()` until the `ExternalDmaAccess` is
+  // destroyed. Backends subclass this and end the access in the destructor.
   class ExternalDmaAccess {
    public:
     explicit ExternalDmaAccess(ExternalDmaInfo info) : info_(info) {}
@@ -115,12 +116,12 @@ class PjRtRawBufferInterface : public PJRT_RawBuffer {
   };
 
   // Starts one external DMA access. This is the only way to get the buffer's
-  // dma-buf location. The result becomes available once the buffer is
+  // dma-buf location. The returned future becomes ready once the buffer is
   // allocated and its address is final, or carries an error if the buffer
   // cannot be reached by external DMA (Unimplemented when the backend does not
-  // expose device memory as a dma-buf). Drop the reference as soon as the
-  // engine is finished; holding it keeps the memory in place.
-  tsl::AsyncValueRef<ExternalDmaAccess> AcquireExternalDmaAccess();
+  // expose device memory as a dma-buf). Destroy the returned access as soon as
+  // the engine is finished; holding it keeps the memory in place.
+  tsl::Future<std::unique_ptr<ExternalDmaAccess>> AcquireExternalDmaAccess();
 
   void CopyTo(PjRtRawBufferRef dst_raw_buffer,
               PjRtDeviceEventPromiseRef definition_event_promise,
@@ -248,7 +249,8 @@ class PjRtRawBuffer : public PjRtRawBufferInterface,
   // Starts one external DMA access; see PjRtRawBufferInterface. Backends whose
   // device memory can move must keep this buffer in place from the moment the
   // access is available until it is destroyed.
-  virtual tsl::AsyncValueRef<ExternalDmaAccess> AcquireExternalDmaAccess();
+  virtual tsl::Future<std::unique_ptr<ExternalDmaAccess>>
+  AcquireExternalDmaAccess();
 
   // Copies directly into dst_raw_buffer. Must set definition_event_promise,
   // when dst_raw_buffer is ready, allocation_event before using dst_raw_buffer

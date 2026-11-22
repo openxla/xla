@@ -4955,14 +4955,6 @@ TEST(StreamExecutorGpuClientTest, InvalidMemoryFractionPolicyFlagIsReported) {
                        HasSubstr("--xla_gpu_memory_fraction_policy")));
 }
 
-tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess>
-AcquireExternalDmaAccessSync(PjRtRawBufferInterface& raw) {
-  tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess> access =
-      raw.AcquireExternalDmaAccess();
-  tsl::BlockUntilReady(access);
-  return access;
-}
-
 TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessCachesBfcChunkFd) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
                        GetStreamExecutorGpuClient(GpuClientOptions()));
@@ -4980,28 +4972,27 @@ TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessCachesBfcChunkFd) {
   ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef raw2,
                        PjRtRawBuffer::CreateRawAliasOfBuffer(buf2.get()));
 
-  tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess> access1 =
-      AcquireExternalDmaAccessSync(*raw1);
-  if (access1.IsError() &&
-      access1.GetError().code() == absl::StatusCode::kUnimplemented) {
+  absl::StatusOr<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+      access1 = raw1->AcquireExternalDmaAccess().Await();
+  if (absl::IsUnimplemented(access1.status())) {
     GTEST_SKIP() << "dma-buf export is not supported on this GPU.";
   }
-  ASSERT_TRUE(access1.IsConcrete()) << access1.GetError();
+  ASSERT_OK(access1);
 
-  tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess> access2 =
-      AcquireExternalDmaAccessSync(*raw2);
-  ASSERT_TRUE(access2.IsConcrete()) << access2.GetError();
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess> access2,
+      raw2->AcquireExternalDmaAccess().Await());
 
-  EXPECT_GE(access1->info().fd, 0);
-  EXPECT_EQ(access1->info().fd, access2->info().fd);
-  EXPECT_NE(access1->info().offset, access2->info().offset);
-  EXPECT_EQ(access1->info().size, raw1->GetOnDeviceSizeInBytes());
+  EXPECT_GE((*access1)->info().fd, 0);
+  EXPECT_EQ((*access1)->info().fd, access2->info().fd);
+  EXPECT_NE((*access1)->info().offset, access2->info().offset);
+  EXPECT_EQ((*access1)->info().size, raw1->GetOnDeviceSizeInBytes());
   EXPECT_EQ(access2->info().size, raw2->GetOnDeviceSizeInBytes());
 #if defined(__linux__)
-  const off_t dmabuf_size = lseek(access1->info().fd, 0, SEEK_END);
+  const off_t dmabuf_size = lseek((*access1)->info().fd, 0, SEEK_END);
   ASSERT_NE(dmabuf_size, static_cast<off_t>(-1));
   EXPECT_GE(static_cast<uint64_t>(dmabuf_size),
-            access1->info().offset + access1->info().size);
+            (*access1)->info().offset + (*access1)->info().size);
   EXPECT_GE(static_cast<uint64_t>(dmabuf_size),
             access2->info().offset + access2->info().size);
 #endif
@@ -5020,25 +5011,24 @@ TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessSlicedBuffer) {
   ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef raw,
                        PjRtRawBuffer::CreateRawAliasOfBuffer(buf.get()));
 
-  tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess> parent_access =
-      AcquireExternalDmaAccessSync(*raw);
-  if (parent_access.IsError() &&
-      parent_access.GetError().code() == absl::StatusCode::kUnimplemented) {
+  absl::StatusOr<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+      parent_access = raw->AcquireExternalDmaAccess().Await();
+  if (absl::IsUnimplemented(parent_access.status())) {
     GTEST_SKIP() << "dma-buf export is not supported on this GPU.";
   }
-  ASSERT_TRUE(parent_access.IsConcrete()) << parent_access.GetError();
+  ASSERT_OK(parent_access);
 
   constexpr int64_t kSliceOffset = 256;
   constexpr int64_t kSliceSize = 512;
   ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef slice,
                        raw->Slice(kSliceOffset, kSliceSize));
-  tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess> slice_access =
-      AcquireExternalDmaAccessSync(*slice);
-  ASSERT_TRUE(slice_access.IsConcrete()) << slice_access.GetError();
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess> slice_access,
+      slice->AcquireExternalDmaAccess().Await());
 
-  EXPECT_EQ(slice_access->info().fd, parent_access->info().fd);
+  EXPECT_EQ(slice_access->info().fd, (*parent_access)->info().fd);
   EXPECT_EQ(slice_access->info().offset,
-            parent_access->info().offset + kSliceOffset);
+            (*parent_access)->info().offset + kSliceOffset);
   EXPECT_EQ(slice_access->info().size, kSliceSize);
 }
 
@@ -5057,10 +5047,7 @@ TEST(StreamExecutorGpuClientTest,
       client->BufferFromHostLiteral(literal, pinned_host_space));
   ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef pinned_raw,
                        PjRtRawBuffer::CreateRawAliasOfBuffer(pinned_buf.get()));
-  tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess> pinned_access =
-      AcquireExternalDmaAccessSync(*pinned_raw);
-  ASSERT_TRUE(pinned_access.IsError());
-  EXPECT_THAT(pinned_access.GetError(),
+  EXPECT_THAT(pinned_raw->AcquireExternalDmaAccess().Await(),
               StatusIs(absl::StatusCode::kInvalidArgument));
 
   // Zero-size device buffer returns InvalidArgument (or Unimplemented if the
@@ -5073,10 +5060,9 @@ TEST(StreamExecutorGpuClientTest,
       client->BufferFromHostLiteral(empty_literal, device_space));
   ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef empty_raw,
                        PjRtRawBuffer::CreateRawAliasOfBuffer(empty_buf.get()));
-  tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess> empty_access =
-      AcquireExternalDmaAccessSync(*empty_raw);
-  ASSERT_TRUE(empty_access.IsError());
-  EXPECT_THAT(empty_access.GetError().code(),
+  absl::StatusOr<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+      empty_access = empty_raw->AcquireExternalDmaAccess().Await();
+  EXPECT_THAT(empty_access.status().code(),
               AnyOf(absl::StatusCode::kInvalidArgument,
                     absl::StatusCode::kUnimplemented));
 }
@@ -5095,13 +5081,12 @@ TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessDelayedBuffer) {
       PjRtRawBufferRef concrete_raw,
       PjRtRawBuffer::CreateRawAliasOfBuffer(concrete_buf.get()));
 
-  tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess>
-      concrete_access = AcquireExternalDmaAccessSync(*concrete_raw);
-  if (concrete_access.IsError() &&
-      concrete_access.GetError().code() == absl::StatusCode::kUnimplemented) {
+  absl::StatusOr<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+      concrete_access = concrete_raw->AcquireExternalDmaAccess().Await();
+  if (absl::IsUnimplemented(concrete_access.status())) {
     GTEST_SKIP() << "dma-buf export is not supported on this GPU.";
   }
-  ASSERT_TRUE(concrete_access.IsConcrete()) << concrete_access.GetError();
+  ASSERT_OK(concrete_access);
 
   ASSERT_OK_AND_ASSIGN(auto alias_and_cb, client->CreateAliasBuffer(
                                               literal.shape(), device_space));
@@ -5109,16 +5094,17 @@ TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessDelayedBuffer) {
   ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef alias_raw,
                        PjRtRawBuffer::CreateRawAliasOfBuffer(alias_buf.get()));
 
-  tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess> delayed_access =
-      alias_raw->AcquireExternalDmaAccess();
-  EXPECT_FALSE(delayed_access.IsAvailable());
+  tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+      delayed_future = alias_raw->AcquireExternalDmaAccess();
+  EXPECT_FALSE(delayed_future.IsReady());
 
   ASSERT_OK(std::move(fulfill_cb)(concrete_buf.get()));
-  tsl::BlockUntilReady(delayed_access);
-  ASSERT_TRUE(delayed_access.IsConcrete()) << delayed_access.GetError();
-  EXPECT_EQ(delayed_access->info().fd, concrete_access->info().fd);
-  EXPECT_EQ(delayed_access->info().offset, concrete_access->info().offset);
-  EXPECT_EQ(delayed_access->info().size, concrete_access->info().size);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess> delayed_access,
+      std::move(delayed_future).Await());
+  EXPECT_EQ(delayed_access->info().fd, (*concrete_access)->info().fd);
+  EXPECT_EQ(delayed_access->info().offset, (*concrete_access)->info().offset);
+  EXPECT_EQ(delayed_access->info().size, (*concrete_access)->info().size);
 }
 
 TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessDelayedBufferError) {
@@ -5135,21 +5121,23 @@ TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessDelayedBufferError) {
   ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef alias_raw,
                        PjRtRawBuffer::CreateRawAliasOfBuffer(alias_buf.get()));
 
-  tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess> delayed_access =
-      alias_raw->AcquireExternalDmaAccess();
-  if (delayed_access.IsError() &&
-      delayed_access.GetError().code() == absl::StatusCode::kUnimplemented) {
+  tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+      delayed_future = alias_raw->AcquireExternalDmaAccess();
+  if (delayed_future.IsReady()) {
+    absl::StatusOr<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+        access = std::move(delayed_future).Await();
     EXPECT_THAT(std::move(fulfill_cb)(absl::InternalError("alloc failed")),
                 StatusIs(absl::StatusCode::kInternal));
-    GTEST_SKIP() << "dma-buf export is not supported on this GPU.";
+    if (absl::IsUnimplemented(access.status())) {
+      GTEST_SKIP() << "dma-buf export is not supported on this GPU.";
+    }
+    FAIL() << "Expected delayed future to be pending, got: " << access.status();
   }
-  EXPECT_FALSE(delayed_access.IsAvailable());
 
   EXPECT_THAT(std::move(fulfill_cb)(absl::InternalError("alloc failed")),
               StatusIs(absl::StatusCode::kInternal));
-  tsl::BlockUntilReady(delayed_access);
-  ASSERT_TRUE(delayed_access.IsError());
-  EXPECT_THAT(delayed_access.GetError(), StatusIs(absl::StatusCode::kInternal));
+  EXPECT_THAT(std::move(delayed_future).Await(),
+              StatusIs(absl::StatusCode::kInternal));
 }
 
 TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessKeepsBufferAlive) {
@@ -5168,13 +5156,12 @@ TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessKeepsBufferAlive) {
   ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef raw,
                        PjRtRawBuffer::CreateRawAliasOfBuffer(buf.get()));
 
-  tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess> access =
-      AcquireExternalDmaAccessSync(*raw);
-  if (access.IsError() &&
-      access.GetError().code() == absl::StatusCode::kUnimplemented) {
+  absl::StatusOr<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+      access = raw->AcquireExternalDmaAccess().Await();
+  if (absl::IsUnimplemented(access.status())) {
     GTEST_SKIP() << "dma-buf export is not supported on this GPU.";
   }
-  ASSERT_TRUE(access.IsConcrete()) << access.GetError();
+  ASSERT_OK(access);
 
   ASSERT_OK_AND_ASSIGN(tsl::AllocatorStats allocated_stats,
                        device->GetAllocatorStats());
@@ -5189,7 +5176,7 @@ TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessKeepsBufferAlive) {
                        device->GetAllocatorStats());
   EXPECT_EQ(held_stats.bytes_in_use, allocated_stats.bytes_in_use);
 
-  access.reset();
+  access->reset();
   ASSERT_OK_AND_ASSIGN(tsl::AllocatorStats released_stats,
                        device->GetAllocatorStats());
   EXPECT_EQ(released_stats.bytes_in_use, baseline_stats.bytes_in_use);

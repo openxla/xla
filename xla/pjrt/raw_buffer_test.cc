@@ -128,21 +128,19 @@ class FakeExternalDmaRawBuffer : public PjRtRawBuffer {
     }
   }
 
-  tsl::AsyncValueRef<ExternalDmaAccess> AcquireExternalDmaAccess() override {
-    pending_ = tsl::MakeUnconstructedAsyncValueRef<Access>();
-    return pending_;
+  tsl::Future<std::unique_ptr<ExternalDmaAccess>> AcquireExternalDmaAccess()
+      override {
+    auto [promise, future] =
+        tsl::MakePromise<std::unique_ptr<ExternalDmaAccess>>();
+    pending_ = std::move(promise);
+    return std::move(future);
   }
 
   void SetInfo(ExternalDmaInfo info) {
-    pending_.emplace(info, &releases_);
-    pending_.reset();
+    pending_.Set(std::make_unique<Access>(info, &releases_));
   }
-  void SetError(absl::Status status) {
-    pending_.SetError(std::move(status));
-    pending_.reset();
-  }
+  void SetError(absl::Status status) { pending_.Set(std::move(status)); }
   int releases() const { return releases_; }
-  tsl::AsyncValue* pending() const { return pending_.GetAsyncValue(); }
 
   PJRT_Memory* c_memory_space() const override { return nullptr; }
   size_t GetOnDeviceSizeInBytes() const override { return 0; }
@@ -186,11 +184,11 @@ class FakeExternalDmaRawBuffer : public PjRtRawBuffer {
   PjRtDeviceEventPtr GetRawBufferAsyncValue() override { return {}; }
 
  private:
-  tsl::AsyncValueRef<Access> pending_;
+  tsl::Promise<std::unique_ptr<ExternalDmaAccess>> pending_;
   int releases_ = 0;
 };
 
-tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess>
+tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
 AcquireThroughCApi(PjRtRawBuffer* buffer) {
   return static_cast<PjRtRawBufferInterface*>(buffer)
       ->AcquireExternalDmaAccess();
@@ -198,12 +196,15 @@ AcquireThroughCApi(PjRtRawBuffer* buffer) {
 
 TEST(RawBufferTest, ExternalDmaAccessForwardsInfo) {
   auto buffer = tsl::MakeRef<FakeExternalDmaRawBuffer>();
-  auto access = AcquireThroughCApi(buffer.get());
-  EXPECT_FALSE(access.IsAvailable());
+  tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+      future = AcquireThroughCApi(buffer.get());
+  EXPECT_FALSE(future.IsReady());
 
   buffer->SetInfo(PjRtRawBufferInterface::ExternalDmaInfo{
       /*fd=*/7, /*offset=*/4096, /*size=*/1024});
-  ASSERT_TRUE(access.IsConcrete());
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess> access,
+      std::move(future).Await());
   EXPECT_EQ(access->info().fd, 7);
   EXPECT_EQ(access->info().offset, 4096);
   EXPECT_EQ(access->info().size, 1024);
@@ -215,18 +216,21 @@ TEST(RawBufferTest, ExternalDmaAccessForwardsInfo) {
 
 TEST(RawBufferTest, ExternalDmaAccessForwardsError) {
   auto buffer = tsl::MakeRef<FakeExternalDmaRawBuffer>();
-  auto access = AcquireThroughCApi(buffer.get());
+  tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+      future = AcquireThroughCApi(buffer.get());
 
   buffer->SetError(absl::InvalidArgumentError("unreachable"));
-  ASSERT_TRUE(access.IsError());
-  EXPECT_THAT(access.GetError(),
+  EXPECT_THAT(std::move(future).Await(),
               absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
   EXPECT_EQ(buffer->releases(), 0);
 }
 
 TEST(RawBufferTest, ExternalDmaAccessDroppedBeforeInfo) {
   auto buffer = tsl::MakeRef<FakeExternalDmaRawBuffer>();
-  AcquireThroughCApi(buffer.get()).reset();
+  {
+    tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+        future = AcquireThroughCApi(buffer.get());
+  }
 
   // Nobody holds the access, so it ends as soon as it is established.
   buffer->SetInfo(PjRtRawBufferInterface::ExternalDmaInfo{});
@@ -235,8 +239,12 @@ TEST(RawBufferTest, ExternalDmaAccessDroppedBeforeInfo) {
 
 TEST(RawBufferTest, ExternalDmaAccessDroppedFromCallback) {
   auto buffer = tsl::MakeRef<FakeExternalDmaRawBuffer>();
-  auto access = AcquireThroughCApi(buffer.get());
-  access.AndThen([&access]() { access.reset(); });
+  tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+      future = AcquireThroughCApi(buffer.get());
+  std::move(future).OnReady(
+      [](absl::StatusOr<
+          std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+             access) { access->reset(); });
 
   buffer->SetInfo(PjRtRawBufferInterface::ExternalDmaInfo{});
   EXPECT_EQ(buffer->releases(), 1);
@@ -244,11 +252,16 @@ TEST(RawBufferTest, ExternalDmaAccessDroppedFromCallback) {
 
 TEST(RawBufferTest, ExternalDmaAccessSameBinaryIsNotWrapped) {
   auto buffer = tsl::MakeRef<FakeExternalDmaRawBuffer>(/*foreign=*/false);
-  auto access = AcquireThroughCApi(buffer.get());
-  // The backend's async value comes back as is: no wrapper, no extra event.
-  EXPECT_EQ(access.GetAsyncValue(), buffer->pending());
+  tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+      future = AcquireThroughCApi(buffer.get());
 
   buffer->SetInfo(PjRtRawBufferInterface::ExternalDmaInfo{/*fd=*/7});
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess> access,
+      std::move(future).Await());
+  // The backend's concrete Access comes back directly without C-API wrapping.
+  EXPECT_NE(dynamic_cast<FakeExternalDmaRawBuffer::Access*>(access.get()),
+            nullptr);
   EXPECT_EQ(access->info().fd, 7);
   access.reset();
   EXPECT_EQ(buffer->releases(), 1);
@@ -322,9 +335,9 @@ TEST(RawBufferTest, ExternalDmaAccessOlderPlugin) {
       offsetof(PJRT_RawBuffer_FunctionTable, acquire_external_dma_access);
   buffer->vtable = &older;
 
-  auto access = AcquireThroughCApi(buffer.get());
-  ASSERT_TRUE(access.IsError());
-  EXPECT_THAT(access.GetError(),
+  tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
+      future = AcquireThroughCApi(buffer.get());
+  EXPECT_THAT(std::move(future).Await(),
               absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
 }
 

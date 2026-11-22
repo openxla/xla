@@ -356,12 +356,13 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
 
   // Starts one external DMA access for `device_buffer` on `local_device`.
   // Backends that expose device memory as a Linux dma-buf override this.
-  virtual tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess>
+  virtual tsl::Future<
+      std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
   AcquireExternalDmaAccess(
       LocalDeviceState* local_device, const PJRT_Memory* memory_space,
       tsl::AsyncValueRef<RawSEDeviceMemory> device_buffer) {
-    return tsl::MakeErrorAsyncValueRef(absl::UnimplementedError(
-        "External DMA is not supported by this PjRtStreamExecutorRawClient."));
+    return absl::UnimplementedError(
+        "External DMA is not supported by this PjRtStreamExecutorRawClient.");
   }
 
   absl::StatusOr<PjRtDeviceEventRef> CreateDeviceEvent(

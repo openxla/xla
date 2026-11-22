@@ -219,7 +219,7 @@ PjRtCApiRawBuffer::MakeAllocationReadyEvent() {
       ->MakeAllocationReadyEvent();
 }
 
-tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess>
+tsl::Future<std::unique_ptr<PjRtRawBufferInterface::ExternalDmaAccess>>
 PjRtCApiRawBuffer::AcquireExternalDmaAccess() {
   return static_cast<PjRtRawBufferInterface*>(c_buffer_)
       ->AcquireExternalDmaAccess();

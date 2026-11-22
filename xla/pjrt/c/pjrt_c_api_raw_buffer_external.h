@@ -90,7 +90,8 @@ class PjRtCApiRawBuffer : public PjRtRawBuffer {
 
   absl::StatusOr<PjRtDeviceEventRef> MakeAllocationReadyEvent() override;
 
-  tsl::AsyncValueRef<ExternalDmaAccess> AcquireExternalDmaAccess() override;
+  tsl::Future<std::unique_ptr<ExternalDmaAccess>> AcquireExternalDmaAccess()
+      override;
 
   void CopyTo(
       PjRtRawBufferRef dst_raw_buffer,
