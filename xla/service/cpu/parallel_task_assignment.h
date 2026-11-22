@@ -52,7 +52,7 @@ class ParallelTaskAssignment {
                          const HloCostAnalysis::ShapeSizeFunction& shape_size,
                          HloModule* module,
                          const TargetMachineFeatures* target_machine_features);
-  ~ParallelTaskAssignment() {}
+  ~ParallelTaskAssignment() = default;
 
   // Computes and returns the target parallel task count for 'instruction'.
   int64_t GetTargetParallelTaskCount(HloInstruction* instruction);
@@ -81,7 +81,7 @@ class ParallelTaskAssigner : public HloModulePass {
       : max_parallelism_(max_parallelism),
         shape_size_function_(shape_size),
         target_machine_features_(*target_machine_features) {}
-  ~ParallelTaskAssigner() override {}
+  ~ParallelTaskAssigner() override = default;
 
   absl::string_view name() const override {
     return "cpu-parallel-task-assigner";
