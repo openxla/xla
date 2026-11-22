@@ -93,6 +93,7 @@ xla_cc_test(
     srcs = ["fusion_wrapper_test.cc"],
     deps = [
         ":fusion_wrapper",
+        "//third_party/gloop/util/task:status_matchers",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service/cpu:target_machine_features_stub",

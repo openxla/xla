@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "third_party/gloop/util/task/status_matchers.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
