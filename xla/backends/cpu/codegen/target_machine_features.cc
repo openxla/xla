@@ -18,18 +18,86 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <string>
+#include <tuple>
+#include <utility>
 
+#include "absl/base/no_destructor.h"
+#include "absl/container/node_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
+#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Target/TargetMachine.h"
+#include "llvm/TargetParser/SubtargetFeature.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/primitive_util.h"
+#include "xla/service/llvm_ir/llvm_type_conversion_util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
+namespace {
+
+struct CachedSubtargetInfo {
+  int32_t default_vector_register_byte_size = 0;
+  std::string enabled_target_features;
+};
+
+// Caches subtarget vector register width and expanded processor features by
+// (triple, cpu, feature_string) so constructing a TargetMachineFeatures per
+// compilation avoids allocating a temporary LLVMContext and Module.
+const CachedSubtargetInfo& GetCachedSubtargetInfo(
+    llvm::TargetMachine& target_machine) {
+  using CacheKey = std::tuple<std::string, std::string, std::string>;
+  static absl::NoDestructor<absl::Mutex> mu;
+  static absl::NoDestructor<absl::node_hash_map<CacheKey, CachedSubtargetInfo>>
+      cache;
+
+  CacheKey key(target_machine.getTargetTriple().str(),
+               target_machine.getTargetCPU().str(),
+               target_machine.getTargetFeatureString().str());
+  {
+    absl::MutexLock lock(*mu);
+    if (const auto it = cache->find(key); it != cache->end()) {
+      return it->second;
+    }
+  }
+
+  CachedSubtargetInfo info;
+  info.enabled_target_features = absl::StrJoin(
+      target_machine.getMCSubtargetInfo().getEnabledProcessorFeatures(), ",",
+      [](std::string* out, const llvm::SubtargetFeatureKV* feature) {
+        absl::StrAppend(out, "+", llvm_ir::AsStringView(feature->key()));
+      });
+
+  llvm::LLVMContext context;
+  llvm::Module module("target_features_probe", context);
+  llvm::Function* probe_fn = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(context),
+                              /*isVarArg=*/false),
+      llvm::GlobalValue::ExternalLinkage, "probe", &module);
+  llvm::TargetTransformInfo tti =
+      target_machine.getTargetTransformInfo(*probe_fn);
+  info.default_vector_register_byte_size =
+      tti.getRegisterBitWidth(llvm::TargetTransformInfo::RGK_FixedWidthVector)
+          .getFixedValue() /
+      8;
+
+  absl::MutexLock lock(*mu);
+  return cache->emplace(std::move(key), std::move(info)).first->second;
+}
+
+}  // namespace
 
 TargetMachineFeatures::TargetMachineFeatures(
     llvm::TargetMachine* target_machine)
@@ -37,12 +105,16 @@ TargetMachineFeatures::TargetMachineFeatures(
   // Calling virtual methods in the constructor is discouraged, so we don't
   // call `get_target_feature_string` here.
   if (target_machine_) {
-    const std::string feature_string =
-        target_machine_->getTargetFeatureString().str();
+    const absl::string_view feature_string =
+        llvm_ir::AsStringView(target_machine_->getTargetFeatureString());
     has_avx512bf16_ = absl::StrContains(feature_string, "+avx512bf16");
     has_avx512fp16_ = absl::StrContains(feature_string, "+avx512fp16");
     has_amx_fp16_ = absl::StrContains(feature_string, "+amx-fp16");
     has_amx_fp8_ = absl::StrContains(feature_string, "+amx-fp8");
+
+    const CachedSubtargetInfo& info = GetCachedSubtargetInfo(*target_machine_);
+    enabled_target_features_ = info.enabled_target_features;
+    default_vector_register_byte_size_ = info.default_vector_register_byte_size;
   }
 }
 
@@ -55,6 +127,10 @@ int32_t TargetMachineFeatures::vectorization_factor_in_bytes() const {
   // get from llvm::TargetTransformInfo::getCacheLineSize) of the target
   // machine.  Guess a value of 128 bytes for now.
   return 128;
+}
+
+int32_t TargetMachineFeatures::vector_register_byte_size() const {
+  return default_vector_register_byte_size_;
 }
 
 int32_t TargetMachineFeatures::vector_register_byte_size(
@@ -108,6 +184,10 @@ std::string TargetMachineFeatures::get_target_feature_string() const {
   return target_machine_ == nullptr
              ? ""
              : target_machine_->getTargetFeatureString().str();
+}
+
+std::string TargetMachineFeatures::get_enabled_target_features() const {
+  return enabled_target_features_;
 }
 
 }  // namespace xla::cpu
