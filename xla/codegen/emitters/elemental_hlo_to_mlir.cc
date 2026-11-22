@@ -959,11 +959,39 @@ absl::StatusOr<SmallVector<Value, 1>> EmitCompare(
     const HloInstruction* instr, llvm::ArrayRef<mlir::Type> arg_types,
     ValueRange operands, ImplicitLocOpBuilder& builder) {
   auto* context = builder.getContext();
+  PrimitiveType element_type = instr->operand(0)->shape().element_type();
   auto direction = mhlo::symbolizeComparisonDirection(
       ComparisonDirectionToString(instr->comparison_direction()));
   mhlo::CompareOp::Properties properties;
   properties.comparison_direction =
       mhlo::ComparisonDirectionAttr::get(context, direction.value());
+  if (primitive_util::IsFloatingPointType(element_type)) {
+    switch (instr->comparison_order()) {
+      case ComparisonOrder::kPartial:
+        properties.compare_type =
+            mhlo::ComparisonTypeAttr::get(context, mhlo::ComparisonType::FLOAT);
+        break;
+      case ComparisonOrder::kTotal:
+        if (!primitive_util::HasNegativeZero(element_type)) {
+          return absl::UnimplementedError(absl::StrCat(
+              "TOTAL comparison order requires ComparisonExpander for ",
+              PrimitiveType_Name(element_type)));
+        }
+        properties.compare_type = mhlo::ComparisonTypeAttr::get(
+            context, mhlo::ComparisonType::TOTALORDER);
+        break;
+      case ComparisonOrder::kWeak:
+        properties.compare_type = mhlo::ComparisonTypeAttr::get(
+            context, mhlo::ComparisonType::WEAKORDER);
+        break;
+    }
+  } else if (primitive_util::IsComplexType(element_type) &&
+             instr->comparison_order() != ComparisonOrder::kPartial) {
+    return absl::UnimplementedError(
+        absl::StrCat(ComparisonOrderToString(instr->comparison_order()),
+                     " comparison order is not supported for ",
+                     PrimitiveType_Name(element_type)));
+  }
   auto result_types = llvm::to_vector(mlir::TypeRange{builder.getI1Type()});
   auto i1 = mhlo::MhloOpToStdScalarOp::mapOpOfType<mhlo::CompareOp>(
       builder.getLoc(), result_types, arg_types,
@@ -1961,6 +1989,38 @@ SmallVector<Value, 2> InlineBlock(OpBuilder& builder, Block& src_block,
     mapped_results.push_back(mapping.lookup(result));
   }
   return mapped_results;
+}
+
+Value EmitScatterAtomicUpdate(mlir::ImplicitLocOpBuilder& b,
+                              const HloComputation* to_apply,
+                              mlir::func::FuncOp reducer, Value update_elem,
+                              Value output_tensor, ValueRange indices) {
+  if (reducer.getArgument(0).use_empty() ||
+      to_apply->parameter_instruction(0)->IsDead()) {
+    Value unused_current;
+    if (!reducer.getArgument(0).use_empty()) {
+      mlir::Type arg_type = reducer.getArgument(0).getType();
+      if (auto complex_ty = mlir::dyn_cast<mlir::ComplexType>(arg_type)) {
+        mlir::TypedAttr zero = b.getZeroAttr(complex_ty.getElementType());
+        unused_current = mlir::complex::ConstantOp::create(
+            b, complex_ty, b.getArrayAttr({zero, zero}));
+      } else {
+        unused_current =
+            mlir::arith::ConstantOp::create(b, b.getZeroAttr(arg_type));
+      }
+    }
+    Value reduced_val = InlineBlock(b, reducer.getBody().front(),
+                                    {unused_current, update_elem})[0];
+    return AtomicStoreOp::create(b, reduced_val, output_tensor, indices)
+        .getResult();
+  }
+  auto atomic_rmw = AtomicRMWOp::create(b, output_tensor, indices);
+  mlir::OpBuilder body_b = atomic_rmw.getBodyBuilder();
+  Value reduced_val =
+      InlineBlock(body_b, reducer.getBody().front(),
+                  {atomic_rmw.getCurrentValue(), update_elem})[0];
+  xla::YieldOp::create(body_b, reducer->getLoc(), reduced_val);
+  return atomic_rmw.getResult();
 }
 
 bool IsSupportedElementalOp(HloOpcode opcode) {

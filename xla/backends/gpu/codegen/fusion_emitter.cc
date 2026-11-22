@@ -15,6 +15,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include "absl/container/flat_hash_set.h"
@@ -44,6 +45,7 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/target_util.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/launch_dim.h"
 
@@ -55,9 +57,8 @@ absl::flat_hash_set<int64_t> NonInvariantSliceIndices(
     const emitters::KernelArguments& arguments) {
   absl::flat_hash_set<int64_t> non_invariant;
   for (const emitters::KernelArgument& arg : arguments.args()) {
-    if (arg.kind() == emitters::KernelArgument::Kind::kManaged &&
-        !arg.invariant()) {
-      non_invariant.insert(arg.slice_index());
+    if (arg.slice_index().has_value() && !arg.invariant()) {
+      non_invariant.insert(*arg.slice_index());
     }
   }
   return non_invariant;
@@ -77,8 +78,10 @@ void AnnotateAttrsIfUnset(const emitters::KernelArguments& arguments,
       continue;
     }
 
-    if (!dst_arg.hasByValAttr()) {
-      dst.addDereferenceableParamAttr(arg_idx, kernel_argument.slice().size());
+    if (!dst_arg.hasByValAttr() &&
+        kernel_argument.dereferenceable_bytes() > 0) {
+      dst.addDereferenceableParamAttr(arg_idx,
+                                      kernel_argument.dereferenceable_bytes());
     }
     // If the alignment has been specified in the original function, use it.
     // Otherwise, use the alignment from the kernel argument.
@@ -92,8 +95,8 @@ void AnnotateAttrsIfUnset(const emitters::KernelArguments& arguments,
     // NVPTX derives ld.global.nc from readonly plus noalias; omitting both on
     // slices marked not invariant prevents inferred readonly from restoring it.
     bool slice_invariant =
-        kernel_argument.kind() != emitters::KernelArgument::Kind::kManaged ||
-        !non_invariant_slices.contains(kernel_argument.slice_index());
+        !kernel_argument.slice_index().has_value() ||
+        !non_invariant_slices.contains(*kernel_argument.slice_index());
     if (!kernel_argument.aliased() && slice_invariant) {
       dst.addParamAttr(arg_idx, llvm::Attribute::get(dst_arg.getContext(),
                                                      llvm::Attribute::NoAlias));
@@ -119,14 +122,39 @@ absl::Status AnnotateKernelLaunchDimensions(
   const se::BlockDim &limit = device_info.block_dim_limit(),
                      &block_count = launch_dims.block_counts();
   TF_RET_CHECK((limit.x == 0 || block_count.x <= limit.x) &&
-               (limit.y == 0 || block_count.y <= limit.y))
+               (limit.y == 0 || block_count.y <= limit.y) &&
+               (limit.z == 0 || block_count.z <= limit.z))
       << "Kernel '" << kernel->getName().str() << "' launch needs more blocks ("
-      << block_count.x << ", " << block_count.y
-      << ") than allowed by hardware (" << limit.x << ", " << limit.y << ").";
+      << block_count.x << ", " << block_count.y << ", " << block_count.z
+      << ") than allowed by hardware (" << limit.x << ", " << limit.y << ", "
+      << limit.z << ").";
   // Add __launch_bounds__ to metadata. This limits registers per thread to
   // avoid out-of-resources launching errors.
 
   llvm::Triple target_triple = llvm::Triple(llvm_module->getTargetTriple());
+
+  if (launch_dims.cluster_dims().has_value()) {
+    const se::ClusterDim& cluster = *launch_dims.cluster_dims();
+    TF_RET_CHECK(target_triple.isNVPTX())
+        << "Kernel '" << kernel->getName().str()
+        << "' specifies cluster dimensions on non-NVPTX target '"
+        << target_triple.str() << "'.";
+    TF_RET_CHECK(device_info.cuda_compute_capability().IsAtLeastHopper())
+        << "Kernel '" << kernel->getName().str()
+        << "' specifies cluster dimensions on pre-Hopper CUDA compute "
+        << "capability " << device_info.cuda_compute_capability().ToString()
+        << ".";
+    TF_RET_CHECK(cluster.x > 0 && cluster.y > 0 && cluster.z > 0)
+        << "Kernel '" << kernel->getName().str()
+        << "' has non-positive cluster dimensions: " << cluster.ToString();
+    TF_RET_CHECK(block_count.x % cluster.x == 0 &&
+                 block_count.y % cluster.y == 0 &&
+                 block_count.z % cluster.z == 0)
+        << "Kernel '" << kernel->getName().str() << "' block counts ("
+        << block_count.ToString()
+        << ") must be divisible by cluster dimensions (" << cluster.ToString()
+        << ").";
+  }
 
   if (target_triple.isNVPTX()) {
     // Our launch bounds are exact, so we can specify them as
@@ -136,8 +164,12 @@ absl::Status AnnotateKernelLaunchDimensions(
                      launch_dims.thread_counts_per_block().y, ",",
                      launch_dims.thread_counts_per_block().z);
     kernel->addFnAttr("nvvm.reqntid", attr);
-    // Maybe we want to set "reqnctapercluster" here, but not sure if needed or
-    // if LLVM supports that yet. Let's do that later when needed.
+    if (launch_dims.cluster_dims().has_value()) {
+      const se::ClusterDim& cluster = *launch_dims.cluster_dims();
+      kernel->addFnAttr(
+          "nvvm.cluster_dim",
+          absl::StrCat(cluster.x, ",", cluster.y, ",", cluster.z));
+    }
   } else if (target_triple.getArch() == llvm::Triple::amdgpu) {
     kernel->addFnAttr("amdgpu-flat-work-group-size",
                       absl::StrJoin({launch_dims.num_threads_per_block(),

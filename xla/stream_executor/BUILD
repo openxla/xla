@@ -305,7 +305,6 @@ cc_library(
         "//xla/hlo/testlib:test",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -720,7 +719,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:platform_port",
     ],
 )
@@ -1031,7 +1029,6 @@ cc_library(
     srcs = ["semantic_version.cc"],
     hdrs = ["semantic_version.h"],
     deps = [
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",

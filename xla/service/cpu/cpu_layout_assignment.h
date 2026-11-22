@@ -19,8 +19,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "tsl/platform/status.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
+#include "xla/hlo/transforms/layout_assignment.h"
 #include "xla/service/computation_layout.h"
-#include "xla/service/layout_assignment.h"
 
 namespace xla {
 namespace cpu {

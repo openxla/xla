@@ -166,9 +166,6 @@ class MockClient : public RTTIExtends<MockClient, Client> {
                HostBufferSemantics semantics,
                std::shared_ptr<const void> host_buffer_hold),
               (final));
-  // Expose the base class's `MakeArrayFromHostBuffer` overloads.
-  using xla::ifrt::Client::MakeArrayFromHostBuffer;
-
   MOCK_METHOD(absl::StatusOr<std::vector<ArrayRef>>,
               MakeArraysFromHostBufferShards,
               (absl::Span<MakeArraysFromHostBufferShardsSpec> specs,
@@ -404,6 +401,8 @@ class MockExecutable : public RTTIExtends<MockExecutable, Executable> {
       GetOutputLayouts, (), (const, final));
   MOCK_METHOD(absl::StatusOr<std::vector<std::shared_ptr<HloModule>>>,
               GetHloModules, (), (const, final));
+  MOCK_METHOD(absl::StatusOr<std::vector<std::vector<absl::string_view>>>,
+              GetOutputMemoryKinds, (), (const, final));
   MOCK_METHOD(absl::StatusOr<xla::ifrt::AttributeMap>, GetCostAnalysis, (),
               (const, final));
 
@@ -548,11 +547,6 @@ class MockLoadedHostCallback final
 
 class MockSharding : public RTTIExtends<MockSharding, Sharding> {
  public:
-  MockSharding()
-      : RTTIExtends<MockSharding, Sharding>(BasicDeviceList::Create({}),
-                                            MemoryKind(),
-                                            /*is_fully_replicated=*/false) {}
-
   MockSharding(DeviceListRef devices, MemoryKind memory_kind,
                bool is_fully_replicated)
       : RTTIExtends<MockSharding, Sharding>(devices, memory_kind,

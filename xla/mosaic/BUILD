@@ -41,16 +41,16 @@ cc_library(
     compatible_with = get_compatible_with_libtpu_portable(),
     deps = [
         ":stringify_util",
+        ":tpu_dialect_impl",
         ":tpu_enums_inc_gen",
         ":tpu_inc_gen",
+        ":tpu_ops_impl",
+        ":util",
         "//xla:shape_util",
-        "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
@@ -58,8 +58,50 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
-        "@llvm-project//mlir:VectorDialect",
         "@llvm-project//mlir:ViewLikeInterface",
+    ],
+)
+
+cc_library(
+    name = "tpu_dialect_impl",
+    srcs = ["dialect/tpu/tpu_dialect_impl.cc"],
+    hdrs = ["dialect/tpu/tpu_dialect_impl.h"],
+    compatible_with = get_compatible_with_libtpu_portable(),
+    visibility = internal_visibility(
+        ["//xla:internal"],
+        ["//visibility:private"],
+    ),
+    deps = [
+        ":util",
+        "//xla:shape_util",
+        "@com_google_absl//absl/log:check",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+cc_library(
+    name = "tpu_ops_impl",
+    srcs = ["dialect/tpu/tpu_ops_impl.cc"],
+    hdrs = ["dialect/tpu/tpu_ops_impl.h"],
+    compatible_with = get_compatible_with_libtpu_portable(),
+    visibility = internal_visibility(
+        ["//xla:internal"],
+        ["//visibility:private"],
+    ),
+    deps = [
+        ":util",
+        "//xla:shape_util",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:VectorDialect",
     ],
 )
 
@@ -161,6 +203,24 @@ gentbl_cc_library(
 )
 
 td_library(
+    name = "tpu_base_td_files",
+    srcs = [
+        "dialect/tpu/tpu_attr_base.td",
+        "dialect/tpu/tpu_type_base.td",
+    ],
+    compatible_with = get_compatible_with_libtpu_portable(),
+    includes = ["/"],
+    visibility = internal_visibility(
+        ["//xla:internal"],
+        ["//visibility:private"],
+    ),
+    deps = [
+        "@llvm-project//mlir:BuiltinDialectTdFiles",
+        "@llvm-project//mlir:OpBaseTdFiles",
+    ],
+)
+
+td_library(
     name = "tpu_td_files",
     srcs = [
         "dialect/tpu/tpu.td",
@@ -172,6 +232,7 @@ td_library(
     compatible_with = get_compatible_with_libtpu_portable(),
     includes = ["/"],
     deps = [
+        ":tpu_base_td_files",
         "@llvm-project//mlir:BuiltinDialectTdFiles",
         "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
         "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
@@ -303,4 +364,16 @@ cc_library(
     hdrs = ["dialect/tpu/stringify_util.h"],
     compatible_with = get_compatible_with_libtpu_portable(),
     deps = ["@llvm-project//llvm:Support"],
+)
+
+cc_library(
+    name = "util",
+    srcs = ["util.cc"],
+    hdrs = ["util.h"],
+    compatible_with = get_compatible_with_libtpu_portable(),
+    deps = [
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
 )

@@ -29,6 +29,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/casts.h"
+#include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -353,6 +354,16 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
       PjRtDeviceEventRefVector transfer_dependencies,
       std::vector<CommonPjRtClient::CrossHostTransferSpec> transfer_specs);
 
+  // Starts one external DMA access for `device_buffer` on `local_device`.
+  // Backends that expose device memory as a Linux dma-buf override this.
+  virtual tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess>
+  AcquireExternalDmaAccess(
+      LocalDeviceState* local_device, const PJRT_Memory* memory_space,
+      tsl::AsyncValueRef<RawSEDeviceMemory> device_buffer) {
+    return tsl::MakeErrorAsyncValueRef(absl::UnimplementedError(
+        "External DMA is not supported by this PjRtStreamExecutorRawClient."));
+  }
+
   absl::StatusOr<PjRtDeviceEventRef> CreateDeviceEvent(
       LocalDeviceId local_device_id, int memory_kind_id,
       Future<> dependency) override;
@@ -368,8 +379,7 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
 
   absl::StatusOr<PjRtRawBufferRef> ImportForeignMemory(
       PJRT_Memory* memory_space, void* device_ptr, size_t size,
-      absl::AnyInvocable<void() &&> on_delete_callback,
-      bool is_mutable) override;
+      PjRtOnceCallbackRef on_delete_callback, bool is_mutable) override;
 
   absl::StatusOr<PjRtDeviceEventRef> CreateDeviceEventForStream(
       LocalDeviceId local_device_id, std::intptr_t stream) override;

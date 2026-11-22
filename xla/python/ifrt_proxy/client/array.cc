@@ -210,7 +210,7 @@ Array::MakeArraysFromHostBufferShards(
   absl::Cleanup release_host_buffers = [&]() {
     for (xla::ifrt::Client::MakeArraysFromHostBufferShardsSpec& spec : specs) {
       for (auto& [shard_indices, host_buffer] : spec.buffers) {
-        host_buffer.on_done.reset();
+        host_buffer.hold.reset();
       }
     }
   };
@@ -239,7 +239,7 @@ Array::MakeArraysFromHostBufferShards(
           MakeHostBuffer(client, rpc_helper, host_buffer.data,
                          host_buffer.dtype, host_buffer.shape,
                          host_buffer.byte_strides, semantics,
-                         /*host_buffer_hold=*/std::move(host_buffer.on_done)));
+                         /*host_buffer_hold=*/std::move(host_buffer.hold)));
       host_buffer_handles.push_back(host_buffer_handle);
     }
   }
@@ -320,6 +320,9 @@ Array::MakeArraysFromHostBufferShards(
 absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> Array::MakeErrorArrays(
     xla::ifrt::Client* client, std::shared_ptr<RpcHelper> rpc_helper,
     const absl::Status& error, absl::Span<const ArraySpec> array_specs) {
+  if (error.ok()) {
+    return absl::InvalidArgumentError("Error status must not be OK");
+  }
   auto req = std::make_unique<MakeErrorArraysRequest>();
   *req->mutable_error() = tsl::StatusToProto(error);
 
@@ -663,6 +666,14 @@ absl::StatusOr<xla::ifrt::ArrayRef> Array::FullyReplicatedShard(
     ArrayCopySemantics semantics) {
   tsl::profiler::TraceMe traceme_ifrt_entrypoint(
       "IfrtProxyEntrypointFullyReplicatedShard");
+  if (array_spec_.dtype.kind() != DType::kToken) {
+    absl::StatusOr<Shape> shard_shape =
+        array_spec_.sharding->GetShardShape(array_spec_.shape);
+    if (shard_shape.ok() && *shard_shape != array_spec_.shape) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Array is not fully replicated: ", array_spec_));
+    }
+  }
   auto req = std::make_unique<FullyReplicatedShardRequest>();
   ABSL_ASSIGN_OR_RETURN(ArrayHandle handle, GetHandle(semantics));
   req->set_array_handle(handle.handle);

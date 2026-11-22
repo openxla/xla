@@ -79,12 +79,16 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/codegen/emitters/computation_fingerprint.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/kernel_api_builder.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/codegen/llvm_kernel_source.h"
 #include "xla/codegen/mlir_kernel_source.h"
 #include "xla/future.h"
+#include "xla/hlo/analysis/indexing_map.h"
+#include "xla/hlo/analysis/interval.h"
+#include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -98,6 +102,7 @@ limitations under the License.
 #include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -130,35 +135,31 @@ std::vector<const NestedKernelSpec*> CollectLeafSpecs(
 }
 
 void EmitNode(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
-              mlir::Value rel_bid, mlir::Value tid, int64_t active_blocks,
-              int64_t active_threads, absl::Span<const mlir::Value> arg_ptrs,
+              mlir::Value rel_bid, mlir::Value tid,
+              absl::Span<const mlir::Value> arg_ptrs,
               const LeafDecls& leaf_decls);
 
-void EmitLeaf(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
-              mlir::Value rel_bid, mlir::Value tid, int64_t active_blocks,
-              int64_t active_threads, absl::Span<const mlir::Value> arg_ptrs,
-              const LeafDecls& leaf_decls) {
-  int64_t leaf_blocks = spec.launch_dims.num_blocks();
-  if (leaf_blocks < active_blocks) {
-    mlir::Value block_bound =
-        mlir::arith::ConstantIntOp::create(b, leaf_blocks, 32);
-    mlir::Value block_active = mlir::arith::CmpIOp::create(
-        b, mlir::arith::CmpIPredicate::ult, rel_bid, block_bound);
-    auto block_if =
-        mlir::scf::IfOp::create(b, block_active, /*withElseRegion=*/false);
-    b.setInsertionPointToStart(&block_if.getThenRegion().front());
-  }
+// Emits `if (value < bound)` and moves the insertion point of `b` into its
+// `then` region. `value` is an `index` with a known range, so
+// `SimplifyArithPass` removes the guard if it always holds.
+void EmitUpperBoundGuard(mlir::ImplicitLocOpBuilder& b, mlir::Value value,
+                         int64_t bound) {
+  mlir::Value bound_val = mlir::arith::ConstantIndexOp::create(b, bound);
+  mlir::Value in_bounds = mlir::arith::CmpIOp::create(
+      b, mlir::arith::CmpIPredicate::ult, value, bound_val);
+  auto if_op = mlir::scf::IfOp::create(b, in_bounds, /*withElseRegion=*/false);
+  b.setInsertionPointToStart(&if_op.getThenRegion().front());
+}
 
-  int64_t leaf_threads = spec.launch_dims.num_threads_per_block();
-  if (leaf_threads < active_threads) {
-    mlir::Value tid_bound =
-        mlir::arith::ConstantIntOp::create(b, leaf_threads, 32);
-    mlir::Value tid_active = mlir::arith::CmpIOp::create(
-        b, mlir::arith::CmpIPredicate::ult, tid, tid_bound);
-    auto tid_if =
-        mlir::scf::IfOp::create(b, tid_active, /*withElseRegion=*/false);
-    b.setInsertionPointToStart(&tid_if.getThenRegion().front());
-  }
+void EmitLeaf(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
+              mlir::Value rel_bid, mlir::Value tid,
+              absl::Span<const mlir::Value> arg_ptrs,
+              const LeafDecls& leaf_decls) {
+  EmitUpperBoundGuard(b, rel_bid, spec.launch_dims.num_blocks());
+  // TODO(b/480040242): Utilize all threads in the outer CTA (e.g. `tid >= 128`)
+  // in `LoopFusion` sub-kernels when a sibling stage expands the block size,
+  // instead of masking extra threads off here.
+  EmitUpperBoundGuard(b, tid, spec.launch_dims.num_threads_per_block());
 
   llvm::SmallVector<mlir::Value> call_args;
   call_args.reserve(spec.input_arg_indices.size() +
@@ -169,28 +170,29 @@ void EmitLeaf(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
   for (int64_t arg_idx : spec.output_arg_indices) {
     call_args.push_back(arg_ptrs[arg_idx]);
   }
-  call_args.push_back(rel_bid);
+  call_args.push_back(
+      mlir::arith::IndexCastUIOp::create(b, b.getI32Type(), rel_bid));
   mlir::LLVM::CallOp::create(b, leaf_decls.at(spec.fusion), call_args);
 }
 
 void EmitHorizontal(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
                     mlir::Value rel_bid, mlir::Value tid,
-                    int64_t active_threads,
                     absl::Span<const mlir::Value> arg_ptrs,
                     const LeafDecls& leaf_decls) {
-  int64_t cluster_x = spec.cluster_dim.has_value()
-                          ? static_cast<int64_t>(spec.cluster_dim->x)
-                          : 1;
+  int64_t cluster_x =
+      spec.launch_dims.cluster_dims().has_value()
+          ? static_cast<int64_t>(spec.launch_dims.cluster_dims()->x)
+          : 1;
   int64_t block_offset = 0;
   for (size_t idx = 0; idx < spec.children.size(); ++idx) {
     const NestedKernelSpec& child = spec.children[idx];
     int64_t child_blocks = child.launch_dims.num_blocks();
-    int64_t allocated_blocks = child.cluster_dim.has_value()
+    int64_t allocated_blocks = child.launch_dims.cluster_dims().has_value()
                                    ? RoundUpTo<int64_t>(child_blocks, cluster_x)
                                    : child_blocks;
     int64_t upper_bound = block_offset + allocated_blocks;
     mlir::Value bound_val =
-        mlir::arith::ConstantIntOp::create(b, upper_bound, 32);
+        mlir::arith::ConstantIndexOp::create(b, upper_bound);
     mlir::Value in_range = mlir::arith::CmpIOp::create(
         b, mlir::arith::CmpIPredicate::ult, rel_bid, bound_val);
 
@@ -199,16 +201,24 @@ void EmitHorizontal(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
         mlir::scf::IfOp::create(b, in_range, /*withElseRegion=*/has_else);
     b.setInsertionPointToStart(&if_op.getThenRegion().front());
 
-    mlir::Value child_rel_bid = rel_bid;
-    if (block_offset != 0) {
-      mlir::Value offset_val =
-          mlir::arith::ConstantIntOp::create(b, block_offset, 32);
-      child_rel_bid = mlir::arith::SubIOp::create(b, rel_bid, offset_val);
-    }
+    // On this path `rel_bid` is in `[block_offset, upper_bound)`.
+    // `SimplifyArithPass` does not derive ranges from the enclosing `scf.if`,
+    // so state the range of the child's block id explicitly. `xla.range` also
+    // keeps the op from being folded to `rel_bid` if `block_offset` is 0.
+    mlir::MLIRContext* ctx = b.getContext();
+    IndexingMap child_bid_map(
+        SymbolicMap::Get(ctx, /*num_dimensions=*/1, /*num_symbols=*/0,
+                         {CreateDimExpr(0, ctx) - block_offset}),
+        {IndexingMap::Variable{block_offset, upper_bound - 1}},
+        /*range_vars=*/{}, /*rt_vars=*/{});
+    mlir::Value child_rel_bid =
+        ApplyIndexingOp::create(b, /*dims=*/{rel_bid}, /*symbols=*/{},
+                                child_bid_map,
+                                Interval{0, allocated_blocks - 1})
+            .getResult(0);
     block_offset = upper_bound;
 
-    EmitNode(b, child, child_rel_bid, tid, allocated_blocks, active_threads,
-             arg_ptrs, leaf_decls);
+    EmitNode(b, child, child_rel_bid, tid, arg_ptrs, leaf_decls);
 
     if (has_else) {
       b.setInsertionPointToStart(&if_op.getElseRegion().front());
@@ -217,47 +227,41 @@ void EmitHorizontal(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
 }
 
 void EmitPhased(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
-                mlir::Value rel_bid, mlir::Value tid, int64_t active_blocks,
-                int64_t active_threads, absl::Span<const mlir::Value> arg_ptrs,
+                mlir::Value rel_bid, mlir::Value tid,
+                absl::Span<const mlir::Value> arg_ptrs,
                 const LeafDecls& leaf_decls) {
   mlir::OpBuilder::InsertPoint caller_ip = b.saveInsertionPoint();
   auto is_single_block = [](const NestedKernelSpec& child) {
     return child.launch_dims.num_blocks() == 1 &&
-           !child.cluster_dim.has_value();
+           !child.launch_dims.cluster_dims().has_value();
   };
   // Contiguous single-block phases execute exclusively on relative block 0
   // (`rel_bid < 1`) and share a single block-range guard so block barriers
   // synchronize them without flushing L1 via a cluster barrier.
-  mlir::Value c0 = mlir::arith::ConstantIntOp::create(b, 0, 32);
-  mlir::Value c1 = mlir::arith::ConstantIntOp::create(b, 1, 32);
+  mlir::Value c0 = mlir::arith::ConstantIndexOp::create(b, 0);
   std::optional<mlir::scf::IfOp> single_block_if;
   for (size_t idx = 0; idx < spec.children.size(); ++idx) {
     const NestedKernelSpec& child = spec.children[idx];
     const bool child_single_block = is_single_block(child);
     if (child_single_block) {
-      if (active_blocks > 1) {
-        // While block 0 executes single-block phases, all other blocks in the
-        // cluster skip ahead avoiding any synchronization between phases.
-        if (!single_block_if.has_value()) {
-          b.restoreInsertionPoint(caller_ip);
-          mlir::Value in_block0 = mlir::arith::CmpIOp::create(
-              b, mlir::arith::CmpIPredicate::ult, rel_bid, c1);
-          single_block_if =
-              mlir::scf::IfOp::create(b, in_block0, /*withElseRegion=*/false);
-        }
-        b.setInsertionPoint(single_block_if->thenYield());
-      } else {
+      // While block 0 executes single-block phases, all other blocks in the
+      // cluster skip ahead avoiding any synchronization between phases.
+      // `SimplifyArithPass` removes this guard when `rel_bid` is statically 0.
+      if (!single_block_if.has_value()) {
         b.restoreInsertionPoint(caller_ip);
+        mlir::Value c1 = mlir::arith::ConstantIndexOp::create(b, 1);
+        mlir::Value in_block0 = mlir::arith::CmpIOp::create(
+            b, mlir::arith::CmpIPredicate::ult, rel_bid, c1);
+        single_block_if =
+            mlir::scf::IfOp::create(b, in_block0, /*withElseRegion=*/false);
       }
-      EmitNode(b, child, c0, tid, /*active_blocks=*/1, active_threads, arg_ptrs,
-               leaf_decls);
+      b.setInsertionPoint(single_block_if->thenYield());
+      EmitNode(b, child, c0, tid, arg_ptrs, leaf_decls);
     } else {
       single_block_if.reset();
       b.restoreInsertionPoint(caller_ip);
-      EmitNode(b, child, rel_bid, tid, active_blocks, active_threads, arg_ptrs,
-               leaf_decls);
+      EmitNode(b, child, rel_bid, tid, arg_ptrs, leaf_decls);
     }
-
     if (idx + 1 < spec.children.size()) {
       if (child_single_block && is_single_block(spec.children[idx + 1])) {
         // Both phases run exclusively on relative block 0. Emit a block barrier
@@ -271,7 +275,8 @@ void EmitPhased(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
         // This is safe as long as sub-kernels use default barrier ID 0 only.
         // TODO(tjoerg): Revisit when adding support for Triton-generated
         // sub-kernels.
-        mlir::NVVM::BarrierOp::create(b, /*barrierId=*/c1,
+        mlir::Value barrier_id = mlir::arith::ConstantIntOp::create(b, 1, 32);
+        mlir::NVVM::BarrierOp::create(b, /*barrierId=*/barrier_id,
                                       /*numberOfThreads=*/mlir::Value{});
       } else {
         // Emit a cluster barrier at `caller_ip` level outside all child block
@@ -288,23 +293,20 @@ void EmitPhased(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
 }
 
 void EmitNode(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
-              mlir::Value rel_bid, mlir::Value tid, int64_t active_blocks,
-              int64_t active_threads, absl::Span<const mlir::Value> arg_ptrs,
+              mlir::Value rel_bid, mlir::Value tid,
+              absl::Span<const mlir::Value> arg_ptrs,
               const LeafDecls& leaf_decls) {
   mlir::OpBuilder::InsertionGuard guard(b);
 
   switch (spec.kind) {
     case NestedKernelSpec::Kind::kLeaf:
-      EmitLeaf(b, spec, rel_bid, tid, active_blocks, active_threads, arg_ptrs,
-               leaf_decls);
+      EmitLeaf(b, spec, rel_bid, tid, arg_ptrs, leaf_decls);
       break;
     case NestedKernelSpec::Kind::kHorizontal:
-      EmitHorizontal(b, spec, rel_bid, tid, active_threads, arg_ptrs,
-                     leaf_decls);
+      EmitHorizontal(b, spec, rel_bid, tid, arg_ptrs, leaf_decls);
       break;
     case NestedKernelSpec::Kind::kPhased:
-      EmitPhased(b, spec, rel_bid, tid, active_blocks, active_threads, arg_ptrs,
-                 leaf_decls);
+      EmitPhased(b, spec, rel_bid, tid, arg_ptrs, leaf_decls);
       break;
   }
 }
@@ -348,32 +350,27 @@ NestedKernelSpec BuildNestedKernelSpec(const HloFusionAnalysis& analysis,
   }
 
   std::vector<const HloFusionInstruction*> child_fusions;
-  absl::flat_hash_map<const HloInstruction*, std::vector<int64_t>>
+  absl::flat_hash_map<const HloInstruction*, ShapeTree<int64_t>>
       fusion_to_child_output_arg_indices;
 
   for (int64_t root_idx = 0; root_idx < analysis.fusion_root_count();
        ++root_idx) {
-    const HloInstruction* inst = &analysis.fusion_root(root_idx).instruction();
-    CHECK(!inst->shape().IsTuple())
+    const HloInstruction* root_inst =
+        &analysis.fusion_root(root_idx).instruction();
+    CHECK(!root_inst->shape().IsTuple())
         << "Nested fusion tuple output must be unpacked via get-tuple-element: "
-        << inst->ToString();
-    int64_t tuple_idx = 0;
-    if (inst->opcode() == HloOpcode::kGetTupleElement) {
-      tuple_idx = inst->tuple_index();
-      inst = inst->operand(0);
-    }
+        << root_inst->ToString();
+    auto [inst, shape_index] = root_inst->LatestNonGteAncestorAndIndex();
     const auto* child_fusion = Cast<HloFusionInstruction>(inst);
-    auto [it, inserted] =
-        fusion_to_child_output_arg_indices.try_emplace(child_fusion);
+    auto [it, inserted] = fusion_to_child_output_arg_indices.try_emplace(
+        child_fusion, &child_fusion->shape(), -1);
     if (inserted) {
       child_fusions.push_back(child_fusion);
-      it->second.assign(ShapeUtil::GetLeafCount(child_fusion->shape()), -1);
     }
-    CHECK_LT(tuple_idx, it->second.size());
-    CHECK_EQ(it->second[tuple_idx], -1)
-        << "Duplicate root referencing output " << tuple_idx << " of "
-        << child_fusion->ToString();
-    it->second[tuple_idx] = spec.output_arg_indices[root_idx];
+    int64_t& arg_idx = *it->second.mutable_element(shape_index);
+    CHECK_EQ(arg_idx, -1) << "Duplicate root referencing output " << shape_index
+                          << " of " << child_fusion->ToString();
+    arg_idx = spec.output_arg_indices[root_idx];
   }
 
   if (spec.kind == NestedKernelSpec::Kind::kPhased) {
@@ -401,27 +398,29 @@ NestedKernelSpec BuildNestedKernelSpec(const HloFusionAnalysis& analysis,
       }
 
       CHECK(spec.kind == NestedKernelSpec::Kind::kPhased);
-      const HloInstruction* prod_inst = operand;
-      int64_t prod_tuple_idx = 0;
-      if (prod_inst->opcode() == HloOpcode::kGetTupleElement) {
-        prod_tuple_idx = prod_inst->tuple_index();
-        prod_inst = prod_inst->operand(0);
-      }
-      auto prod_it = absl::c_find_if(
-          spec.children,
-          [&](const NestedKernelSpec& c) { return c.fusion == prod_inst; });
-      CHECK(prod_it != spec.children.end());
-      CHECK_LT(prod_tuple_idx, prod_it->output_arg_indices.size());
-      child_input_arg_indices.push_back(
-          prod_it->output_arg_indices[prod_tuple_idx]);
+      auto [prod_inst, prod_shape_index] =
+          operand->LatestNonGteAncestorAndIndex();
+      CHECK(absl::c_any_of(spec.children, [&](const NestedKernelSpec& c) {
+        return c.fusion == prod_inst;
+      }));
+      int64_t prod_arg_idx =
+          fusion_to_child_output_arg_indices.at(prod_inst).element(
+              prod_shape_index);
+      CHECK_GE(prod_arg_idx, 0)
+          << "Expected leaf output of " << prod_inst->ToString() << " at "
+          << prod_shape_index;
+      child_input_arg_indices.push_back(prod_arg_idx);
     }
 
-    std::vector<int64_t>& child_output_arg_indices =
-        fusion_to_child_output_arg_indices[child_fusion];
-    for (int64_t out_arg_idx : child_output_arg_indices) {
+    const ShapeTree<int64_t>& output_tree =
+        fusion_to_child_output_arg_indices.at(child_fusion);
+    std::vector<int64_t> child_output_arg_indices;
+    child_output_arg_indices.reserve(output_tree.leaf_count());
+    for (const auto& [shape_index, out_arg_idx] : output_tree.leaves()) {
       CHECK_GE(out_arg_idx, 0)
-          << "Multi-output nested fusion has unreferenced output in "
-          << child_fusion->ToString();
+          << "Multi-output nested fusion has unreferenced output "
+          << shape_index << " in " << child_fusion->ToString();
+      child_output_arg_indices.push_back(out_arg_idx);
     }
     HloFusionAnalysis child_analysis =
         HloFusionAnalysis::Create(*child_fusion, analysis.device_info());
@@ -449,17 +448,20 @@ NestedKernelSpec BuildNestedKernelSpec(const HloFusionAnalysis& analysis,
       max_blocks = std::max(max_blocks, child.launch_dims.num_blocks());
       max_threads =
           std::max(max_threads, child.launch_dims.num_threads_per_block());
-      child_uses_cluster |= child.cluster_dim.has_value();
+      child_uses_cluster |= child.launch_dims.cluster_dims().has_value();
     }
     // Cluster barriers only synchronize blocks within one cluster, so allocate
     // a portable cluster of power-of-2 size in {2, 4, 8} when multiple blocks
     // are needed, or a single block without a cluster when `max_blocks <= 1`.
     uint64_t cluster_blocks = absl::bit_ceil(std::min<uint64_t>(
         max_blocks, ThreadBlockSpecializedFusion::kMaxBlocksPerCluster));
-    spec.launch_dims = LaunchDimensions(cluster_blocks, max_threads);
+    std::optional<se::ClusterDim> cluster_dims;
     if (cluster_blocks > 1 || child_uses_cluster) {
-      spec.cluster_dim = se::ClusterDim(cluster_blocks, 1, 1);
+      cluster_dims = se::ClusterDim(cluster_blocks, 1, 1);
     }
+    spec.launch_dims =
+        LaunchDimensions(se::BlockDim(cluster_blocks, 1, 1),
+                         se::ThreadDim(max_threads, 1, 1), cluster_dims);
     return spec;
   }
 
@@ -467,7 +469,7 @@ NestedKernelSpec BuildNestedKernelSpec(const HloFusionAnalysis& analysis,
   // occupies a multiple of `cluster_x` CTAs, while non-clustered children pack
   // contiguously afterward without per-child padding.
   absl::c_stable_partition(spec.children, [](const NestedKernelSpec& child) {
-    return child.cluster_dim.has_value();
+    return child.launch_dims.cluster_dims().has_value();
   });
 
   uint64_t max_threads = 0;
@@ -475,14 +477,15 @@ NestedKernelSpec BuildNestedKernelSpec(const HloFusionAnalysis& analysis,
   for (const NestedKernelSpec& child : spec.children) {
     max_threads =
         std::max(max_threads, child.launch_dims.num_threads_per_block());
-    if (child.cluster_dim.has_value()) {
-      cluster_x = std::max(cluster_x.value_or(1), child.cluster_dim->x);
+    if (child.launch_dims.cluster_dims().has_value()) {
+      cluster_x =
+          std::max(cluster_x.value_or(1), child.launch_dims.cluster_dims()->x);
     }
   }
 
   uint64_t total_blocks = 0;
   for (const NestedKernelSpec& child : spec.children) {
-    if (child.cluster_dim.has_value()) {
+    if (child.launch_dims.cluster_dims().has_value()) {
       total_blocks +=
           RoundUpTo<uint64_t>(child.launch_dims.num_blocks(), *cluster_x);
     } else {
@@ -490,10 +493,13 @@ NestedKernelSpec BuildNestedKernelSpec(const HloFusionAnalysis& analysis,
     }
   }
   total_blocks = RoundUpTo<uint64_t>(total_blocks, cluster_x.value_or(1));
-  spec.launch_dims = LaunchDimensions(total_blocks, max_threads);
+  std::optional<se::ClusterDim> cluster_dims;
   if (cluster_x.has_value()) {
-    spec.cluster_dim = se::ClusterDim(*cluster_x, 1, 1);
+    cluster_dims = se::ClusterDim(*cluster_x, 1, 1);
   }
+  spec.launch_dims =
+      LaunchDimensions(se::BlockDim(total_blocks, 1, 1),
+                       se::ThreadDim(max_threads, 1, 1), cluster_dims);
   return spec;
 }
 
@@ -573,7 +579,6 @@ absl::Status ThreadBlockSpecializedFusion::EmitLauncherBody(
     absl::Span<const mlir::OwningOpRef<mlir::ModuleOp>> nested_modules) const {
   mlir::MLIRContext* ctx = launcher_module.getContext();
   mlir::ImplicitLocOpBuilder b(entry_function.getLoc(), ctx);
-  mlir::Type i32_ty = b.getI32Type();
   auto ptr_ty = mlir::LLVM::LLVMPointerType::get(ctx);
 
   // Declare external llvm.func symbols for each lowered leaf kernel.
@@ -606,16 +611,16 @@ absl::Status ThreadBlockSpecializedFusion::EmitLauncherBody(
         mlir::UnrealizedConversionCastOp::create(b, ptr_ty, arg).getResult(0));
   }
 
-  // Emit block and thread IDs.
-  mlir::Value bid_idx =
-      mlir::gpu::BlockIdOp::create(b, mlir::gpu::Dimension::x);
-  mlir::Value tid_idx =
-      mlir::gpu::ThreadIdOp::create(b, mlir::gpu::Dimension::x);
-  mlir::Value bid = mlir::arith::IndexCastUIOp::create(b, i32_ty, bid_idx);
-  mlir::Value tid = mlir::arith::IndexCastUIOp::create(b, i32_ty, tid_idx);
+  // Emit block and thread IDs. The `xla.range` annotations let
+  // `SimplifyArithPass` remove the bound guards that always hold.
+  int64_t num_blocks = launch_dimensions().num_blocks();
+  int64_t num_threads = launch_dimensions().num_threads_per_block();
+  auto bid = mlir::gpu::BlockIdOp::create(b, mlir::gpu::Dimension::x);
+  bid->setAttr("xla.range", b.getIndexArrayAttr({0, num_blocks - 1}));
+  auto tid = mlir::gpu::ThreadIdOp::create(b, mlir::gpu::Dimension::x);
+  tid->setAttr("xla.range", b.getIndexArrayAttr({0, num_threads - 1}));
 
-  EmitNode(b, root_spec_, bid, tid, launch_dimensions().num_blocks(),
-           launch_dimensions().num_threads_per_block(), arg_ptrs, leaf_decls);
+  EmitNode(b, root_spec_, bid, tid, arg_ptrs, leaf_decls);
 
   b.setInsertionPointToEnd(entry_block);
   mlir::func::ReturnOp::create(
@@ -759,7 +764,8 @@ ThreadBlockSpecializedFusion::CreateAndLowerMLIRModule(
   ABSL_RETURN_IF_ERROR(LowerLauncherModuleToLlvmDialect(
       *launcher_module, device_info_, should_verify));
 
-  if (std::optional<se::ClusterDim> cluster_dim = this->cluster_dim()) {
+  if (std::optional<se::ClusterDim> cluster_dim =
+          launch_dimensions().cluster_dims()) {
     auto launcher_entry = launcher_module->lookupSymbol<mlir::LLVM::LLVMFuncOp>(
         entry_function_name);
     TF_RET_CHECK(launcher_entry != nullptr);
@@ -815,7 +821,7 @@ AsyncThunkSequence ThreadBlockSpecializedFusion::Emit(
     const HloFusionInstruction& fusion) const {
   VLOG(4) << "ThreadBlockSpecializedFusion: "
           << fusion.fused_instructions_computation()->ToString();
-  if (cluster_dim().has_value()) {
+  if (launch_dimensions().cluster_dims().has_value()) {
     const auto* cuda_cc =
         ir_emitter_context.gpu_compute_capability().cuda_compute_capability();
     if (cuda_cc == nullptr || !cuda_cc->IsAtLeastHopper()) {
@@ -831,9 +837,10 @@ AsyncThunkSequence ThreadBlockSpecializedFusion::Emit(
                                         GetDefaultBufferAlignment(), &fusion));
 
   std::string discriminator = GetSpecCacheDiscriminator(root_spec_);
+  std::string fingerprint = emitters::GetComputationFingerprint(
+      fusion.fused_instructions_computation(), args.args(), discriminator);
   auto [future_entry, cached] = ir_emitter_context.kernel_cache().GetWithStatus(
-      fusion.fused_instructions_computation(), args, discriminator,
-      [&]() -> xla::Future<KernelReuseCache::Entry> {
+      fingerprint, args, [&]() -> xla::Future<KernelReuseCache::Entry> {
         std::string kernel_name = ir_emitter_context.GetSanitizedUniqueName(
             std::string(fusion.name()));
         BorrowedMlirContext borrowed_context =
@@ -861,13 +868,13 @@ AsyncThunkSequence ThreadBlockSpecializedFusion::Emit(
                            std::nullopt, use_pdl};
         return ir_emitter_context.kernel_compiler()
             ->CompileToTargetBinary(LlvmKernelSource(std::move(safe_module)),
-                                    spec)
-            .Map([spec = std::move(spec), cluster_dim = cluster_dim(),
+                                    fingerprint, spec)
+            .Map([spec = std::move(spec),
                   max_shmem_bytes = llvm_source_wrapper.max_shmem_bytes](
                      const std::vector<uint8_t>& cubin) mutable {
               KernelReuseCache::Entry entry{
                   std::string{spec.name()}, spec.launch_dimensions(),
-                  cluster_dim, max_shmem_bytes,
+                  max_shmem_bytes,
                   std::make_shared<const std::vector<uint8_t>>(cubin)};
               entry.use_pdl = spec.use_pdl();
               return entry;

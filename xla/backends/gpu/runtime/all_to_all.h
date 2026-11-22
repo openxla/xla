@@ -29,6 +29,9 @@ limitations under the License.
 
 namespace xla::gpu {
 
+// Maximum number of blocks per grid for the Triton all-to-all kernel.
+inline constexpr int64_t kAllToAllMaxBlocksPerGrid = 64;
+
 // Strategy for performing an all-to-all via the Triton collective kernel
 // backend.
 enum class AllToAllStrategy {
@@ -66,10 +69,10 @@ absl::StatusOr<AllToAllInfo> BuildAllToAllInfo(
 //   [2] remote scratch buffer pointer table (kScratchBuffer, index 1)
 //   [3] signal flags (kScratchBuffer, index 0)
 //   [4] runtime rank (kRuntimeRank)
-// `scratch_memory_type` is used for both scratch buffers.
+// `symmetric_memory_type` is used for both symmetric scratch buffers.
 absl::StatusOr<CollectiveKernelSpec> CreateAllToAllKernelSpec(
     const HloInstruction* instr, const LaunchDimensions& launch_dimensions,
-    SymmetricMemoryType scratch_memory_type);
+    SymmetricMemoryType symmetric_memory_type);
 
 }  // namespace xla::gpu
 

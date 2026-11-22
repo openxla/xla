@@ -78,6 +78,16 @@ func.func @good_array_with_multiple_unreduced_axes() {
 
 // -----
 
+func.func @array_with_empty_memory_kind() {
+  // expected-error@+4 {{Memory kind cannot be empty}}
+  %0 = builtin.unrealized_conversion_cast to
+      !ifrt.array<tensor<4x6xi32>, #ifrt.sharding_param<4x1 to [0,1] on 2x2>,
+                  [0,1,2,3], memory_kind = "">
+  return
+}
+
+// -----
+
 func.func @array_with_bad_layout() {
   // expected-error@+4 {{Invalid layout mode}}
   %0 = builtin.unrealized_conversion_cast to
@@ -281,8 +291,26 @@ func.func @array_unsupported_element_type() {
 // -----
 
 func.func @array_shape_element_count_overflow() {
-  // expected-error@+3 {{Array shape element count overflows 64-bit signed integer}}
+  // expected-error@+3 {{Array shape element count exceeds maximum supported elements (72057594037927935)}}
   %0 = builtin.unrealized_conversion_cast to
-      !ifrt.array<tensor<4611686018427387904x4xi32>, #ifrt.sharding_param<1x1 to [0] on 1>, [0]>
+      !ifrt.array<tensor<65536x281474976710656xi32>, #ifrt.sharding_param<1x1 to [0] on 1>, [0]>
+  return
+}
+
+// -----
+
+func.func @array_shape_exceeds_max_num_elements() {
+  // expected-error@+3 {{Array shape element count exceeds maximum supported elements (72057594037927935)}}
+  %0 = builtin.unrealized_conversion_cast to
+      !ifrt.array<tensor<72057594037927936xi8>, #ifrt.sharding_param<1 to [0] on 1>, [0]>
+  return
+}
+
+// -----
+
+func.func @array_shape_zero_dim_exceeds_max_num_elements() {
+  // expected-error@+3 {{Array shape element count exceeds maximum supported elements (72057594037927935)}}
+  %0 = builtin.unrealized_conversion_cast to
+      !ifrt.array<tensor<0x72057594037927936xi8>, #ifrt.sharding_param<1x1 to [0] on 1>, [0]>
   return
 }

@@ -399,6 +399,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
+        "@highway//:hwy",
         "@ml_dtypes_py//ml_dtypes:float8",
         "@tsl//tsl/platform:denormal",
         "@tsl//tsl/platform:ml_dtypes",
@@ -1381,7 +1382,6 @@ cc_library(
             "@com_google_absl//absl/strings:string_view",
             "@com_google_absl//absl/time",
             "@com_google_protobuf//:protobuf",
-            "@tsl//tsl/platform:platform_port",
         ],
 )
 

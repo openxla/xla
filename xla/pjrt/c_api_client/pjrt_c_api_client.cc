@@ -507,31 +507,13 @@ absl::StatusOr<PjRtDevice*> PjRtCApiClient::LookupAddressableDevice(
 
 void PjRtCApiClient::UpdateGlobalProcessInfo(
     absl::Span<xla::coordination::TaskInfo> infos) {
-  auto translate_state = [](xla::coordination::TaskState state) {
-    switch (state) {
-      case xla::coordination::TaskState::UNSPECIFIED:
-        return PJRT_ProcessState_kUnspecified;
-      case xla::coordination::TaskState::UNINITIALIZED:
-        return PJRT_ProcessState_kUninitialized;
-      case xla::coordination::TaskState::DISCONNECTED:
-        return PJRT_ProcessState_kDisconnected;
-      case xla::coordination::TaskState::CONNECTED:
-        return PJRT_ProcessState_kConnected;
-      case xla::coordination::TaskState::ERROR:
-        return PJRT_ProcessState_kError;
-      default:
-        LOG(FATAL) << "Unexpected TaskState " << state;
-        return PJRT_ProcessState_kUnspecified;
-    }
-  };
-
   std::vector<PJRT_ProcessInfo> process_infos;
   for (const xla::coordination::TaskInfo& info : infos) {
     PJRT_ProcessInfo process_info;
     process_info.struct_size = PJRT_ProcessInfo_STRUCT_SIZE;
     process_info.task_id = info.task_id();
     process_info.incarnation_id = info.incarnation();
-    process_info.state = translate_state(info.state());
+    process_info.state = pjrt::TaskStateToPjRtProcessState(info.state());
     process_info.error_code = info.error_code();
     process_info.error_message = info.error_message().data();
     process_info.error_message_size = info.error_message().size();
@@ -2045,68 +2027,13 @@ absl::StatusOr<PjRtMemorySpace*> PjRtCApiDevice::memory_space_by_kind(
 }
 
 absl::StatusOr<tsl::AllocatorStats> PjRtCApiDevice::GetAllocatorStats() const {
-  PJRT_Device_MemoryStats_Args args;
+  PJRT_Device_MemoryStats_Args args{};
   args.struct_size = PJRT_Device_MemoryStats_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
   args.device = device_;
   const PJRT_Api* api = client_->pjrt_c_api();
   RETURN_STATUS_IF_PJRT_ERROR(api->PJRT_Device_MemoryStats(&args), api);
-
-  tsl::AllocatorStats result;
-  result.bytes_in_use = args.bytes_in_use;
-
-  // The PJRT C API supports optionally returning most fields, but only some
-  // fields in tsl::AllocatorStats are optional. Return -1 for unset,
-  // non-optional fields. We could change tsl::AllocatorStats to have all
-  // optional fields, but that requires changing a lot of callers.
-  if (args.peak_bytes_in_use_is_set) {
-    result.peak_bytes_in_use = args.peak_bytes_in_use;
-  } else {
-    result.peak_bytes_in_use = -1;
-  }
-  if (args.num_allocs_is_set) {
-    result.num_allocs = args.num_allocs;
-  } else {
-    result.num_allocs = -1;
-  }
-  if (args.largest_alloc_size_is_set) {
-    result.largest_alloc_size = args.largest_alloc_size;
-  } else {
-    result.largest_alloc_size = -1;
-  }
-  if (args.bytes_limit_is_set) {
-    result.bytes_limit = args.bytes_limit;
-  }
-  if (args.bytes_reserved_is_set) {
-    result.bytes_reserved = args.bytes_reserved;
-  } else {
-    result.bytes_reserved = -1;
-  }
-  if (args.peak_bytes_reserved_is_set) {
-    result.peak_bytes_reserved = args.peak_bytes_reserved;
-  } else {
-    result.peak_bytes_reserved = -1;
-  }
-  if (args.peak_allocated_bytes_is_set) {
-    result.peak_allocated_bytes = args.peak_allocated_bytes;
-  } else {
-    result.peak_allocated_bytes = -1;
-  }
-  if (args.bytes_reservable_limit_is_set) {
-    result.bytes_reservable_limit = args.bytes_reservable_limit;
-  }
-  if (args.largest_free_block_bytes_is_set) {
-    result.largest_free_block_bytes = args.largest_free_block_bytes;
-  } else {
-    result.largest_free_block_bytes = -1;
-  }
-  if (args.pool_bytes_is_set) {
-    result.pool_bytes = args.pool_bytes;
-  }
-  if (args.peak_pool_bytes_is_set) {
-    result.peak_pool_bytes = args.peak_pool_bytes;
-  }
-  return result;
+  return pjrt::ConvertFromPjRtDeviceMemoryStats(args);
 }
 
 absl::Status PjRtCApiDevice::ClearMemoryStats() {

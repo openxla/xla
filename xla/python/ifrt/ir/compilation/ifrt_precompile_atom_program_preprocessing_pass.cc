@@ -17,9 +17,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "llvm/ADT/SmallVector.h"
+#include "absl/log/check.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Support/Casting.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
@@ -29,11 +30,9 @@ limitations under the License.
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/SymbolTable.h"
-#include "mlir/IR/Visitors.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "xla/pjrt/pjrt_compiler.h"
 #include "xla/python/ifrt/ir/compilation/passes.h"
 #include "xla/python/ifrt/ir/compilation/utils.h"
 #include "xla/python/ifrt/ir/constants.h"
@@ -67,25 +66,18 @@ class IfrtPrecompileAtomProgramPreprocessingPass
 // Determines the module type based on platform name.
 mlir::FailureOr<llvm::StringRef> GetModuleType(
     CallOp call_op, const std::vector<std::string>& platform_names) {
-  llvm::ArrayRef<int> device_ids = call_op.getDevices();
   // All devices should have the same type. Use the first platform name to
   // determine module type.
-  auto first_logical_device_id = device_ids.front();
-  if (first_logical_device_id >= platform_names.size()) {
-    return call_op->emitOpError()
-           << "cannot find mapping for logical device id "
-           << first_logical_device_id
-           << ". Mapping size: " << platform_names.size();
+  mlir::FailureOr<llvm::StringRef> platform_name = GetPlatformNameForDeviceId(
+      call_op, call_op.getDevices().front(), platform_names);
+  if (mlir::failed(platform_name)) {
+    return mlir::failure();
   }
-  auto platform_name = platform_names[first_logical_device_id];
-
-  // Get module type based on platform name.
-  if (platform_name == xla::TpuName() || platform_name == xla::CudaName() ||
-      platform_name == xla::RocmName() || platform_name == xla::CpuName()) {
-    return kIfrtModuleTypeXla;
+  if (IsXlaPlatform(*platform_name)) {
+    return llvm::StringRef(kIfrtModuleTypeXla);
   }
   return call_op->emitOpError()
-         << "Unsupported platform for call op: " << platform_name;
+         << "Unsupported platform for call op: " << *platform_name;
 }
 
 mlir::LogicalResult IfrtPrecompileAtomProgramPreprocessingPass::initialize(
@@ -112,7 +104,7 @@ void IfrtPrecompileAtomProgramPreprocessingPass::runOnOperation() {
   llvm::DenseMap<std::pair<mlir::SymbolRefAttr, mlir::StringAttr>,
                  mlir::SymbolRefAttr>
       module_and_type_refs_to_callee_symbol_ref;
-  auto result = main_func.walk([&](CallOp call_op) -> mlir::WalkResult {
+  for (CallOp call_op : main_func.getOps<CallOp>()) {
     mlir::StringAttr module_type_attr =
         call_op->getAttrOfType<mlir::StringAttr>(kIfrtModuleTypeAttrName);
     if (module_type_attr == nullptr) {
@@ -123,73 +115,61 @@ void IfrtPrecompileAtomProgramPreprocessingPass::runOnOperation() {
         module_type_attr = builder.getStringAttr(*module_type);
         call_op->setAttr(kIfrtModuleTypeAttrName, module_type_attr);
       } else {
-        return mlir::WalkResult::interrupt();
+        signalPassFailure();
+        return;
       }
     }
 
-    bool new_module_type = callee_module_type_count[call_op.getCallee()]
-                               .insert(module_type_attr)
-                               .second;
+    auto& module_types = callee_module_type_count[call_op.getCallee()];
+    bool new_module_type = module_types.insert(module_type_attr).second;
+    mlir::SymbolRefAttr& callee_symbol_ref =
+        module_and_type_refs_to_callee_symbol_ref[std::make_pair(
+            call_op.getCallee(), module_type_attr)];
     // Clone the callee module if it is of a new type, and there's more than
     // one type.
     if (new_module_type) {
-      if (callee_module_type_count[call_op.getCallee()].size() > 1) {
-        mlir::func::FuncOp callee = call_op.getCalleeOp(symbol_table);
-        auto callee_module =
-            llvm::dyn_cast<mlir::ModuleOp>(callee->getParentOp());
-        mlir::ModuleOp cloned_module = callee_module.clone();
-        mlir::func::FuncOp cloned_callee = GetMainFunction(cloned_module);
-        // Insert new cloned atom program module in the SymbolTable.
-        symbol_table
-            .getSymbolTable(
-                callee_module->getParentWithTrait<mlir::OpTrait::SymbolTable>())
-            .insert(cloned_module);
-        mlir::SymbolRefAttr callee_attr = mlir::SymbolRefAttr::get(
-            cloned_module.getSymNameAttr(),
-            mlir::SymbolRefAttr::get(cloned_callee.getSymNameAttr()));
-        module_and_type_refs_to_callee_symbol_ref[std::make_pair(
-            call_op.getCallee(), module_type_attr)] = callee_attr;
+      if (module_types.size() > 1) {
+        mlir::FailureOr<mlir::ModuleOp> callee_module =
+            GetOutlinedAtomProgramModule(call_op, symbol_table);
+        if (mlir::failed(callee_module)) {
+          signalPassFailure();
+          return;
+        }
+        ClonedAtomProgramModule cloned =
+            CloneOutlinedAtomProgramModule(*callee_module, symbol_table);
+        callee_symbol_ref = cloned.callee_ref;
       } else {
-        module_and_type_refs_to_callee_symbol_ref[std::make_pair(
-            call_op.getCallee(), module_type_attr)] = call_op.getCalleeAttr();
+        callee_symbol_ref = call_op.getCalleeAttr();
       }
     }
-    call_op.setCalleeAttr(
-        module_and_type_refs_to_callee_symbol_ref[std::make_pair(
-            call_op.getCallee(), module_type_attr)]);
-    return mlir::WalkResult::advance();
-  });
-  if (result.wasInterrupted()) {
-    signalPassFailure();
-    return;
+    call_op.setCalleeAttr(callee_symbol_ref);
   }
 
   // Stores symbol references to modules that have been preprocessed.
   mlir::DenseSet<mlir::SymbolRefAttr> preprocessed_modules;
-  result = main_func.walk([&](CallOp call_op) -> mlir::WalkResult {
+  for (CallOp call_op : main_func.getOps<CallOp>()) {
     // Preprocess a module only if it hasn't been already preprocessed.
     if (!preprocessed_modules.insert(call_op.getCallee()).second) {
-      return mlir::WalkResult::advance();
+      continue;
     }
-    mlir::func::FuncOp callee = call_op.getCalleeOp(symbol_table);
+    mlir::FailureOr<mlir::ModuleOp> callee_module =
+        GetOutlinedAtomProgramModule(call_op, symbol_table);
+    if (mlir::failed(callee_module)) {
+      signalPassFailure();
+      return;
+    }
     mlir::StringAttr module_type_attr =
         call_op->getAttrOfType<mlir::StringAttr>(kIfrtModuleTypeAttrName);
-    auto callee_module = llvm::dyn_cast<mlir::ModuleOp>(callee->getParentOp());
     mlir::OpPassManager pm(mlir::ModuleOp::getOperationName());
     if (module_type_attr == kIfrtModuleTypeXla) {
       createIfrtCompileXlaPreprocessingPipeline(pm, compile_options);
-    } else if (module_type_attr != kIfrtModuleTypeMpmdReshard) {
-      return call_op.emitOpError()
-             << "module type " << module_type_attr << " is not supported";
+    } else {
+      CHECK(module_type_attr == kIfrtModuleTypeMpmdReshard);
     }
-    if (mlir::failed(runPipeline(pm, callee_module))) {
-      return mlir::WalkResult::interrupt();
+    if (mlir::failed(runPipeline(pm, *callee_module))) {
+      signalPassFailure();
+      return;
     }
-    return mlir::WalkResult::advance();
-  });
-  if (result.wasInterrupted()) {
-    signalPassFailure();
-    return;
   }
 }
 

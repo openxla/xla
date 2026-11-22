@@ -22,12 +22,17 @@ limitations under the License.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <variant>
+
+#if defined(__linux__)
+#include <unistd.h>
+#endif
 
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
@@ -37,7 +42,6 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
-#include "absl/numeric/int128.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -56,7 +60,6 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
 #include "third_party/gpus/cuda/nvml/include/nvml.h"
-#include "tsl/platform/fingerprint.h"
 #include "tsl/platform/numa.h"
 #include "tsl/platform/numbers.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
@@ -95,6 +98,7 @@ limitations under the License.
 #include "xla/stream_executor/generic_memory_allocator.h"
 #include "xla/stream_executor/gpu/context.h"
 #include "xla/stream_executor/gpu/core_info.h"
+#include "xla/stream_executor/gpu/dma_buf.h"
 #include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/gpu/multicast_memory.h"
 #include "xla/stream_executor/gpu/read_numa_node.h"
@@ -760,6 +764,38 @@ absl::StatusOr<bool> IsMulticastSupported(CUdevice device) {
   return is_multicast_supported;
 }
 
+absl::StatusOr<bool> IsDmaBufSupported(CUdevice device) {
+#if defined(__linux__)
+  constexpr bool kIsLinux = true;
+#else
+  constexpr bool kIsLinux = false;
+#endif
+  if constexpr (!kIsLinux) {
+    return false;
+  }
+  int is_supported = 0;
+  CUresult result = cuDeviceGetAttribute(
+      &is_supported, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, device);
+  if (result == CUDA_ERROR_NOT_SUPPORTED ||
+      result == CUDA_ERROR_INVALID_VALUE) {
+    return false;
+  }
+  ABSL_RETURN_IF_ERROR(cuda::ToStatus(result));
+  return is_supported != 0;
+}
+
+absl::StatusOr<uint64_t> GetHostPageSize() {
+#if defined(__linux__)
+  const int64_t page_size_raw = sysconf(_SC_PAGESIZE);
+  if (page_size_raw <= 0) {
+    return absl::InternalError("Failed to query host page size.");
+  }
+  return static_cast<uint64_t>(page_size_raw);
+#else
+  return absl::UnimplementedError("dma-buf export is only supported on Linux.");
+#endif
+}
+
 absl::StatusOr<CUmulticastObjectProp> CreateMulticastObjectProperties(
     int num_devices, size_t size) {
   CUmulticastObjectProp multicast_properties;
@@ -1144,6 +1180,48 @@ absl::StatusOr<DeviceAddressBase> CudaExecutor::ImportFabricHandle(
       handle));
 }
 
+absl::StatusOr<DmaBuf> CudaExecutor::ExportDmaBuf(
+    const DeviceAddressBase& address) const {
+  if (!is_dma_buf_supported_) {
+    return absl::UnimplementedError(
+        "dma-buf export is not supported on this CUDA device.");
+  }
+  if (address.opaque() == nullptr || address.size() == 0) {
+    return absl::InvalidArgumentError(
+        "Cannot export dma-buf for empty device address range.");
+  }
+
+  ABSL_ASSIGN_OR_RETURN(const uint64_t page_size, GetHostPageSize());
+  const uint64_t addr =
+      static_cast<uint64_t>(reinterpret_cast<uintptr_t>(address.opaque()));
+  const uint64_t aligned_addr = xla::RoundDownTo<uint64_t>(addr, page_size);
+  const uint64_t offset = addr - aligned_addr;
+  if (address.size() >
+      std::numeric_limits<uint64_t>::max() - offset - (page_size - 1)) {
+    return absl::InvalidArgumentError("Device address range size overflow.");
+  }
+  const uint64_t aligned_size =
+      xla::RoundUpTo<uint64_t>(offset + address.size(), page_size);
+
+  ScopedActivateContext activation(cuda_context_);
+  int fd = -1;
+  CUresult result = cuMemGetHandleForAddressRange(
+      &fd, static_cast<CUdeviceptr>(aligned_addr), aligned_size,
+      CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, /*flags=*/0);
+  if (result == CUDA_ERROR_NOT_SUPPORTED) {
+    return absl::UnimplementedError(
+        absl::StrCat("cuMemGetHandleForAddressRange not supported: ",
+                     cuda::ToStatus(result).message()));
+  }
+  if (result == CUDA_ERROR_INVALID_VALUE) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("cuMemGetHandleForAddressRange invalid value: ",
+                     cuda::ToStatus(result).message()));
+  }
+  ABSL_RETURN_IF_ERROR(cuda::ToStatus(result));
+  return DmaBuf(fd, offset);
+}
+
 absl::StatusOr<std::unique_ptr<MemoryAllocator>>
 CudaExecutor::CreateMemoryAllocator(MemorySpace type) {
   if (type == MemorySpace::kUnified) {
@@ -1218,6 +1296,7 @@ absl::Status CudaExecutor::Init() {
   }
 
   ABSL_ASSIGN_OR_RETURN(is_multicast_supported_, IsMulticastSupported(device_));
+  ABSL_ASSIGN_OR_RETURN(is_dma_buf_supported_, IsDmaBufSupported(device_));
   ABSL_ASSIGN_OR_RETURN(CudaContext * context,
                         CudaContext::Create(device_ordinal(), device_));
   cuda_context_ = context;
@@ -1539,68 +1618,6 @@ absl::StatusOr<ModuleHandle> CudaExecutor::LoadModule(
 bool CudaExecutor::UnloadModule(ModuleHandle module_handle) {
   absl::MutexLock lock{in_memory_modules_mu_};
   return UnloadGpuBinary(module_handle);
-}
-
-namespace {
-absl::uint128 Fingerprint128(const absl::string_view s) {
-  auto fp = tsl::Fingerprint128(s);
-  return absl::MakeUint128(fp.high64, fp.low64);
-}
-
-}  // namespace
-
-absl::StatusOr<std::shared_ptr<DeviceAddressBase>>
-CudaExecutor::CreateOrShareConstant(Stream* stream,
-                                    absl::Span<const uint8_t> content) {
-  absl::MutexLock lock{shared_constants_mu_};
-  // We assume all constants are uniquely identified by this hash. In the
-  // (highly unlikely) event of a hash collision, the program will likely crash
-  // (because the cached constant that will be returned by mistake is unlikely
-  // to have the correct size).
-  absl::uint128 fingerprint = Fingerprint128(absl::string_view(
-      reinterpret_cast<const char*>(content.data()), content.size()));
-  // Must insert nullptr first to get an iterator to the insertion point.
-  auto insert_result = shared_constants_.insert(
-      {fingerprint, std::weak_ptr<DeviceAddressBase>()});
-  auto it = insert_result.first;
-  bool was_already_in_cache = !insert_result.second;
-  std::shared_ptr<DeviceAddressBase> shared_constant;
-
-  if (was_already_in_cache) {
-    shared_constant = it->second.lock();
-  }
-
-  if (shared_constant == nullptr) {
-    // Either the constant wasn't found in the cache, or it was but its
-    // weak_ptr had expired.
-    auto new_constant = std::make_unique<DeviceAddressBase>(
-        Allocate(content.size(), /*memory_space=*/0));
-    if (new_constant->opaque() == nullptr) {
-      return absl::InternalError(absl::StrFormat(
-          "Failed to allocate %d bytes for new constant", content.size()));
-    }
-
-    ABSL_RETURN_IF_ERROR(
-        stream->Memcpy(new_constant.get(), content.data(), content.size()));
-    absl::Status status = stream->BlockHostUntilDone();
-    if (!status.ok()) {
-      Deallocate(new_constant.get());
-      status.Update(absl::InternalError(absl::StrFormat(
-          "Memcpy to device address %p failed", new_constant->opaque())));
-      return status;
-    }
-
-    // Capturing 'this' in the custom deleter means this executor must
-    // outlive all shared uses of this constant.
-    shared_constant = std::shared_ptr<DeviceAddressBase>(
-        new_constant.release(), [this](DeviceAddressBase* p) {
-          Deallocate(p);
-          delete p;
-        });
-    it->second = std::weak_ptr<DeviceAddressBase>(shared_constant);
-  }
-
-  return shared_constant;
 }
 
 DeviceAddressBase CudaExecutor::AllocateAndTrack(MemoryAllocator& allocator,

@@ -89,6 +89,7 @@ limitations under the License.
 #include "xla/pjrt/distributed/topology_util.h"
 #include "xla/pjrt/gpu/allocator_config.h"
 #include "xla/pjrt/gpu/cross_host_transfer_clique_key.h"
+#include "xla/pjrt/gpu/gpu_dma_buf_cache.h"
 #include "xla/pjrt/gpu/gpu_helpers.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_cross_host_transfer.pb.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_runtime_abi_version.h"
@@ -128,6 +129,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/device_interconnect_resource.h"
+#include "xla/stream_executor/gpu/dma_buf.h"
 #include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
 #include "xla/stream_executor/memory_space.h"
@@ -1261,6 +1263,81 @@ StreamExecutorGpuRawClient::GetOrImportFabricHandle(
   return imported_fabric_handles_[key] = std::move(address);
 }
 
+namespace {
+
+class GpuExternalDmaAccess : public PjRtRawBufferInterface::ExternalDmaAccess {
+ public:
+  GpuExternalDmaAccess(tsl::AsyncValueRef<RawSEDeviceMemory> device_buffer,
+                       std::shared_ptr<se::gpu::DmaBuf> dma_buf,
+                       uint64_t offset, uint64_t size)
+      : ExternalDmaAccess(PjRtRawBufferInterface::ExternalDmaInfo{
+            /*fd=*/dma_buf->fd(),
+            /*offset=*/offset,
+            /*size=*/size,
+        }),
+        device_buffer_(std::move(device_buffer)),
+        dma_buf_(std::move(dma_buf)) {}
+
+  ~GpuExternalDmaAccess() override = default;
+
+ private:
+  // Order matters: `dma_buf_` is destroyed before `device_buffer_` so any
+  // uncached fd is closed before releasing the backing device memory.
+  tsl::AsyncValueRef<RawSEDeviceMemory> device_buffer_;
+  std::shared_ptr<se::gpu::DmaBuf> dma_buf_;
+};
+
+absl::StatusOr<GpuDmaBufCache::ExportedDmaBuf> ExportDeviceBufferDmaBuf(
+    GpuDmaBufCache& cache, const se::gpu::GpuExecutor& gpu_executor,
+    const se::DeviceAddressBase& mem) {
+  if (mem.opaque() == nullptr || mem.size() == 0) {
+    return absl::InvalidArgumentError(
+        "Cannot acquire external DMA access for empty buffer.");
+  }
+  return cache.GetOrExport(gpu_executor.device_ordinal(), mem,
+                           [&gpu_executor](const se::DeviceAddressBase& range) {
+                             return gpu_executor.ExportDmaBuf(range);
+                           });
+}
+
+}  // namespace
+
+tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess>
+StreamExecutorGpuRawClient::AcquireExternalDmaAccess(
+    LocalDeviceState* local_device, const PJRT_Memory* memory_space,
+    tsl::AsyncValueRef<RawSEDeviceMemory> device_buffer) {
+  if (IsOnCpu(memory_space)) {
+    return tsl::MakeErrorAsyncValueRef(absl::InvalidArgumentError(
+        "External DMA is only supported for device memory, not host memory."));
+  }
+  auto* const gpu_executor =
+      dynamic_cast<se::gpu::GpuExecutor*>(local_device->executor());
+  if (gpu_executor == nullptr || !gpu_executor->is_dma_buf_supported()) {
+    return tsl::MakeErrorAsyncValueRef(absl::UnimplementedError(
+        "External DMA is not supported by this GPU device."));
+  }
+
+  tsl::AsyncValueRef<GpuExternalDmaAccess> result =
+      tsl::MakeUnconstructedAsyncValueRef<GpuExternalDmaAccess>();
+  device_buffer.AndThen(
+      [cache = dma_buf_cache_, gpu_executor, device_buffer, result]() mutable {
+        if (device_buffer.IsError()) {
+          result.SetError(device_buffer.GetError());
+          return;
+        }
+        const se::DeviceAddressBase mem = device_buffer->mem();
+        absl::StatusOr<GpuDmaBufCache::ExportedDmaBuf> exported =
+            ExportDeviceBufferDmaBuf(*cache, *gpu_executor, mem);
+        if (!exported.ok()) {
+          result.SetError(exported.status());
+          return;
+        }
+        result.emplace(std::move(device_buffer), std::move(exported->dma_buf),
+                       exported->offset, mem.size());
+      });
+  return result;
+}
+
 // ==== End cross-host transfer implementations ==== //
 
 void StreamExecutorGpuRawClient::RecordMemoryStats(
@@ -1384,14 +1461,29 @@ void RegisterDistributedDeviceErrorListener(
       });
 }
 
-// Builds a LocalDeviceState for each GPU present.
+// Builds a LocalDeviceState for each GPU present. If `compute_stream_priority`
+// is set, each device's compute, host-to-device, and device-to-host streams
+// are created at that priority.
 absl::StatusOr<std::map<int, std::unique_ptr<LocalDeviceState>>>
 BuildLocalDeviceStates(
     LocalClient* xla_client, bool schedule_async,
     std::optional<int> max_inflight_computations, int node_id, int num_nodes,
     const std::shared_ptr<KeyValueStoreInterface>& kv_store,
-    const std::shared_ptr<std::atomic<bool>>& error_already_fired) {
+    const std::shared_ptr<std::atomic<bool>>& error_already_fired,
+    std::optional<int> compute_stream_priority = std::nullopt) {
   std::map<int, std::unique_ptr<LocalDeviceState>> addressable_devices;
+  // Only pass stream options when a priority is requested. The transfer stream
+  // counts stay at the client's defaults (LocalDeviceState::
+  // kNumDeviceToHostStreams and kNumDeviceToDeviceStreams, the counts used when
+  // no options are given. StreamOptions' own defaults are 1).
+  std::optional<LocalDeviceState::StreamOptions> stream_options;
+  if (compute_stream_priority.has_value()) {
+    stream_options = LocalDeviceState::StreamOptions{
+        .priority = *compute_stream_priority,
+        .num_device_to_host_streams = 4,
+        .num_device_to_device_streams = 4,
+    };
+  }
   for (se::StreamExecutor* executor :
        xla_client->backend().stream_executors()) {
     int device_ordinal = executor->device_ordinal();
@@ -1405,9 +1497,8 @@ BuildLocalDeviceStates(
         std::make_unique<LocalDeviceState>(
             executor, xla_client, LocalDeviceState::kComputeSynchronized,
             max_inflight_computations, /*allow_event_reuse=*/true,
-            /*use_callback_stream=*/true, /*device_ordinal=*/-1,
-            /*stream_options=*/std::nullopt, schedule_async,
-            std::move(device_error_callback)));
+            /*use_callback_stream=*/true, /*device_ordinal=*/-1, stream_options,
+            schedule_async, std::move(device_error_callback)));
   }
   return std::move(addressable_devices);
 }
@@ -1580,7 +1671,8 @@ GetStreamExecutorGpuDeviceAllocator(
         // MemorySpace::kCollective = 2)
         auto collective_allocator =
             std::make_shared<se::StreamExecutorMemoryAllocator>(
-                executor, static_cast<int64_t>(se::MemorySpace::kCollective));
+                executor, static_cast<int64_t>(se::MemorySpace::kCollective),
+                allocator_config.sub_allocator_free_visitors);
         allocators.push_back(
             {std::move(collective_allocator), stream,
              /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kCollective});
@@ -1643,7 +1735,8 @@ GetStreamExecutorGpuDeviceAllocator(
           CreateCollectiveBFCAllocator(
               ordinal_and_device.second->executor(),
               /*memory_fraction=*/MemFractionLeft(memory_fraction),
-              allocator_config.collective_memory_size));
+              allocator_config.collective_memory_size,
+              allocator_config.sub_allocator_free_visitors));
       allocators.push_back(
           {std::move(collective_bfc_allocator),
            ordinal_and_device.second->compute_stream(),
@@ -2191,13 +2284,26 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
       local_device_states,
       BuildLocalDeviceStates(xla_client, use_async_dispatch,
                              options.max_inflight_computations, options.node_id,
-                             options.num_nodes, kv_store, error_already_fired));
+                             options.num_nodes, kv_store, error_already_fired,
+                             options.compute_stream_priority));
   EnablePeerAccess(xla_client->backend().stream_executors());
 
   GpuAllocatorConfig allocator_config = options.allocator_config;
   bool preallocate_device_memory = allocator_config.preallocate;
   auto memory_registration =
       CreateAllocatorMemoryRegistration(&allocator_config);
+  // Drops symmetric memory cached on communicators when the collective memory
+  // it was registered for is returned to the device.
+  allocator_config.sub_allocator_free_visitors.push_back(
+      [](void* ptr, int device_ordinal, size_t num_bytes) {
+        gpu::ReleaseSymmetricMemory(LocalDeviceId(device_ordinal),
+                                    se::DeviceAddressBase(ptr, num_bytes));
+      });
+  auto dma_buf_cache = std::make_shared<GpuDmaBufCache>();
+  allocator_config.sub_allocator_alloc_visitors.push_back(
+      dma_buf_cache->alloc_visitor());
+  allocator_config.sub_allocator_free_visitors.push_back(
+      dma_buf_cache->free_visitor());
 
   bool preallocate_host_memory;
   ABSL_RETURN_IF_ERROR(tsl::ReadBoolFromEnvVar(
@@ -2330,7 +2436,8 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
       /*async_work_runner=*/nullptr, first_executor, kv_store,
       preallocate_device_memory, options.abort_collectives_on_failure,
       std::move(gpu_run_options), std::move(memory_registration),
-      std::move(devices_and_topology.multi_slice_config));
+      std::move(devices_and_topology.multi_slice_config),
+      std::move(dma_buf_cache));
   VLOG(1) << absl::StreamFormat(
       "Constructed StreamExecutor GPU client: #devices=%d #num_nodes=%d",
       devices_and_topology.devices.size(), options.num_nodes);

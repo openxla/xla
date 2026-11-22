@@ -278,10 +278,7 @@ cc_library(
     name = "pjrt_c_api_multi_slice_internal_types",
     hdrs = ["pjrt_c_api_multi_slice_internal_types.h"],
     visibility = ["//visibility:public"],
-    deps = [
-        "//xla/pjrt:pjrt_executable",
-        "//xla/tsl/concurrency:ref_count",
-    ],
+    deps = ["//xla/pjrt:pjrt_executable"],
 )
 
 cc_library(
@@ -342,7 +339,9 @@ cc_library(
     hdrs = ["pjrt_c_api_raw_client.h"],
     visibility = ["//visibility:public"],
     deps = [
+        ":pjrt_c_api_device_event_hdrs",
         ":pjrt_c_api_hdrs",
+        ":pjrt_c_api_raw_buffer_extension_hdrs",
     ],
 )
 
@@ -422,8 +421,6 @@ cc_library(
         "//xla/tsl/lib/strings:proto_serialization",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
@@ -567,6 +564,8 @@ cc_library(
         "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt/distributed:key_value_store_interface",
+        "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
+        "//xla/tsl/framework:allocator",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
@@ -900,7 +899,9 @@ xla_cc_test(
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
         "@stablehlo//:version",
-    ],
+    ] + if_google([
+        "//xla/tsl/framework:allocator",
+    ]),
 )
 
 xla_cc_test(

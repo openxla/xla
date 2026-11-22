@@ -69,12 +69,12 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/transforms/expanders/scatter_simplifier.h"
 #include "xla/primitive_util.h"
 #include "xla/runtime/work_dimensions.h"
 #include "xla/runtime/work_group.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/backend_config.pb.h"
-#include "xla/service/scatter_simplifier.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
@@ -174,15 +174,12 @@ SmallVector<Value> EmitScatterComputation(
     }
     return ret;
   }
-  Value output_tensor = output_tensors.front();
-  Value update_elem = update_elems.front();
-  auto atomic_rmw = AtomicRMWOp::create(b, output_tensor, indices);
-  mlir::OpBuilder body_builder = atomic_rmw.getBodyBuilder();
-  auto reduced_val =
-      emitters::InlineBlock(body_builder, reducer.getBody().front(),
-                            {atomic_rmw.getCurrentValue(), update_elem})[0];
-  xla::YieldOp::create(body_builder, reducer->getLoc(), reduced_val);
-  return {atomic_rmw->getResult(0)};
+  // Multi workgroup CPU scatter path (active when num_threads > 1).
+  CHECK_EQ(output_tensors.size(), 1);
+  CHECK_EQ(update_elems.size(), 1);
+  return {emitters::EmitScatterAtomicUpdate(
+      b, scatter->called_computations()[0], reducer, update_elems.front(),
+      output_tensors.front(), indices)};
 }
 
 CpuScatterFusion::CpuScatterFusion(const BufferAssignment& buffer_assignment,

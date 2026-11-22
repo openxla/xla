@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/autotuner/fission_backend.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
+#include "xla/backends/gpu/hlo/analysis/alias_info.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -39,7 +40,6 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/compiler.h"
-#include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -135,6 +135,44 @@ absl::string_view kTritonGemmFusionHlo = R"hlo(
     p0 = f32[3,28,32] parameter(0)
     p1 = f32[3,28,32] parameter(1)
     _ = f32[3,32,32] fusion(p0, p1), kind=kCustom, calls=fusion1,
+      backend_config={"fusion_backend_config": {kind: "__triton_gemm"}}
+  })hlo";
+
+absl::string_view kRaggedDotCudnnFusionHlo = R"hlo(
+  fusion1 {
+    p0 = bf16[64,9] parameter(0)
+    p1 = bf16[2,9,8] parameter(1)
+    p2 = s64[2] parameter(2)
+    ROOT rd = bf16[64,8] ragged-dot(p0, p1, p2),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+      lhs_ragged_dims={0}, rhs_group_dims={0}
+  }
+
+  ENTRY e {
+    p0 = bf16[64,9] parameter(0)
+    p1 = bf16[2,9,8] parameter(1)
+    p2 = s64[2] parameter(2)
+    ROOT _ = bf16[64,8] fusion(p0, p1, p2), kind=kCustom, calls=fusion1,
+      backend_config={"fusion_backend_config": {kind: "__cudnn$fusion"}}
+  })hlo";
+
+// Same ragged-dot hero, but emitted by GemmRewriter for the Triton XTile
+// backend: cuDNN must not claim it.
+absl::string_view kRaggedDotTritonFusionHlo = R"hlo(
+  fusion1 {
+    p0 = bf16[64,9] parameter(0)
+    p1 = bf16[2,9,8] parameter(1)
+    p2 = s64[2] parameter(2)
+    ROOT rd = bf16[64,8] ragged-dot(p0, p1, p2),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+      lhs_ragged_dims={0}, rhs_group_dims={0}
+  }
+
+  ENTRY e {
+    p0 = bf16[64,9] parameter(0)
+    p1 = bf16[2,9,8] parameter(1)
+    p2 = s64[2] parameter(2)
+    ROOT _ = bf16[64,8] fusion(p0, p1, p2), kind=kCustom, calls=fusion1,
       backend_config={"fusion_backend_config": {kind: "__triton_gemm"}}
   })hlo";
 
@@ -448,6 +486,21 @@ TEST_F(CudnnBackendTest, GetSupportedConfigsFromScaledDotGemmFusionIsEmpty) {
   EXPECT_THAT(backend.GetSupportedConfigs(
                   *hlo_module->entry_computation()->root_instruction()),
               IsOkAndHolds(IsEmpty()));
+}
+
+TEST_F(CudnnBackendTest, SupportsRaggedDotCudnnFusion) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kRaggedDotCudnnFusionHlo));
+  EXPECT_TRUE(backend_->IsSupported(
+      *hlo_module->entry_computation()->root_instruction()));
+}
+
+TEST_F(CudnnBackendTest, DoesNotSupportRaggedDotTritonFusion) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kRaggedDotTritonFusionHlo));
+  HloInstruction& fusion = *hlo_module->entry_computation()->root_instruction();
+  EXPECT_FALSE(backend_->IsSupported(fusion));
+  EXPECT_THAT(backend_->GetSupportedConfigs(fusion), IsOkAndHolds(IsEmpty()));
 }
 
 TEST_F(CudnnBackendTest, GetSupportedConfigsFromCudnnCustomCall) {

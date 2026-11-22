@@ -37,6 +37,7 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/IR/ArithAttributes.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -45,6 +46,8 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Location.h"
+#include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
@@ -638,13 +641,62 @@ absl::StatusOr<PrimitiveType> GetPrimitiveType(Type t) {
 }
 
 Type StorageType(Type t) {
-  if (auto i = mlir::dyn_cast<mlir::IntegerType>(t); i && i.getWidth() == 1) {
-    return i.get(i.getContext(), 8, i.getSignedness());
-  }
   if (mlir::isa<mlir::Float4E2M1FNType>(t)) {
     return mlir::IntegerType::get(t.getContext(), 8);
   }
   return t;
+}
+
+Type MemoryStorageType(Type elem_type) {
+  if (elem_type.isInteger(1)) {
+    return mlir::IntegerType::get(elem_type.getContext(), 8);
+  }
+  return elem_type;
+}
+
+bool IsI1MemRef(Type type) {
+  auto memref_type = mlir::dyn_cast<mlir::MemRefType>(type);
+  return memref_type && memref_type.getElementType().isInteger(1);
+}
+
+bool HasUnlegalizedI1Storage(mlir::Operation* op) {
+  if (auto entry = mlir::dyn_cast<EntryFuncOp>(op)) {
+    return llvm::any_of(entry.getArgumentTypes(), IsI1MemRef);
+  }
+  if (auto select = mlir::dyn_cast<SelectBufferOp>(op)) {
+    return IsI1MemRef(select.getType());
+  }
+  if (auto tiled = mlir::dyn_cast<TiledBufferInterface>(op)) {
+    return tiled.getBuffer().getType().getElementType().isInteger(1) ||
+           tiled.getTile().getType().getElementType().isInteger(1);
+  }
+  return false;
+}
+
+TensorValue UnpackFromMemoryStorage(mlir::OpBuilder& b, mlir::Location loc,
+                                    TensorValue storage_value,
+                                    Type logical_elem_type) {
+  if (!logical_elem_type.isInteger(1)) {
+    return storage_value;
+  }
+  Value zero = ma::ConstantOp::create(
+      b, loc,
+      mlir::DenseElementsAttr::get(storage_value.getType(),
+                                   b.getI8IntegerAttr(0)));
+  return mlir::cast<TensorValue>(
+      ma::CmpIOp::create(b, loc, ma::CmpIPredicate::ne, storage_value, zero)
+          .getResult());
+}
+
+TensorValue PackToMemoryStorage(mlir::OpBuilder& b, mlir::Location loc,
+                                TensorValue logical_value) {
+  mlir::RankedTensorType type = logical_value.getType();
+  if (!type.getElementType().isInteger(1)) {
+    return logical_value;
+  }
+  return mlir::cast<TensorValue>(
+      ma::ExtUIOp::create(b, loc, type.clone(b.getI8Type()), logical_value)
+          .getResult());
 }
 
 Type GetSignlessType(Type t) {
@@ -941,28 +993,9 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
 
   auto minor_to_major_layout =
       llvm::to_vector(LayoutUtil::MinorToMajor(logical_shape));
-  SmallVector<Value> replica_id_offsets;
-  SmallVector<Value> replica_id_bounds;
-  if (!tiled_hlo.tile().replica_ids().empty()) {
-    llvm::SmallVector<SymbolicExpr> offset_exprs;
-    llvm::SmallVector<SymbolicExpr> bound_exprs;
-    offset_exprs.reserve(tiled_hlo.tile().replica_ids().size());
-    bound_exprs.reserve(tiled_hlo.tile().replica_ids().size());
-    for (const auto& replica_id : tiled_hlo.tile().replica_ids()) {
-      offset_exprs.push_back(replica_id.offset);
-      bound_exprs.push_back(replica_id.upper_bound);
-    }
-    ABSL_ASSIGN_OR_RETURN(mlir::SmallVector<mlir::Value> evaluated_offsets,
-                          emitter_ctx.EvaluateTilingParameters(offset_exprs));
-    ABSL_ASSIGN_OR_RETURN(mlir::SmallVector<mlir::Value> evaluated_bounds,
-                          emitter_ctx.EvaluateTilingParameters(bound_exprs));
-    replica_id_offsets = std::move(evaluated_offsets);
-    replica_id_bounds = std::move(evaluated_bounds);
-  }
   return TileInfo(std::move(storage_offsets), std::move(storage_tile_strides),
                   std::move(storage_shape), std::move(storage_tile_sizes),
-                  std::move(minor_to_major_layout), storage_type,
-                  std::move(replica_id_offsets), std::move(replica_id_bounds));
+                  std::move(minor_to_major_layout), storage_type);
 }
 
 absl::StatusOr<TensorValue> EmitParameterExtract(mlir::ImplicitLocOpBuilder& b,
@@ -1151,8 +1184,28 @@ absl::StatusOr<Type> GetMlirType(
   return PrimitiveTypeToMlirType(b, type, gpu_cc);
 }
 
+std::optional<RootPeerBufferInfo> GetRootPeerBufferInfo(
+    const gpu::TilingSpace& tiling_space, const HloInstruction& root_hlo) {
+  for (int64_t dim = 0;
+       dim < static_cast<int64_t>(root_hlo.shape().dimensions().size());
+       ++dim) {
+    const gpu::TilingSpace::DimensionInfo& dim_info =
+        tiling_space.GetDimensionInfo(root_hlo, dim);
+    if (dim_info.peer_dim.has_value() &&
+        dim_info.peer_dim->mode ==
+            gpu::TilingSpace::PeerIndexing::kPerPeerBuffer) {
+      gpu::TiledDimId replica_dim_id = dim_info.peer_dim->dim_id;
+      return RootPeerBufferInfo{
+          dim, replica_dim_id,
+          tiling_space.dimensions()[replica_dim_id.value()].dimension_size};
+    }
+  }
+  return std::nullopt;
+}
+
 absl::StatusOr<SmallVector<Type>> GetFnArgTypes(
     mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
+    const CollectiveEntrySpec& collective_spec,
     const std::optional<GpuComputeCapability>& gpu_cc) {
   SmallVector<Type> fn_arg_types;
 
@@ -1167,7 +1220,19 @@ absl::StatusOr<SmallVector<Type>> GetFnArgTypes(
   }
 
   // Add result types.
-  for (const auto& [index, shape] : ShapeUtil::GetLeafShapes(fusion.shape())) {
+  const auto leaf_shapes = ShapeUtil::GetLeafShapes(fusion.shape());
+  TF_RET_CHECK(collective_spec.peer_table_results.empty() ||
+               collective_spec.peer_table_results.size() == leaf_shapes.size());
+  for (int64_t result_idx = 0;
+       result_idx < static_cast<int64_t>(leaf_shapes.size()); ++result_idx) {
+    const Shape& shape = leaf_shapes[result_idx].shape;
+    if (!collective_spec.peer_table_results.empty() &&
+        collective_spec.peer_table_results[result_idx]) {
+      TF_RET_CHECK(collective_spec.world_size > 0);
+      fn_arg_types.push_back(
+          mlir::MemRefType::get({collective_spec.world_size}, b.getI64Type()));
+      continue;
+    }
     ABSL_ASSIGN_OR_RETURN(
         Type ir_type, PrimitiveTypeToMlirType(b, shape.element_type(), gpu_cc));
     ABSL_ASSIGN_OR_RETURN(mlir::MemRefType memref_type,

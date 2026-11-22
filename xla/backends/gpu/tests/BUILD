@@ -7,7 +7,12 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:lit.bzl", "enforce_glob", "lit_test_suite_for_gpus")
 load("//xla:xla.default.bzl", "xla_cc_test")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "AMD_GPU_ANY_BACKEND",
+    "NVIDIA_GPU_ANY_BACKEND",
+    "xla_test",
+)
 load("//xla/tsl:tsl.bzl", "if_google", "if_oss")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 load(
@@ -170,6 +175,27 @@ xla_test(
 )
 
 xla_test(
+    name = "locality_domain_compute_test",
+    srcs = ["locality_domain_compute_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        "//xla:error_spec",
+        "//xla:side_effect_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tests:hlo_interpreter_reference_mixin",
+        "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_test(
     name = "command_buffer_test",
     srcs = ["command_buffer_test.cc"],
     backends = ["gpu"],
@@ -269,7 +295,6 @@ xla_test(
     name = "gpu_too_many_blocks_test",
     srcs = ["gpu_too_many_blocks_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
     deps = [
         ":gpu_pjrt_codegen_test",
         "//xla/hlo/ir:hlo",
@@ -286,9 +311,11 @@ xla_test(
         ":gpu_pjrt_codegen_test",
         "//xla:error_spec",
         "//xla:xla_proto_cc",
-        "//xla/backends/gpu/transforms:horizontal_fusion",
+        "//xla/backends/gpu/transforms/fusion:horizontal_fusion",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:hlo_interpreter_reference_mixin",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/status:status_matchers",
@@ -442,7 +469,7 @@ xla_test(
         "h100",
         "v100",
         "b200",
-        "amdgpu_any",
+        AMD_GPU_ANY_BACKEND,
     ],
     deps = [
         ":gpu_pjrt_codegen_test",
@@ -709,9 +736,9 @@ xla_test(
         "a100",
         "h100",
         "b200",
-        "amdgpu_any",
+        AMD_GPU_ANY_BACKEND,
     ] + if_oss([
-        "nvgpu_any",
+        NVIDIA_GPU_ANY_BACKEND,
     ]),
     deps = [
         ":hlo_pjrt_gpu_test_base",
@@ -746,6 +773,48 @@ xla_test(
         "@eigen_archive//:eigen3",
     ],
 )
+
+# NVIDIA GPUs the hlo lit tests run on.
+_CUDA_LIT_GPUS = [
+    "a100_pcie_80",
+    "a6000",
+    "b200",
+    "h100_sxm",
+]
+
+# ROCm GPUs the hlo lit tests run on. Mirrors `rocm_gpus` in //xla:lit.bzl.
+_ROCM_LIT_GPUS = [
+    "gfx1250_strict",
+    "mi200",
+    "mi300",
+    "mi350",
+    "mi450",
+]
+
+# hlo lit tests that are NVIDIA-only. Skipped on every GPU in _ROCM_LIT_GPUS,
+# so a new ROCm GPU does not have to repeat them in its skip list below.
+_CUDA_ONLY_HLO_TESTS = [
+    "pdl.hlo",
+]
+
+_ROCM_ALLGPU_SKIPPED_HLO_TESTS = [
+    # TODO: re-enable once mi200.txtpb sets registers_per_block_limit.
+    "triton_scan_bf16.hlo",
+]
+
+# Per-GPU skips, on top of _CUDA_ONLY_HLO_TESTS. Each entry should say why.
+_ROCM_SKIPPED_HLO_TESTS = {
+    "mi200": [
+        # gfx90a cannot run this GEMM through hipBLASLt and the legacy cublas
+        # fallback is gone, so GemmRewriter fails the compile.
+        "dot_bf16.hlo",
+        "element_wise_row_vectorization.hlo",
+        "scatter_bf16.hlo",
+        "reduce_unnested.hlo",
+        "reduction_vectorization_sm_all.hlo",
+        "triton_async_copy.hlo",
+    ],
+}
 
 lit_test_suite_for_gpus(
     name = "hlo_lit_tests",
@@ -782,57 +851,10 @@ lit_test_suite_for_gpus(
     cfg = "//xla:lit.cfg.py",
     default_tags = ["gpu"],  # Needs to run in a build with a gpu configured.
     disabled_on_gpus = {
-        "mi200": [
-            "dot_bf16.hlo",
-            "element_wise_row_vectorization.hlo",
-            "scatter_bf16.hlo",
-            "reduce_unnested.hlo",
-            "reduction_vectorization_sm_all.hlo",
-            "triton_async_copy.hlo",
-            "pdl.hlo",
-            # TODO: re-enable once mi200.txtpb sets registers_per_block_limit.
-            "triton_scan_bf16.hlo",
-        ],
-        "mi300": [
-            "memory_bandwidth_fusion.hlo",
-            "dot_bf16.hlo",
-            "single_instruction.hlo",
-            "vectorization.hlo",
-            "pdl.hlo",
-        ],
-        "mi350": [
-            "dot_bf16.hlo",
-            "pdl.hlo",
-        ],
-        "mi450": [
-            # TODO: re-enable once mi450 memory_bandwidth is finalized.
-            "memory_bandwidth_fusion.hlo",
-            "vectorization.hlo",
-            "pdl.hlo",
-            # TODO: re-enable once mi450.txtpb sets registers_per_block_limit.
-            "triton_scan_bf16.hlo",
-        ],
-        "gfx1250_strict": [
-            # TODO: re-enable once gfx1250-strict memory_bandwidth is finalized.
-            "memory_bandwidth_fusion.hlo",
-            "vectorization.hlo",
-            "pdl.hlo",
-            # TODO: re-enable once gfx1250_strict.txtpb sets
-            # registers_per_block_limit.
-            "triton_scan_bf16.hlo",
-        ],
+        gpu: _ROCM_SKIPPED_HLO_TESTS.get(gpu, []) + _CUDA_ONLY_HLO_TESTS + _ROCM_ALLGPU_SKIPPED_HLO_TESTS
+        for gpu in _ROCM_LIT_GPUS
     },
-    gpus = [
-        "a100_pcie_80",
-        "a6000",
-        "b200",
-        "gfx1250_strict",
-        "h100_sxm",
-        "mi200",
-        "mi300",
-        "mi350",
-        "mi450",
-    ],
+    gpus = _CUDA_LIT_GPUS + _ROCM_LIT_GPUS,
     tags = ["no-oneapi"],
     tools = [
         "//xla/tools:hlo-opt",
@@ -852,6 +874,7 @@ cc_binary(
         "//xla/codegen/emitters/ir:xla",
         "//xla/codegen/emitters/transforms:passes",
         "//xla/codegen/xtile/ir:xtile",
+        "//xla/codegen/xtile/ir/transforms:passes",
         "//xla/mlir_hlo",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
@@ -938,9 +961,9 @@ xla_test(
     backends = [
         "a100",
         "b200",
-        "amdgpu_any",
+        AMD_GPU_ANY_BACKEND,
     ] + if_oss([
-        "nvgpu_any",
+        NVIDIA_GPU_ANY_BACKEND,
     ]),
     deps = [
         "//xla:error_spec",
@@ -1027,7 +1050,7 @@ xla_test(
         "a100",
         "h100",
         "b200",
-        "amdgpu_any",
+        AMD_GPU_ANY_BACKEND,
     ],
     shard_count = 2,
     deps = [
@@ -1078,7 +1101,7 @@ xla_test(
     backends = ["gpu"],
     # Data dependency must be declared for the cache.
     data = ["test_autotune_cache.textproto"],
-    env = {"XLA_FLAGS": "--xla_gpu_load_autotune_results_from=" +
+    env = {"XLA_FLAGS": "--xla_load_autotune_cache_from=" +
                         "$(execpath test_autotune_cache.textproto)"},
     deps = [
         ":simple_optimization_test",
@@ -1089,7 +1112,7 @@ xla_test(
 # This shows that tests can load an autotune cache using the TEST_WORKSPACE prefix.
 #
 # This also works from the command line, by specifying this arguments:
-# --test_env=XLA_FLAGS=--xla_gpu_load_autotune_results_from=TEST_WORKSPACE/my/package/autotune_results_test.textproto.
+# --test_env=XLA_FLAGS=--xla_load_autotune_cache_from=TEST_WORKSPACE/my/package/autotune_results_test.textproto.
 #
 # If the GPU used for running the test is different from the one in the cache, then the cache will
 # be loaded, but not used.
@@ -1099,7 +1122,7 @@ xla_test(
     backends = ["gpu"],
     # Data dependency must be declared for the cache.
     data = ["test_autotune_cache.textproto"],
-    env = {"XLA_FLAGS": "--xla_gpu_load_autotune_results_from=TEST_WORKSPACE/" +
+    env = {"XLA_FLAGS": "--xla_load_autotune_cache_from=TEST_WORKSPACE/" +
                         package_name() +
                         "/test_autotune_cache.textproto"},
     deps = [
@@ -1111,13 +1134,13 @@ xla_test(
 # This shows that tests can dump an autotune cache into their output directory.
 #
 # This also works from the command line, by specifying these arguments:
-# --test_env=XLA_FLAGS=--xla_gpu_dump_autotune_results_to=TEST_UNDECLARED_OUTPUTS_DIR/autotune_cache.textproto
+# --test_env=XLA_FLAGS=--xla_dump_autotune_cache_to=TEST_UNDECLARED_OUTPUTS_DIR/autotune_cache.textproto
 # --test_sharding_strategy=disabled
 xla_test(
     name = "dump_autotune_results_to_test_outputs_test",
     srcs = [],
     backends = ["gpu"],
-    env = {"XLA_FLAGS": "--xla_gpu_dump_autotune_results_to=" +
+    env = {"XLA_FLAGS": "--xla_dump_autotune_cache_to=" +
                         "TEST_UNDECLARED_OUTPUTS_DIR/autotune_cache.textproto"},
     # Sharding must be disabled to correctly dump the autotune cache for all test.
     shard_count = 1,
@@ -1488,6 +1511,7 @@ xla_test(
         "//xla/core/collectives:symmetric_memory",
         "//xla/ffi",
         "//xla/ffi:collectives_ffi",
+        "//xla/ffi:ffi_interop",
         "//xla/ffi/api:c_api",
         "//xla/ffi/api:collectives_api",
         "//xla/runtime:device_id",
@@ -1505,6 +1529,7 @@ xla_test(
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",

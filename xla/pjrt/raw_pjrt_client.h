@@ -41,7 +41,6 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_raw_client.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
-#include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -164,9 +163,31 @@ class PjRtExecutableLoadState
                     int attempt) = 0;
 };
 
+class PjRtOnceCallbackInterface;
+
+struct PjRtOnceCallbackDeleter {
+  PjRtOnceCallbackDeleter() = default;
+  template <typename T>
+  PjRtOnceCallbackDeleter(std::default_delete<T>) {}
+  void operator()(PjRtOnceCallbackInterface* cb) const;
+};
+using PjRtOnceCallbackRef =
+    std::unique_ptr<PjRtOnceCallbackInterface, PjRtOnceCallbackDeleter>;
+
+class PjRtOnceCallbackInterface : public PJRT_OnceCallback {
+ public:
+  static void Invoke(PjRtOnceCallbackRef cb);
+};
+
+PjRtOnceCallbackRef MakeOnceCallback(absl::AnyInvocable<void() &&> cb);
+absl::AnyInvocable<void() &&> ToAnyInvocable(PjRtOnceCallbackRef cb);
+
 class PjRtRawClientInterface;
 
 struct PjRtRawClientDeleter {
+  PjRtRawClientDeleter() = default;
+  template <typename T>
+  PjRtRawClientDeleter(std::default_delete<T>) {}
   void operator()(PjRtRawClientInterface* client) const;
 };
 using PjRtRawClientRef =
@@ -226,9 +247,6 @@ class PjRtRawClientInterface : public PJRT_RawClient {
   absl::StatusOr<PjRtDeviceEventRef> CreateDeviceEventForStream(
       LocalDeviceId local_device_id, std::intptr_t stream);
 
-  std::optional<std::shared_ptr<KeyValueStoreInterface>> key_value_store()
-      const;
-
   absl::Status DmaMap(void* data, size_t size);
 
   absl::Status DmaUnmap(void* data);
@@ -262,7 +280,7 @@ class PjRtRawClientInterface : public PJRT_RawClient {
 
   absl::StatusOr<PjRtRawBufferRef> ImportForeignMemory(
       PJRT_Memory* memory_space, void* device_ptr, size_t size,
-      absl::AnyInvocable<void() &&> on_delete_callback, bool is_mutable);
+      PjRtOnceCallbackRef on_delete_callback, bool is_mutable);
 
   absl::StatusOr<std::unique_ptr<PjRtRuntimeAbiVersion>> RuntimeAbiVersion()
       const;
@@ -418,12 +436,6 @@ class PjRtRawClient : public PjRtRawClientInterface {
         "CreateDeviceEventForStream is not supported");
   }
 
-  // Returns the process-level key-value store, if supported.
-  virtual std::optional<std::shared_ptr<KeyValueStoreInterface>>
-  key_value_store() const {
-    return std::nullopt;
-  }
-
   // Experimental: Maps memory for fast transfers. May have backend specific
   // alignment requirements (most backends will require at least a page).
   virtual absl::Status DmaMap(void* data, size_t size) {
@@ -490,7 +502,7 @@ class PjRtRawClient : public PjRtRawClientInterface {
   // Imports foreign memory as a raw buffer.
   virtual absl::StatusOr<PjRtRawBufferRef> ImportForeignMemory(
       PJRT_Memory* memory_space, void* device_ptr, size_t size,
-      absl::AnyInvocable<void() &&> on_delete_callback, bool is_mutable) = 0;
+      PjRtOnceCallbackRef on_delete_callback, bool is_mutable) = 0;
 
   virtual absl::StatusOr<std::unique_ptr<PjRtRuntimeAbiVersion>>
   RuntimeAbiVersion() const {

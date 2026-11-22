@@ -34,20 +34,30 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/optional_ref.h"
+#include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/Attributes.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
+#include "llvm/Support/Alignment.h"
 #include "llvm/TargetParser/Triple.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/cubin_custom_kernel_compiler.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/fusions.h"
+#include "xla/backends/gpu/codegen/gpu_kernel_spec.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/codegen/triton/fusion.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/backends/gpu/transforms/collectives/collective_fusion.h"
 #include "xla/backends/gpu/transforms/collectives/collective_kernel_strategy_annotator.h"
+#include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -57,6 +67,8 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/primitive_util.h"
 #include "xla/runtime/object_pool.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/mlir_context_pool.h"
@@ -91,6 +103,16 @@ MATCHER_P(HasOpcode, expected_opcode, "") {
 }
 MATCHER_P(HasNumOperands, expected_operands, "") {
   return arg != nullptr && arg->operand_count() == expected_operands;
+}
+
+std::vector<Shape> UnmanagedShapes(
+    const std::vector<emitters::KernelArgument>& args) {
+  std::vector<Shape> shapes;
+  shapes.reserve(args.size());
+  for (const emitters::KernelArgument& arg : args) {
+    shapes.push_back(arg.shape());
+  }
+  return shapes;
 }
 
 struct ModuleWithFusion {
@@ -370,9 +392,10 @@ TEST_F(CollectiveEmitterTest, AllReduceGetCollectiveUnmanagedKernelArguments) {
   ASSERT_OK_AND_ASSIGN(
       const auto unmanaged_arguments,
       GetCollectiveUnmanagedKernelArguments(module_with_fusion.FusionInstr()));
-  EXPECT_THAT(unmanaged_arguments, ElementsAre(ShapeUtil::MakeShape(U64, {2}),
-                                               ShapeUtil::MakeShape(U64, {2}),
-                                               ShapeUtil::MakeShape(S32, {})));
+  EXPECT_THAT(UnmanagedShapes(unmanaged_arguments),
+              ElementsAre(ShapeUtil::MakeShape(U64, {2}),
+                          ShapeUtil::MakeShape(U64, {2}),
+                          ShapeUtil::MakeShape(S32, {})));
 }
 
 TEST_F(CollectiveEmitterTest, AllReduceWithTritonGetLaunchConfig) {
@@ -410,7 +433,10 @@ TEST_P(CollectiveEmitterParameterizedTest,
   ASSERT_NE(triton_fusion, nullptr);
 
   auto llvm_compiler =
-      [&](llvm::Module& llvm_module, const se::DeviceDescription& descr,
+      [&](llvm::Module& llvm_module,
+          absl::optional_ref<const GpuKernelSpec> spec,
+          absl::string_view kernel_fingerprint,
+          const se::DeviceDescription& descr,
           const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
     return std::vector<uint8_t>{1};
   };
@@ -577,9 +603,10 @@ TEST_F(CollectiveEmitterTest, AllGatherGetCollectiveUnmanagedKernelArguments) {
   ASSERT_OK_AND_ASSIGN(
       const auto unmanaged_arguments,
       GetCollectiveUnmanagedKernelArguments(module_with_fusion.FusionInstr()));
-  EXPECT_THAT(unmanaged_arguments, ElementsAre(ShapeUtil::MakeShape(U64, {2}),
-                                               ShapeUtil::MakeShape(U64, {2}),
-                                               ShapeUtil::MakeShape(S32, {})));
+  EXPECT_THAT(UnmanagedShapes(unmanaged_arguments),
+              ElementsAre(ShapeUtil::MakeShape(U64, {2}),
+                          ShapeUtil::MakeShape(U64, {2}),
+                          ShapeUtil::MakeShape(S32, {})));
 }
 
 TEST_F(CollectiveBlockLevelConfigTest,
@@ -654,9 +681,10 @@ TEST_F(CollectiveEmitterTest, AllToAllGetCollectiveUnmanagedKernelArguments) {
   ASSERT_OK_AND_ASSIGN(
       const auto unmanaged_arguments,
       GetCollectiveUnmanagedKernelArguments(module_with_fusion.FusionInstr()));
-  EXPECT_THAT(unmanaged_arguments, ElementsAre(ShapeUtil::MakeShape(U64, {2}),
-                                               ShapeUtil::MakeShape(U64, {2}),
-                                               ShapeUtil::MakeShape(S32, {})));
+  EXPECT_THAT(UnmanagedShapes(unmanaged_arguments),
+              ElementsAre(ShapeUtil::MakeShape(U64, {2}),
+                          ShapeUtil::MakeShape(U64, {2}),
+                          ShapeUtil::MakeShape(S32, {})));
 }
 
 TEST_F(CollectiveBlockLevelConfigTest,
@@ -742,9 +770,10 @@ TEST_F(CollectiveEmitterTest,
   ASSERT_OK_AND_ASSIGN(
       const auto unmanaged_arguments,
       GetCollectiveUnmanagedKernelArguments(module_with_fusion.FusionInstr()));
-  EXPECT_THAT(unmanaged_arguments, ElementsAre(ShapeUtil::MakeShape(U64, {2}),
-                                               ShapeUtil::MakeShape(U64, {2}),
-                                               ShapeUtil::MakeShape(S32, {})));
+  EXPECT_THAT(UnmanagedShapes(unmanaged_arguments),
+              ElementsAre(ShapeUtil::MakeShape(U64, {2}),
+                          ShapeUtil::MakeShape(U64, {2}),
+                          ShapeUtil::MakeShape(S32, {})));
 }
 
 constexpr absl::string_view kVariadicReduceScatterModuleStr = R"(
@@ -890,12 +919,12 @@ TEST_F(CollectiveEmitterTest,
       module_with_fusion.module->entry_computation();
 
   // Operand 0 (12288/rank, non-pow2):
-  //   f32[2,24576] -> f32[4,32,384] -> f32[2,32,384].
+  //   f32[2,24576] -> f32[4,64,192] -> f32[2,64,192].
   // Operand 1 (2/rank, pow2):
   //   f32[4,2] -> f32[4,2] -> f32[2,2].
-  const Shape param_0 = ShapeUtil::MakeShape(F32, {4, 32, 384});
+  const Shape param_0 = ShapeUtil::MakeShape(F32, {4, 64, 192});
   const Shape param_1 = ShapeUtil::MakeShape(F32, {4, 2});
-  const Shape new_output_0 = ShapeUtil::MakeShape(F32, {2, 32, 384});
+  const Shape new_output_0 = ShapeUtil::MakeShape(F32, {2, 64, 192});
   const Shape new_output_1 = ShapeUtil::MakeShape(F32, {2, 2});
   const Shape new_fusion_shape =
       ShapeUtil::MakeTupleShape({new_output_0, new_output_1});
@@ -935,12 +964,12 @@ TEST_F(CollectiveBlockLevelConfigTest,
                            *gpu_topology_, module_with_fusion.FusionInstr()));
 
   // 4 blocks/rank:
-  // - Output 0 (f32[2,32,384]) -> 4 tiles of [1,8,512].
+  // - Output 0 (f32[2,64,192]) -> 4 tiles of [1,16,256].
   // - Output 1 (f32[2,2])      -> 2 tiles of [1,1].
   EXPECT_EQ(block_level_config.num_warps(), 16);
   ASSERT_EQ(block_level_config.output_tiles_size(), 2);
   EXPECT_THAT(block_level_config.output_tiles(0).sizes(),
-              ElementsAre(1, 8, 512));
+              ElementsAre(1, 16, 256));
   EXPECT_THAT(block_level_config.output_tiles(1).sizes(), ElementsAre(1, 1));
 }
 
@@ -951,10 +980,11 @@ TEST_F(CollectiveEmitterTest,
   ASSERT_OK_AND_ASSIGN(
       const auto unmanaged_arguments,
       GetCollectiveUnmanagedKernelArguments(module_with_fusion.FusionInstr()));
-  EXPECT_THAT(unmanaged_arguments, ElementsAre(ShapeUtil::MakeShape(U64, {2}),
-                                               ShapeUtil::MakeShape(U64, {2}),
-                                               ShapeUtil::MakeShape(U64, {2}),
-                                               ShapeUtil::MakeShape(S32, {})));
+  EXPECT_THAT(UnmanagedShapes(unmanaged_arguments),
+              ElementsAre(ShapeUtil::MakeShape(U64, {2}),
+                          ShapeUtil::MakeShape(U64, {2}),
+                          ShapeUtil::MakeShape(U64, {2}),
+                          ShapeUtil::MakeShape(S32, {})));
 }
 
 GpuTopology MakeGpuTopology(int32_t num_partitions,
@@ -1125,19 +1155,19 @@ TEST_F(CollectiveEmitterTest,
                                              /*replica_count=*/16));
 
   // Root is now a bitcast back to bf16[8,24576]; operand(0) is the 3D fusion
-  // with shape bf16[16,4,3072].
+  // with shape bf16[16,8,1536].
   HloInstruction* root =
       module_with_fusion.module->entry_computation()->root_instruction();
   ASSERT_EQ(root->opcode(), HloOpcode::kBitcast);
   HloFusionInstruction* flat_fusion = module_with_fusion.MutableFusionInstr();
   EXPECT_EQ(flat_fusion, root->operand(0));
-  EXPECT_EQ(flat_fusion->shape(), ShapeUtil::MakeShape(BF16, {16, 4, 3072}));
+  EXPECT_EQ(flat_fusion->shape(), ShapeUtil::MakeShape(BF16, {16, 8, 1536}));
 
   ASSERT_OK_AND_ASSIGN(
       BlockLevelFusionConfig block_level_config,
       GetCollectiveBlockLevelFusionConfig(topology_16, flat_fusion));
   EXPECT_THAT(block_level_config.output_tiles(0).sizes(),
-              ElementsAre(1, 1, 4096));
+              ElementsAre(1, 2, 2048));
 
   HloFusionAnalysis analysis =
       HloFusionAnalysis::Create(*flat_fusion, device_info_);
@@ -1148,7 +1178,10 @@ TEST_F(CollectiveEmitterTest,
   EXPECT_EQ(launch_config->launch_dimensions.num_threads_per_block(), 512);
 
   auto llvm_compiler =
-      [&](llvm::Module& llvm_module, const se::DeviceDescription& descr,
+      [&](llvm::Module& llvm_module,
+          absl::optional_ref<const GpuKernelSpec> spec,
+          absl::string_view kernel_fingerprint,
+          const se::DeviceDescription& descr,
           const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
     return std::vector<uint8_t>{1};
   };
@@ -1259,6 +1292,116 @@ TEST_F(CollectiveBlockLevelConfigTest,
   EXPECT_EQ(launch_config->launch_dimensions.num_threads_per_block(), 512);
 }
 
-}  // namespace
+llvm::Function* CreateAnnotatedDummyKernel(
+    const emitters::KernelArguments& kernel_args, llvm::Module& llvm_mod) {
+  llvm::LLVMContext& llvm_ctx = llvm_mod.getContext();
+  llvm::Type* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+  llvm::Type* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  std::vector<llvm::Type*> param_types;
+  param_types.reserve(kernel_args.args().size());
+  for (const emitters::KernelArgument& arg : kernel_args.args()) {
+    const bool is_scalar_unmanaged =
+        arg.kind() == emitters::KernelArgument::Kind::kUnmanaged &&
+        arg.shape().dimensions().empty();
+    param_types.push_back(is_scalar_unmanaged ? i32_ty : ptr_ty);
+  }
+  auto* fn = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(llvm_ctx), param_types,
+                              /*isVarArg=*/false),
+      llvm::Function::ExternalLinkage, "kernel", llvm_mod);
+  AnnotateAttrsIfUnset(kernel_args, *fn);
+  return fn;
+}
 
+struct PeerTableAlignmentTestCase {
+  std::string name;
+  std::string replica_groups;
+  int64_t num_devices;
+  uint64_t expected_align;
+};
+
+void VerifyPeerPointerTableAttrs(const HloFusionInstruction* fusion,
+                                 int64_t output_bytes,
+                                 absl::Span<const unsigned> table_indices,
+                                 const PeerTableAlignmentTestCase& tc) {
+  BufferAllocation alloc(/*index=*/0, /*size=*/262144 + output_bytes,
+                         /*color=*/0);
+  auto slice_provider =
+      [&](const HloInstruction& instr,
+          const ShapeIndex& idx) -> absl::StatusOr<BufferAllocation::Slice> {
+    if (&instr == fusion) {
+      return BufferAllocation::Slice(&alloc, 262144, output_bytes);
+    }
+    return BufferAllocation::Slice(&alloc, 0, 262144);
+  };
+  ASSERT_OK_AND_ASSIGN(
+      emitters::KernelArguments kernel_args,
+      CreateCollectiveKernelArguments(slice_provider,
+                                      GetDefaultBufferAlignment(), *fusion));
+  EXPECT_THAT(kernel_args.PositionOfOperand(0), IsOkAndHolds(0));
+  EXPECT_THAT(kernel_args.PositionOfResult({}), IsOkAndHolds(1));
+
+  llvm::LLVMContext llvm_ctx;
+  llvm::Module llvm_mod("test", llvm_ctx);
+  llvm::Function* fn = CreateAnnotatedDummyKernel(kernel_args, llvm_mod);
+
+  EXPECT_EQ(fn->getParamDereferenceableBytes(0), 262144);
+  EXPECT_EQ(fn->getParamAlign(0), llvm::MaybeAlign(256));
+  for (unsigned idx : table_indices) {
+    EXPECT_EQ(fn->getParamDereferenceableBytes(idx), tc.num_devices * 8);
+    EXPECT_EQ(fn->getParamAlign(idx), llvm::MaybeAlign(tc.expected_align));
+    EXPECT_TRUE(fn->hasParamAttribute(idx, llvm::Attribute::NoAlias));
+    EXPECT_TRUE(fn->hasParamAttribute(idx, llvm::Attribute::ReadOnly));
+  }
+}
+
+class PeerPointerTableAlignmentTest
+    : public CollectiveEmitterTest,
+      public ::testing::WithParamInterface<PeerTableAlignmentTestCase> {};
+
+TEST_P(PeerPointerTableAlignmentTest,
+       CreateCollectiveKernelArgumentsMarksPeerPointerTables) {
+  const PeerTableAlignmentTestCase& tc = GetParam();
+  const std::string hlo = absl::StrFormat(
+      R"(
+      HloModule test
+      add {
+        x = f32[] parameter(0)
+        y = f32[] parameter(1)
+        ROOT sum = f32[] add(x, y)
+      }
+      fused_ar {
+        param_0 = f32[65536] parameter(0)
+        ROOT all-reduce = f32[65536] all-reduce(param_0), to_apply=add,
+          replica_groups={%s}
+      }
+      ENTRY test_computation {
+        p0 = f32[65536] parameter(0)
+        ROOT fusion = f32[65536] fusion(p0), kind=kCustom, calls=fused_ar,
+          backend_config={"fusion_backend_config":{
+            "kind":"__triton_collective"
+          }}
+      }
+      )",
+      tc.replica_groups);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo, tc.num_devices));
+  const auto* fusion = Cast<HloFusionInstruction>(
+      module->entry_computation()->root_instruction());
+  ASSERT_NO_FATAL_FAILURE(VerifyPeerPointerTableAttrs(
+      fusion, /*output_bytes=*/262144, /*table_indices=*/{2u, 3u}, tc));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    PeerPointerTableAlignments, PeerPointerTableAlignmentTest,
+    ::testing::ValuesIn<PeerTableAlignmentTestCase>({
+        {"TwoDevices", "{0,1}", 2, 16},
+        {"FourDevices", "{0,1,2,3}", 4, 16},
+        {"ThreeDevices", "{0,1,2}", 3, 8},
+    }),
+    [](const ::testing::TestParamInfo<PeerTableAlignmentTestCase>& info) {
+      return info.param.name;
+    });
+
+}  // namespace
 }  // namespace xla::gpu

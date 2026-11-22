@@ -20,8 +20,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -63,7 +65,7 @@ class TestChildExecutableCompiler : public AtomProgramCompiler {
  public:
   TestChildExecutableCompiler() { methods_.reserve(kMaxTestMethods); }
 
-  tsl::Future<LoadedExecutableRef> CompileXla(
+  tsl::Future<LoadedExecutableRef> CompileAndLoadXla(
       std::unique_ptr<HloProgram> hlo_program, xla::CompileOptions options,
       std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks)
       override ABSL_LOCKS_EXCLUDED(mu_) {
@@ -109,7 +111,16 @@ class TestChildExecutableCompiler : public AtomProgramCompiler {
     return mock_executable;
   }
 
-  tsl::Future<LoadedExecutableRef> CompileMpmdReshard(
+  tsl::Future<absl_nonnull std::shared_ptr<const CompiledAtomProgram>>
+  CompileXla(std::unique_ptr<HloProgram> hlo_program,
+             xla::CompileOptions options,
+             std::vector<tsl::RCReference<LoadedHostCallback>>
+                 loaded_host_callbacks) override {
+    return absl::UnimplementedError(
+        "TestChildExecutableCompiler does not support CompileXla");
+  }
+
+  tsl::Future<LoadedExecutableRef> CompileAndLoadMpmdReshard(
       std::vector<DType> dtypes, std::vector<Shape> shapes,
       std::vector<IfrtArrayType> in_array_types,
       std::vector<IfrtArrayType> out_array_types) override
@@ -120,6 +131,14 @@ class TestChildExecutableCompiler : public AtomProgramCompiler {
         << "push_back() might have caused reallocation, which might have "
            "invalidated some method string_views.";
     return std::make_unique<testing::NiceMock<MockLoadedExecutable>>();
+  }
+
+  tsl::Future<absl_nonnull std::shared_ptr<const CompiledAtomProgram>>
+  CompileMpmdReshard(std::vector<DType> dtypes, std::vector<Shape> shapes,
+                     std::vector<IfrtArrayType> in_array_types,
+                     std::vector<IfrtArrayType> out_array_types) override {
+    return absl::UnimplementedError(
+        "TestChildExecutableCompiler does not support CompileMpmdReshard");
   }
 
  private:

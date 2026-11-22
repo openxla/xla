@@ -1452,11 +1452,20 @@ absl::Status ShapeVerifier::HandleGetTupleElement(
 }
 
 namespace {
+// Checks that each operand of `instruction` has the same element type as its
+// corresponding `to_apply` parameter (used by reduce, map, reduce_window, and
+// scatter). `skip_operand_index` skips an operand with no `to_apply` parameter,
+// such as `scatter_indices` in scatter.
 absl::Status SameElementTypesForOperandsAndToApplyParameters(
-    const HloInstruction& instruction, int64_t num_operands_to_check) {
+    const HloInstruction& instruction, int64_t num_operands_to_check,
+    std::optional<int64_t> skip_operand_index = std::nullopt) {
   const ProgramShape& to_apply = instruction.to_apply()->ComputeProgramShape();
-  for (int i = 0; i < num_operands_to_check; ++i) {
-    const Shape& parameter_shape = to_apply.parameters(i);
+  int64_t parameter_idx = 0;
+  for (int64_t i = 0; i < num_operands_to_check; ++i) {
+    if (i == skip_operand_index) {
+      continue;
+    }
+    const Shape& parameter_shape = to_apply.parameters(parameter_idx++);
     const Shape& operand_shape = instruction.operands()[i]->shape();
     if (!ShapeUtil::SameElementType(parameter_shape, operand_shape)) {
       return InvalidArgument(
@@ -1887,28 +1896,29 @@ absl::Status ShapeVerifier::CheckCompositeCall(const HloInstruction* call) {
   }
   TF_RET_CHECK(call->has_frontend_attributes())
       << "A composite call op must have frontend attributes";
-  auto map = call->frontend_attributes().map();
-  if (auto name = map.find("composite.name");
-      name == map.end() || name->second.empty()) {
+  if (std::optional<std::string> name =
+          call->get_frontend_attribute("composite.name");
+      !name.has_value() || name->empty()) {
     return InvalidArgument(
         "A composite call op must have frontend attributes with key "
         "composite.name whose value is non-empty");
   }
-  if (auto attributes = map.find("composite.attributes");
-      attributes != map.end() && attributes->second.empty()) {
+  if (std::optional<std::string> attributes =
+          call->get_frontend_attribute("composite.attributes");
+      attributes.has_value() && attributes->empty()) {
     return InvalidArgument(
         "A composite call op must have frontend attributes with key "
         "composite.attributes whose value is default: {} or non-empty");
   }
-  if (auto version_str = map.find("composite.version");
-      version_str != map.end()) {
+  if (std::optional<std::string> version_str =
+          call->get_frontend_attribute("composite.version")) {
     int64_t version = 0;
-    if (!absl::SimpleAtoi(version_str->second, &version) || version < 0) {
+    if (!absl::SimpleAtoi(*version_str, &version) || version < 0) {
       return InvalidArgument(
           "A composite call op must have frontend attributes with a "
           "composite.version whose value is a non-negative integer but got: "
           "%s",
-          version_str->second);
+          *version_str);
     }
   }
   return absl::OkStatus();
@@ -1959,7 +1969,7 @@ absl::Status ShapeVerifier::HandleCustomCall(HloInstruction* instruction) {
         << "Invalid aliasing operand shape index.";
     TF_RET_CHECK(ShapeUtil::IndexIsValid(custom_call->shape(), pair.first))
         << "Invalid aliasing output shape index.";
-    if (custom_call->frontend_attributes().map().contains(
+    if (custom_call->has_frontend_attribute(
             "xla_skip_custom_call_alias_shape_check")) {
       return absl::OkStatus();
     }
@@ -2714,6 +2724,7 @@ absl::Status CheckMixedPrecisionOperands(const HloInstruction* instruction) {
     case HloOpcode::kRecvDone:
     case HloOpcode::kReducePrecision:
     case HloOpcode::kReduceWindow:
+    case HloOpcode::kScatter:
     case HloOpcode::kSend:
     case HloOpcode::kSendDone:
     case HloOpcode::kSort:
@@ -2762,10 +2773,17 @@ absl::Status ShapeVerifier::HandleScatter(HloInstruction* scatter) {
   for (const HloInstruction* operand : scatter->operands()) {
     arg_shapes.push_back(&operand->shape());
   }
-  return CheckShape(scatter,
-                    ShapeInference::InferScatterShape(
-                        arg_shapes, scatter->to_apply()->ComputeProgramShape(),
-                        scatter->scatter_dimension_numbers()));
+  ABSL_RETURN_IF_ERROR(CheckShape(
+      scatter, ShapeInference::InferScatterShape(
+                   arg_shapes, scatter->to_apply()->ComputeProgramShape(),
+                   scatter->scatter_dimension_numbers())));
+  if (opts_.allow_mixed_precision) {
+    return absl::OkStatus();
+  }
+  const int64_t indices_operand_index =
+      Cast<HloScatterInstruction>(scatter)->scatter_operand_count();
+  return SameElementTypesForOperandsAndToApplyParameters(
+      *scatter, scatter->operand_count(), indices_operand_index);
 }
 
 absl::Status ShapeVerifier::HandleAfterAll(HloInstruction* token) {
@@ -3525,8 +3543,7 @@ absl::StatusOr<bool> ShouldSkipDeadlockCheck(const T* instruction) {
   // For now we will skip checks for instructions annotated with
   // _xla_send_recv_pipeline, since they introduce extra constraints that have
   // not been modeled by this function.
-  if (instruction->frontend_attributes().map().contains(
-          kSendRecvPipelineAttr)) {
+  if (instruction->has_frontend_attribute(kSendRecvPipelineAttr)) {
     return true;
   }
   // Check that the instruction itself does not have conflicting
@@ -4646,9 +4663,9 @@ absl::Status VerifyBuffers(const HloModule& module, bool layout_sensitive) {
       continue;
     }
     for (auto* inst : comp->instructions()) {
-      if (inst->IsAsynchronous() || (inst->opcode() == HloOpcode::kCall &&
-                                     inst->frontend_attributes().map().contains(
-                                         kXlaStreamAnnotationAttr))) {
+      if (inst->IsAsynchronous() ||
+          (inst->opcode() == HloOpcode::kCall &&
+           inst->has_frontend_attribute(kXlaStreamAnnotationAttr))) {
         // No need for additional buffer verification on start/update as the
         // correctness of buffer usage is guaranteed through consistency with
         // the wrapped computation and buffer verification inside it. For
@@ -4754,6 +4771,60 @@ absl::Status InstructionVerifier::HandleBitcastConvert(HloInstruction* c) {
   return absl::OkStatus();
 }
 
+// Every `dynamic_variables` entry must set both init and step or neither
+// ("writers set both or neither"). Additionally, `known_init_step` is
+// authoritative for the induction variable, so a `dynamic_variables` entry for
+// it may repeat its init/step but must not contradict them. Loops whose backend
+// config is not a WhileLoopBackendConfig (e.g. one attached by another
+// backend) are not checked.
+static absl::Status VerifyWhileLoopBackendConfig(
+    const HloInstruction* xla_while) {
+  if (!xla_while->has_backend_config()) {
+    return absl::OkStatus();
+  }
+  absl::StatusOr<WhileLoopBackendConfig> config =
+      xla_while->backend_config<WhileLoopBackendConfig>();
+  if (!config.ok()) {
+    return absl::OkStatus();
+  }
+  for (const WhileLoopBackendConfig::DynamicVariable& entry :
+       config->dynamic_variables()) {
+    if (entry.has_init() != entry.has_step()) {
+      return FailedPrecondition(
+          "Dynamic variable entry at tuple index %d must set both init and "
+          "step or neither (init=%s, step=%s): %s",
+          entry.tuple_index(),
+          entry.has_init() ? absl::StrCat(entry.init()) : "unset",
+          entry.has_step() ? absl::StrCat(entry.step()) : "unset",
+          xla_while->ToString());
+    }
+  }
+  if (!config->has_known_induction_variable() ||
+      !config->has_known_init_step()) {
+    return absl::OkStatus();
+  }
+  const WhileLoopBackendConfig::KnownInitStep& init_step =
+      config->known_init_step();
+  int64_t tuple_index = config->known_induction_variable().tuple_index();
+  for (const WhileLoopBackendConfig::DynamicVariable& entry :
+       config->dynamic_variables()) {
+    if (entry.tuple_index() != tuple_index) {
+      continue;
+    }
+    if ((entry.has_init() && entry.init() != init_step.init()) ||
+        (entry.has_step() && entry.step() != init_step.step())) {
+      return FailedPrecondition(
+          "Dynamic variable entry for the induction variable at tuple index "
+          "%d (init=%s, step=%s) disagrees with known_init_step (init=%d, "
+          "step=%d): %s",
+          tuple_index, entry.has_init() ? absl::StrCat(entry.init()) : "unset",
+          entry.has_step() ? absl::StrCat(entry.step()) : "unset",
+          init_step.init(), init_step.step(), xla_while->ToString());
+    }
+  }
+  return absl::OkStatus();
+}
+
 absl::Status InstructionVerifier::HandleWhile(HloInstruction* xla_while) {
   auto* while_cond = xla_while->while_condition();
   auto* while_body = xla_while->while_body();
@@ -4782,7 +4853,7 @@ absl::Status InstructionVerifier::HandleWhile(HloInstruction* xla_while) {
                   xla_while->while_body()->parameter_instruction(0),
                   xla_while->while_condition()->parameter_instruction(0)}));
 
-  return absl::OkStatus();
+  return VerifyWhileLoopBackendConfig(xla_while);
 }
 
 absl::Status InstructionVerifier::HandleCall(HloInstruction* call) {

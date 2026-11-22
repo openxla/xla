@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/service/spmd/shardy/shardy_xla_pass.h"
 
 #include <cstdint>
-#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <string>
@@ -68,6 +67,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/map_util.h"
 #include "xla/service/computation_layout.h"
+#include "xla/service/dump.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/pipelines.h"
@@ -357,11 +357,21 @@ void removeFrontendAttributes(HloModule* hloModule,
   hloModule->set_frontend_attributes(feAttrs);
 }
 
-std::string getShardyDirIfShouldDump(const DebugOptions& debugOptions,
+std::string getShardyDirIfShouldDump(const HloModule& hloModule,
                                      absl::string_view passName,
                                      bool isShardyVerbose) {
+  const DebugOptions& debugOptions = hloModule.config().debug_options();
+  if (!debugOptions.xla_enable_dumping()) {
+    return "";
+  }
   std::string shardyDir = debugOptions.xla_dump_to();
-  if (shardyDir.empty() || isShardyVerbose) {
+  if (shardyDir.empty()) {
+    return "";
+  }
+  if (!DumpingEnabledForHloModule(hloModule)) {
+    return "";
+  }
+  if (isShardyVerbose) {
     return shardyDir;
   }
   absl::string_view regex = debugOptions.xla_dump_hlo_pass_re();
@@ -382,30 +392,30 @@ absl::Status runShardingPropagation(HloModule* hloModule,
   bool isShardyVerbose =
       absl::StrContains(debugOptions.xla_dump_hlo_pass_re(), kShardyVerbose);
   std::string shardyDir =
-      getShardyDirIfShouldDump(debugOptions, passName, isShardyVerbose);
+      getShardyDirIfShouldDump(*hloModule, passName, isShardyVerbose);
 
   if (shardyDir == "sponge") {
-    shardyDir = getenv("TEST_UNDECLARED_OUTPUTS_DIR");
-    if (shardyDir.empty()) {
-      LOG(WARNING) << "\"sponge\" specified as dump directory but "
-                      "TEST_UNDECLARED_OUTPUTS_DIR is not set!";
-    } else {
+    if (tsl::io::GetTestUndeclaredOutputsDir(&shardyDir) &&
+        !shardyDir.empty()) {
       LOG(INFO) << "Shardy dump directory is sponge on undeclared outputs dir: "
                 << shardyDir;
+    } else {
+      shardyDir.clear();
+      LOG(WARNING) << "\"sponge\" specified as dump directory but "
+                      "TEST_UNDECLARED_OUTPUTS_DIR is not set!";
     }
   }
 
-  if (isShardyVerbose) {
-    options.debugPropagationEdgeSharding = true;
-    options.debugShardingOrigins = true;
-  }
-
   if (!shardyDir.empty()) {
+    if (isShardyVerbose) {
+      options.debugPropagationEdgeSharding = true;
+      options.debugShardingOrigins = true;
+    }
     shardyDir =
         tsl::io::JoinPath(shardyDir, "shardy", uniqueModuleName(*hloModule));
     LOG(INFO) << "Using Shardy output directory: " << shardyDir;
+    ABSL_RETURN_IF_ERROR(tsl::Env::Default()->RecursivelyCreateDir(shardyDir));
   }
-  ABSL_RETURN_IF_ERROR(tsl::Env::Default()->RecursivelyCreateDir(shardyDir));
   // MLIR pipeline: (1) import, (2) Shardy, and (3) export.
 
   bool enableVerifier = false;
@@ -503,10 +513,9 @@ absl::StatusOr<bool> eraseInlineableAttrForShardyManualComputations(
       if (instruction->opcode() == HloOpcode::kCall &&
           absl::StrContains(instruction->to_apply()->name(),
                             sdy::kManualComputationFuncName.str())) {
-        auto it =
-            instruction->frontend_attributes().map().find(kXlaInlineableAttr);
-        if (it != instruction->frontend_attributes().map().end()) {
-          absl::string_view value = it->second;
+        if (std::optional<std::string> inlineable =
+                instruction->get_frontend_attribute(kXlaInlineableAttr)) {
+          absl::string_view value = *inlineable;
           TF_RET_CHECK(value == "false" || value == "xla_late" ||
                        value == "auto")
               << "Unexpected inlineable attribute value: " << value;

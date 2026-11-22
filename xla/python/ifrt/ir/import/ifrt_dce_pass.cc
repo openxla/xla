@@ -13,13 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstddef>
 #include <cstdint>
-#include <optional>
 
 #include "absl/log/check.h"
-#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/BitVector.h"
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -30,23 +28,21 @@ limitations under the License.
 #include "mlir/IR/Block.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/Iterators.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
-#include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
-#include "mlir/IR/ValueRange.h"
-#include "mlir/IR/Visitors.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "mlir/Support/WalkResult.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "xla/python/ifrt/ir/constants.h"
 #include "xla/python/ifrt/ir/ifrt_dialect.h"
 #include "xla/python/ifrt/ir/ifrt_interfaces.h"
 #include "xla/python/ifrt/ir/ifrt_ops.h"
+#include "xla/python/ifrt/ir/import/callee_symbol_manager.h"
 #include "xla/python/ifrt/ir/import/passes.h"  // IWYU pragma: keep
+#include "xla/python/ifrt/ir/utils.h"
 
 namespace xla {
 namespace ifrt {
@@ -56,108 +52,16 @@ namespace ifrt {
 
 namespace {
 
-// Returns true if `callee` has a single block containing only `func.return`.
-bool IsEmptyCallee(mlir::func::FuncOp callee) {
+// Returns true if `callee` has a single block containing only `func.return` and
+// operations that would be trivially dead once `func.return` operands are
+// dropped.
+bool IsSideEffectFreeCallee(mlir::func::FuncOp callee) {
   return callee.getBody().hasOneBlock() &&
          llvm::all_of(callee.getBody().front().getOperations(),
-                      [](const mlir::Operation& op) {
-                        return llvm::isa<mlir::func::ReturnOp>(&op);
+                      [](mlir::Operation& op) {
+                        return llvm::isa<mlir::func::ReturnOp>(&op) ||
+                               mlir::wouldOpBeTriviallyDead(&op);
                       });
-}
-
-// Filters an array of per-argument or per-result dictionary attributes (e.g.,
-// `arg_attrs` or `res_attrs`) by dropping entries whose index is set in
-// `erase`. Returns nullptr if `dict_array` is null, all entries are erased, or
-// no kept entry is a non-empty `DictionaryAttr`.
-mlir::ArrayAttr FilterDictArrayAttr(mlir::ArrayAttr dict_array,
-                                    const llvm::BitVector& erase) {
-  if (dict_array == nullptr) {
-    return nullptr;
-  }
-  llvm::SmallVector<mlir::Attribute> kept;
-  kept.reserve(dict_array.size());
-  bool has_non_empty = false;
-  for (auto [idx, attr] : llvm::enumerate(dict_array)) {
-    if (idx < erase.size() && erase.test(idx)) {
-      continue;
-    }
-    kept.push_back(attr);
-    if (auto dict = llvm::dyn_cast<mlir::DictionaryAttr>(attr);
-        dict != nullptr && !dict.empty()) {
-      has_non_empty = true;
-    }
-  }
-  if (kept.empty() || !has_non_empty) {
-    return nullptr;
-  }
-  return mlir::ArrayAttr::get(dict_array.getContext(), kept);
-}
-
-// Partition of an `IfrtArrayOpInterface` op's array outputs into used (kept)
-// and unused (erased) results, along with index remapping and kept types.
-struct UsedOutputsSlice {
-  llvm::BitVector keep;
-  llvm::BitVector erase;
-  llvm::SmallVector<int32_t> old_to_new;
-  llvm::SmallVector<mlir::Type> kept_types;
-};
-
-// Inspects the array outputs of `op` and returns a `UsedOutputsSlice` recording
-// which outputs are used vs. unused, their compacted output indices, and the
-// types of the kept outputs.
-UsedOutputsSlice CollectUsedOutputs(IfrtArrayOpInterface op) {
-  mlir::ResultRange outputs = op.getOutputs();
-  const unsigned num_outputs = outputs.size();
-  UsedOutputsSlice slice{llvm::BitVector(num_outputs),
-                         llvm::BitVector(num_outputs),
-                         llvm::SmallVector<int32_t>(num_outputs, -1),
-                         {}};
-  slice.kept_types.reserve(num_outputs);
-  for (unsigned i = 0; i < num_outputs; ++i) {
-    if (outputs[i].use_empty()) {
-      slice.erase.set(i);
-    } else {
-      slice.keep.set(i);
-      slice.old_to_new[i] = slice.kept_types.size();
-      slice.kept_types.push_back(outputs[i].getType());
-    }
-  }
-  return slice;
-}
-
-// Replaces uses of kept array outputs of `old_op` with the corresponding
-// compacted outputs of `new_op` according to `old_to_new` (-1 for erased
-// outputs), forwards `old_op`'s control output to `new_op`'s control output,
-// and erases `old_op`.
-void ReplaceKeptOutputs(mlir::RewriterBase& rewriter,
-                        IfrtArrayOpInterface old_op,
-                        IfrtArrayOpInterface new_op,
-                        llvm::ArrayRef<int32_t> old_to_new) {
-  for (auto [i, new_idx] : llvm::enumerate(old_to_new)) {
-    if (new_idx != -1) {
-      rewriter.replaceAllUsesWith(old_op.getOutputs()[i],
-                                  new_op.getOutputs()[new_idx]);
-    }
-  }
-  rewriter.replaceAllUsesWith(old_op.getControlOutput(),
-                              new_op.getControlOutput());
-  rewriter.eraseOp(old_op);
-}
-
-// Returns true if `control_inputs` can be forwarded to all users of
-// `control_output` via `detail::ForwardControlInputsToUsers` (either all users
-// accept variadic IFRT control dependencies, or there is a single unique
-// control input).
-bool CanForwardControlInputs(mlir::Value control_output,
-                             mlir::ValueRange control_inputs) {
-  if (llvm::all_of(control_output.getUsers(), [](mlir::Operation* user) {
-        return llvm::isa<IfrtArrayOpInterface, AssembleOp, DisassembleOp>(user);
-      })) {
-    return true;
-  }
-  llvm::SmallDenseSet<mlir::Value, 4> unique(control_inputs.begin(),
-                                             control_inputs.end());
-  return unique.size() == 1;
 }
 
 // Eliminates unused `(input, output)` pairs from `op`, or erases `op` entirely
@@ -166,11 +70,15 @@ bool CanForwardControlInputs(mlir::Value control_output,
 //
 // REQUIRES: `op` is side-effect free.
 void EliminateUnusedPairwiseArrayOpOutputs(IfrtPairwiseArrayOpInterface op,
+                                           CalleeSymbolManager& symbol_manager,
                                            mlir::RewriterBase& rewriter) {
   UsedOutputsSlice slice = CollectUsedOutputs(op);
-  if (slice.keep.none() &&
-      !CanForwardControlInputs(op.getControlOutput(), op.getControlInputs())) {
-    return;
+  if (slice.keep.none()) {
+    if (!CanForwardControlInputs(op.getControlOutput(),
+                                 op.getControlInputs())) {
+      return;
+    }
+    symbol_manager.RecordOpErased(op);
   }
   op.replaceWithKeptOutputs(rewriter, slice.keep);
 }
@@ -181,13 +89,15 @@ void EliminateUnusedPairwiseArrayOpOutputs(IfrtPairwiseArrayOpInterface op,
 // arrays and compacting `in_array_index` and `out_array_index` in kept
 // `IfrtArrayMappingAttr` entries.
 void EliminateUnusedRemapArraysOutputs(RemapArraysOp remap_op,
+                                       CalleeSymbolManager& symbol_manager,
                                        mlir::RewriterBase& rewriter) {
   UsedOutputsSlice slice = CollectUsedOutputs(remap_op);
   if (slice.keep.none()) {
     if (CanForwardControlInputs(remap_op.getControlOutput(),
                                 remap_op.getControlInputs())) {
-      detail::ForwardControlInputsToUsers(
-          remap_op.getControlOutput(), remap_op.getControlInputs(), rewriter);
+      ForwardControlInputsToUsers(remap_op.getControlOutput(),
+                                  remap_op.getControlInputs(), rewriter);
+      symbol_manager.RecordOpErased(remap_op);
       rewriter.eraseOp(remap_op);
     }
     return;
@@ -220,10 +130,6 @@ void EliminateUnusedRemapArraysOutputs(RemapArraysOp remap_op,
     }
   }
 
-  if (new_inputs.empty() || kept_mappings.empty()) {
-    return;
-  }
-
   llvm::SmallVector<mlir::Attribute> new_mappings;
   new_mappings.reserve(kept_mappings.size());
   for (IfrtArrayMappingAttr mapping : kept_mappings) {
@@ -246,143 +152,120 @@ void EliminateUnusedRemapArraysOutputs(RemapArraysOp remap_op,
   ReplaceKeptOutputs(rewriter, remap_op, new_remap, slice.old_to_new);
 }
 
-// Resolved target of an `ifrt.Call` callee symbol reference, supporting either
-// a top-level `func.func` or a `func.func` nested inside a `builtin.module`.
-struct ResolvedCallee {
-  mlir::Operation* root_symbol_op = nullptr;
-  mlir::StringAttr root_symbol_name;
-  mlir::func::FuncOp func_op;
-  bool is_nested_module = false;
-};
-
-// Resolves `call_op.getCallee()` in `symbol_table` to a non-external
-// `func.func`, supporting either a flat symbol ref (`@callee`) or a 1-level
-// nested module ref (`@module::@callee`).
-std::optional<ResolvedCallee> ResolveCallee(CallOp call_op,
-                                            mlir::SymbolTable& symbol_table) {
-  mlir::SymbolRefAttr callee_ref = call_op.getCallee();
-  mlir::StringAttr root_name = callee_ref.getRootReference();
-  mlir::Operation* root_op = symbol_table.lookup(root_name);
-  auto func_op = llvm::dyn_cast_or_null<mlir::func::FuncOp>(root_op);
-  if (callee_ref.getNestedReferences().size() == 1) {
-    if (auto mod = llvm::dyn_cast_or_null<mlir::ModuleOp>(root_op);
-        mod != nullptr) {
-      func_op =
-          mod.lookupSymbol<mlir::func::FuncOp>(callee_ref.getLeafReference());
-    }
-  } else if (!callee_ref.getNestedReferences().empty()) {
-    return std::nullopt;
-  }
-  if (func_op == nullptr || func_op.isExternal()) {
-    return std::nullopt;
-  }
-  return ResolvedCallee{root_op, root_name, func_op, root_op != func_op};
-}
-
 // Eliminates unused results and inputs of `call_op` and its resolved callee:
-// clones a private copy of the callee (or enclosing module) when shared,
-// erases unused `call_op` outputs and callee `func.return` operands, simplifies
-// the callee region, erases unused callee arguments and `call_op` inputs while
-// remapping aliasing/donation/arg/result attributes, and erases `call_op` (plus
-// its private callee if unused) when it becomes an empty dead call.
-// NOTE: `call_op` is not removed if it is not side-effect free.
-void EliminateCallDce(CallOp call_op, mlir::ModuleOp module_op,
-                      mlir::SymbolTable& symbol_table,
-                      llvm::DenseMap<mlir::StringAttr, int>& symbol_use_counts,
-                      bool symbol_uses_known, mlir::RewriterBase& rewriter) {
-  std::optional<ResolvedCallee> resolved = ResolveCallee(call_op, symbol_table);
-  if (!resolved.has_value()) {
-    return;
+// erases `call_op` (plus its private callee if unused) when all outputs are
+// unused and the callee is side-effect free, or clones a private copy of the
+// callee (or enclosing module) when shared before erasing unused `call_op`
+// outputs/inputs and remapping aliasing/donation/arg/result attributes. Returns
+// `mlir::failure()` (having emitted an op error) if the callee cannot be
+// resolved or prepared for mutation.
+mlir::LogicalResult EliminateCallDce(CallOp call_op,
+                                     CalleeSymbolManager& symbol_manager,
+                                     mlir::RewriterBase& rewriter) {
+  mlir::FailureOr<mlir::func::FuncOp> resolved_callee =
+      symbol_manager.GetCallee(call_op);
+  if (mlir::failed(resolved_callee)) {
+    return mlir::failure();
   }
+  mlir::func::FuncOp callee = *resolved_callee;
 
-  const int root_uses = symbol_use_counts.lookup(resolved->root_symbol_name);
-  const bool is_shared = !symbol_uses_known || root_uses != 1;
-
-  mlir::Operation* root_op = resolved->root_symbol_op;
-  mlir::func::FuncOp callee = resolved->func_op;
-  mlir::SymbolRefAttr callee_ref = call_op.getCalleeAttr();
-  mlir::StringAttr cloned_root_name;
-  if (is_shared) {
-    root_op = resolved->root_symbol_op->clone();
-    mlir::SymbolTable::setSymbolVisibility(
-        root_op, mlir::SymbolTable::Visibility::Private);
-    cloned_root_name = symbol_table.insert(
-        root_op,
-        mlir::Block::iterator(resolved->root_symbol_op->getNextNode()));
-    if (resolved->is_nested_module) {
-      auto cloned_module = llvm::cast<mlir::ModuleOp>(root_op);
-      mlir::StringAttr leaf_name = call_op.getCallee().getLeafReference();
-      callee =
-          llvm::cast<mlir::func::FuncOp>(cloned_module.lookupSymbol(leaf_name));
-      callee_ref = mlir::SymbolRefAttr::get(
-          cloned_root_name, {mlir::SymbolRefAttr::get(leaf_name)});
-    } else {
-      callee = llvm::cast<mlir::func::FuncOp>(root_op);
-      callee_ref = mlir::FlatSymbolRefAttr::get(cloned_root_name);
-    }
-  }
-
-  // 1. Eliminate unused CallOp results and corresponding callee return values.
   UsedOutputsSlice out_slice = CollectUsedOutputs(call_op);
-  if (out_slice.erase.any()) {
-    for (mlir::Block& block : callee.getBody()) {
-      if (auto return_op =
-              llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator());
-          return_op != nullptr) {
-        return_op->eraseOperands(out_slice.erase);
-      }
-    }
-    CHECK(mlir::succeeded(callee.eraseResults(out_slice.erase)));
+
+  // Erase dead `CallOp` (and its private callee if now unused) without cloning
+  // when all outputs are unused, control inputs can be forwarded, and `callee`
+  // is side-effect free.
+  if (out_slice.kept_types.empty() &&
+      CanForwardControlInputs(call_op.getControlOutput(),
+                              call_op.getControlInputs()) &&
+      IsSideEffectFreeCallee(callee)) {
+    ForwardControlInputsToUsers(call_op.getControlOutput(),
+                                call_op.getControlInputs(), rewriter);
+    symbol_manager.EraseCallAndMaybeEraseCallee(call_op, rewriter);
+    return mlir::success();
   }
 
-  // 2. Simplify the callee region so pure ops feeding only erased return values
-  // are eliminated before checking block argument uses.
-  const bool simplified =
-      mlir::succeeded(mlir::simplifyRegions(rewriter, callee.getBody()));
+  const bool has_unused_args =
+      llvm::any_of(callee.getBody().front().getArguments(),
+                   [](mlir::BlockArgument arg) { return arg.use_empty(); });
+  // If no outputs are erased and there are no unused arguments, then the call
+  // op and callee are already minimal.
+  if (out_slice.erase.none() && !has_unused_args) {
+    return mlir::success();
+  }
 
-  // 3. Eliminate unused callee entry block arguments and CallOp inputs.
-  mlir::Block& entry_block = callee.getBody().front();
+  mlir::FailureOr<mlir::func::FuncOp> target_callee =
+      symbol_manager.GetOrCloneCalleeForMutation({call_op});
+  if (mlir::failed(target_callee)) {
+    return mlir::failure();
+  }
+  callee = *target_callee;
+
   const unsigned num_inputs = call_op.getInputs().size();
   llvm::BitVector unused_arguments(num_inputs);
   llvm::SmallVector<int32_t> old_in_to_new_in(num_inputs, -1);
   llvm::SmallVector<mlir::Value> new_inputs;
   new_inputs.reserve(num_inputs);
-  for (mlir::BlockArgument arg : entry_block.getArguments()) {
-    const unsigned idx = arg.getArgNumber();
-    if (arg.use_empty()) {
-      unused_arguments.set(idx);
-    } else {
-      old_in_to_new_in[idx] = new_inputs.size();
-      new_inputs.push_back(call_op.getInputs()[idx]);
-    }
-  }
 
-  if (out_slice.erase.any()) {
-    for (unsigned old_in = 0; old_in < num_inputs; ++old_in) {
-      if (unused_arguments.test(old_in)) {
-        continue;
+  // Track symbol-use changes across result/argument erasure and region
+  // simplification on `callee`.
+  symbol_manager.RecordOpMutation(callee, [&]() {
+    // 1. Eliminate unused `CallOp` results and corresponding callee return
+    // values, then re-simplify the callee region so pure ops feeding only
+    // erased return values are eliminated before checking block argument uses.
+    if (out_slice.erase.any()) {
+      for (mlir::Block& block : callee.getBody()) {
+        if (auto return_op =
+                llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator());
+            return_op != nullptr) {
+          return_op->eraseOperands(out_slice.erase);
+        }
       }
-      if (auto aliasing_attr = callee.getArgAttrOfType<mlir::IntegerAttr>(
-              old_in, kAliasingOutputAttrName);
-          aliasing_attr != nullptr) {
-        if (const int64_t old_out = aliasing_attr.getInt();
-            out_slice.old_to_new[old_out] == -1) {
-          callee.removeArgAttr(old_in, kAliasingOutputAttrName);
-        } else if (out_slice.old_to_new[old_out] != old_out) {
-          callee.setArgAttr(
-              old_in, kAliasingOutputAttrName,
-              mlir::IntegerAttr::get(aliasing_attr.getType(),
-                                     out_slice.old_to_new[old_out]));
+      CHECK(mlir::succeeded(callee.eraseResults(out_slice.erase)));
+      (void)mlir::simplifyRegions(rewriter, callee.getBody());
+    }
+
+    // 2. Eliminate unused callee entry block arguments and `CallOp` inputs.
+    mlir::Block& entry_block = callee.getBody().front();
+    for (mlir::BlockArgument arg : entry_block.getArguments()) {
+      const unsigned idx = arg.getArgNumber();
+      if (arg.use_empty()) {
+        unused_arguments.set(idx);
+      } else {
+        old_in_to_new_in[idx] = new_inputs.size();
+        new_inputs.push_back(call_op.getInputs()[idx]);
+      }
+    }
+
+    if (out_slice.erase.any()) {
+      for (unsigned old_in = 0; old_in < num_inputs; ++old_in) {
+        if (unused_arguments.test(old_in)) {
+          continue;
+        }
+        if (auto aliasing_attr = callee.getArgAttrOfType<mlir::IntegerAttr>(
+                old_in, kAliasingOutputAttrName);
+            aliasing_attr != nullptr) {
+          const int64_t old_out = aliasing_attr.getInt();
+          CHECK_GE(old_out, 0);
+          CHECK_LT(static_cast<size_t>(old_out), out_slice.old_to_new.size());
+          if (out_slice.old_to_new[old_out] == -1) {
+            callee.removeArgAttr(old_in, kAliasingOutputAttrName);
+          } else if (out_slice.old_to_new[old_out] != old_out) {
+            callee.setArgAttr(
+                old_in, kAliasingOutputAttrName,
+                mlir::IntegerAttr::get(aliasing_attr.getType(),
+                                       out_slice.old_to_new[old_out]));
+          }
         }
       }
     }
-  }
 
-  if (unused_arguments.any()) {
-    CHECK(mlir::succeeded(callee.eraseArguments(unused_arguments)));
-  }
+    if (unused_arguments.any()) {
+      CHECK(mlir::succeeded(callee.eraseArguments(unused_arguments)));
+    }
+  });
+  CHECK(out_slice.erase.any() || unused_arguments.any());
 
-  // Remap donated_input_indices and io_aliases.
+  // 3. Remap `donated_input_indices` and `io_aliases` and replace `call_op`.
   llvm::SmallVector<int32_t> new_donated_input_indices;
   for (int32_t old_in : call_op.getDonatedInputIndices()) {
     if (old_in_to_new_in[old_in] != -1) {
@@ -390,79 +273,40 @@ void EliminateCallDce(CallOp call_op, mlir::ModuleOp module_op,
     }
   }
   llvm::SmallVector<mlir::Attribute> new_io_aliases;
-  for (mlir::DenseI32ArrayAttr raw_alias :
-       call_op.getIoAliases().getAsRange<mlir::DenseI32ArrayAttr>()) {
-    llvm::ArrayRef<int32_t> pair = raw_alias.asArrayRef();
-    const int32_t old_in = pair[0];
-    const int32_t old_out = pair[1];
-    if (old_in_to_new_in[old_in] != -1 && out_slice.old_to_new[old_out] != -1) {
+  for (const IoAlias& alias : call_op.getIoAliasPairs()) {
+    if (old_in_to_new_in[alias.input_index] != -1 &&
+        out_slice.old_to_new[alias.output_index] != -1) {
       new_io_aliases.push_back(rewriter.getDenseI32ArrayAttr(
-          {old_in_to_new_in[old_in], out_slice.old_to_new[old_out]}));
+          {old_in_to_new_in[alias.input_index],
+           out_slice.old_to_new[alias.output_index]}));
     }
   }
 
-  // 4. Erase empty dead CallOp and its unused private callee.
-  if (out_slice.kept_types.empty() && new_inputs.empty() &&
-      IsEmptyCallee(callee) &&
-      CanForwardControlInputs(call_op.getControlOutput(),
-                              call_op.getControlInputs())) {
-    detail::ForwardControlInputsToUsers(call_op.getControlOutput(),
-                                        call_op.getControlInputs(), rewriter);
-    rewriter.eraseOp(call_op);
-    int& remaining_uses = symbol_use_counts[resolved->root_symbol_name];
-    --remaining_uses;
-    if (is_shared) {
-      symbol_table.erase(root_op);
-    }
-    if (mlir::SymbolTable::getSymbolVisibility(resolved->root_symbol_op) ==
-            mlir::SymbolTable::Visibility::Private &&
-        ((symbol_uses_known && remaining_uses == 0) ||
-         mlir::SymbolTable::symbolKnownUseEmpty(resolved->root_symbol_op,
-                                                module_op))) {
-      symbol_table.erase(resolved->root_symbol_op);
-    }
-    return;
-  }
+  mlir::ArrayAttr new_arg_attrs =
+      FilterDictArrayAttr(call_op.getArgAttrsAttr(), unused_arguments);
+  mlir::ArrayAttr new_res_attrs =
+      FilterDictArrayAttr(call_op.getResAttrsAttr(), out_slice.erase);
 
-  if (out_slice.erase.any() || unused_arguments.any()) {
-    mlir::ArrayAttr new_arg_attrs =
-        FilterDictArrayAttr(call_op.getArgAttrsAttr(), unused_arguments);
-    mlir::ArrayAttr new_res_attrs =
-        FilterDictArrayAttr(call_op.getResAttrsAttr(), out_slice.erase);
+  rewriter.setInsertionPoint(call_op);
+  CallOp new_call =
+      CallOp::create(rewriter, call_op.getLoc(),
+                     /*outputs=*/out_slice.kept_types,
+                     /*control_output=*/call_op.getControlOutput().getType(),
+                     /*inputs=*/new_inputs,
+                     /*control_inputs=*/call_op.getControlInputs(),
+                     /*arg_attrs=*/new_arg_attrs,
+                     /*res_attrs=*/new_res_attrs,
+                     /*callee=*/call_op.getCalleeAttr(),
+                     /*devices=*/call_op.getDevicesAttr(),
+                     /*io_aliases=*/rewriter.getArrayAttr(new_io_aliases),
+                     /*donated_input_indices=*/
+                     rewriter.getDenseI32ArrayAttr(new_donated_input_indices));
+  new_call->setDiscardableAttrs(call_op->getDiscardableAttrDictionary());
 
-    rewriter.setInsertionPoint(call_op);
-    CallOp new_call = CallOp::create(
-        rewriter, call_op.getLoc(),
-        /*outputs=*/out_slice.kept_types,
-        /*control_output=*/call_op.getControlOutput().getType(),
-        /*inputs=*/new_inputs,
-        /*control_inputs=*/call_op.getControlInputs(),
-        /*arg_attrs=*/new_arg_attrs,
-        /*res_attrs=*/new_res_attrs,
-        /*callee=*/callee_ref,
-        /*devices=*/call_op.getDevicesAttr(),
-        /*io_aliases=*/rewriter.getArrayAttr(new_io_aliases),
-        /*donated_input_indices=*/
-        rewriter.getDenseI32ArrayAttr(new_donated_input_indices));
-    new_call->setDiscardableAttrs(call_op->getDiscardableAttrDictionary());
-
-    ReplaceKeptOutputs(rewriter, call_op, new_call, out_slice.old_to_new);
-    if (is_shared) {
-      --symbol_use_counts[resolved->root_symbol_name];
-      symbol_use_counts[cloned_root_name] = 1;
-    }
-    return;
-  }
-
-  if (is_shared) {
-    if (simplified) {
-      call_op.setCalleeAttr(callee_ref);
-      --symbol_use_counts[resolved->root_symbol_name];
-      symbol_use_counts[cloned_root_name] = 1;
-    } else {
-      symbol_table.erase(root_op);
-    }
-  }
+  symbol_manager.RecordOpCreated(new_call);
+  symbol_manager.RecordOpErased(call_op);
+  ReplaceKeptOutputs(rewriter, call_op, new_call, out_slice.old_to_new);
+  return mlir::success();
 }
 
 class IfrtDcePass : public impl::IfrtDcePassBase<IfrtDcePass> {
@@ -472,52 +316,71 @@ class IfrtDcePass : public impl::IfrtDcePassBase<IfrtDcePass> {
   void runOnOperation() override {
     mlir::ModuleOp module_op = getOperation();
     mlir::IRRewriter rewriter(&getContext());
-    mlir::SymbolTable symbol_table(module_op);
-
-    llvm::DenseMap<mlir::StringAttr, int> symbol_use_counts;
-    bool symbol_uses_known = false;
-    if (std::optional<mlir::SymbolTable::UseRange> uses =
-            mlir::SymbolTable::getSymbolUses(&module_op.getBodyRegion());
-        uses.has_value()) {
-      symbol_uses_known = true;
-      for (const mlir::SymbolTable::SymbolUse& use : *uses) {
-        ++symbol_use_counts[use.getSymbolRef().getRootReference()];
-      }
+    mlir::SymbolTableCollection symbol_table;
+    mlir::FailureOr<CalleeSymbolManager> symbol_manager =
+        CalleeSymbolManager::Create(module_op, &symbol_table);
+    if (mlir::failed(symbol_manager)) {
+      signalPassFailure();
+      return;
     }
-
     // Snapshot IFRT entry functions upfront because `EliminateCallDce` inserts
     // and erases private callee `func.func` ops in `module_op`, which would
     // invalidate a live `module_op.getOps<mlir::func::FuncOp>()` iterator.
-    llvm::SmallVector<mlir::func::FuncOp> ifrt_funcs;
-    for (mlir::func::FuncOp func_op : module_op.getOps<mlir::func::FuncOp>()) {
-      if (IsIfrtFunction(func_op)) {
-        ifrt_funcs.push_back(func_op);
+    llvm::SmallVector<mlir::func::FuncOp> ifrt_funcs =
+        GetIfrtFunctions(module_op);
+
+    // Simplify dead pure ops and unreachable blocks inside every distinct
+    // defined callee upfront (preserving callee signatures and semantics for
+    // all callers) so dead symbol references inside unreachable blocks are
+    // dropped before the reverse DCE walk checks callee exclusivity or erases
+    // calls.
+    llvm::DenseSet<mlir::func::FuncOp> simplified_callees;
+    for (mlir::func::FuncOp func_op : ifrt_funcs) {
+      for (CallOp call_op : func_op.getOps<CallOp>()) {
+        mlir::FailureOr<mlir::func::FuncOp> callee =
+            symbol_manager->GetCallee(call_op);
+        if (mlir::failed(callee)) {
+          signalPassFailure();
+          return;
+        }
+        if (simplified_callees.insert(*callee).second) {
+          symbol_manager->RecordOpMutation(*callee, [&]() {
+            (void)mlir::simplifyRegions(rewriter, callee->getBody());
+          });
+        }
       }
     }
 
     for (mlir::func::FuncOp func_op : ifrt_funcs) {
-      func_op.walk<mlir::WalkOrder::PreOrder, mlir::ReverseIterator>(
-          [&](mlir::Operation* op) {
-            return llvm::TypeSwitch<mlir::Operation*, mlir::WalkResult>(op)
+      for (mlir::Operation* op = &func_op.getBody().front().back();
+           op != nullptr;) {
+        mlir::Operation* prev_op = op->getPrevNode();
+        const mlir::LogicalResult op_result =
+            llvm::TypeSwitch<mlir::Operation*, mlir::LogicalResult>(op)
                 .Case<CallOp>([&](CallOp call_op) {
-                  EliminateCallDce(call_op, module_op, symbol_table,
-                                   symbol_use_counts, symbol_uses_known,
-                                   rewriter);
-                  return mlir::WalkResult::skip();
+                  return EliminateCallDce(call_op, *symbol_manager, rewriter);
                 })
                 .Case<IfrtPairwiseArrayOpInterface>(
                     [&](IfrtPairwiseArrayOpInterface pairwise_op) {
-                      EliminateUnusedPairwiseArrayOpOutputs(pairwise_op,
-                                                            rewriter);
-                      return mlir::WalkResult::skip();
+                      EliminateUnusedPairwiseArrayOpOutputs(
+                          pairwise_op, *symbol_manager, rewriter);
+                      return mlir::success();
                     })
                 .Case<RemapArraysOp>([&](RemapArraysOp remap_op) {
-                  EliminateUnusedRemapArraysOutputs(remap_op, rewriter);
-                  return mlir::WalkResult::skip();
+                  EliminateUnusedRemapArraysOutputs(remap_op, *symbol_manager,
+                                                    rewriter);
+                  return mlir::success();
                 })
-                .Default(mlir::WalkResult::advance());
-          });
+                .Default(mlir::success());
+        if (mlir::failed(op_result)) {
+          signalPassFailure();
+          return;
+        }
+        op = prev_op;
+      }
     }
+
+    symbol_manager->EraseUnusedTrackedRootSymbols();
   }
 };
 

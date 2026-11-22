@@ -26,6 +26,7 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
 include "xla/mosaic/dialect/tpu/tpu.td"
+include "xla/mosaic/dialect/tpu/tpu_attr_base.td"
 include "xla/mosaic/dialect/tpu/tpu_enums.td"
 include "xla/mosaic/dialect/tpu/tpu_types.td"
 
@@ -33,8 +34,12 @@ def TPU_Vreg : Type<IsVectorOfNonZeroRankTypePred, "native-sized vreg", "::mlir:
 
 def TPU_Vmask : VectorOfRankAndType<[2, 3], [I1]>;
 
-def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore", [MemRefElementTypeInterface]>;
-def TPU_DMASemaphoreType : TPU_Type<"DMASemaphore", "dma_semaphore", [MemRefElementTypeInterface]>;
+def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore", [MemRefElementTypeInterface]> {
+  let summary = "semaphore";
+}
+def TPU_DMASemaphoreType : TPU_Type<"DMASemaphore", "dma_semaphore", [MemRefElementTypeInterface]> {
+  let summary = "DMA semaphore";
+}
 def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>;
 
 // All indices/sizes are in element-space.
@@ -48,56 +53,7 @@ def TPU_ElementWindowAttr : TPU_Attr<"ElementWindow", "element_window"> {
   let assemblyFormat = "`<` `[` $pad_low `]` `,` `[` $pad_high `]` `>`";
 }
 
-def TPU_TiledLayoutAttr
-  : TPU_Attr<"TiledLayout", "tiled",
-             [DeclareAttrInterfaceMethods<MemRefLayoutAttrInterface, ["verifyLayout"]>]> {
-  let description = [{
-    This attribute represents tiled layouts in memrefs.
-
-    Multiple levels of tiling are supported with the following restriction:
-    - Additional levels of tiling may not add any padding.
-    - Additional levels of tiling may not tile previously untiled dimensions,
-      that is, they cannot tile across first-level tiles.
-
-    Tile strides encode the stride when moving along a given dimension. They
-    must have the same rank as the shape and must be decreasing with increasing
-    dimension number. For tiled dimensions, the stride applies only when moving
-    across first-level tiles. The strides are in units of the size of the first
-    tile, or 1 if there are no tiles.
-  }];
-  let parameters = (ins
-    ArrayRefParameter<"::xla::Tile", "">:$tiles,
-    ArrayRefParameter<"int64_t", "">:$tile_strides
-  );
-  let extraClassDeclaration = [{
-    static ::llvm::SmallVector<int64_t> getContiguousTileStrides(::llvm::ArrayRef<::xla::Tile> tiles, ::llvm::ArrayRef<int64_t> shape);
-    static TiledLayoutAttr getContiguous(::mlir::MLIRContext* context, ::llvm::ArrayRef<::xla::Tile> tiles, ::llvm::ArrayRef<int64_t> shape);
-
-    // Returns the number of trailing dimensions where tiles can be statically
-    // determined to be contiguous (there are no gaps or overlap between tiles).
-    // NOTE: Tiles being contiguous does not imply the _data_ is contiguous
-    //   since the tiles may contain padding. This means this function is
-    //   different from MemRefType::getNumContiguousTrailingDims.
-    int64_t getNumTrailingDimsWithContiguousTiles(
-        ::llvm::ArrayRef<int64_t> shape) const;
-    bool tilesAreKnownContiguous(const ::llvm::ArrayRef<int64_t> shape) const {
-      return getNumTrailingDimsWithContiguousTiles(shape) == getRank();
-    }
-
-    int64_t getRank() const {
-      return getTileStrides().size();
-    }
-
-    ::llvm::SmallVector<int64_t> getExpandedStrides() const;
-
-    // Returns true if any of the tile strides are dynamic.
-    bool hasDynamicStrides() const;
-    int64_t getNumDynamicStrides() const;
-  }];
-
-  let hasCustomAssemblyFormat = 1;
-  let genVerifyDecl = 1;
-}
+def TPU_TiledLayoutAttr : TPU_TiledLayoutAttrBase<TPU_Dialect>;
 
 def TPU_MemorySpaceAttr : AttrDef<TPU_Dialect, "MemorySpace"> {
   let mnemonic = "memory_space";
@@ -117,6 +73,13 @@ def TPU_MemorySpaceAttr : AttrDef<TPU_Dialect, "MemorySpace"> {
 
 class TPU_Op<string mnemonic, list<Trait> traits = []> :
     Op<TPU_Dialect, mnemonic, traits> {
+  bit hasCustomVerifier = 0;
+  let hasVerifier = hasCustomVerifier;
+  let extraClassDefinition = !if(!and(hasVerifier, !not(hasCustomVerifier)), [{
+    ::llvm::LogicalResult $cppClass::verify() {
+      return TpuOpVerifiers::verify$cppClass(*this);
+    }
+  }], [{}]);
 }
 
 def DefaultMemWrite : MemoryEffects<[MemWrite<DefaultResource>]>;
@@ -911,7 +874,7 @@ def TPU_GatherOp : TPU_Op<"gather", [Pure]> {
   }];
 }
 
-def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>, AllShapesMatch<["indices", "output"]>, AllElementTypesMatch<["source", "output"]>]> {
+def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure, InferTypeOpAdaptor, AllShapesMatch<["indices", "output"]>, AllElementTypesMatch<["source", "output"]>]> {
   let description = [{
     Gathers elements from `source` using `indices`.
 
@@ -1120,7 +1083,7 @@ def TPU_MatmulPopFifoOp : TPU_Op<"matmul_pop_fifo"> {
 
 include "xla/mosaic/dialect/tpu/tpu_matmul_ops.td"
 
-def TPU_ConcatenateOp : TPU_Op<"concatenate", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+def TPU_ConcatenateOp : TPU_Op<"concatenate", [Pure, InferTypeOpAdaptor]> {
   let arguments = (ins
     Variadic<AnyVectorOfNonZeroRank>:$sources,
     I32Attr:$dimension
@@ -1364,7 +1327,7 @@ def TPU_SharedMemRefSliceOp : TPU_Op<"shared_memref_slice", [Pure, ViewLikeOpInt
     // ViewLikeOpInterface.
     ::mlir::Value getViewSource() { return getMemRef(); }
   }];
-  let hasVerifier = 1;
+  let hasCustomVerifier = 1;
 }
 
 def TPU_MemRefSqueezeOp : TPU_Op<"memref_squeeze", [Pure, ViewLikeOpInterface]> {
@@ -1376,11 +1339,6 @@ def TPU_MemRefSqueezeOp : TPU_Op<"memref_squeeze", [Pure, ViewLikeOpInterface]> 
   let extraClassDeclaration = [{
     // ViewLikeOpInterface.
     ::mlir::Value getViewSource() { return getInput(); }
-
-    static ::mlir::FailureOr<::mlir::MemRefLayoutAttrInterface> inferResultLayout(
-        ::mlir::MemRefLayoutAttrInterface input_layout,
-        ::mlir::ArrayRef<int64_t> squeezed,
-        ::mlir::function_ref<::mlir::InFlightDiagnostic()> emit_error);
   }];
   let hasVerifier = 1;
 }
@@ -1394,10 +1352,6 @@ def TPU_MemRefReshapeOp : TPU_Op<"memref_reshape", [Pure, ViewLikeOpInterface]> 
   let extraClassDeclaration = [{
     // ViewLikeOpInterface.
     ::mlir::Value getViewSource() { return getInput(); }
-
-    static ::mlir::FailureOr<::mlir::MemRefLayoutAttrInterface> inferResultLayout(
-        ::mlir::MemRefType input_type, ::mlir::ArrayRef<int64_t> result_shape,
-        ::mlir::function_ref<::mlir::InFlightDiagnostic()> emit_error);
   }];
   let hasVerifier = 1;
 }
@@ -1442,10 +1396,6 @@ def TPU_MemRefBitcastOp : TPU_Op<"memref_bitcast", [Pure, ViewLikeOpInterface]> 
   let extraClassDeclaration = [{
     // ViewLikeOpInterface.
     ::mlir::Value getViewSource() { return getInput(); }
-
-    static ::mlir::FailureOr<::mlir::MemRefType> inferResultType(
-        ::mlir::MemRefType input_type, ::mlir::Type result_elem_type,
-        ::mlir::function_ref<::mlir::InFlightDiagnostic()> emit_error);
   }];
   let hasVerifier = 1;
 }
@@ -1541,7 +1491,7 @@ def TPU_CoreIdOp : TPU_Op<"core_id", [Pure]> {
   let arguments = (ins);
   let results = (outs I32:$result);
   let assemblyFormat = [{ attr-dict `:` type($result) }];
-  let hasVerifier = 1;
+  let hasCustomVerifier = 1;
 }
 
 // Returns the logical ID of the current subcore.
@@ -1550,7 +1500,7 @@ def TPU_SubcoreIdOp : TPU_Op<"subcore_id", [Pure]> {
   let arguments = (ins);
   let results = (outs I32:$result);
   let assemblyFormat = [{ attr-dict `:` type($result) }];
-  let hasVerifier = 1;
+  let hasCustomVerifier = 1;
 }
 
 def TPU_SemaphoreReadOp : TPU_Op<"sem_read"> {
@@ -1593,10 +1543,7 @@ def TPU_SemaphoreSignalOp : TPU_Op<"sem_signal", [AttrSizedOperandSegments]> {
 let assemblyFormat = [{
     $semaphore `,` $amount (`device_id` $device_id^)? (`core_id` $core_id^)? (`subcore_id` $subcore_id^)? attr-dict `:` type($semaphore)
   }];
-  let hasVerifier = 1;
-  let extraClassDeclaration = [{
-    mlir::tpu::CoreType getTargetCoreType();
-  }];
+  let hasCustomVerifier = 1;
   let builders = [
     // A backward-compatible builder that sets `subcore_id` to nullptr.
     OpBuilder<(ins "Value":$semaphore, "Value":$amount, "Value":$device_id, "Value":$core_id)>,
@@ -1660,21 +1607,11 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     (`subcore_id` `(` $subcore_id^ `)`)?
     prop-dict attr-dict
   }];
-  let hasVerifier = 1;
+  let hasCustomVerifier = 1;
   let builders = [
     // A backward-compatible builder that sets `subcore_id` to nullptr.
     OpBuilder<(ins "Value":$source, "Value":$source_semaphore, "Value":$target, "Value":$target_semaphore, "Value":$device_id, "Value":$core_id, CArg<"uint32_t", "0">:$priority, CArg<"bool", "false">:$strict_ordering)>,
   ];
-}
-
-// A base class for all ops that need to differentiate between gather and
-// scatter.
-class IndirectDMAOp {
-  code extraBaseClassDeclaration = [{
-    // Return true if this op performs a gather. Returns false if it performs a
-    // scatter.
-    FailureOr<bool> isGather();
-  }];
 }
 
 // tpu.enqueue_indirect_dma copies data between HBM and VMEM, or between
@@ -1690,10 +1627,19 @@ class IndirectDMAOp {
 // scatter) must have a shape `[z, s0, ..., sm]` or `[1, z, s0, ..., sm]`,
 // where `z` is the indexed dimension.
 //
-// The `offsets` argument must be of shape `[o]` or `[1, o]`.
-// Each of the `o` values indexes the `z` dimension within the range `[0, z-1]`.
+// The `offsets` argument must be a memref of shape `[o]` or `[1, o]`, or a 1D
+// vector of shape `[k]`.
+// - For memref offsets, the local memref (`target` for gather, `source` for
+//   scatter) must have shape `[o, s0, ..., sm]` or `[1, o, s0, ..., sm]`, and
+//   each of the `o` values indexes the `z` dimension within `[0, z-1]`.
+// - For 1D vector offsets of shape `[k]`, vector offsets may contain trailing
+//   padding lanes: the local memref must have shape `[n, s0, ..., sm]` where
+//   `n` is static and in `[1, k]`. Only the prefix `[0, n)` of `offsets` is
+//   used (each value indexing `z` within `[0, z-1]`), and trailing padding
+//   offsets `[n, k)` are ignored.
 //
-// Each offset selects a slice of shape `[s0, ..., sm]` (which can be elemental).
+// Each active offset selects a slice of shape `[s0, ..., sm]` (which can be
+// elemental).
 //
 // source          : Memref to copy from.
 // target          : Memref to copy to.
@@ -1702,7 +1648,7 @@ class IndirectDMAOp {
 // add             : If true, add source values to target values. Otherwise, overwrite.
 // offset_filter   : If set, don't write values at offsets whose value is equal to
 //                   the filter value.
-def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma">, IndirectDMAOp {
+def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma"> {
   let arguments = (ins
     AnyMemRef:$source,
     AnyMemRef:$target,
@@ -1719,8 +1665,7 @@ def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma">, IndirectDMAOp {
     `semaphore` `(` $semaphore `:` type($semaphore) `)`
     prop-dict attr-dict
   }];
-  let hasVerifier = 1;
-  let extraClassDeclaration = extraBaseClassDeclaration;
+  let hasCustomVerifier = 1;
 }
 
 // tpu.wait_dma2 waits for a DMA to complete.
@@ -1744,7 +1689,7 @@ def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
     (`core_id` `(` $core_id^ `)`)?
     prop-dict attr-dict
   }];
-  let hasVerifier = 1;
+  let hasCustomVerifier = 1;
   // A backward-compatible builder that sets `device_id` and `core_id` to nullptr.
   let builders = [
     OpBuilder<(ins "Value":$semaphore, "Value":$src, "Value":$dst)>
@@ -1775,7 +1720,7 @@ def TPU_WaitDMAOp : TPU_Op<"wait_dma", [AttrSizedOperandSegments]> {
     (`subcore_id` `(` $subcore_id^ `)`)?
     prop-dict attr-dict
   }];
-  let hasVerifier = 1;
+  let hasCustomVerifier = 1;
 }
 
 // Like tpu.wait_dma2, but for indirect DMAs.
@@ -1784,7 +1729,7 @@ def TPU_WaitDMAOp : TPU_Op<"wait_dma", [AttrSizedOperandSegments]> {
 // destination memref in a gather, and the size of the source memref in a
 // scatter. The op differentiates between gather and scatter based on the memory
 // spaces of the source and destination memrefs.
-def TPU_WaitIndirectDMAOp : TPU_Op<"wait_indirect_dma">, IndirectDMAOp {
+def TPU_WaitIndirectDMAOp : TPU_Op<"wait_indirect_dma"> {
   let arguments = (ins
     MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
     AnyMemRef:$src,
@@ -1796,8 +1741,7 @@ def TPU_WaitIndirectDMAOp : TPU_Op<"wait_indirect_dma">, IndirectDMAOp {
     `dst` `(` $dst `:` type($dst) `)`
     attr-dict
   }];
-  let hasVerifier = 1;
-  let extraClassDeclaration = extraBaseClassDeclaration;
+  let hasCustomVerifier = 1;
 }
 
 def TPU_RegionOp : TPU_Op<"region", [RecursiveMemoryEffects, SingleBlockImplicitTerminator<"tpu::YieldOp">]> {
@@ -1979,7 +1923,7 @@ def TPU_LogOp : TPU_Op<"log"> {
   );
   let results = (outs);
   let assemblyFormat = [{ $tag prop-dict attr-dict (`:`  `[` $inputs^ `]` `:` type($inputs))? }];
-  let hasVerifier = 1;
+  let hasCustomVerifier = 1;
 }
 
 def TPU_LogBufferOp : TPU_Op<"log_buffer"> {
@@ -2030,7 +1974,7 @@ def TPU_FetchAndAddSyncOp : TPU_Op<"fetch_and_add_sync", [DefaultMemRead, Defaul
     attr-dict `:` type($base) `,` type($value) `->` type($result)
   }];
 
-  let hasVerifier = 1;
+  let hasCustomVerifier = 1;
 }
 
 def TPU_TileSizeOp : TPU_Op<"tile_size", [Pure]> {

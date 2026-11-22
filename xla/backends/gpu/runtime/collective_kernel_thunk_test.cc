@@ -45,17 +45,20 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/collectives/mock_gpu_collectives.h"
 #include "xla/backends/gpu/collectives/mock_gpu_communicator.h"
+#include "xla/backends/gpu/runtime/all_gather.h"
+#include "xla/backends/gpu/runtime/all_reduce.h"
+#include "xla/backends/gpu/runtime/all_to_all.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_memory_cache.h"
-#include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
-#include "xla/backends/gpu/runtime/command_buffer_requests.h"
 #include "xla/backends/gpu/runtime/command_state.h"
+#include "xla/backends/gpu/runtime/reduce_scatter.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk_test_utils.h"
 #include "xla/core/collectives/clique_id.h"
 #include "xla/core/collectives/clique_key.h"
 #include "xla/core/collectives/collectives.h"
@@ -514,8 +517,6 @@ absl::StatusOr<se::DeviceAddressBase> RunCollectiveKernelThunk(
     ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
   }
 
-  CollectiveCliqueRequests clique_requests;
-
   ReplicaGroup all_replica_groups;
   for (int64_t i = 0; i < metadata.num_devices; ++i) {
     all_replica_groups.add_replica_ids(i);
@@ -531,62 +532,47 @@ absl::StatusOr<se::DeviceAddressBase> RunCollectiveKernelThunk(
   for (int i = 0; i < metadata.num_devices; ++i) {
     all_device_groups.push_back(GlobalDeviceId(i));
   }
-  ABSL_RETURN_IF_ERROR(clique_requests.RequestClique(
+  TestThunkParams thunk_params(executor, &buffer_allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options)
+      .WithCollectiveParams(&collective_params);
+  ABSL_RETURN_IF_ERROR(thunk_params.collective_clique_requests().RequestClique(
       clique_key, /*device_groups=*/{all_device_groups}));
-  CollectiveMemoryRequests memory_requests(buffer_allocations);
-  CommandBufferRequests command_buffer_requests;
-  Thunk::PrepareParams prepare_params{
-      /*collective_params=*/&collective_params,
-      /*collective_clique_requests=*/&clique_requests,
-      /*collective_memory_requests=*/&memory_requests,
-      /*executor=*/executor,
-      /*buffer_allocations=*/&buffer_allocations,
-      /*execution_scoped_state=*/nullptr,
-      /*custom_options=*/nullptr,
-      /*command_buffer_requests=*/&command_buffer_requests};
-
-  ABSL_RETURN_IF_ERROR(metadata.thunk->Prepare(prepare_params));
+  ABSL_RETURN_IF_ERROR(metadata.thunk->Prepare(thunk_params.PrepareParams()));
   CollectiveCliques collective_cliques;
   ABSL_ASSIGN_OR_RETURN(
       collective_cliques,
-      AcquireCollectiveCliques(collective_params, clique_requests));
+      AcquireCollectiveCliques(collective_params,
+                               thunk_params.collective_clique_requests()));
   ABSL_ASSIGN_OR_RETURN(
       CollectiveMemory collective_memory,
       AcquireCollectiveMemory(collective_params, collective_cliques,
-                              memory_requests,
+                              thunk_params.collective_memory_requests(),
                               *metadata.collective_memory_cache));
-
-  Thunk::InitializeParams initialize_params(&command_buffer_requests);
-  initialize_params.executor = executor;
-  initialize_params.src = {metadata.kernel_source};
-  initialize_params.buffer_allocations = &buffer_allocations;
-  initialize_params.stream = stream.get();
-  initialize_params.collective_params = &collective_params;
-  initialize_params.collective_cliques = &collective_cliques;
-  initialize_params.collective_memory = &collective_memory;
 
   GpuExecutableRunOptions::DeviceIdMap global_device_id_map = {
       {LocalDeviceId(0), GlobalDeviceId(0)}};
   if (emulate_multiprocess) {
-    initialize_params.collective_params->global_device_id_map =
-        &global_device_id_map;
+    collective_params.global_device_id_map = &global_device_id_map;
   }
 
+  Thunk::ExecutableSource src = {metadata.kernel_source};
   std::vector<uint8_t> cubin;
   if (!metadata.use_ptx) {
     ABSL_ASSIGN_OR_RETURN(
         cubin,
         CompilePtxToCubin(metadata.kernel_source,
                           executor->GetDeviceDescription(), DebugOptions()));
-    initialize_params.src.binary = cubin;
+    src.binary = cubin;
   }
-  ABSL_RETURN_IF_ERROR(metadata.thunk->Initialize(initialize_params));
+  thunk_params.WithExecutableSource(src)
+      .WithCollectiveCliques(&collective_cliques)
+      .WithCollectiveMemory(&collective_memory);
+  ABSL_RETURN_IF_ERROR(
+      metadata.thunk->Initialize(thunk_params.InitializeParams()));
 
-  auto execute_params = Thunk::ExecuteParams::Create(
-      run_options, buffer_allocations, stream.get(),
-      /*command_buffer_trace_stream=*/nullptr, &collective_params,
-      /*collective_cliques=*/nullptr, /*collective_memory=*/&collective_memory);
-  ABSL_RETURN_IF_ERROR(metadata.thunk->ExecuteOnStream(execute_params));
+  thunk_params.WithCollectiveCliques(nullptr);
+  ABSL_RETURN_IF_ERROR(
+      metadata.thunk->ExecuteOnStream(thunk_params.ExecuteParams()));
   ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
   return output_buffer;
 }
@@ -815,43 +801,31 @@ TEST(CollectiveKernelThunkTest, RecordCommandBufferCreateUpdate) {
   BufferAllocations allocations1({src1, dst1}, 0, nullptr);
   BufferAllocations allocations2({src2, dst2}, 0, nullptr);
 
-  CollectiveCliqueRequests clique_requests;
-  CollectiveMemoryRequests memory_requests(allocations1);
-  CommandBufferRequests command_buffer_requests;
-  Thunk::PrepareParams prepare_params{
-      /*collective_params=*/&collective_params,
-      /*collective_clique_requests=*/&clique_requests,
-      /*collective_memory_requests=*/&memory_requests,
-      /*executor=*/executor,
-      /*buffer_allocations=*/&allocations1,
-      /*execution_scoped_state=*/nullptr,
-      /*custom_options=*/nullptr,
-      /*command_buffer_requests=*/&command_buffer_requests};
-  ASSERT_OK(collective_kernel_thunk->Prepare(prepare_params));
+  TestThunkParams thunk_params(executor, &allocations1, stream.get());
+  thunk_params.WithRunOptions(&run_options)
+      .WithCommandBufferTraceStream(trace_stream.get())
+      .WithExecutableSource({/*text=*/kKernelSource})
+      .WithCollectiveParams(&collective_params);
+  ASSERT_OK(collective_kernel_thunk->Prepare(thunk_params.PrepareParams()));
 
   CollectiveMemoryCache collective_memory_cache(/*num_devices=*/2);
   ASSERT_OK_AND_ASSIGN(
       CollectiveCliques collective_cliques,
-      AcquireCollectiveCliques(collective_params, clique_requests));
+      AcquireCollectiveCliques(collective_params,
+                               thunk_params.collective_clique_requests()));
   ASSERT_OK_AND_ASSIGN(
       CollectiveMemory collective_memory,
       AcquireCollectiveMemory(collective_params, collective_cliques,
-                              memory_requests, collective_memory_cache));
+                              thunk_params.collective_memory_requests(),
+                              collective_memory_cache));
 
-  Thunk::InitializeParams initialize_params(&command_buffer_requests);
-  initialize_params.executor = executor;
-  initialize_params.src.text = kKernelSource;
-  initialize_params.buffer_allocations = &allocations1;
-  initialize_params.stream = stream.get();
-  initialize_params.collective_params = &collective_params;
-  initialize_params.collective_cliques = &collective_cliques;
-  initialize_params.collective_memory = &collective_memory;
-  ASSERT_OK(collective_kernel_thunk->Initialize(initialize_params));
+  thunk_params.WithCollectiveCliques(&collective_cliques)
+      .WithCollectiveMemory(&collective_memory);
+  ASSERT_OK(
+      collective_kernel_thunk->Initialize(thunk_params.InitializeParams()));
   ASSERT_OK(stream->BlockHostUntilDone());
 
-  Thunk::ExecuteParams params1 = Thunk::ExecuteParams::Create(
-      run_options, allocations1, stream.get(), trace_stream.get(),
-      &collective_params, &collective_cliques, &collective_memory);
+  Thunk::ExecuteParams params1 = thunk_params.ExecuteParams();
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -870,9 +844,8 @@ TEST(CollectiveKernelThunkTest, RecordCommandBufferCreateUpdate) {
   ASSERT_OK(stream->BlockHostUntilDone());
 
   BufferAllocations updated_allocations({src2, dst2}, 0, nullptr);
-  Thunk::ExecuteParams params2 = Thunk::ExecuteParams::Create(
-      run_options, updated_allocations, stream.get(), trace_stream.get(),
-      &collective_params, &collective_cliques, &collective_memory);
+  Thunk::ExecuteParams params2 =
+      thunk_params.WithBufferAllocations(&updated_allocations).ExecuteParams();
   std::vector<BufferAllocation::Index> updated_allocs = {0, 1};
   Command::RecordParams update_record_params = {state,
                                                 std::move(updated_allocs)};
@@ -1046,6 +1019,10 @@ StrictMock<MockGpuCollectives>* CreateMockCollectives(
                   .Times(AnyNumber())
                   .WillRepeatedly(
                       [inner_ptr]() { return inner_ptr->HealthCheck(); });
+              EXPECT_CALL(*mock_comm, stream_executor())
+                  .Times(AnyNumber())
+                  .WillRepeatedly(
+                      [inner_ptr]() { return inner_ptr->stream_executor(); });
               wrapped_comms.push_back({std::move(inner_comm), mock_comm.get()});
               result.push_back(std::move(mock_comm));
             }
@@ -1065,6 +1042,9 @@ void VerifyAndLeakMockCollectives(StrictMock<MockGpuCollectives>* collectives,
     EXPECT_CALL(*comm.mock, HealthCheck())
         .Times(AnyNumber())
         .WillRepeatedly([inner_ptr]() { return inner_ptr->HealthCheck(); });
+    EXPECT_CALL(*comm.mock, stream_executor())
+        .Times(AnyNumber())
+        .WillRepeatedly([inner_ptr]() { return inner_ptr->stream_executor(); });
     GetLeakedMocks().comms.push_back(std::move(comm));
   }
 }
@@ -1348,6 +1328,19 @@ INSTANTIATE_TEST_SUITE_P(
     [](const ::testing::TestParamInfo<KernelSpecTestCase>& info) {
       return info.param.test_name;
     });
+
+// The collective kernels synchronize across thread blocks, so all blocks of a
+// grid must be resident on the device at the same time. We conservatively
+// assume that only one block fits on each streaming multiprocessor.
+TEST(CollectiveKernelThunkTest, MaxBlocksPerGridFitOnDevice) {
+  const int64_t max_parallel_blocks =
+      GetGpuExecutor(/*device_ordinal=*/0)->GetDeviceDescription().core_count();
+
+  EXPECT_LE(kAllGatherMaxBlocksPerGrid, max_parallel_blocks);
+  EXPECT_LE(kAllReduceMaxBlocksPerGrid, max_parallel_blocks);
+  EXPECT_LE(kAllToAllMaxBlocksPerGrid, max_parallel_blocks);
+  EXPECT_LE(kReduceScatterMaxBlocksPerGrid, max_parallel_blocks);
+}
 
 }  // namespace
 }  // namespace xla::gpu

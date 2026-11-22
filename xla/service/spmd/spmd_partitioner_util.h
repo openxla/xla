@@ -171,6 +171,16 @@ inline HloInstruction* CreateLastWithType(PrimitiveType type, T* b) {
 // Create a binary add computation of the given type and add to the module.
 HloComputation* MakeBinaryAdd(PrimitiveType type, HloModule* module);
 
+// Bitcasts `x` to `t` when its element type differs, allowing zeroless
+// floating point types such as F8E8M0FNU to use U8 zero masked AllReduce sums.
+inline HloInstruction* BitcastTo(SpmdBuilder* b, HloInstruction* x,
+                                 PrimitiveType t) {
+  return x->shape().element_type() == t
+             ? x
+             : b->AddInstruction(HloInstruction::CreateBitcastConvert(
+                   ShapeUtil::ChangeElementType(x->shape(), t), x));
+}
+
 // Returns true if the shape can be evenly partitioned for the given sharding.
 // All tile sharded dimensions should be evenly divisible and there should be no
 // single-device sharding. Replicate sharding is considered even partition.
@@ -484,10 +494,14 @@ HloSharding AlignShardingOnDims(const HloSharding& sharding,
                                 const HloSharding& reference,
                                 absl::Span<const int64_t> reference_dims);
 
-// AlignShardingOnDims only if it doesn't change the sharding when ungrouped.
+// Aligns device groups with `reference` only if all groups share a single
+// within group device permutation. When `ignore_group_order` is false, group
+// order must also match `reference` (preserving the ungrouped sharding); when
+// true, groups may be reordered if each matches a `reference` group.
 std::optional<hlo_sharding_util::GroupedSharding> AlignGroupsWithIfCompatible(
     hlo_sharding_util::GroupedSharding grouped_sharding,
-    const hlo_sharding_util::GroupedSharding& reference);
+    const hlo_sharding_util::GroupedSharding& reference,
+    bool ignore_group_order = false);
 
 // Returns the per-group base shape, i.e., before applying the in-group
 // sharding.

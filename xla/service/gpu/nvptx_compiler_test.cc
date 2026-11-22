@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/strings/substitute.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/autotuner/backends.pb.h"
+#include "xla/backends/gpu/hlo/analysis/alias_info.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
@@ -41,7 +42,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/compiler.h"
-#include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
@@ -312,8 +312,7 @@ TEST_F(NVPTXCompilerScaledDotTest,
   }
 }
 
-TEST_F(NVPTXCompilerScaledDotTest,
-       Block16Fp4ScaledDotUsesCudnnWhenTritonEnabled) {
+TEST_F(NVPTXCompilerScaledDotTest, Nvfp4ScaledDotSurvivesWhenTritonEnabled) {
   constexpr absl::string_view kNvfp4Hlo = R"hlo(
     ENTRY e {
       lhs = f4e2m1fn[128,256] parameter(0)
@@ -328,7 +327,8 @@ TEST_F(NVPTXCompilerScaledDotTest,
       .set_xla_gpu_experimental_scaled_dot_with_triton(true);
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        GetOptimizedModule(kNvfp4Hlo, config));
-  EXPECT_TRUE(HasCudnnFusion(*module));
+  EXPECT_TRUE(HasScaledDot(*module));
+  EXPECT_FALSE(HasCublasLtMatmul(*module));
 }
 
 TEST_F(NVPTXCompilerScaledDotTest, ScaledDotAutotunesBetweenTritonAndCudnn) {

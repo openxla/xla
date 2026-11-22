@@ -33,6 +33,7 @@ def Ifrt_Dialect : Dialect {
   let useDefaultAttributePrinterParser = 1;
   let hasOperationAttrVerify = 1;
   let hasRegionArgAttrVerify = 1;
+  let hasRegionResultAttrVerify = 1;
 }
 
 //===---------------------------------------------------------------------------
@@ -220,6 +221,11 @@ def Ifrt_ArrayType : TypeDef<Ifrt_Dialect, "IfrtArray"> {
     // Get the layout mode from `layout_attr`. Returns default layout mode if
     // the layout attribute is not set.
     ::xla::LayoutMode LayoutMode() const;
+    // Computes the per-shard local shape from `shape` and `sharding_attr`.
+    ::absl::StatusOr<::llvm::SmallVector<int64_t>> LocalShape() const;
+    // Returns true if this array type and `other` resolve to the same
+    // `xla::LayoutMode`.
+    bool HasSameLayout(::xla::ifrt::IfrtArrayType other) const;
   }];
 }
 

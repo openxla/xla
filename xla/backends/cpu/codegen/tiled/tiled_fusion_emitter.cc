@@ -62,6 +62,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/transforms/instruction_fusion.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -69,7 +70,6 @@ limitations under the License.
 #include "xla/runtime/work_dimensions.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/cpu_options.h"
-#include "xla/service/instruction_fusion.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
@@ -491,7 +491,8 @@ absl::StatusOr<KernelDefinition<MlirKernelSource>> EmitTiledFusionKernelImpl(
                              /*collective_spec=*/{},
                              /*gpu_cc=*/std::nullopt,
                              /*num_tiles_per_pid=*/
-                             CeilOfRatio(num_parallel_tiles, num_work_groups)));
+                             CeilOfRatio(num_parallel_tiles, num_work_groups),
+                             /*is_cpu=*/true));
   return CreateTiledKernelDefinition(context, fusion, buffer_assignment, name,
                                      num_work_groups, std::move(module));
 }

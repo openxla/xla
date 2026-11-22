@@ -54,6 +54,8 @@ limitations under the License.
 #include "xla/autotune_results.pb.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/in_memory_store.h"
+#include "xla/backends/gpu/autotuner/autotuner_cache.h"
+#include "xla/backends/gpu/export_hlo.h"
 #include "xla/backends/gpu/ffi.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/host_execute_thunk.h"
@@ -84,9 +86,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/device_assignment.h"
 #include "xla/service/executable.h"
-#include "xla/service/gpu/autotuning/autotuner_cache.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/export_hlo.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/gpu_topology.h"
@@ -150,51 +150,6 @@ using ::testing::TestParamInfo;
 using ::testing::Values;
 using ::tsl::gtl::ValueOrDie;
 using ::tsl::proto_testing::EqualsProto;
-
-class GpuCompilerAlgebraicSimplifierTest
-    : public HloHardwareIndependentTestBase {};
-
-TEST_F(GpuCompilerAlgebraicSimplifierTest,
-       ConvolutionCanonicalizationRespectsFastMinMax) {
-  constexpr absl::string_view kHloText = R"hlo(
-HloModule minmax
-
-ENTRY main {
-  p = f32[] parameter(0)
-  negative_infinity = f32[] constant(-inf)
-  positive_infinity = f32[] constant(inf)
-  maximum = f32[] maximum(p, negative_infinity)
-  minimum = f32[] minimum(p, positive_infinity)
-  ROOT result = (f32[], f32[]) tuple(maximum, minimum)
-}
-)hlo";
-  for (bool fast_min_max : {false, true}) {
-    SCOPED_TRACE(fast_min_max);
-    for (bool is_non_cuda_platform : {false, true}) {
-      SCOPED_TRACE(is_non_cuda_platform);
-      ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                           ParseAndReturnVerifiedModule(kHloText));
-      DebugOptions debug_options = GetDebugOptionsForTest();
-      debug_options.set_xla_gpu_enable_fast_min_max(fast_min_max);
-      AlgebraicSimplifier simplifier(GpuCompiler::GetAlgebraicSimplifierOptions(
-          GpuCompiler::AlgebraicSimplifierMode::
-              kGpuConvoluationCanonicalization,
-          debug_options, is_non_cuda_platform));
-      EXPECT_THAT(simplifier.Run(module.get()),
-                  absl_testing::IsOkAndHolds(!fast_min_max));
-      const HloInstruction* root =
-          module->entry_computation()->root_instruction();
-      if (fast_min_max) {
-        EXPECT_THAT(root, GmockMatch(m::Tuple(
-                              m::Maximum(m::Parameter(0), m::Constant()),
-                              m::Minimum(m::Parameter(0), m::Constant()))));
-      } else {
-        EXPECT_THAT(root,
-                    GmockMatch(m::Tuple(m::Parameter(0), m::Parameter(0))));
-      }
-    }
-  }
-}
 
 class GpuCompilerTest
     : public HloInterpreterReferenceMixin<HloPjRtGpuTestBase> {
@@ -711,6 +666,23 @@ TEST_P(PersistedAutotuningTest, WriteResultsOnEachCompilation) {
                          ReadNonEmptyFile(xla_gpu_dump_autotune_results_to_));
     ExpectValidAutotuneResults(autotune_results_str, use_new_format());
   }
+}
+
+TEST_P(PersistedAutotuningTest, DumpAutotuneCacheToTakesPrecedence) {
+  std::string dump_autotune_cache_to = GetUniqueTempFilePath(".txt");
+  HloModuleConfig config = GetModuleConfigForTest();
+  config.mutable_debug_options().set_xla_dump_autotune_cache_to(
+      dump_autotune_cache_to);
+
+  EXPECT_OK(GetOptimizedModuleForExecutable(kHloText, config).status());
+
+  ASSERT_OK_AND_ASSIGN(std::string autotune_results_str,
+                       ReadNonEmptyFile(dump_autotune_cache_to));
+  ExpectValidAutotuneResults(autotune_results_str, use_new_format());
+  // The deprecated xla_gpu_dump_autotune_results_to path is not written to.
+  EXPECT_THAT(
+      tsl::Env::Default()->FileExists(xla_gpu_dump_autotune_results_to_),
+      absl_testing::StatusIs(absl::StatusCode::kNotFound));
 }
 
 TEST_P(PersistedAutotuningTest, SingleOperationGetsAutotuned) {
@@ -2026,15 +1998,22 @@ ENTRY main {
 
   auto all_reduce_maybe_live_out =
       [&](DebugOptions::CommandBufferUpdateMode update_mode,
-          bool keep_collectives_out_of_outputs) -> absl::StatusOr<bool> {
+          std::optional<bool> keep_collectives_out_of_outputs)
+      -> absl::StatusOr<bool> {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(kHloText));
     DebugOptions& debug_options =
         module->mutable_config().mutable_debug_options();
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
     debug_options.set_xla_gpu_command_buffer_update_mode(update_mode);
-    debug_options.set_xla_gpu_command_buffer_keep_collectives_out_of_outputs(
-        keep_collectives_out_of_outputs);
+    if (keep_collectives_out_of_outputs.has_value()) {
+      debug_options.set_xla_gpu_command_buffer_keep_collectives_out_of_outputs(
+          *keep_collectives_out_of_outputs);
+    } else {
+      EXPECT_FALSE(
+          debug_options
+              .has_xla_gpu_command_buffer_keep_collectives_out_of_outputs());
+    }
 
     Compiler::CompileOptions compile_options;
     compile_options.gpu_topology = GetSingleDeviceGpuTopology(
@@ -2060,10 +2039,20 @@ ENTRY main {
     return slice.allocation()->maybe_live_out();
   };
 
+  // Unset: automatic, enabled only with SKIP_TEMP or SKIP_PROFILED.
+  EXPECT_THAT(all_reduce_maybe_live_out(DebugOptions::ALWAYS_UPDATE,
+                                        /*keep_collectives_out_of_outputs=*/
+                                        std::nullopt),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(all_reduce_maybe_live_out(DebugOptions::SKIP_TEMP,
+                                        /*keep_collectives_out_of_outputs=*/
+                                        std::nullopt),
+              absl_testing::IsOkAndHolds(false));
+  // An explicit value always takes priority.
   EXPECT_THAT(all_reduce_maybe_live_out(DebugOptions::ALWAYS_UPDATE,
                                         /*keep_collectives_out_of_outputs=*/
                                         true),
-              absl_testing::IsOkAndHolds(true));
+              absl_testing::IsOkAndHolds(false));
   EXPECT_THAT(all_reduce_maybe_live_out(DebugOptions::SKIP_TEMP,
                                         /*keep_collectives_out_of_outputs=*/
                                         false),
@@ -2157,12 +2146,26 @@ enum class TopKImpl {
   kSortWithS32Adapter      // pack_to_s32 + Sort(s32)+Slice + unpack_from_s32
 };
 
+struct SelectKTestParam {
+  absl::string_view dtype;
+  int batch;
+  int n;
+  int k;
+  bool is_stable;
+  TopKImpl expected_h100_impl;
+  TopKImpl expected_b200_impl;
+};
+
 // Test fixture for verifying GPU TopK lowering to SelectK or custom kernel.
 class GpuCompilerSelectKTest
     : public GpuCompilerTest,
-      public ::testing::WithParamInterface<
-          std::tuple<absl::string_view, int, int, bool, TopKImpl>> {
+      public ::testing::WithParamInterface<SelectKTestParam> {
  protected:
+  TopKImpl ExpectedTopKImpl(const SelectKTestParam& param) const {
+    return get_cuda_cc().IsAtLeastBlackwell() ? param.expected_b200_impl
+                                              : param.expected_h100_impl;
+  }
+
   void VerifyTopKThunkSequence(absl::string_view hlo_text,
                                TopKImpl expected_impl) {
     bool is_rocm = device_description().gpu_compute_capability().IsRocm();
@@ -2183,6 +2186,7 @@ class GpuCompilerSelectKTest
     HloModuleConfig config;
     DebugOptions debug_options = GetDebugOptionsForTest();
     debug_options.set_xla_gpu_experimental_enable_raft_for_stable_topk(true);
+    debug_options.set_xla_gpu_experimental_enable_raft_u64_radix(true);
     config.set_debug_options(debug_options);
 
     ASSERT_OK_AND_ASSIGN(auto module,
@@ -2215,6 +2219,7 @@ class GpuCompilerSelectKTest
       kinds.push_back(thunk->kind());
     }
 
+    using ::testing::AnyOf;
     using ::testing::ElementsAre;
 
     switch (expected_impl) {
@@ -2231,17 +2236,26 @@ class GpuCompilerSelectKTest
           // LLVM
           EXPECT_THAT(kinds, ElementsAre(Thunk::Kind::kCommandBuffer));
         } else if (kinds.size() == 4 && kinds[0] == Thunk::Kind::kCopy) {
-          // LLVM Bitonic sort (unbundled, with input copy)
+          // LLVM Bitonic sort (unbundled, with input copy); for batch == 1 the
+          // contiguous output slices lower to device-to-device kCopy thunks.
           EXPECT_THAT(
-              kinds, ElementsAre(Thunk::Kind::kCopy, Thunk::Kind::kCustomKernel,
-                                 Thunk::Kind::kCustomKernel,
-                                 Thunk::Kind::kCustomKernel));
+              kinds,
+              AnyOf(ElementsAre(Thunk::Kind::kCopy, Thunk::Kind::kCustomKernel,
+                                Thunk::Kind::kCustomKernel,
+                                Thunk::Kind::kCustomKernel),
+                    ElementsAre(Thunk::Kind::kCopy, Thunk::Kind::kCustomKernel,
+                                Thunk::Kind::kCopy, Thunk::Kind::kCopy)));
         } else if (kinds.size() == 4) {
-          // CUB sort via FFI custom call
-          EXPECT_THAT(kinds, ElementsAre(Thunk::Kind::kCustomKernel,
-                                         Thunk::Kind::kCustomCall,
-                                         Thunk::Kind::kCustomKernel,
-                                         Thunk::Kind::kCustomKernel));
+          // CUB sort via FFI custom call; for batch == 1 the contiguous output
+          // slices lower to device-to-device kCopy thunks.
+          EXPECT_THAT(
+              kinds,
+              AnyOf(ElementsAre(
+                        Thunk::Kind::kCustomKernel, Thunk::Kind::kCustomCall,
+                        Thunk::Kind::kCustomKernel, Thunk::Kind::kCustomKernel),
+                    ElementsAre(Thunk::Kind::kCustomKernel,
+                                Thunk::Kind::kCustomCall, Thunk::Kind::kCopy,
+                                Thunk::Kind::kCopy)));
         } else {
           FAIL() << "Unexpected thunk sequence size: " << kinds.size();
         }
@@ -2270,19 +2284,20 @@ class GpuCompilerSelectKTest
 // Test lowering of TopK to different GPU implementations
 // (CustomKernel, raft::select_k, or Sort+Slice (LLVM/CUBSort)).
 TEST_P(GpuCompilerSelectKTest, SelectKOrCustomKernelThunk) {
-  auto [dtype, n, k, is_stable, expected_impl] = GetParam();
+  const SelectKTestParam& param = GetParam();
 
   // Generate HLO text with parameters substituted.
-  std::string hlo_text = absl::Substitute(R"(
+  std::string hlo_text = absl::Substitute(
+      R"(
 HloModule m
 
 ENTRY main {
-  p = $0[8,$1]{1,0} parameter(0)
-  ROOT t = ($0[8,$2]{1,0}, s32[8,$2]{1,0}) topk(p), k=$2, largest=true, is_stable=$3
+  p = $0[$1,$2]{1,0} parameter(0)
+  ROOT t = ($0[$1,$3]{1,0}, s32[$1,$3]{1,0}) topk(p), k=$3, largest=true, is_stable=$4
 }
 )",
-                                          dtype, n, k, is_stable);
-  VerifyTopKThunkSequence(hlo_text, expected_impl);
+      param.dtype, param.batch, param.n, param.k, param.is_stable);
+  VerifyTopKThunkSequence(hlo_text, ExpectedTopKImpl(param));
 }
 
 class GpuCompilerApproxTopKSelectKTest : public GpuCompilerSelectKTest {};
@@ -2290,9 +2305,10 @@ class GpuCompilerApproxTopKSelectKTest : public GpuCompilerSelectKTest {};
 // Test lowering of unoptimized approx_topk (sort + slice with PARTIAL order
 // comparator) to different GPU implementations.
 TEST_P(GpuCompilerApproxTopKSelectKTest, SelectKOrCustomKernelThunk) {
-  auto [dtype, n, k, is_stable, expected_impl] = GetParam();
+  const SelectKTestParam& param = GetParam();
 
-  std::string hlo_text = absl::Substitute(R"(
+  std::string hlo_text = absl::Substitute(
+      R"(
 HloModule m
 
 %top_k_gt_comparator (lhs_val: $0[], rhs_val: $0[], lhs_idx: s32[], rhs_idx: s32[]) -> pred[] {
@@ -2304,17 +2320,16 @@ HloModule m
 }
 
 ENTRY main {
-  p = $0[8,$1]{1,0} parameter(0)
-  iota = s32[$1]{0} iota(), iota_dimension=0
-  bcast = s32[8,$1]{1,0} broadcast(iota), dimensions={1}
-  sorted = ($0[8,$1]{1,0}, s32[8,$1]{1,0}) sort(p, bcast), dimensions={1}, is_stable=$3, to_apply=%top_k_gt_comparator
-  vals = $0[8,$2]{1,0} slice(sorted#0), slice={[0:8], [0:$2]}
-  idxs = s32[8,$2]{1,0} slice(sorted#1), slice={[0:8], [0:$2]}
-  ROOT t = ($0[8,$2]{1,0}, s32[8,$2]{1,0}) tuple(vals, idxs)
+  p = $0[$1,$2]{1,0} parameter(0)
+  iota = s32[$1,$2]{1,0} iota(), iota_dimension=1
+  sorted = ($0[$1,$2]{1,0}, s32[$1,$2]{1,0}) sort(p, iota), dimensions={1}, is_stable=$4, to_apply=%top_k_gt_comparator
+  vals = $0[$1,$3]{1,0} slice(sorted#0), slice={[0:$1], [0:$3]}
+  idxs = s32[$1,$3]{1,0} slice(sorted#1), slice={[0:$1], [0:$3]}
+  ROOT t = ($0[$1,$3]{1,0}, s32[$1,$3]{1,0}) tuple(vals, idxs)
 }
 )",
-                                          dtype, n, k, is_stable);
-  VerifyTopKThunkSequence(hlo_text, expected_impl);
+      param.dtype, param.batch, param.n, param.k, param.is_stable);
+  VerifyTopKThunkSequence(hlo_text, ExpectedTopKImpl(param));
 }
 
 XLA_FFI_DEFINE_HANDLER(
@@ -3034,107 +3049,430 @@ INSTANTIATE_TEST_SUITE_P(
           "_", info.param.use_input_output_alias ? "with_alias" : "no_alias");
     });
 
-auto SelectKTestParams() {
-  // Depending on dtype, N, K and is_stable flag, XLA chooses different TopK
-  // implementations:
-  // CustomKernel, raft::select_k, select_k_with_u64_adapter, or Sort+Slice.
-  // The heuristic for selecting between TopK CustomKernel and
-  // raft::matrix::select_k was developed as part of the initial research
-  // described in b/409009349.
-  return ::testing::Values(
-      // dtype, n, k, is_stable, expected_impl
-      std::make_tuple("f32", 1023, 4, false, TopKImpl::kSelectK),
-      std::make_tuple("f32", 1023, 4, true, TopKImpl::kSort),
-      std::make_tuple("f32", 1024, 4, false, TopKImpl::kCustomKernel),
-      std::make_tuple("f32", 1024, 4, true, TopKImpl::kCustomKernel),
-      std::make_tuple("f32", 1024, 16, false, TopKImpl::kSelectK),
-      std::make_tuple("f32", 1024, 16, true, TopKImpl::kCustomKernel),
-      std::make_tuple("f32", 8192, 24, false, TopKImpl::kSelectK),
-      std::make_tuple("f32", 8192, 24, true, TopKImpl::kSelectKWithU64Adapter),
-      std::make_tuple("f32", 8192, 512, false, TopKImpl::kSort),
-      std::make_tuple("f32", 8192, 512, true, TopKImpl::kSort),
-      // f32: exact upper bound of max_k
-      std::make_tuple("f32", 8192, 128, false, TopKImpl::kSelectK),
-      std::make_tuple("f32", 8192, 128, true, TopKImpl::kSelectKWithU64Adapter),
-      // f32: just over the upper bound
-      std::make_tuple("f32", 8192, 129, false, TopKImpl::kSort),
-      std::make_tuple("f32", 8192, 129, true, TopKImpl::kSort),
-      // bf16 and size <= 2**16 - use sort(s32) + slice.
-      std::make_tuple("bf16", 1023, 4, false, TopKImpl::kSortWithS32Adapter),
-      std::make_tuple("bf16", 1023, 4, true, TopKImpl::kSortWithS32Adapter),
-      std::make_tuple("bf16", 1024, 4, false, TopKImpl::kSortWithS32Adapter),
-      std::make_tuple("bf16", 1024, 4, true, TopKImpl::kSortWithS32Adapter),
-      std::make_tuple("bf16", 1024, 16, false, TopKImpl::kSortWithS32Adapter),
-      std::make_tuple("bf16", 1024, 16, true, TopKImpl::kSortWithS32Adapter),
-      // bf16 and size > 2**16.
-      std::make_tuple("bf16", 65540, 16, false, TopKImpl::kSelectK),
-      std::make_tuple("bf16", 65540, 16, true, TopKImpl::kCustomKernel),
-      std::make_tuple("bf16", 65540, 24, false, TopKImpl::kSelectK),
-      std::make_tuple("bf16", 65540, 24, true,
-                      TopKImpl::kSelectKWithU64Adapter),
-      std::make_tuple("bf16", 65540, 512, false, TopKImpl::kSort),
-      std::make_tuple("bf16", 65540, 512, true, TopKImpl::kSort),
-      // bf16: exact upper bound of max_k for batch=8
-      std::make_tuple("bf16", 65540, 128, false, TopKImpl::kSelectK),
-      std::make_tuple("bf16", 65540, 128, true,
-                      TopKImpl::kSelectKWithU64Adapter),
-      // bf16: just over the upper bound
-      std::make_tuple("bf16", 65540, 129, false, TopKImpl::kSort),
-      std::make_tuple("bf16", 65540, 129, true, TopKImpl::kSort));
+std::string SelectKTestParamName(const TestParamInfo<SelectKTestParam>& info) {
+  return absl::StrCat(info.param.dtype, "_b", info.param.batch, "_n",
+                      info.param.n, "_k", info.param.k,
+                      info.param.is_stable ? "_stable" : "_unstable");
 }
-// Instantiate the test suite with (n, k, expected_kind) pairs.
+
+auto SelectKTestParams() {
+  // Depending on dtype, batch, N, K, is_stable, and GPU architecture (H100 vs
+  // B200), XLA chooses different TopK implementations: CustomKernel,
+  // raft::select_k, select_k_with_u64_adapter, sort_with_s32_adapter, or
+  // Sort+Slice. The decision-tree heuristics are described in b/409009349.
+  return ::testing::Values(
+      // dtype, batch, n, k, is_stable, expected_h100_impl, expected_b200_impl
+      // Small n / small k (CustomKernel vs RAFT select_k vs Sort).
+      SelectKTestParam{"f32", 8, 1023, 4, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 8, 1023, 4, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 8, 1024, 4, false, TopKImpl::kCustomKernel,
+                       TopKImpl::kCustomKernel},
+      SelectKTestParam{"f32", 8, 1024, 4, true, TopKImpl::kCustomKernel,
+                       TopKImpl::kCustomKernel},
+      SelectKTestParam{"f32", 8, 1024, 16, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 8, 1024, 16, true, TopKImpl::kCustomKernel,
+                       TopKImpl::kCustomKernel},
+      // High k/n ratio (>= 0.85) falls back to Sort.
+      SelectKTestParam{"f32", 8, 100, 84, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 8, 100, 85, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      // f32 (n <= 4608): unstable uses select_k for k <= 96; stable U64 uses
+      // select_k for k <= 48 and 48 < k <= 96 (batch <= 24 on H100, all batch
+      // on B200).
+      SelectKTestParam{"f32", 8, 4096, 24, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 8, 4096, 96, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 8, 4096, 96, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 25, 4096, 96, true, TopKImpl::kSort,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 8, 4096, 97, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 8, 4096, 97, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 49, 4096, 512, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      // f32 (4608 < n <= 24576): unstable and stable U64 H100 vs B200
+      // boundaries across k <= 96, 96 < k <= 192, 192 < k <= 384, and k > 384.
+      SelectKTestParam{"f32", 8, 8192, 24, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 8, 8192, 24, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 8, 8192, 192, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 8, 8192, 192, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 49, 8192, 128, false, TopKImpl::kSort,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 49, 8192, 128, true, TopKImpl::kSort,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 49, 8192, 256, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 97, 8192, 256, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 8, 8192, 193, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 8, 8192, 193, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 48, 8192, 512, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 48, 8192, 512, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 49, 8192, 512, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 49, 8192, 512, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      // f32 (n > 24576): batch == 1, 2 <= batch <= 3, 4 <= batch <= 6, and
+      // batch > 6 boundaries on H100 vs B200.
+      SelectKTestParam{"f32", 1, 65540, 96, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 1, 65540, 96, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 1, 65540, 97, false, TopKImpl::kSort,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 1, 65540, 97, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 1, 262144, 97, false, TopKImpl::kSelectK,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 1, 262144, 97, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 2, 65540, 192, true,
+                       TopKImpl::kSelectKWithU64Adapter, TopKImpl::kSort},
+      SelectKTestParam{"f32", 2, 65540, 1024, false, TopKImpl::kSelectK,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 2, 65540, 1024, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 2, 131072, 256, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 4, 131072, 192, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 4, 131072, 512, true,
+                       TopKImpl::kSelectKWithU64Adapter, TopKImpl::kSort},
+      SelectKTestParam{"f32", 4, 196608, 512, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 8, 65540, 1024, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 8, 65540, 1024, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 8, 65540, 1025, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 8, 65540, 1025, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      // bf16 and size < 2**16 - TopkDecomposer uses sort(s32) + slice.
+      SelectKTestParam{"bf16", 8, 1023, 4, false, TopKImpl::kSortWithS32Adapter,
+                       TopKImpl::kSortWithS32Adapter},
+      SelectKTestParam{"bf16", 8, 1023, 4, true, TopKImpl::kSortWithS32Adapter,
+                       TopKImpl::kSortWithS32Adapter},
+      SelectKTestParam{"bf16", 8, 1024, 4, false, TopKImpl::kSortWithS32Adapter,
+                       TopKImpl::kSortWithS32Adapter},
+      SelectKTestParam{"bf16", 8, 1024, 4, true, TopKImpl::kSortWithS32Adapter,
+                       TopKImpl::kSortWithS32Adapter},
+      SelectKTestParam{"bf16", 8, 1024, 16, false,
+                       TopKImpl::kSortWithS32Adapter,
+                       TopKImpl::kSortWithS32Adapter},
+      SelectKTestParam{"bf16", 8, 1024, 16, true, TopKImpl::kSortWithS32Adapter,
+                       TopKImpl::kSortWithS32Adapter},
+      // bf16 and size >= 2**16: H100 vs B200 boundaries across batch and n.
+      SelectKTestParam{"bf16", 2, 65540, 64, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 2, 65540, 128, true,
+                       TopKImpl::kSelectKWithU64Adapter, TopKImpl::kSort},
+      SelectKTestParam{"bf16", 2, 65540, 256, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"bf16", 2, 196608, 256, true,
+                       TopKImpl::kSelectKWithU64Adapter, TopKImpl::kSort},
+      SelectKTestParam{"bf16", 4, 196608, 256, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 8, 65540, 16, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 8, 65540, 16, true, TopKImpl::kCustomKernel,
+                       TopKImpl::kCustomKernel},
+      SelectKTestParam{"bf16", 8, 65540, 24, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 8, 65540, 24, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 8, 65540, 512, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 8, 65540, 512, true, TopKImpl::kSort,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 8, 98304, 512, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 16, 65540, 1024, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 16, 65540, 1024, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 16, 65540, 1025, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"bf16", 16, 65540, 1025, true, TopKImpl::kSort,
+                       TopKImpl::kSort});
+}
 INSTANTIATE_TEST_SUITE_P(SelectKOrCustomKernel, GpuCompilerSelectKTest,
-                         SelectKTestParams());
+                         SelectKTestParams(), SelectKTestParamName);
 
 auto ApproxTopKSelectKTestParams() {
   // Unlike HloOpcode::kTopK (where TopkDecomposer intercepts bf16 with
-  // N <= 2**16 before TopkRewriter), approx_topk is lowered as sort + slice
+  // N < 2**16 before TopkRewriter), approx_topk is lowered as sort + slice
   // with a PARTIAL order comparator and rewritten directly into a TopK
   // CustomCall by TopkRewriter for both f32 and bf16.
   return ::testing::Values(
-      // dtype, n, k, is_stable, expected_impl
-      std::make_tuple("f32", 1023, 4, false, TopKImpl::kSelectK),
-      std::make_tuple("f32", 1023, 4, true, TopKImpl::kSort),
-      std::make_tuple("f32", 1024, 4, false, TopKImpl::kCustomKernel),
-      std::make_tuple("f32", 1024, 4, true, TopKImpl::kCustomKernel),
-      std::make_tuple("f32", 1024, 16, false, TopKImpl::kSelectK),
-      std::make_tuple("f32", 1024, 16, true, TopKImpl::kCustomKernel),
-      std::make_tuple("f32", 8192, 24, false, TopKImpl::kSelectK),
-      std::make_tuple("f32", 8192, 24, true, TopKImpl::kSelectKWithU64Adapter),
-      std::make_tuple("f32", 8192, 512, false, TopKImpl::kSort),
-      std::make_tuple("f32", 8192, 512, true, TopKImpl::kSort),
-      // f32: exact upper bound of max_k
-      std::make_tuple("f32", 8192, 128, false, TopKImpl::kSelectK),
-      std::make_tuple("f32", 8192, 128, true, TopKImpl::kSelectKWithU64Adapter),
-      // f32: just over the upper bound
-      std::make_tuple("f32", 8192, 129, false, TopKImpl::kSort),
-      std::make_tuple("f32", 8192, 129, true, TopKImpl::kSort),
-      // bf16 and size <= 2**16.
-      std::make_tuple("bf16", 1023, 4, false, TopKImpl::kSelectK),
-      std::make_tuple("bf16", 1023, 4, true, TopKImpl::kSort),
-      std::make_tuple("bf16", 1024, 4, false, TopKImpl::kCustomKernel),
-      std::make_tuple("bf16", 1024, 4, true, TopKImpl::kCustomKernel),
-      std::make_tuple("bf16", 1024, 16, false, TopKImpl::kSelectK),
-      std::make_tuple("bf16", 1024, 16, true, TopKImpl::kCustomKernel),
-      // bf16 and size > 2**16.
-      std::make_tuple("bf16", 65540, 16, false, TopKImpl::kSelectK),
-      std::make_tuple("bf16", 65540, 16, true, TopKImpl::kCustomKernel),
-      std::make_tuple("bf16", 65540, 24, false, TopKImpl::kSelectK),
-      std::make_tuple("bf16", 65540, 24, true,
-                      TopKImpl::kSelectKWithU64Adapter),
-      std::make_tuple("bf16", 65540, 512, false, TopKImpl::kSort),
-      std::make_tuple("bf16", 65540, 512, true, TopKImpl::kSort),
-      // bf16: exact upper bound of max_k for batch=8
-      std::make_tuple("bf16", 65540, 128, false, TopKImpl::kSelectK),
-      std::make_tuple("bf16", 65540, 128, true,
-                      TopKImpl::kSelectKWithU64Adapter),
-      // bf16: just over the upper bound
-      std::make_tuple("bf16", 65540, 129, false, TopKImpl::kSort),
-      std::make_tuple("bf16", 65540, 129, true, TopKImpl::kSort));
+      // dtype, batch, n, k, is_stable, expected_h100_impl, expected_b200_impl
+      // Small n / small k (CustomKernel vs RAFT select_k vs Sort).
+      SelectKTestParam{"f32", 8, 1023, 4, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 8, 1023, 4, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 8, 1024, 4, false, TopKImpl::kCustomKernel,
+                       TopKImpl::kCustomKernel},
+      SelectKTestParam{"f32", 8, 1024, 4, true, TopKImpl::kCustomKernel,
+                       TopKImpl::kCustomKernel},
+      SelectKTestParam{"f32", 8, 1024, 16, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 8, 1024, 16, true, TopKImpl::kCustomKernel,
+                       TopKImpl::kCustomKernel},
+      // High k/n ratio (>= 0.85) falls back to Sort.
+      SelectKTestParam{"f32", 8, 100, 84, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 8, 100, 85, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      // f32 (n <= 4608): unstable uses select_k for k <= 96; stable U64 uses
+      // select_k for k <= 48 and 48 < k <= 96 (batch <= 24 on H100, all batch
+      // on B200).
+      SelectKTestParam{"f32", 8, 4096, 24, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 8, 4096, 96, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 8, 4096, 96, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 25, 4096, 96, true, TopKImpl::kSort,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 8, 4096, 97, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 8, 4096, 97, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 49, 4096, 512, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      // f32 (4608 < n <= 24576): unstable and stable U64 H100 vs B200
+      // boundaries across k <= 96, 96 < k <= 192, 192 < k <= 384, and k > 384.
+      SelectKTestParam{"f32", 8, 8192, 24, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 8, 8192, 24, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 8, 8192, 192, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 8, 8192, 192, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 49, 8192, 128, false, TopKImpl::kSort,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 49, 8192, 128, true, TopKImpl::kSort,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 49, 8192, 256, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 97, 8192, 256, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 8, 8192, 193, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 8, 8192, 193, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 48, 8192, 512, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 48, 8192, 512, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 49, 8192, 512, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 49, 8192, 512, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      // f32 (n > 24576): batch == 1, 2 <= batch <= 3, 4 <= batch <= 6, and
+      // batch > 6 boundaries on H100 vs B200.
+      SelectKTestParam{"f32", 1, 65540, 96, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 1, 65540, 96, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 1, 65540, 97, false, TopKImpl::kSort,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 1, 65540, 97, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 1, 262144, 97, false, TopKImpl::kSelectK,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 1, 262144, 97, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 2, 65540, 192, true,
+                       TopKImpl::kSelectKWithU64Adapter, TopKImpl::kSort},
+      SelectKTestParam{"f32", 2, 65540, 1024, false, TopKImpl::kSelectK,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 2, 65540, 1024, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 2, 131072, 256, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 4, 131072, 192, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 4, 131072, 512, true,
+                       TopKImpl::kSelectKWithU64Adapter, TopKImpl::kSort},
+      SelectKTestParam{"f32", 4, 196608, 512, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 8, 65540, 1024, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"f32", 8, 65540, 1024, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"f32", 8, 65540, 1025, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"f32", 8, 65540, 1025, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      // bf16 and size < 2**16.
+      SelectKTestParam{"bf16", 8, 1023, 4, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 8, 1023, 4, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 8, 1024, 4, false, TopKImpl::kCustomKernel,
+                       TopKImpl::kCustomKernel},
+      SelectKTestParam{"bf16", 8, 1024, 4, true, TopKImpl::kCustomKernel,
+                       TopKImpl::kCustomKernel},
+      SelectKTestParam{"bf16", 8, 1024, 16, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 8, 1024, 16, true, TopKImpl::kCustomKernel,
+                       TopKImpl::kCustomKernel},
+      // bf16 (n <= 4608): k <= 96 vs k > 96 and stable batch <= 24 on H100.
+      SelectKTestParam{"bf16", 8, 4096, 24, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 8, 4096, 96, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 8, 4096, 96, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 25, 4096, 96, true, TopKImpl::kSort,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 8, 4096, 97, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"bf16", 8, 4096, 97, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"bf16", 193, 4096, 512, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      // bf16 (4608 < n <= 12288): unstable batch <= 12 / > 96 and stable
+      // batch > 96 (H100) / > 192 (B200) with k > 384.
+      SelectKTestParam{"bf16", 8, 8192, 24, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 8, 8192, 24, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 8, 8192, 192, false, TopKImpl::kSelectK,
+                       TopKImpl::kSort},
+      SelectKTestParam{"bf16", 8, 8192, 192, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"bf16", 16, 8192, 192, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"bf16", 97, 8192, 192, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 96, 8192, 256, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"bf16", 97, 8192, 256, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 193, 8192, 256, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"bf16", 96, 8192, 512, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"bf16", 97, 8192, 512, true,
+                       TopKImpl::kSelectKWithU64Adapter, TopKImpl::kSort},
+      SelectKTestParam{"bf16", 192, 8192, 512, true,
+                       TopKImpl::kSelectKWithU64Adapter, TopKImpl::kSort},
+      SelectKTestParam{"bf16", 193, 8192, 512, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      // bf16 (12288 < n <= 24576): unstable k <= 192 vs batch > 48, and
+      // stable 48 < k <= 96 on H100 vs B200.
+      SelectKTestParam{"bf16", 48, 16384, 96, true, TopKImpl::kSort,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 48, 16384, 192, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 48, 16384, 193, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"bf16", 49, 16384, 193, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      // bf16 (24576 < n <= 49152): H100 vs B200 batch and k boundaries.
+      SelectKTestParam{"bf16", 8, 32768, 96, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 8, 32768, 192, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 8, 32768, 256, false, TopKImpl::kSelectK,
+                       TopKImpl::kSort},
+      SelectKTestParam{"bf16", 25, 32768, 256, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 16, 32768, 256, true,
+                       TopKImpl::kSelectKWithU64Adapter, TopKImpl::kSort},
+      SelectKTestParam{"bf16", 49, 32768, 256, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      // bf16 and size >= 2**16 (n > 49152).
+      SelectKTestParam{"bf16", 2, 65540, 64, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 2, 65540, 128, true,
+                       TopKImpl::kSelectKWithU64Adapter, TopKImpl::kSort},
+      SelectKTestParam{"bf16", 2, 65540, 256, true, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"bf16", 2, 196608, 256, true,
+                       TopKImpl::kSelectKWithU64Adapter, TopKImpl::kSort},
+      SelectKTestParam{"bf16", 4, 196608, 256, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 8, 65540, 16, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 8, 65540, 16, true, TopKImpl::kCustomKernel,
+                       TopKImpl::kCustomKernel},
+      SelectKTestParam{"bf16", 8, 65540, 24, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 8, 65540, 24, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 8, 65540, 512, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 8, 65540, 512, true, TopKImpl::kSort,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 8, 98304, 512, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 16, 65540, 1024, false, TopKImpl::kSelectK,
+                       TopKImpl::kSelectK},
+      SelectKTestParam{"bf16", 16, 65540, 1024, true,
+                       TopKImpl::kSelectKWithU64Adapter,
+                       TopKImpl::kSelectKWithU64Adapter},
+      SelectKTestParam{"bf16", 16, 65540, 1025, false, TopKImpl::kSort,
+                       TopKImpl::kSort},
+      SelectKTestParam{"bf16", 16, 65540, 1025, true, TopKImpl::kSort,
+                       TopKImpl::kSort});
 }
 INSTANTIATE_TEST_SUITE_P(ApproxTopKSelectKOrCustomKernel,
                          GpuCompilerApproxTopKSelectKTest,
-                         ApproxTopKSelectKTestParams());
+                         ApproxTopKSelectKTestParams(), SelectKTestParamName);
 }  // namespace
 
 XLA_FFI_DEFINE_HANDLER(
@@ -4272,9 +4610,7 @@ ENTRY %main (a: f32[]) -> f32[] {
        optimized_module->MakeNonfusionComputations()) {
     for (const HloInstruction* instruction : computation->instructions()) {
       EXPECT_NE(instruction->opcode(), HloOpcode::kCall);
-      EXPECT_FALSE(
-          instruction->has_frontend_attributes() &&
-          instruction->frontend_attributes().map().contains("inlineable"));
+      EXPECT_FALSE(instruction->has_frontend_attribute("inlineable"));
     }
   }
 }
@@ -4314,9 +4650,7 @@ ENTRY %main (a: f32[4]) -> f32[4] {
        optimized_module->MakeNonfusionComputations()) {
     for (const HloInstruction* instruction : computation->instructions()) {
       EXPECT_NE(instruction->opcode(), HloOpcode::kCall);
-      EXPECT_FALSE(
-          instruction->has_frontend_attributes() &&
-          instruction->frontend_attributes().map().contains("inlineable"));
+      EXPECT_FALSE(instruction->has_frontend_attribute("inlineable"));
     }
   }
 }
@@ -4359,9 +4693,7 @@ ENTRY %main (a: f32[4]) -> f32[4] {
        optimized_module->MakeNonfusionComputations()) {
     for (const HloInstruction* instruction : computation->instructions()) {
       EXPECT_NE(instruction->opcode(), HloOpcode::kCall);
-      EXPECT_FALSE(
-          instruction->has_frontend_attributes() &&
-          instruction->frontend_attributes().map().contains("inlineable"));
+      EXPECT_FALSE(instruction->has_frontend_attribute("inlineable"));
     }
   }
 }

@@ -1033,9 +1033,10 @@ TEST(PjrtCApiGpuExtensionTest,
   PJRT_Error* error = api->PJRT_Client_Create(&create_arg);
   EXPECT_EQ(error, nullptr) << GetErrorMessage(error, api);
 
-  auto* gpu_client = absl::down_cast<xla::PjRtStreamExecutorRawClient*>(
+  auto* gpu_client =
       absl::down_cast<xla::CommonPjRtClient*>(create_arg.client->client.get())
-          ->raw_client());
+          ->raw_client()
+          ->down_cast<xla::PjRtStreamExecutorRawClient>();
   std::vector<float> data(4, 0.0f);
   EXPECT_TRUE(gpu_client->ShouldStageHostToDeviceTransfers(
       data.data(), sizeof(float) * data.size()));
@@ -1074,9 +1075,10 @@ TEST(PjrtCApiGpuExtensionTest,
   PJRT_Error* error = api->PJRT_Client_Create(&create_arg);
   EXPECT_EQ(error, nullptr) << GetErrorMessage(error, api);
 
-  auto* gpu_client = absl::down_cast<xla::PjRtStreamExecutorRawClient*>(
+  auto* gpu_client =
       absl::down_cast<xla::CommonPjRtClient*>(create_arg.client->client.get())
-          ->raw_client());
+          ->raw_client()
+          ->down_cast<xla::PjRtStreamExecutorRawClient>();
   std::vector<float> data(4, 0.0f);
   EXPECT_FALSE(gpu_client->ShouldStageHostToDeviceTransfers(
       data.data(), sizeof(float) * data.size()));
@@ -1117,6 +1119,37 @@ TEST(PJRTGpuDeviceTopologyTest, CreateGpuTopology) {
   destroy_args.struct_size = PJRT_TopologyDescription_Destroy_Args_STRUCT_SIZE;
   destroy_args.extension_start = nullptr;
   destroy_args.topology = const_cast<PJRT_TopologyDescription*>(pjrt_topology);
+  PJRT_Error* destroy_error =
+      pjrt_api->PJRT_TopologyDescription_Destroy(&destroy_args);
+  EXPECT_EQ(destroy_error, nullptr) << GetErrorMessage(destroy_error, pjrt_api);
+}
+
+TEST(PJRTGpuDeviceTopologyTest, CreateGpuTopologyWithVisibleDevices) {
+  const PJRT_Api* pjrt_api = gpu_plugin::GetGpuPjrtApi();
+
+  absl::flat_hash_map<std::string, xla::PjRtValueType> options = {
+      {"visible_devices", std::vector<int64_t>{0}},
+  };
+  ASSERT_OK_AND_ASSIGN(std::vector<PJRT_NamedValue> c_options,
+                       ::pjrt::ConvertToPjRtNamedValueList(options));
+
+  PJRT_TopologyDescription_Create_Args args;
+  args.struct_size = PJRT_TopologyDescription_Create_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.topology = nullptr;
+  args.num_options = c_options.size();
+  args.create_options = c_options.data();
+
+  PJRT_Error* error = pjrt_api->PJRT_TopologyDescription_Create(&args);
+  ASSERT_EQ(error, nullptr) << GetErrorMessage(error, pjrt_api);
+
+  ASSERT_NE(args.topology, nullptr);
+  EXPECT_EQ(args.topology->topology->DeviceDescriptions().size(), 1);
+
+  PJRT_TopologyDescription_Destroy_Args destroy_args;
+  destroy_args.struct_size = PJRT_TopologyDescription_Destroy_Args_STRUCT_SIZE;
+  destroy_args.extension_start = nullptr;
+  destroy_args.topology = args.topology;
   PJRT_Error* destroy_error =
       pjrt_api->PJRT_TopologyDescription_Destroy(&destroy_args);
   EXPECT_EQ(destroy_error, nullptr) << GetErrorMessage(destroy_error, pjrt_api);

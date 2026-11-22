@@ -92,13 +92,17 @@ def Ifrt_CopyArraysOp
 }
 
 def Ifrt_AssembleOp
-    : Ifrt_Op<"Assemble", [AttrSizedOperandSegments, NestedInIfrtFunc]> {
+    : Ifrt_Op<"Assemble",
+              [AttrSizedOperandSegments, NestedInIfrtFunc,
+               Ifrt_ControlOpInterface]> {
   let summary = "Assembles single device arrays to a sharded array";
   let description = [{
     Builds a larger array out of individual per-device arrays.
 
     On each device, the local shard of the result array is the input array.
-    Thus, in an efficient implementation, no buffer transfer is needed.
+    By default (`donated = false`), the output array aliases the input buffers;
+    when `donated = true`, the input arrays are donated to construct the
+    output array.
 
     The inputs' `device` parameter must have size 1. They should be distinct and
     combine to the output's `device` list.
@@ -106,26 +110,30 @@ def Ifrt_AssembleOp
 
   let arguments = (ins
     Variadic<Ifrt_ArrayType>:$inputs,
-    Variadic<Ifrt_ControlType>:$control_inputs);
+    Variadic<Ifrt_ControlType>:$control_inputs,
+    DefaultValuedOptionalAttr<BoolAttr, "false">:$donated);
   let results = (outs
     Ifrt_ArrayType:$output,
     Ifrt_ControlType:$control_output);
 
   let assemblyFormat = [{
-    `(` $inputs `)` oilist(`after` $control_inputs) attr-dict
+    `(` $inputs `)` oilist(`after` $control_inputs) prop-dict attr-dict
     `:` functional-type($inputs, $output)
   }];
 
   let hasVerifier = 1;
 }
 
-def Ifrt_DisassembleOp : Ifrt_Op<"Disassemble", [NestedInIfrtFunc]> {
+def Ifrt_DisassembleOp
+    : Ifrt_Op<"Disassemble", [NestedInIfrtFunc, Ifrt_ControlOpInterface]> {
   let summary = "Disassembles a sharded array to single device arrays";
   let description = [{
     Breaks an array up into per-device arrays.
 
     On each device, the result array is its local shard in the input array.
-    Thus, in an efficient implementation, no buffer transfer is needed.
+    By default (`donated = false`), the output arrays alias the local shards of
+    the input array; when `donated = true`, the input array is donated to
+    construct the output arrays.
 
     The outputs' `devices` parameter must have size 1. They should be distinct
     and combine to the input's `devices` list.
@@ -133,13 +141,14 @@ def Ifrt_DisassembleOp : Ifrt_Op<"Disassemble", [NestedInIfrtFunc]> {
 
   let arguments = (ins
     Ifrt_ArrayType:$input,
-    Variadic<Ifrt_ControlType>:$control_inputs);
+    Variadic<Ifrt_ControlType>:$control_inputs,
+    DefaultValuedOptionalAttr<BoolAttr, "false">:$donated);
   let results = (
     outs Variadic<Ifrt_ArrayType>:$outputs,
     Ifrt_ControlType:$control_output);
 
   let assemblyFormat = [{
-    `(` $input `)` oilist(`after` $control_inputs) attr-dict
+    `(` $input `)` oilist(`after` $control_inputs) prop-dict attr-dict
     `:` functional-type($input, $outputs)
   }];
 
@@ -185,8 +194,9 @@ def Ifrt_BitcastArraysOp
   let summary = "Bitcasts `Array`s to new `Array`s with a different type.";
   let description = [{
     A metadata-only op that can change the per-shard interpretation without
-    changing the per-sharding location. The new arrays must use the same
-    devices, have the same on-device size, and have the same memory kind.
+    changing the per-sharding location. The input arrays must be donated
+    (`donated = true`), and the new arrays must use the same devices, have the
+    same on-device size, and have the same memory kind.
 
     The `dtype`, `shape`, `sharding`, and `layout` of the new arrays might be
     different from the input arrays.
@@ -212,7 +222,7 @@ def Ifrt_CallOp : Ifrt_Op<"Call",
     [AttrSizedOperandSegments,
      NestedInIfrtFunc,
      IfrtCallLike<"::mlir::func::FuncOp">,
-     Ifrt_ArrayOpInterface,
+     Ifrt_CallOpInterface,
      DeclareOpInterfaceMethods<CallOpInterface>,
      DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Call some function on a set of devices";
@@ -262,7 +272,7 @@ def Ifrt_CallLoadedExecutableOp : Ifrt_Op<"CallLoadedExecutable",
     [AttrSizedOperandSegments,
      NestedInIfrtFunc,
      IfrtCallLike<"LoadedExecutableOp">,
-     Ifrt_ArrayOpInterface,
+     Ifrt_CallOpInterface,
      DeclareOpInterfaceMethods<CallOpInterface>,
      DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Call some loaded executable";
@@ -298,7 +308,6 @@ def Ifrt_CallLoadedExecutableOp : Ifrt_Op<"CallLoadedExecutable",
     $callee `(` $inputs `)` oilist(`after` $control_inputs) prop-dict attr-dict
     `:` functional-type($inputs, $outputs)
   }];
-  let hasVerifier = 1;
 }
 
 def Ifrt_LoadedExecutableOp : Ifrt_Op<"LoadedExecutable",
@@ -340,6 +349,7 @@ def Ifrt_AfterOp : Ifrt_Op<"After", [NestedInIfrtFunc]> {
 
   let arguments = (ins Variadic<Ifrt_ArrayType>:$inputs);
   let results = (outs Ifrt_ControlType:$control_output);
+  let hasVerifier = 1;
 }
 
 #endif  // XLA_PYTHON_IFRT_IR_IFRT_OPS_TD_

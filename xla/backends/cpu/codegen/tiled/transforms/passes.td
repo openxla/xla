@@ -143,3 +143,23 @@ def VectorizeXTilePass : Pass<"xtile-cpu-vectorize-xtile", "mlir::ModuleOp"> {
   ];
 }
 
+def LowerVectorContractPass
+    : Pass<"xtile-cpu-lower-vector-contract", "mlir::ModuleOp"> {
+  let summary = "Lowers vector.contract via outer products.";
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::vector::VectorDialect",
+  ];
+}
+
+def InterchangeReductionLoopPass
+    : Pass<"xtile-cpu-interchange-reduction-loop", "mlir::func::FuncOp"> {
+  let summary = "Interchanges parallel outer and reduction inner loops for contiguous minor-dim streaming.";
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::vector::VectorDialect",
+  ];
+}
+

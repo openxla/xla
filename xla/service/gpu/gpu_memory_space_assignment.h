@@ -65,11 +65,6 @@ absl::StatusOr<MemorySpaceColor> AsMemorySpaceColor(int64_t memory_space);
 absl::StatusOr<std::vector<std::pair<int64_t, MemorySpaceColor>>>
 ParseIndexMemorySpacePairs(absl::string_view str);
 
-// Returns true if the instruction's collectives mode requires symmetric
-// (collective) memory. Device-initiated and one-sided collectives need all
-// buffers registered with the collective runtime ahead of time.
-bool RequiresCollectiveSymmetricMemorySpace(const HloInstruction* inst);
-
 // Returns true if the given operand use requires collective memory space.
 bool RequiresCollectiveInput(const HloUse& use, const DebugOptions& option);
 
@@ -92,8 +87,10 @@ BufferAssigner::Colorer CreateColorer(const DebugOptions& option);
 // Buffer assignment runs before the command buffer conversion pass decides what
 // is recorded, so this also matches collectives that end up outside a command
 // buffer (for example below `xla_gpu_graph_min_graph_size`). Costs temp memory.
-// nullopt unless `xla_gpu_command_buffer_keep_collectives_out_of_outputs` is
-// set and COLLECTIVES is enabled with SKIP_TEMP or SKIP_PROFILED.
+// An explicit value of `xla_gpu_command_buffer_keep_collectives_out_of_outputs`
+// always takes priority. When it is not set, this is enabled only if
+// COLLECTIVES is in `xla_gpu_enable_command_buffer` and the update mode is
+// SKIP_TEMP or SKIP_PROFILED. nullopt when disabled.
 std::optional<BufferAssigner::MustNotLiveOut> CreateMustNotLiveOut(
     const DebugOptions& option);
 

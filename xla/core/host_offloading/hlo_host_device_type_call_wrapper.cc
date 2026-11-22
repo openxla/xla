@@ -42,11 +42,11 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/hlo/pass/hlo_pass_options.h"
 #include "xla/hlo/pass/hlo_pass_registry.h"
+#include "xla/hlo/transforms/call_inliner.h"
 #include "xla/hlo/transforms/offloaded_instruction_wrapper.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/service/call_graph.h"
-#include "xla/service/call_inliner.h"
 #include "xla/service/host_offload_utils.h"
 #include "xla/service/memory_annotations.h"
 #include "xla/service/tuple_util.h"
@@ -69,9 +69,7 @@ bool IsPassThroughShardingOp(const HloInstruction& instr) {
 }
 
 void RemoveComputeTypeFrontendAttribute(HloInstruction& instr) {
-  FrontendAttributes copy_of_frontend_attributes = instr.frontend_attributes();
-  copy_of_frontend_attributes.mutable_map()->erase(kXlaComputeTypeAttr);
-  instr.set_frontend_attributes(copy_of_frontend_attributes);
+  instr.erase_frontend_attribute(kXlaComputeTypeAttr);
 }
 
 void RemoveComputeTypeFrontendAttribute(HloComputation& computation) {
@@ -167,13 +165,12 @@ std::string GetDevicePlacement(const HloInstruction* instr) {
       << "Input " << instr->name() << " must be a device placement annotation";
   CHECK(instr->has_frontend_attributes())
       << "Input " << instr->name() << " must have frontend attributes";
-  const auto& frontend_attribute_map = instr->frontend_attributes().map();
-  auto buffer_placement_it =
-      frontend_attribute_map.find(kXlaBufferPlacementAttr);
-  CHECK(buffer_placement_it != frontend_attribute_map.end())
+  std::optional<std::string> buffer_placement =
+      instr->get_frontend_attribute(kXlaBufferPlacementAttr);
+  CHECK(buffer_placement.has_value())
       << "Input " << instr->name()
       << " must have a buffer placement frontend attribute";
-  return buffer_placement_it->second;
+  return *std::move(buffer_placement);
 }
 
 absl::flat_hash_set<HloInstruction*> CollectAllowedDevicePlacementAnnotations(
@@ -440,16 +437,11 @@ absl::StatusOr<bool> RemoveDevicePlacementAnnotationsFromHostComputations(
     // Check if this computation is a host computation.
     for (const HloInstruction* caller_instruction :
          computation->caller_instructions()) {
-      if (caller_instruction->has_frontend_attributes()) {
-        FrontendAttributes frontend_attributes =
-            caller_instruction->frontend_attributes();
-        if (frontend_attributes.map().contains(kXlaComputeTypeAttr) &&
-            frontend_attributes.map().at(kXlaComputeTypeAttr) ==
-                kXlaComputeTypeHost) {
-          // The computation is a host computation.
-          host_computations.push_back(computation);
-          break;
-        }
+      if (caller_instruction->get_frontend_attribute(kXlaComputeTypeAttr) ==
+          kXlaComputeTypeHost) {
+        // The computation is a host computation.
+        host_computations.push_back(computation);
+        break;
       }
     }
   }

@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
+#include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
@@ -43,6 +44,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/collective_ops_utils.h"
+#include "xla/service/decision.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_buffer.h"
@@ -132,7 +134,7 @@ static bool SupportsMemorySpaceAnnotations(const HloInstruction* inst) {
 // Returns true if the instruction's collectives mode requires symmetric
 // (collective) memory. Device-initiated and one-sided collectives need all
 // buffers registered with the collective runtime ahead of time.
-bool RequiresCollectiveSymmetricMemorySpace(const HloInstruction* inst) {
+static bool RequiresCollectiveSymmetricMemorySpace(const HloInstruction* inst) {
   if (!inst->has_backend_config()) {
     return false;
   }
@@ -142,6 +144,10 @@ bool RequiresCollectiveSymmetricMemorySpace(const HloInstruction* inst) {
   }
   const auto mode = gpu_config->collective_backend_config().collectives_mode();
   return mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY;
+}
+
+static bool RequiresTritonSymmetricOutput(const HloInstruction* inst) {
+  return IsTritonTwoShotAllGather(*inst);
 }
 
 bool IsCollectiveMemoryInstruction(const HloInstruction* inst) {
@@ -253,7 +259,8 @@ bool RequiresCollectiveOutput(const HloValue& value,
   // Handle standard collectives under NCCL user/symmetric buffers, or
   // device-initiated/one-sided collectives requiring symmetric memory.
   if (IsNcclSymmetricOrUserBuffersEnabledForInstruction(def, option) ||
-      RequiresCollectiveSymmetricMemorySpace(def)) {
+      RequiresCollectiveSymmetricMemorySpace(def) ||
+      RequiresTritonSymmetricOutput(def)) {
     return true;
   }
 
@@ -431,21 +438,40 @@ bool IsCommandBufferCollectiveValue(const HloAliasAnalysis& alias_analysis,
   });
 }
 
+Decision ShouldKeepCollectivesOutOfOutputs(const DebugOptions& option) {
+  // An explicit value of the flag always takes priority.
+  if (option.has_xla_gpu_command_buffer_keep_collectives_out_of_outputs()) {
+    return option.xla_gpu_command_buffer_keep_collectives_out_of_outputs()
+               ? Decision::Allow()
+               : Decision::Forbid(
+                     "xla_gpu_command_buffer_keep_collectives_out_of_outputs "
+                     "is explicitly disabled");
+  }
+  // Otherwise enable it automatically when collectives are recorded into
+  // command buffers and only the VA remapping modes keep the temp allocation
+  // at a stable address.
+  const DebugOptions::CommandBufferUpdateMode update_mode =
+      option.xla_gpu_command_buffer_update_mode();
+  if (update_mode != DebugOptions::SKIP_TEMP &&
+      update_mode != DebugOptions::SKIP_PROFILED) {
+    return Decision::Forbid(
+        "command buffer update mode is not SKIP_TEMP or SKIP_PROFILED");
+  }
+  if (!absl::c_linear_search(option.xla_gpu_enable_command_buffer(),
+                             DebugOptions::COLLECTIVES)) {
+    return Decision::Forbid("COLLECTIVES is not enabled in command buffers");
+  }
+  return Decision::Allow();
+}
+
 }  // namespace
 
 std::optional<BufferAssigner::MustNotLiveOut> CreateMustNotLiveOut(
     const DebugOptions& option) {
-  // Only the VA remapping modes keep the temp allocation at a stable address.
-  const DebugOptions::CommandBufferUpdateMode update_mode =
-      option.xla_gpu_command_buffer_update_mode();
   // TODO(magaonka-amd): Account for ragged all-to-all, which the command
   // buffer conversion pass records as COLLECTIVES_KERNEL when it uses the
   // symmetric memory kernel.
-  if (!option.xla_gpu_command_buffer_keep_collectives_out_of_outputs() ||
-      (update_mode != DebugOptions::SKIP_TEMP &&
-       update_mode != DebugOptions::SKIP_PROFILED) ||
-      !absl::c_linear_search(option.xla_gpu_enable_command_buffer(),
-                             DebugOptions::COLLECTIVES)) {
+  if (ShouldKeepCollectivesOutOfOutputs(option).IsForbidden()) {
     return std::nullopt;
   }
   return [enabled = GetEnabledCollectiveOpTypes(option)](

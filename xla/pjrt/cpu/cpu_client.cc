@@ -46,7 +46,6 @@ limitations under the License.
 #include "riegeli/bytes/reader.h"
 #include "riegeli/messages/parse_message.h"
 #include "tsl/platform/denormal.h"
-#include "tsl/platform/fingerprint.h"
 #include "tsl/platform/setround.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "xla/array.h"
@@ -1068,10 +1067,10 @@ PjRtCpuRawClient::CreateLinkedEventPromise(LocalDeviceId local_device_id,
 
 absl::StatusOr<PjRtRawBufferRef> PjRtCpuRawClient::ImportForeignMemory(
     PJRT_Memory* memory_space, void* device_ptr, size_t size,
-    absl::AnyInvocable<void() &&> on_delete_callback, bool is_mutable) {
+    PjRtOnceCallbackRef on_delete_callback, bool is_mutable) {
   return CpuRawBuffer::ImportForeignMemory(
-      device_ptr, std::move(on_delete_callback), size, memory_space, is_mutable,
-      async_work_runner());
+      device_ptr, ToAnyInvocable(std::move(on_delete_callback)), size,
+      memory_space, is_mutable, async_work_runner());
 }
 
 absl::StatusOr<PjRtRawBufferRef> PjRtCpuRawClient::AllocateRawBuffer(
@@ -1188,6 +1187,8 @@ PjRtCpuExecutable::PjRtCpuExecutable(
                                          CpuDeviceMemorySpace::kKindId);
   }
 
+  fingerprint_ = cpu_executable_->module().GetFingerprint128();
+
   const auto& computation_layout =
       cpu_executable_->module().entry_computation_layout();
   if (computation_layout.parameter_count() == 0) {
@@ -1217,13 +1218,6 @@ PjRtCpuExecutable::PjRtCpuExecutable(
               .size);
     }
   }
-
-  // Compute fingerprint of the executable from the HloModule.
-  tsl::Fprint128 fingerprint = tsl::Fingerprint128(fingerprint_);
-  fingerprint = tsl::FingerprintCat128(
-      tsl::Fingerprint128(fingerprint_),
-      tsl::Fingerprint128(cpu_executable_->module().ToString()));
-  fingerprint_ = absl::StrCat(fingerprint.low64, fingerprint.high64);
 }
 
 namespace {

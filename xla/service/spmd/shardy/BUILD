@@ -56,6 +56,7 @@ cc_library(
         "//xla/hlo/translate:stablehlo",
         "//xla/hlo/utils:hlo_sharding_util",
         "//xla/service:computation_layout",
+        "//xla/service:dump",
         "//xla/service:hlo_proto_cc",
         "//xla/service/spmd/shardy/sdy_round_trip:pipelines",
         "//xla/service/spmd/shardy/stablehlo_round_trip:stablehlo_export",
@@ -140,6 +141,33 @@ cc_library(
     deps = ["@llvm-project//llvm:Support"],
 )
 
+cc_library(
+    name = "shardy_manual_computation_inliner",
+    srcs = ["shardy_manual_computation_inliner.cc"],
+    hdrs = ["shardy_manual_computation_inliner.h"],
+    deps = [
+        ":constants",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass_registry",
+        "//xla/hlo/transforms:call_inliner",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+    alwayslink = True,
+)
+
+xla_cc_test(
+    name = "shardy_manual_computation_inliner_test",
+    srcs = ["shardy_manual_computation_inliner_test.cc"],
+    deps = [
+        ":shardy_manual_computation_inliner",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 xla_cc_test(
     name = "shardy_xla_pass_test",
     srcs = ["shardy_xla_pass_test.cc"],
@@ -148,6 +176,7 @@ xla_cc_test(
         ":shardy_xla_pass",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
@@ -156,14 +185,20 @@ xla_cc_test(
         "//xla/python:inspect_sharding",
         "//xla/service:computation_layout",
         "//xla/service/spmd:sharding_format_picker",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/testing:temporary_directory",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@shardy//shardy/dialect/sdy/transforms/common:partitioner_stage",
         "@shardy//shardy/dialect/sdy/transforms/common:propagation_options",
+        "@tsl//tsl/platform:path",
     ],
 )
 
