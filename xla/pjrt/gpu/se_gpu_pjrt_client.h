@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
@@ -139,6 +140,10 @@ class StreamExecutorGpuRawClient : public PjRtStreamExecutorRawClient {
   AcquireExternalDmaAccess(
       LocalDeviceState* local_device, const PJRT_Memory* memory_space,
       tsl::AsyncValueRef<RawSEDeviceMemory> device_buffer) override;
+
+  absl::StatusOr<std::unique_ptr<PjRtExternalDmaRegionWatcher>>
+  WatchExternalDmaRegions(LocalDeviceId local_device_id, int memory_kind_id,
+                          PjRtExternalDmaRegionCallbacks callbacks) override;
 
   void UpdateCompileOptionsTopology(const PjRtTopologyDescription& topology,
                                     CompileOptions* options) const override;

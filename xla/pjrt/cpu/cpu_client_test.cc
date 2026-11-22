@@ -61,6 +61,7 @@ limitations under the License.
 #include "xla/pjrt/host_to_device_transfer_manager.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_execute_options.h"
@@ -2561,6 +2562,27 @@ ENTRY main {
                                        LoadOptions()));
   EXPECT_THAT(deserialized->FingerprintExecutable(),
               IsOkAndHolds(compiled_fingerprint));
+}
+
+TEST(PjRtCpuClientTest, WatchExternalDmaRegionsUnimplemented) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetXlaPjrtCpuClient(CpuClientOptions()));
+  PjRtMemorySpace* memory_space = client->memory_spaces()[0];
+  EXPECT_THAT(
+      client->WatchExternalDmaRegions(
+          nullptr, PjRtExternalDmaRegionCallbacks{
+                       /*on_register=*/[](const PjRtExternalDmaRegion&) {},
+                   }),
+      StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(client->WatchExternalDmaRegions(memory_space,
+                                              PjRtExternalDmaRegionCallbacks{}),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(
+      client->WatchExternalDmaRegions(
+          memory_space, PjRtExternalDmaRegionCallbacks{
+                            /*on_register=*/[](const PjRtExternalDmaRegion&) {},
+                        }),
+      StatusIs(absl::StatusCode::kUnimplemented));
 }
 
 }  // namespace

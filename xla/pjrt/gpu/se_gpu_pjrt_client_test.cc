@@ -90,6 +90,7 @@ limitations under the License.
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -5193,6 +5194,110 @@ TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessKeepsBufferAlive) {
   ASSERT_OK_AND_ASSIGN(tsl::AllocatorStats released_stats,
                        device->GetAllocatorStats());
   EXPECT_EQ(released_stats.bytes_in_use, baseline_stats.bytes_in_use);
+}
+
+TEST(StreamExecutorGpuClientTest,
+     WatchExternalDmaRegionsPreallocatedMatchesAcquireExternalDmaAccess) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetStreamExecutorGpuClient(GpuClientOptions()));
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * device_space,
+      client->addressable_devices()[0]->default_memory_space());
+
+  std::vector<PjRtExternalDmaRegion> registered;
+  std::vector<int> unregistered_fds;
+  absl::StatusOr<std::unique_ptr<PjRtExternalDmaRegionWatcher>> watcher =
+      client->WatchExternalDmaRegions(
+          device_space,
+          PjRtExternalDmaRegionCallbacks{
+              /*on_register=*/[&](const PjRtExternalDmaRegion& region) {
+                registered.push_back(region);
+              },
+              /*on_unregister=*/
+              [&](const PjRtExternalDmaRegion& region) {
+                unregistered_fds.push_back(region.fd);
+              },
+          });
+  if (absl::IsUnimplemented(watcher.status())) {
+    GTEST_SKIP() << "dma-buf export is not supported on this GPU.";
+  }
+  ASSERT_OK(watcher);
+  EXPECT_TRUE(registered.empty());
+
+  Literal literal = LiteralUtil::CreateR1<int32_t>(std::vector<int32_t>(1024));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> buf,
+                       client->BufferFromHostLiteral(literal, device_space));
+  ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef raw,
+                       PjRtRawBuffer::CreateRawAliasOfBuffer(buf.get()));
+  tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess> access =
+      AcquireExternalDmaAccessSync(*raw);
+  ASSERT_TRUE(access.IsConcrete()) << access.GetError();
+
+  bool found_covering_region = false;
+  for (const PjRtExternalDmaRegion& region : registered) {
+    if (region.fd == access->info().fd) {
+      found_covering_region = true;
+      EXPECT_LE(access->info().offset + access->info().size, region.size);
+    }
+  }
+  EXPECT_TRUE(found_covering_region);
+
+  watcher->reset();
+  EXPECT_EQ(unregistered_fds.size(), registered.size());
+}
+
+TEST(StreamExecutorGpuClientTest,
+     WatchExternalDmaRegionsDynamicBfcNotifiesOnFirstAccess) {
+  GpuClientOptions options;
+  options.allocator_config.preallocate = false;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetStreamExecutorGpuClient(options));
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * device_space,
+      client->addressable_devices()[0]->default_memory_space());
+
+  std::vector<PjRtExternalDmaRegion> registered;
+  absl::StatusOr<std::unique_ptr<PjRtExternalDmaRegionWatcher>> watcher =
+      client->WatchExternalDmaRegions(
+          device_space,
+          PjRtExternalDmaRegionCallbacks{
+              /*on_register=*/[&](const PjRtExternalDmaRegion& region) {
+                registered.push_back(region);
+              },
+          });
+  if (absl::IsUnimplemented(watcher.status())) {
+    GTEST_SKIP() << "dma-buf export is not supported on this GPU.";
+  }
+  ASSERT_OK(watcher);
+  EXPECT_TRUE(registered.empty());
+
+  Literal literal = LiteralUtil::CreateR1<int32_t>(std::vector<int32_t>(1024));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> buf,
+                       client->BufferFromHostLiteral(literal, device_space));
+  ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef raw,
+                       PjRtRawBuffer::CreateRawAliasOfBuffer(buf.get()));
+  tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess> access =
+      AcquireExternalDmaAccessSync(*raw);
+  ASSERT_TRUE(access.IsConcrete()) << access.GetError();
+
+  ASSERT_EQ(registered.size(), 1);
+  EXPECT_EQ(registered[0].fd, access->info().fd);
+  EXPECT_LE(access->info().offset + access->info().size, registered[0].size);
+}
+
+TEST(StreamExecutorGpuClientTest,
+     WatchExternalDmaRegionsRejectsPinnedHostMemorySpace) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetStreamExecutorGpuClient(GpuClientOptions()));
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * pinned_host,
+      client->addressable_devices()[0]->memory_space_by_kind("pinned_host"));
+  EXPECT_THAT(
+      client->WatchExternalDmaRegions(
+          pinned_host, PjRtExternalDmaRegionCallbacks{
+                           /*on_register=*/[](const PjRtExternalDmaRegion&) {},
+                       }),
+      StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
 }  // namespace

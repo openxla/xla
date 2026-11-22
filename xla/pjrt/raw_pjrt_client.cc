@@ -905,4 +905,15 @@ PjRtRawClientInterface::CrossHostTransferBuffers(
       "CrossHostTransferBuffers is not implemented.");
 }
 
+absl::StatusOr<std::unique_ptr<PjRtExternalDmaRegionWatcher>>
+PjRtRawClientInterface::WatchExternalDmaRegions(
+    LocalDeviceId local_device_id, int memory_kind_id,
+    PjRtExternalDmaRegionCallbacks callbacks) {
+  if (auto* cpp = down_cast<PjRtRawClient>()) {
+    return cpp->WatchExternalDmaRegions(local_device_id, memory_kind_id,
+                                        std::move(callbacks));
+  }
+  return absl::UnimplementedError("WatchExternalDmaRegions is not supported.");
+}
+
 }  // namespace xla

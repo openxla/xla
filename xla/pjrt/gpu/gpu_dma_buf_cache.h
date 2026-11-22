@@ -19,28 +19,33 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
+#include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/function_ref.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/pjrt/pjrt_common.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/gpu/dma_buf.h"
 #include "xla/tsl/framework/allocator.h"
 
 namespace xla {
 
-// Caches exported Linux dma-buf file descriptors for GPU suballocator chunks.
+// Caches exported Linux dma-buf file descriptors for GPU suballocator chunks
+// and notifies registered watchers when dma-buf regions are created or closed.
 //
 // Chunks are recorded via `alloc_visitor()` and invalidated via
 // `free_visitor()`. When `GetOrExport()` is called for a buffer contained in a
 // tracked chunk, the entire chunk is lazily exported once and shared across all
 // buffers in that chunk. Buffers outside any single tracked chunk fall back to
 // an uncached export owned by the returned `ExportedDmaBuf`. Instances must be
-// owned by `std::shared_ptr` before calling `alloc_visitor()` or
-// `free_visitor()`.
+// owned by `std::shared_ptr` before calling `alloc_visitor()`,
+// `free_visitor()`, `GetOrExport()`, or `WatchRegions()`.
 class GpuDmaBufCache : public std::enable_shared_from_this<GpuDmaBufCache> {
  public:
   struct ExportedDmaBuf {
@@ -70,33 +75,101 @@ class GpuDmaBufCache : public std::enable_shared_from_this<GpuDmaBufCache> {
       const stream_executor::DeviceAddressBase& buffer_range,
       ExportFn export_fn);
 
- private:
-  struct Chunk {
-    // Full suballocator chunk address range.
-    stream_executor::DeviceAddressBase range;
+  // Subscribes to dma-buf regions for `device_ordinal`. Replays `on_register`
+  // synchronously for all currently live regions on `device_ordinal` and
+  // notifies for any new regions created on that device while the returned
+  // watcher is alive.
+  absl::StatusOr<std::unique_ptr<PjRtExternalDmaRegionWatcher>> WatchRegions(
+      int32_t device_ordinal, PjRtExternalDmaRegionCallbacks callbacks);
 
-    // Unique identifier for this chunk allocation instance.
-    uint64_t id = 0;
+ private:
+  struct ChunkState {
+    explicit ChunkState(stream_executor::DeviceAddressBase range)
+        : range(range) {}
+
+    // Full suballocator chunk address range.
+    const stream_executor::DeviceAddressBase range;
+
+    // Serializes lazy export of this chunk across concurrent `GetOrExport`
+    // callers. Never acquired by `RecordFree`.
+    absl::Mutex export_mu;
 
     // Lazily exported dma-buf for `range`, or nullptr if not yet exported.
+    // Protected by `GpuDmaBufCache::mu_`.
     std::shared_ptr<stream_executor::gpu::DmaBuf> dma_buf;
+
+    // True once `RecordFree` has removed this chunk from `chunks_`.
+    // Protected by `GpuDmaBufCache::mu_`.
+    bool freed = false;
+  };
+
+  struct LiveRegion {
+    // Device ordinal owning the exported region.
+    int32_t device_ordinal = 0;
+
+    // Exported region metadata.
+    PjRtExternalDmaRegion region;
+
+    // Weak reference to the live dma-buf so `live_regions_` does not extend
+    // its lifetime.
+    std::weak_ptr<stream_executor::gpu::DmaBuf> dma_buf;
+  };
+
+  struct WatcherState {
+    WatcherState(int32_t device_ordinal,
+                 PjRtExternalDmaRegionCallbacks callbacks)
+        : device_ordinal(device_ordinal), callbacks(std::move(callbacks)) {}
+
+    // Device ordinal this watcher subscribes to.
+    const int32_t device_ordinal;
+
+    // User-supplied register/unregister callbacks.
+    PjRtExternalDmaRegionCallbacks callbacks;
+
+    // Serializes all callback invocations for this watcher and prevents
+    // `~PjRtExternalDmaRegionWatcher()` from returning while a callback is in
+    // flight.
+    absl::Mutex cb_mu;
+
+    // Live region IDs currently registered with this watcher.
+    absl::btree_map<uint64_t, PjRtExternalDmaRegion> registered_regions
+        ABSL_GUARDED_BY(cb_mu);
+
+    // True once the watcher has been unsubscribed.
+    bool unsubscribed ABSL_GUARDED_BY(cb_mu) = false;
   };
 
   void RecordAlloc(void* ptr, int32_t device_ordinal, size_t bytes);
   void RecordFree(void* ptr, int32_t device_ordinal, size_t bytes);
 
-  // Protects `chunks_` and `next_id_`.
+  // Returns the chunk's dma-buf (exporting lazily if needed), or nullptr if the
+  // chunk was freed concurrently.
+  absl::StatusOr<std::shared_ptr<stream_executor::gpu::DmaBuf>>
+  GetOrExportChunk(int32_t device_ordinal, ChunkState& chunk,
+                   ExportFn export_fn);
+
+  std::shared_ptr<stream_executor::gpu::DmaBuf> RegisterNewDmaBuf(
+      int32_t device_ordinal, stream_executor::gpu::DmaBuf raw_dma_buf);
+  void UnregisterDmaBuf(int32_t device_ordinal, uint64_t region_id,
+                        const PjRtExternalDmaRegion& region);
+  void UnwatchRegions(std::shared_ptr<WatcherState> watcher);
+
+  // Protects `chunks_`, `next_region_id_`, `live_regions_`, and `watchers_`.
+  // Never held across user callbacks or driver export syscalls.
   absl::Mutex mu_;
 
-  // Monotonically increasing chunk allocation ID.
-  uint64_t next_id_ ABSL_GUARDED_BY(mu_) = 0;
+  // Tracked suballocator chunks keyed by device ordinal.
+  absl::flat_hash_map<int32_t, std::vector<std::shared_ptr<ChunkState>>> chunks_
+      ABSL_GUARDED_BY(mu_);
 
-  // Tracked suballocator chunks keyed by device ordinal. A flat vector with
-  // linear scan is intentional: default BFC preallocates a single chunk per
-  // device, dynamic BFC grows chunks exponentially (tens of entries at most),
-  // and non-BFC allocators (e.g., VMM) do not register alloc visitors and fall
-  // back to uncached exports.
-  absl::flat_hash_map<int32_t, std::vector<Chunk>> chunks_ ABSL_GUARDED_BY(mu_);
+  // Monotonically increasing live region ID.
+  uint64_t next_region_id_ ABSL_GUARDED_BY(mu_) = 0;
+
+  // Currently live dma-buf regions keyed by region ID.
+  absl::btree_map<uint64_t, LiveRegion> live_regions_ ABSL_GUARDED_BY(mu_);
+
+  // Active region watchers.
+  std::vector<std::shared_ptr<WatcherState>> watchers_ ABSL_GUARDED_BY(mu_);
 };
 
 }  // namespace xla

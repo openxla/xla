@@ -20,10 +20,12 @@ limitations under the License.
 #include <functional>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -114,6 +116,51 @@ struct PjRtCrossHostRecvState {
 };
 using PjRtCrossHostRecvNotifier =
     std::function<void(absl::StatusOr<PjRtCrossHostRecvState>)>;
+
+// Describes a contiguous device memory region exported as a Linux dma-buf,
+// starting at byte 0 of `fd`.
+struct PjRtExternalDmaRegion {
+  // Linux dma-buf file descriptor owned by the client; valid from
+  // `on_register` until `on_unregister` returns (or the watcher is destroyed).
+  int fd = -1;
+
+  // Size of the exported dma-buf window in bytes, starting at byte 0 of `fd`.
+  uint64_t size = 0;
+};
+
+// Callbacks invoked by `PjRtClient::WatchExternalDmaRegions()`.
+struct PjRtExternalDmaRegionCallbacks {
+  // Called synchronously when a region is already live or becomes live.
+  absl::AnyInvocable<void(const PjRtExternalDmaRegion&)> on_register;
+
+  // Optional callback invoked before a registered region's dma-buf fd is
+  // closed or when the watcher is destroyed.
+  absl::AnyInvocable<void(const PjRtExternalDmaRegion&)> on_unregister;
+};
+
+// RAII handle returned by `PjRtClient::WatchExternalDmaRegions()`. Destroying
+// the handle unregisters the watcher and invokes `on_unregister` for any
+// still-live regions.
+class PjRtExternalDmaRegionWatcher final {
+ public:
+  explicit PjRtExternalDmaRegionWatcher(
+      absl::AnyInvocable<void() &&> on_destroy)
+      : on_destroy_(std::move(on_destroy)) {}
+
+  ~PjRtExternalDmaRegionWatcher() {
+    if (on_destroy_) {
+      std::move(on_destroy_)();
+    }
+  }
+
+  PjRtExternalDmaRegionWatcher(const PjRtExternalDmaRegionWatcher&) = delete;
+  PjRtExternalDmaRegionWatcher& operator=(const PjRtExternalDmaRegionWatcher&) =
+      delete;
+
+ private:
+  // Cleanup callback invoked when the watcher is destroyed.
+  absl::AnyInvocable<void() &&> on_destroy_;
+};
 
 }  // namespace xla
 

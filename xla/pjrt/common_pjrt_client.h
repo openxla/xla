@@ -299,6 +299,10 @@ class CommonPjRtClient : public PjRtClient {
 
   absl::Status DmaUnmap(void* data) override;
 
+  absl::StatusOr<std::unique_ptr<PjRtExternalDmaRegionWatcher>>
+  WatchExternalDmaRegions(PjRtMemorySpace* memory_space,
+                          PjRtExternalDmaRegionCallbacks callbacks) override;
+
   // Allocates a raw buffer of a particular size. Backends may support retrying
   // allocation on oom which can be controlled via retry_on_oom.
   // This is separate from AllocateRawBuffer so that backends can specialize

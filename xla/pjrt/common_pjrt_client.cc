@@ -84,6 +84,7 @@ limitations under the License.
 #include "xla/pjrt/infer_dispatch_info.h"
 #include "xla/pjrt/linearize_throttler.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_topology.h"
@@ -560,6 +561,22 @@ absl::Status CommonPjRtClient::DmaMap(void* data, size_t buffer_size) {
 
 absl::Status CommonPjRtClient::DmaUnmap(void* data) {
   return raw_client()->DmaUnmap(data);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtExternalDmaRegionWatcher>>
+CommonPjRtClient::WatchExternalDmaRegions(
+    PjRtMemorySpace* memory_space, PjRtExternalDmaRegionCallbacks callbacks) {
+  if (memory_space == nullptr || memory_space->devices().empty()) {
+    return absl::InvalidArgumentError(
+        "WatchExternalDmaRegions requires a valid device memory space.");
+  }
+  if (!callbacks.on_register) {
+    return absl::InvalidArgumentError(
+        "WatchExternalDmaRegions requires a non-null on_register callback.");
+  }
+  return raw_client()->WatchExternalDmaRegions(
+      memory_space->devices()[0]->local_device_id(), memory_space->kind_id(),
+      std::move(callbacks));
 }
 
 tsl::AsyncValueRef<PjRtStagingBuffer>

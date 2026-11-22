@@ -24,12 +24,14 @@ limitations under the License.
 #include <cerrno>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/notification.h"
+#include "xla/pjrt/pjrt_common.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/gpu/dma_buf.h"
 #include "xla/tsl/platform/env.h"
@@ -53,6 +55,14 @@ bool IsFdOpen(int fd) { return ::fcntl(fd, F_GETFD) != -1; }
 
 void* FakeAddr(uintptr_t addr) { return reinterpret_cast<void*>(addr); }
 
+auto MakeExportFn(uint64_t offset = 0) {
+  return [offset](const stream_executor::DeviceAddressBase& range)
+             -> absl::StatusOr<stream_executor::gpu::DmaBuf> {
+    return stream_executor::gpu::DmaBuf(MakeTestFd(), offset,
+                                        range.size() + offset);
+  };
+}
+
 TEST(GpuDmaBufCacheTest, CachesPerChunkAndComputesOffsets) {
   auto cache = std::make_shared<GpuDmaBufCache>();
   cache->alloc_visitor()(FakeAddr(0x10000), /*device_ordinal=*/0, 0x4000);
@@ -63,7 +73,8 @@ TEST(GpuDmaBufCacheTest, CachesPerChunkAndComputesOffsets) {
       -> absl::StatusOr<stream_executor::gpu::DmaBuf> {
     ++export_count;
     exported_range = range;
-    return stream_executor::gpu::DmaBuf(MakeTestFd(), /*offset=*/128);
+    return stream_executor::gpu::DmaBuf(MakeTestFd(), /*offset=*/128,
+                                        /*size=*/range.size() + 128);
   };
 
   ASSERT_OK_AND_ASSIGN(GpuDmaBufCache::ExportedDmaBuf first,
@@ -100,7 +111,8 @@ TEST(GpuDmaBufCacheTest, FreeVisitorClosesCachedFdWhenNoRefsRemain) {
             [&](const stream_executor::DeviceAddressBase&)
                 -> absl::StatusOr<stream_executor::gpu::DmaBuf> {
               fd = MakeTestFd();
-              return stream_executor::gpu::DmaBuf(fd, /*offset=*/0);
+              return stream_executor::gpu::DmaBuf(fd, /*offset=*/0,
+                                                  /*size=*/0x4000);
             }));
     EXPECT_TRUE(IsFdOpen(fd));
   }
@@ -123,7 +135,8 @@ TEST(GpuDmaBufCacheTest, ActiveReferenceKeepsFdAlivePastFreeVisitor) {
           stream_executor::DeviceAddressBase(FakeAddr(0x30000), 0x1000),
           [](const stream_executor::DeviceAddressBase&)
               -> absl::StatusOr<stream_executor::gpu::DmaBuf> {
-            return stream_executor::gpu::DmaBuf(MakeTestFd(), /*offset=*/0);
+            return stream_executor::gpu::DmaBuf(MakeTestFd(), /*offset=*/0,
+                                                /*size=*/0x4000);
           }));
   const int fd = entry.dma_buf->fd();
   ASSERT_TRUE(IsFdOpen(fd));
@@ -144,7 +157,8 @@ TEST(GpuDmaBufCacheTest, UntrackedAndMultiChunkRangesUseUncachedFallback) {
   auto export_fn = [&](const stream_executor::DeviceAddressBase&)
       -> absl::StatusOr<stream_executor::gpu::DmaBuf> {
     ++export_count;
-    return stream_executor::gpu::DmaBuf(MakeTestFd(), /*offset=*/64);
+    return stream_executor::gpu::DmaBuf(MakeTestFd(), /*offset=*/64,
+                                        /*size=*/0x2000 + 64);
   };
 
   // Range straddling two adjacent chunks falls back to uncached export.
@@ -219,7 +233,8 @@ TEST(GpuDmaBufCacheTest, ExportErrorsAreNotCached) {
     if (++calls == 1) {
       return absl::UnavailableError("transient failure");
     }
-    return stream_executor::gpu::DmaBuf(MakeTestFd(), /*offset=*/0);
+    return stream_executor::gpu::DmaBuf(MakeTestFd(), /*offset=*/0,
+                                        /*size=*/0x4000);
   };
 
   EXPECT_THAT(cache->GetOrExport(
@@ -236,25 +251,21 @@ TEST(GpuDmaBufCacheTest, ExportErrorsAreNotCached) {
   EXPECT_TRUE(IsFdOpen(ok.dma_buf->fd()));
 }
 
-TEST(GpuDmaBufCacheTest, ConcurrentFirstExportDeduplicatesAndClosesExtraFd) {
+TEST(GpuDmaBufCacheTest, ConcurrentFirstExportSerializesAndCallsExportOnce) {
   auto cache = std::make_shared<GpuDmaBufCache>();
   cache->alloc_visitor()(FakeAddr(0x60000), /*device_ordinal=*/0, 0x4000);
 
-  absl::Notification both_entered;
-  absl::Notification release_exports;
-  std::atomic<int> entered_count{0};
-  std::atomic<int> fds[2] = {-1, -1};
+  absl::Notification first_entered;
+  absl::Notification release_export;
+  std::atomic<int> export_count{0};
 
   auto export_fn = [&](const stream_executor::DeviceAddressBase&)
       -> absl::StatusOr<stream_executor::gpu::DmaBuf> {
-    const int idx = entered_count.fetch_add(1, std::memory_order_relaxed);
-    const int fd = MakeTestFd();
-    fds[idx].store(fd, std::memory_order_relaxed);
-    if (idx == 1) {
-      both_entered.Notify();
-    }
-    release_exports.WaitForNotification();
-    return stream_executor::gpu::DmaBuf(fd, /*offset=*/0);
+    export_count.fetch_add(1, std::memory_order_relaxed);
+    first_entered.Notify();
+    release_export.WaitForNotification();
+    return stream_executor::gpu::DmaBuf(MakeTestFd(), /*offset=*/0,
+                                        /*size=*/0x4000);
   };
 
   tsl::thread::ThreadPool pool(tsl::Env::Default(), "dma_buf_cache_test", 2);
@@ -270,6 +281,7 @@ TEST(GpuDmaBufCacheTest, ConcurrentFirstExportDeduplicatesAndClosesExtraFd) {
         export_fn);
     done1.Notify();
   });
+  first_entered.WaitForNotification();
   pool.Schedule([&] {
     res2 = cache->GetOrExport(
         /*device_ordinal=*/0,
@@ -277,21 +289,15 @@ TEST(GpuDmaBufCacheTest, ConcurrentFirstExportDeduplicatesAndClosesExtraFd) {
         export_fn);
     done2.Notify();
   });
-
-  both_entered.WaitForNotification();
-  release_exports.Notify();
+  release_export.Notify();
   done1.WaitForNotification();
   done2.WaitForNotification();
 
   ASSERT_OK(res1);
   ASSERT_OK(res2);
+  EXPECT_EQ(export_count.load(std::memory_order_relaxed), 1);
   EXPECT_EQ(res1->dma_buf->fd(), res2->dma_buf->fd());
-  const int winning_fd = res1->dma_buf->fd();
-  const int losing_fd = (fds[0].load(std::memory_order_relaxed) == winning_fd)
-                            ? fds[1].load(std::memory_order_relaxed)
-                            : fds[0].load(std::memory_order_relaxed);
-  EXPECT_TRUE(IsFdOpen(winning_fd));
-  EXPECT_FALSE(IsFdOpen(losing_fd));
+  EXPECT_TRUE(IsFdOpen(res1->dma_buf->fd()));
 }
 
 TEST(GpuDmaBufCacheTest, ConcurrentFreeDuringExportFallsBackToUncached) {
@@ -306,14 +312,16 @@ TEST(GpuDmaBufCacheTest, ConcurrentFreeDuringExportFallsBackToUncached) {
       // Simulate chunk being freed while the chunk-wide export is in flight.
       chunk_fd = MakeTestFd();
       cache->free_visitor()(FakeAddr(0x70000), /*device_ordinal=*/0, 0x4000);
-      return stream_executor::gpu::DmaBuf(chunk_fd, /*offset=*/0);
+      return stream_executor::gpu::DmaBuf(chunk_fd, /*offset=*/0,
+                                          /*size=*/0x4000);
     }
     // The discarded chunk-wide fd must be closed before the fallback export
     // (checking here avoids POSIX fd-number reuse by `MakeTestFd()`).
     EXPECT_FALSE(IsFdOpen(chunk_fd));
     EXPECT_EQ(range.opaque(), FakeAddr(0x70100));
     EXPECT_EQ(range.size(), 0x1000);
-    return stream_executor::gpu::DmaBuf(MakeTestFd(), /*offset=*/32);
+    return stream_executor::gpu::DmaBuf(MakeTestFd(), /*offset=*/32,
+                                        /*size=*/0x1000 + 32);
   };
 
   ASSERT_OK_AND_ASSIGN(GpuDmaBufCache::ExportedDmaBuf entry,
@@ -324,6 +332,162 @@ TEST(GpuDmaBufCacheTest, ConcurrentFreeDuringExportFallsBackToUncached) {
   EXPECT_EQ(call_count, 2);
   EXPECT_TRUE(IsFdOpen(entry.dma_buf->fd()));
   EXPECT_EQ(entry.offset, 32);
+}
+
+TEST(GpuDmaBufCacheTest, WatchRegionsReplaysLiveAndNotifiesNewAndFreedChunks) {
+  auto cache = std::make_shared<GpuDmaBufCache>();
+  cache->alloc_visitor()(FakeAddr(0x80000), /*device_ordinal=*/0, 0x4000);
+  cache->alloc_visitor()(FakeAddr(0x90000), /*device_ordinal=*/1, 0x2000);
+  auto export_fn = MakeExportFn(/*offset=*/16);
+
+  // Export chunk 0 before attaching the watcher.
+  ASSERT_OK_AND_ASSIGN(
+      GpuDmaBufCache::ExportedDmaBuf first,
+      cache->GetOrExport(
+          /*device_ordinal=*/0,
+          stream_executor::DeviceAddressBase(FakeAddr(0x80000), 0x1000),
+          export_fn));
+  const int first_fd = first.dma_buf->fd();
+  first.dma_buf.reset();
+
+  std::vector<PjRtExternalDmaRegion> registered;
+  std::vector<int> unregistered_fds;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExternalDmaRegionWatcher> watcher,
+      cache->WatchRegions(
+          /*device_ordinal=*/0,
+          PjRtExternalDmaRegionCallbacks{
+              /*on_register=*/[&](const PjRtExternalDmaRegion& region) {
+                EXPECT_TRUE(IsFdOpen(region.fd));
+                registered.push_back(region);
+              },
+              /*on_unregister=*/
+              [&](const PjRtExternalDmaRegion& region) {
+                // The fd must still be open until `on_unregister` returns.
+                EXPECT_TRUE(IsFdOpen(region.fd));
+                unregistered_fds.push_back(region.fd);
+              },
+          }));
+
+  ASSERT_EQ(registered.size(), 1);
+  EXPECT_EQ(registered[0].fd, first_fd);
+  EXPECT_EQ(registered[0].size, 0x4000 + 16);
+
+  // Exporting chunk on device 1 does not notify the device 0 watcher.
+  ASSERT_OK_AND_ASSIGN(
+      GpuDmaBufCache::ExportedDmaBuf other_device,
+      cache->GetOrExport(
+          /*device_ordinal=*/1,
+          stream_executor::DeviceAddressBase(FakeAddr(0x90000), 0x1000),
+          export_fn));
+  EXPECT_EQ(registered.size(), 1);
+
+  // Exporting a second chunk on device 0 notifies the watcher before returning.
+  cache->alloc_visitor()(FakeAddr(0x88000), /*device_ordinal=*/0, 0x2000);
+  ASSERT_OK_AND_ASSIGN(
+      GpuDmaBufCache::ExportedDmaBuf second,
+      cache->GetOrExport(
+          /*device_ordinal=*/0,
+          stream_executor::DeviceAddressBase(FakeAddr(0x88000), 0x1000),
+          export_fn));
+  const int second_fd = second.dma_buf->fd();
+  ASSERT_EQ(registered.size(), 2);
+  EXPECT_EQ(registered[1].fd, second_fd);
+  EXPECT_EQ(registered[1].size, 0x2000 + 16);
+
+  // Freeing chunk 0 unregisters it and closes its fd.
+  cache->free_visitor()(FakeAddr(0x80000), /*device_ordinal=*/0, 0x4000);
+  ASSERT_EQ(unregistered_fds.size(), 1);
+  EXPECT_EQ(unregistered_fds[0], first_fd);
+  EXPECT_FALSE(IsFdOpen(first_fd));
+
+  // Freeing the second chunk on device 0 while caller holds a ref defers
+  // unregister until the ref drops.
+  cache->free_visitor()(FakeAddr(0x88000), /*device_ordinal=*/0, 0x2000);
+  EXPECT_EQ(unregistered_fds.size(), 1);
+  EXPECT_TRUE(IsFdOpen(second_fd));
+
+  second.dma_buf.reset();
+  ASSERT_EQ(unregistered_fds.size(), 2);
+  EXPECT_EQ(unregistered_fds[1], second_fd);
+  EXPECT_FALSE(IsFdOpen(second_fd));
+  other_device.dma_buf.reset();
+}
+
+TEST(GpuDmaBufCacheTest, WatchRegionsNotifiesUncachedExports) {
+  auto cache = std::make_shared<GpuDmaBufCache>();
+  std::vector<int> registered_fds;
+  std::vector<int> unregistered_fds;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExternalDmaRegionWatcher> watcher,
+      cache->WatchRegions(
+          /*device_ordinal=*/0,
+          PjRtExternalDmaRegionCallbacks{
+              /*on_register=*/[&](const PjRtExternalDmaRegion& region) {
+                EXPECT_TRUE(IsFdOpen(region.fd));
+                registered_fds.push_back(region.fd);
+              },
+              /*on_unregister=*/
+              [&](const PjRtExternalDmaRegion& region) {
+                EXPECT_TRUE(IsFdOpen(region.fd));
+                unregistered_fds.push_back(region.fd);
+              },
+          }));
+
+  int fd = -1;
+  {
+    ASSERT_OK_AND_ASSIGN(
+        GpuDmaBufCache::ExportedDmaBuf uncached,
+        cache->GetOrExport(
+            /*device_ordinal=*/0,
+            stream_executor::DeviceAddressBase(FakeAddr(0xa0000), 0x1000),
+            MakeExportFn()));
+    fd = uncached.dma_buf->fd();
+    ASSERT_EQ(registered_fds.size(), 1);
+    EXPECT_EQ(registered_fds[0], fd);
+    EXPECT_TRUE(unregistered_fds.empty());
+  }
+  ASSERT_EQ(unregistered_fds.size(), 1);
+  EXPECT_EQ(unregistered_fds[0], fd);
+  EXPECT_FALSE(IsFdOpen(fd));
+}
+
+TEST(GpuDmaBufCacheTest, DestroyingWatcherUnregistersLiveRegions) {
+  auto cache = std::make_shared<GpuDmaBufCache>();
+  cache->alloc_visitor()(FakeAddr(0xd0000), /*device_ordinal=*/0, 0x4000);
+
+  ASSERT_OK_AND_ASSIGN(
+      GpuDmaBufCache::ExportedDmaBuf entry,
+      cache->GetOrExport(
+          /*device_ordinal=*/0,
+          stream_executor::DeviceAddressBase(FakeAddr(0xd0000), 0x1000),
+          MakeExportFn()));
+  const int fd = entry.dma_buf->fd();
+  entry.dma_buf.reset();
+
+  int unregistered_count = 0;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExternalDmaRegionWatcher> watcher,
+      cache->WatchRegions(
+          /*device_ordinal=*/0,
+          PjRtExternalDmaRegionCallbacks{
+              /*on_register=*/[](const PjRtExternalDmaRegion&) {},
+              /*on_unregister=*/
+              [&](const PjRtExternalDmaRegion& region) {
+                EXPECT_EQ(region.fd, fd);
+                EXPECT_TRUE(IsFdOpen(region.fd));
+                ++unregistered_count;
+              },
+          }));
+
+  watcher.reset();
+  EXPECT_EQ(unregistered_count, 1);
+  EXPECT_TRUE(IsFdOpen(fd));
+
+  // Subsequent free does not double-unregister the already-destroyed watcher.
+  cache->free_visitor()(FakeAddr(0xd0000), /*device_ordinal=*/0, 0x4000);
+  EXPECT_EQ(unregistered_count, 1);
+  EXPECT_FALSE(IsFdOpen(fd));
 }
 
 }  // namespace

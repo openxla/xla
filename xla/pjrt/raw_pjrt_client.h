@@ -276,6 +276,10 @@ class PjRtRawClientInterface : public PJRT_RawClient {
 
   bool IsDmaMapped(const void* data, int64_t transfer_size) const;
 
+  absl::StatusOr<std::unique_ptr<PjRtExternalDmaRegionWatcher>>
+  WatchExternalDmaRegions(LocalDeviceId local_device_id, int memory_kind_id,
+                          PjRtExternalDmaRegionCallbacks callbacks);
+
   HostMemoryAllocator* GetHostMemoryAllocator() const;
 
   int GetNumaNode(LocalDeviceId local_device_id) const;
@@ -472,6 +476,14 @@ class PjRtRawClient : public PjRtRawClientInterface {
   // already DMA-mapped (e.g. pinned on GPU or in a premapped buffer on TPU).
   virtual bool IsDmaMapped(const void* data, int64_t transfer_size) const {
     return false;
+  }
+
+  // Subscribes to device memory regions exported for external DMA.
+  virtual absl::StatusOr<std::unique_ptr<PjRtExternalDmaRegionWatcher>>
+  WatchExternalDmaRegions(LocalDeviceId local_device_id, int memory_kind_id,
+                          PjRtExternalDmaRegionCallbacks callbacks) {
+    return absl::UnimplementedError(
+        "WatchExternalDmaRegions is not supported.");
   }
 
   // Returns the host memory allocator for the client or null if not supported.

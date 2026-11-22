@@ -306,6 +306,7 @@ xla_cc_test(
         "//xla/pjrt:host_memory_spaces",
         "//xla/pjrt:maybe_owning_mlir_module",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:raw_buffer",
         "//xla/pjrt:strided_gather",

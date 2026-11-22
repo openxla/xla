@@ -1067,6 +1067,23 @@ class PjRtClient {
         "DmaUnmap not supported on platform %s", platform_name()));
   }
 
+  // Experimental: Subscribes to device memory regions exported for external
+  // DMA in `memory_space`. `callbacks.on_register` is invoked synchronously for
+  // all currently live regions before returning and for any new regions created
+  // while the returned watcher is alive. `callbacks.on_unregister` (if set) is
+  // invoked before a region's dma-buf fd is closed and for all still-live
+  // regions when the watcher is destroyed.
+  //
+  // Callbacks must not invoke `WatchExternalDmaRegions()` or destroy the
+  // watcher reentrantly.
+  virtual absl::StatusOr<std::unique_ptr<PjRtExternalDmaRegionWatcher>>
+  WatchExternalDmaRegions(PjRtMemorySpace* memory_space,
+                          PjRtExternalDmaRegionCallbacks callbacks) {
+    return absl::UnimplementedError(
+        absl::StrFormat("WatchExternalDmaRegions not supported on platform %s",
+                        platform_name()));
+  }
+
   // CrossHostSendBuffers and CrossHostReceiveBuffers are part of the second
   // cross-host transfers API.
 

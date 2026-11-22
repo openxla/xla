@@ -1338,6 +1338,28 @@ StreamExecutorGpuRawClient::AcquireExternalDmaAccess(
   return result;
 }
 
+absl::StatusOr<std::unique_ptr<PjRtExternalDmaRegionWatcher>>
+StreamExecutorGpuRawClient::WatchExternalDmaRegions(
+    LocalDeviceId local_device_id, int memory_kind_id,
+    PjRtExternalDmaRegionCallbacks callbacks) {
+  if (memory_kind_id != StreamExecutorGpuHbmMemorySpace::kKindId) {
+    return absl::InvalidArgumentError(
+        "External DMA is only supported for device memory.");
+  }
+
+  ABSL_ASSIGN_OR_RETURN(LocalDeviceState * local_device,
+                        GetLocalDeviceState(local_device_id));
+  auto* const gpu_executor =
+      dynamic_cast<se::gpu::GpuExecutor*>(local_device->executor());
+  if (gpu_executor == nullptr || !gpu_executor->is_dma_buf_supported()) {
+    return absl::UnimplementedError(
+        "External DMA is not supported by this GPU device.");
+  }
+
+  return dma_buf_cache_->WatchRegions(gpu_executor->device_ordinal(),
+                                      std::move(callbacks));
+}
+
 // ==== End cross-host transfer implementations ==== //
 
 void StreamExecutorGpuRawClient::RecordMemoryStats(
