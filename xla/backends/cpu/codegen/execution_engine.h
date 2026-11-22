@@ -47,7 +47,7 @@ class ExecutionEngine {
       DefinitionGenerator definition_generator = nullptr);
 
   ExecutionEngine(ExecutionEngine&& other) noexcept = default;
-  ExecutionEngine& operator=(ExecutionEngine&& other) = default;
+  ExecutionEngine& operator=(ExecutionEngine&& other) noexcept = default;
 
   void AllocateDylibs(size_t num_dylibs);
 

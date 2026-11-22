@@ -53,9 +53,9 @@ namespace xla {
 class HloSharding {
  public:
   HloSharding(const HloSharding& other);
-  HloSharding(HloSharding&& other) = default;
+  HloSharding(HloSharding&& other) noexcept = default;
   HloSharding& operator=(const HloSharding& other);
-  HloSharding& operator=(HloSharding&& other) = default;
+  HloSharding& operator=(HloSharding&& other) noexcept = default;
 
   // The name of the HLO instruction frontend attribute which stores that
   // instruction's sharding (e.g., Shardy).
