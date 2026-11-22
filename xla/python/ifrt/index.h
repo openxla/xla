@@ -62,7 +62,7 @@ class Index {
   Index(const Index&) = default;
   Index(Index&&) = default;
   Index& operator=(const Index&) = default;
-  Index& operator=(Index&&) = default;
+  Index& operator=(Index&&) noexcept = default;
 
   // Constructs `Index` from `IndexProto`.
   static absl::StatusOr<Index> FromProto(const IndexProto& proto);

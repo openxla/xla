@@ -141,7 +141,8 @@ class BoundedDynamicShapeTag {
   BoundedDynamicShapeTag(const BoundedDynamicShapeTag&) = default;
   BoundedDynamicShapeTag(BoundedDynamicShapeTag&&) = default;
   BoundedDynamicShapeTag& operator=(const BoundedDynamicShapeTag&) = default;
-  BoundedDynamicShapeTag& operator=(BoundedDynamicShapeTag&&) = default;
+  BoundedDynamicShapeTag& operator=(BoundedDynamicShapeTag&&) noexcept =
+      default;
 
   absl::Span<const bool> DynamicDims() const { return dynamic_dims_; }
 
@@ -204,7 +205,7 @@ class DynamicShape {
   DynamicShape(const DynamicShape&) = default;
   DynamicShape(DynamicShape&&) = default;
   DynamicShape& operator=(const DynamicShape&) = default;
-  DynamicShape& operator=(DynamicShape&&) = default;
+  DynamicShape& operator=(DynamicShape&&) noexcept = default;
 
   const DynamicShapeTag& GetTag() const { return tag_; }
 
