@@ -401,9 +401,12 @@ TEST_F(AllGatherTest, TwentyAllGathersInWhileLoopWithCudaGraphs) {
   if (!CheckDeviceCount(kNumReplicas)) {
     return;
   }
-  if (!SupportsCommandBufferControlFlow()) {
-    GTEST_SKIP() << "Command buffers on this platform do not support "
-                    "on-device control flow (while loops).";
+  // ROCm has no equivalent of CUDA's conditional graph nodes, so
+  // CommandBufferConversionPass drops the WHILE command there and the while
+  // thunk stays outside of command buffers.
+  if (Capability().IsRocm()) {
+    GTEST_SKIP() << "Command buffers on ROCm do not support on-device control "
+                    "flow (while loops).";
   }
 
   // Each step k in the loop body gathers in_k = 0.5 * prev + p0 (f32[128])

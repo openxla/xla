@@ -70,10 +70,11 @@ namespace {
 static constexpr int kNumDevices = 2;
 
 // Symmetric-memory ragged all-to-all synchronizes through the cross-device
-// barrier, which is only available on platforms providing the NCCL-backed
-// multi-GPU barrier kernel.
+// barrier. The barrier kernel reads peer pointers out of an NCCL symmetric
+// memory window, which has no RCCL equivalent on ROCm.
 static constexpr absl::string_view kNoCrossDeviceBarrierSkipReason =
-    "Test requires the NCCL-backed cross-device barrier";
+    "Test requires the NCCL-backed cross-device barrier, which is unavailable "
+    "on ROCm";
 static constexpr int64_t kNumUpdates = 4;
 static constexpr int64_t kNumInputRows = 4;
 static constexpr int64_t kNumRowElements = 1;
@@ -467,7 +468,7 @@ TEST(RaggedAllToAllThunkMultiGpuTest, ExecuteOnStreamWithSymmetricMemory) {
   if (!HasEnoughGpus(kNumDevices)) {
     GTEST_SKIP() << "Test requires at least " << kNumDevices << " GPUs";
   }
-  if (!IsMultiGpuBarrierWithNcclSupported(GetGpuExecutor(0))) {
+  if (IsROCm(GetGpuExecutor(0))) {
     GTEST_SKIP() << kNoCrossDeviceBarrierSkipReason;
   }
 
@@ -492,7 +493,7 @@ TEST(RaggedAllToAllThunkMultiGpuTest,
   if (!HasEnoughGpus(kNumDevices)) {
     GTEST_SKIP() << "Test requires at least " << kNumDevices << " GPUs";
   }
-  if (!IsMultiGpuBarrierWithNcclSupported(GetGpuExecutor(0))) {
+  if (IsROCm(GetGpuExecutor(0))) {
     GTEST_SKIP() << kNoCrossDeviceBarrierSkipReason;
   }
 
@@ -516,7 +517,7 @@ TEST(RaggedAllToAllThunkMultiGpuTest,
   if (!HasEnoughGpus(kNumDevices)) {
     GTEST_SKIP() << "Test requires at least " << kNumDevices << " GPUs";
   }
-  if (!IsMultiGpuBarrierWithNcclSupported(GetGpuExecutor(0))) {
+  if (IsROCm(GetGpuExecutor(0))) {
     GTEST_SKIP() << kNoCrossDeviceBarrierSkipReason;
   }
 

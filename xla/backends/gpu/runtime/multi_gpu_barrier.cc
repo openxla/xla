@@ -142,10 +142,6 @@ LoadMultiGpuBarrierWithNcclKernel(se::StreamExecutor* executor) {
       .LoadKernel<se::gpu::MultiGpuBarrierWithNcclKernel>(executor);
 }
 
-bool IsMultiGpuBarrierWithNcclSupported(se::StreamExecutor* executor) {
-  return LoadMultiGpuBarrierWithNcclKernel(executor).ok();
-}
-
 // See MultiGpuBarrierWithNcclKernel for more details.
 absl::Status LaunchMultiGpuBarrierWithNccl(
     stream_executor::Stream* stream,
