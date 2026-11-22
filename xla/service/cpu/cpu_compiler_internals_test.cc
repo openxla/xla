@@ -754,6 +754,404 @@ TEST_F(CpuCompilerInternalsTest, CollectiveThunksUseInstructionUniqueIdAsOpId) {
   EXPECT_EQ(unique_op_ids.size(), 3);
 }
 
+TEST_F(CpuCompilerInternalsTest,
+       FusionsWithDifferentOuterDimensionPartitionsDoNotShareKernel) {
+  static constexpr absl::string_view kHlo = R"(
+    HloModule m
+
+    fused_a {
+      p0 = f32[16,16] parameter(0)
+      ROOT r = f32[16,16] negate(p0)
+    }
+
+    fused_b {
+      p0 = f32[16,16] parameter(0)
+      ROOT r = f32[16,16] negate(p0)
+    }
+
+    ENTRY main {
+      a = f32[16,16] parameter(0)
+      b = f32[16,16] parameter(1)
+      f0 = f32[16,16] fusion(a), kind=kLoop, calls=fused_a,
+        backend_config={"outer_dimension_partitions":["4"]}
+      f1 = f32[16,16] fusion(b), kind=kLoop, calls=fused_b,
+        backend_config={"outer_dimension_partitions":["2"]}
+      ROOT out = (f32[16,16], f32[16,16]) tuple(f0, f1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  CpuCompiler compiler;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> executable,
+      compiler.RunBackend(std::move(hlo_module), /*stream_exec=*/nullptr,
+                          /*options=*/{}));
+
+  std::vector<const KernelThunkBase*> kernel_thunks;
+  absl::down_cast<CpuExecutable*>(executable.get())
+      ->thunks()
+      .thunk_sequence()
+      .ForEach([&](const Thunk& thunk) {
+        if (thunk.kind() == Thunk::Kind::kKernel) {
+          kernel_thunks.push_back(
+              absl::down_cast<const KernelThunkBase*>(&thunk));
+        }
+      });
+
+  ASSERT_EQ(kernel_thunks.size(), 2);
+  EXPECT_NE(kernel_thunks[0]->kernel_name(), kernel_thunks[1]->kernel_name());
+  EXPECT_EQ(kernel_thunks[0]->num_workgroups().x, 4);
+  EXPECT_EQ(kernel_thunks[1]->num_workgroups().x, 2);
+}
+
+TEST_F(CpuCompilerInternalsTest,
+       FusionsWithMatchingOuterDimensionPartitionsShareKernel) {
+  static constexpr absl::string_view kHlo = R"(
+    HloModule m
+
+    fused_a {
+      p0 = f32[16,16] parameter(0)
+      ROOT r = f32[16,16] negate(p0), origin={{"a"}}
+    }
+
+    fused_b {
+      p0 = f32[16,16] parameter(0)
+      ROOT r = f32[16,16] negate(p0), origin={{"b"}}
+    }
+
+    ENTRY main {
+      a = f32[16,16] parameter(0)
+      b = f32[16,16] parameter(1)
+      f0 = f32[16,16] fusion(a), kind=kLoop, calls=fused_a,
+        backend_config={"outer_dimension_partitions":["4"]},
+        metadata={op_name="f0"}, origin={{"f0"}}
+      f1 = f32[16,16] fusion(b), kind=kLoop, calls=fused_b,
+        backend_config={"outer_dimension_partitions":["4"]},
+        metadata={op_name="f1"}, origin={{"f1"}}
+      ROOT out = (f32[16,16], f32[16,16]) tuple(f0, f1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  CpuCompiler compiler;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> executable,
+      compiler.RunBackend(std::move(hlo_module), /*stream_exec=*/nullptr,
+                          /*options=*/{}));
+
+  std::vector<const KernelThunkBase*> kernel_thunks;
+  absl::down_cast<CpuExecutable*>(executable.get())
+      ->thunks()
+      .thunk_sequence()
+      .ForEach([&](const Thunk& thunk) {
+        if (thunk.kind() == Thunk::Kind::kKernel) {
+          kernel_thunks.push_back(
+              absl::down_cast<const KernelThunkBase*>(&thunk));
+        }
+      });
+
+  ASSERT_EQ(kernel_thunks.size(), 2);
+  EXPECT_EQ(kernel_thunks[0]->kernel_name(), kernel_thunks[1]->kernel_name());
+  EXPECT_EQ(kernel_thunks[0]->num_workgroups().x, 4);
+  EXPECT_EQ(kernel_thunks[1]->num_workgroups().x, 4);
+}
+
+TEST_F(CpuCompilerInternalsTest,
+       FusionsWithDifferentBlockLevelFusionConfigDoNotShareKernel) {
+  static constexpr absl::string_view kHlo = R"(
+    HloModule m
+
+    fused_a {
+      p0 = f32[32,32] parameter(0)
+      ROOT r = f32[32,32] negate(p0)
+    }
+
+    fused_b {
+      p0 = f32[32,32] parameter(0)
+      ROOT r = f32[32,32] negate(p0)
+    }
+
+    ENTRY main {
+      a = f32[32,32] parameter(0)
+      b = f32[32,32] parameter(1)
+      f0 = f32[32,32] fusion(a), kind=kLoop, calls=fused_a,
+        backend_config={
+          "fusion_backend_config":{
+            "block_level_fusion_config":{
+              "output_tiles":[{"sizes":["8","8"]}],
+              "num_ctas":"1"
+            }
+          }
+        }
+      f1 = f32[32,32] fusion(b), kind=kLoop, calls=fused_b,
+        backend_config={
+          "fusion_backend_config":{
+            "block_level_fusion_config":{
+              "output_tiles":[{"sizes":["16","16"]}],
+              "num_ctas":"1"
+            }
+          }
+        }
+      ROOT out = (f32[32,32], f32[32,32]) tuple(f0, f1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  CpuCompiler compiler;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> executable,
+      compiler.RunBackend(std::move(hlo_module), /*stream_exec=*/nullptr,
+                          /*options=*/{}));
+
+  std::vector<const KernelThunkBase*> kernel_thunks;
+  absl::down_cast<CpuExecutable*>(executable.get())
+      ->thunks()
+      .thunk_sequence()
+      .ForEach([&](const Thunk& thunk) {
+        if (thunk.kind() == Thunk::Kind::kKernel) {
+          kernel_thunks.push_back(
+              absl::down_cast<const KernelThunkBase*>(&thunk));
+        }
+      });
+
+  ASSERT_EQ(kernel_thunks.size(), 2);
+  EXPECT_NE(kernel_thunks[0]->kernel_name(), kernel_thunks[1]->kernel_name());
+}
+
+TEST_F(CpuCompilerInternalsTest,
+       FusionsWithMatchingBlockLevelFusionConfigShareKernel) {
+  static constexpr absl::string_view kHlo = R"(
+    HloModule m
+
+    fused_a {
+      p0 = f32[32,32] parameter(0)
+      ROOT r = f32[32,32] negate(p0)
+    }
+
+    fused_b {
+      p0 = f32[32,32] parameter(0)
+      ROOT r = f32[32,32] negate(p0)
+    }
+
+    ENTRY main {
+      a = f32[32,32] parameter(0)
+      b = f32[32,32] parameter(1)
+      f0 = f32[32,32] fusion(a), kind=kLoop, calls=fused_a,
+        backend_config={
+          "fusion_backend_config":{
+            "block_level_fusion_config":{
+              "output_tiles":[{"sizes":["8","8"]}],
+              "num_ctas":"1"
+            }
+          }
+        }
+      f1 = f32[32,32] fusion(b), kind=kLoop, calls=fused_b,
+        backend_config={
+          "fusion_backend_config":{
+            "block_level_fusion_config":{
+              "num_ctas":"1",
+              "output_tiles":[{"sizes":["8","8"]}]
+            }
+          }
+        }
+      ROOT out = (f32[32,32], f32[32,32]) tuple(f0, f1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  CpuCompiler compiler;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> executable,
+      compiler.RunBackend(std::move(hlo_module), /*stream_exec=*/nullptr,
+                          /*options=*/{}));
+
+  std::vector<const KernelThunkBase*> kernel_thunks;
+  absl::down_cast<CpuExecutable*>(executable.get())
+      ->thunks()
+      .thunk_sequence()
+      .ForEach([&](const Thunk& thunk) {
+        if (thunk.kind() == Thunk::Kind::kKernel) {
+          kernel_thunks.push_back(
+              absl::down_cast<const KernelThunkBase*>(&thunk));
+        }
+      });
+
+  ASSERT_EQ(kernel_thunks.size(), 2);
+  EXPECT_EQ(kernel_thunks[0]->kernel_name(), kernel_thunks[1]->kernel_name());
+}
+
+TEST_F(CpuCompilerInternalsTest,
+       FusionsWithDistinctLargeConstantsDoNotShareKernel) {
+  static constexpr absl::string_view kHlo = R"(
+    HloModule m
+
+    fused_a {
+      p0 = f32[16] parameter(0)
+      c0 = f32[16] constant({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})
+      ROOT r = f32[16] add(p0, c0)
+    }
+
+    fused_b {
+      p0 = f32[16] parameter(0)
+      c0 = f32[16] constant({101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116})
+      ROOT r = f32[16] add(p0, c0)
+    }
+
+    ENTRY main {
+      a = f32[16] parameter(0)
+      b = f32[16] parameter(1)
+      f0 = f32[16] fusion(a), kind=kLoop, calls=fused_a
+      f1 = f32[16] fusion(b), kind=kLoop, calls=fused_b
+      ROOT out = (f32[16], f32[16]) tuple(f0, f1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  CpuCompiler compiler;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> executable,
+      compiler.RunBackend(std::move(hlo_module), /*stream_exec=*/nullptr,
+                          /*options=*/{}));
+
+  std::vector<const KernelThunkBase*> kernel_thunks;
+  absl::down_cast<CpuExecutable*>(executable.get())
+      ->thunks()
+      .thunk_sequence()
+      .ForEach([&](const Thunk& thunk) {
+        if (thunk.kind() == Thunk::Kind::kKernel) {
+          kernel_thunks.push_back(
+              absl::down_cast<const KernelThunkBase*>(&thunk));
+        }
+      });
+
+  ASSERT_EQ(kernel_thunks.size(), 2);
+  EXPECT_NE(kernel_thunks[0]->kernel_name(), kernel_thunks[1]->kernel_name());
+}
+
+TEST_F(CpuCompilerInternalsTest,
+       FusionsWithDifferentFrontendAttributesDoNotShareKernel) {
+  static constexpr absl::string_view kHlo = R"(
+    HloModule m
+
+    fused_a {
+      p0 = f32[16] parameter(0)
+      ROOT r = f32[16] negate(p0)
+    }
+
+    fused_b {
+      p0 = f32[16] parameter(0)
+      ROOT r = f32[16] negate(p0)
+    }
+
+    ENTRY main {
+      a = f32[16] parameter(0)
+      b = f32[16] parameter(1)
+      f0 = f32[16] fusion(a), kind=kLoop, calls=fused_a,
+        frontend_attributes={custom_attr="a"}
+      f1 = f32[16] fusion(b), kind=kLoop, calls=fused_b,
+        frontend_attributes={custom_attr="b"}
+      ROOT out = (f32[16], f32[16]) tuple(f0, f1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  CpuCompiler compiler;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> executable,
+      compiler.RunBackend(std::move(hlo_module), /*stream_exec=*/nullptr,
+                          /*options=*/{}));
+
+  std::vector<const KernelThunkBase*> kernel_thunks;
+  absl::down_cast<CpuExecutable*>(executable.get())
+      ->thunks()
+      .thunk_sequence()
+      .ForEach([&](const Thunk& thunk) {
+        if (thunk.kind() == Thunk::Kind::kKernel) {
+          kernel_thunks.push_back(
+              absl::down_cast<const KernelThunkBase*>(&thunk));
+        }
+      });
+
+  ASSERT_EQ(kernel_thunks.size(), 2);
+  EXPECT_NE(kernel_thunks[0]->kernel_name(), kernel_thunks[1]->kernel_name());
+}
+
+TEST_F(CpuCompilerInternalsTest,
+       FusionsWithDifferentFusionKindsDoNotShareKernel) {
+  static constexpr absl::string_view kHlo = R"(
+    HloModule m
+
+    add_a {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT sum = f32[] add(lhs, rhs)
+    }
+
+    add_b {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT sum = f32[] add(lhs, rhs)
+    }
+
+    scatter_a {
+      operand = f32[8,4] parameter(0)
+      indices = s32[2,1] parameter(1)
+      updates = f32[2,1,4] parameter(2)
+      ROOT s = f32[8,4] scatter(operand, indices, updates),
+        update_window_dims={1,2},
+        inserted_window_dims={},
+        scatter_dims_to_operand_dims={0},
+        index_vector_dim=1,
+        to_apply=add_a
+    }
+
+    scatter_b {
+      operand = f32[8,4] parameter(0)
+      indices = s32[2,1] parameter(1)
+      updates = f32[2,1,4] parameter(2)
+      ROOT s = f32[8,4] scatter(operand, indices, updates),
+        update_window_dims={1,2},
+        inserted_window_dims={},
+        scatter_dims_to_operand_dims={0},
+        index_vector_dim=1,
+        to_apply=add_b
+    }
+
+    ENTRY main {
+      p0 = f32[8,4] parameter(0)
+      p1 = f32[8,4] parameter(1)
+      idx = s32[2,1] parameter(2)
+      upd = f32[2,1,4] parameter(3)
+      c0 = f32[8,4] copy(p0)
+      c1 = f32[8,4] copy(p1)
+      f0 = f32[8,4] fusion(c0, idx, upd), kind=kLoop, calls=scatter_a
+      f1 = f32[8,4] fusion(c1, idx, upd), kind=kInput, calls=scatter_b
+      ROOT out = (f32[8,4], f32[8,4]) tuple(f0, f1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  CpuCompiler compiler;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> executable,
+      compiler.RunBackend(std::move(hlo_module), /*stream_exec=*/nullptr,
+                          /*options=*/{}));
+
+  std::vector<const KernelThunkBase*> kernel_thunks;
+  absl::down_cast<CpuExecutable*>(executable.get())
+      ->thunks()
+      .thunk_sequence()
+      .ForEach([&](const Thunk& thunk) {
+        if (thunk.kind() == Thunk::Kind::kKernel) {
+          kernel_thunks.push_back(
+              absl::down_cast<const KernelThunkBase*>(&thunk));
+        }
+      });
+
+  ASSERT_EQ(kernel_thunks.size(), 2);
+  EXPECT_NE(kernel_thunks[0]->kernel_name(), kernel_thunks[1]->kernel_name());
+}
+
 }  // namespace
 }  // namespace cpu
 }  // namespace xla
