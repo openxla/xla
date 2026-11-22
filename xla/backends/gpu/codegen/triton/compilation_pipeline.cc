@@ -85,7 +85,7 @@ void CreateTritonXlaPipeline(
   pm->addPass(mlir::createLowerAffinePass());
 
   // Lower xla_gpu.apply_indexing into arithmetic ops.
-  pm->addPass(emitters::createSimplifyAffinePass());
+  pm->addPass(emitters::createExpandApplyIndexingPass());
   pm->addPass(createConvertIndexTypePass());
   pm->addPass(mlir::createCompositeFixedPointPass(
       "TritonXLAUnswitchLoopsComposite", [](mlir::OpPassManager& pm) {
