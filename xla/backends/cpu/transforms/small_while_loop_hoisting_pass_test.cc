@@ -316,11 +316,12 @@ TEST_F(SmallWhileLoopHoistingPassTest, DotAndConvolutionWhileLoopHoisting) {
     absl::string_view op;
     bool expect_hoisted;
   };
-  // Matrix vector products are emitted as kernels. Larger dots and
-  // convolutions call Eigen.
+  // Small single workgroup matrix vector products are emitted as kernels.
+  // Larger dots and convolutions either launch multiple workgroups or call
+  // Eigen.
   const TestCase kTestCases[] = {
-      {"f32[256,256]", "f32[256,1]",
-       "f32[256,1] dot(lhs, rhs), lhs_contracting_dims={1}, "
+      {"f32[64,64]", "f32[64,1]",
+       "f32[64,1] dot(lhs, rhs), lhs_contracting_dims={1}, "
        "rhs_contracting_dims={0}",
        true},
       {"f32[512,256]", "f32[256,256]",
@@ -537,6 +538,453 @@ TEST_F(SmallWhileLoopHoistingPassTest, PreservesControlDependencies) {
   EXPECT_EQ(call_instr->control_predecessors()[0], pred_op);
   ASSERT_EQ(succ_op->control_predecessors().size(), 1);
   EXPECT_EQ(succ_op->control_predecessors()[0], call_instr);
+}
+
+TEST_F(SmallWhileLoopHoistingPassTest, PartitionedFusionPreventsHoisting) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule partitioned_fusion
+
+    fused_acos {
+      p0 = f64[4096]{0} parameter(0)
+      ROOT r = f64[4096]{0} acos(p0)
+    }
+
+    while_body {
+      s = (s32[], f64[4096]{0}) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      x = f64[4096]{0} get-tuple-element(s), index=1
+      one = s32[] constant(1)
+      next_i = s32[] add(i, one)
+      next_x = f64[4096]{0} fusion(x), kind=kLoop, calls=fused_acos,
+          backend_config={"outer_dimension_partitions":["4"]}
+      ROOT out = (s32[], f64[4096]{0}) tuple(next_i, next_x)
+    }
+
+    while_cond {
+      s = (s32[], f64[4096]{0}) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      ROOT lt = pred[] compare(i, s32[] constant(8)), direction=LT
+    }
+
+    ENTRY main {
+      x = f64[4096]{0} parameter(0)
+      init = (s32[], f64[4096]{0}) tuple(s32[] constant(0), x)
+      ROOT w = (s32[], f64[4096]{0}) while(init),
+          condition=while_cond, body=while_body
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RunSmallWhileLoopHoistingPass(m.get(),
+                                    /*small_buffer_access_size=*/1LL << 30));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(SmallWhileLoopHoistingPassTest,
+       SmallScatterHoistsUnlessPairedWithPartitionedFusion) {
+  constexpr absl::string_view kSmallScatterOnlyHlo = R"hlo(
+    HloModule scatter_loop
+
+    add_f32 {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT sum = f32[] add(lhs, rhs)
+    }
+
+    scatter_fusion {
+      hist = f32[64]{0} parameter(0)
+      idx = s32[128,1]{1,0} parameter(1)
+      upd = f32[128]{0} parameter(2)
+      ROOT s = f32[64]{0} scatter(hist, idx, upd),
+          update_window_dims={}, inserted_window_dims={0},
+          scatter_dims_to_operand_dims={0}, index_vector_dim=1,
+          to_apply=add_f32
+    }
+
+    index_fusion {
+      x = f64[128]{0} parameter(0)
+      a = f64[128]{0} acos(x)
+      c = s32[128]{0} convert(a)
+      ROOT idx = s32[128,1]{1,0} bitcast(c)
+    }
+
+    while_body {
+      s = (s32[], f32[64]{0}, f64[128]{0}, f32[128]{0}) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      hist = f32[64]{0} get-tuple-element(s), index=1
+      x = f64[128]{0} get-tuple-element(s), index=2
+      upd = f32[128]{0} get-tuple-element(s), index=3
+      idx_fusion = s32[128,1]{1,0} fusion(x), kind=kLoop, calls=index_fusion
+      next_hist = f32[64]{0} fusion(hist, idx_fusion, upd),
+          kind=kLoop, calls=scatter_fusion
+      next_i = s32[] add(i, s32[] constant(1))
+      ROOT out = (s32[], f32[64]{0}, f64[128]{0}, f32[128]{0})
+          tuple(next_i, next_hist, x, upd)
+    }
+
+    while_cond {
+      s = (s32[], f32[64]{0}, f64[128]{0}, f32[128]{0}) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      ROOT lt = pred[] compare(i, s32[] constant(5)), direction=LT
+    }
+
+    ENTRY main {
+      hist = f32[64]{0} parameter(0)
+      x = f64[128]{0} parameter(1)
+      upd = f32[128]{0} parameter(2)
+      init = (s32[], f32[64]{0}, f64[128]{0}, f32[128]{0})
+          tuple(s32[] constant(0), hist, x, upd)
+      ROOT w = (s32[], f32[64]{0}, f64[128]{0}, f32[128]{0}) while(init),
+          condition=while_cond, body=while_body
+    }
+  )hlo";
+
+  // Unpartitioned index fusion plus single threaded scatter fusion hoists.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_unpartitioned,
+                       ParseAndReturnVerifiedModule(kSmallScatterOnlyHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool hoisted,
+      RunSmallWhileLoopHoistingPass(m_unpartitioned.get(),
+                                    /*small_buffer_access_size=*/2LL << 20));
+  EXPECT_TRUE(hoisted);
+
+  // When the sibling index fusion carries outer_dimension_partitions > 1, the
+  // loop is not hoisted so the index fusion executes on the thread pool.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_partitioned,
+                       ParseAndReturnVerifiedModule(kSmallScatterOnlyHlo));
+  HloInstruction* idx = FindInstruction(m_partitioned.get(), "idx_fusion");
+  ASSERT_NE(idx, nullptr);
+  cpu::BackendConfig config;
+  config.add_outer_dimension_partitions(8);
+  ASSERT_OK(idx->set_backend_config(config));
+  ASSERT_OK_AND_ASSIGN(
+      bool hoisted_with_parallel_idx,
+      RunSmallWhileLoopHoistingPass(m_partitioned.get(),
+                                    /*small_buffer_access_size=*/1LL << 30));
+  EXPECT_FALSE(hoisted_with_parallel_idx);
+}
+
+TEST_F(SmallWhileLoopHoistingPassTest,
+       ParallelGemvAndBatchDotAndOutputDotFusionPreventHoisting) {
+  // 1024x1024 matrix times 1024 vector lowers to multi workgroup tiled GEMV.
+  constexpr absl::string_view kParallelGemvHlo = R"hlo(
+    HloModule parallel_gemv
+
+    while_body {
+      s = (s32[], f32[1024,1024]{1,0}, f32[1024]{0}) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      a = f32[1024,1024]{1,0} get-tuple-element(s), index=1
+      v = f32[1024]{0} get-tuple-element(s), index=2
+      next_v = f32[1024]{0} dot(a, v),
+          lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ROOT out = (s32[], f32[1024,1024]{1,0}, f32[1024]{0})
+          tuple(add(i, s32[] constant(1)), a, next_v)
+    }
+
+    while_cond {
+      s = (s32[], f32[1024,1024]{1,0}, f32[1024]{0}) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      ROOT lt = pred[] compare(i, s32[] constant(4)), direction=LT
+    }
+
+    ENTRY main {
+      a = f32[1024,1024]{1,0} parameter(0)
+      v = f32[1024]{0} parameter(1)
+      init = (s32[], f32[1024,1024]{1,0}, f32[1024]{0})
+          tuple(s32[] constant(0), a, v)
+      ROOT w = (s32[], f32[1024,1024]{1,0}, f32[1024]{0}) while(init),
+          condition=while_cond, body=while_body
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_gemv,
+                       ParseAndReturnVerifiedModule(kParallelGemvHlo));
+  const HloInstruction* gemv = FindInstruction(m_gemv.get(), HloOpcode::kDot);
+  ASSERT_NE(gemv, nullptr);
+  EXPECT_TRUE(cpu::HasMultipleDotWorkGroups(cpu::GetDotOpWorkGroupDim(
+      m_gemv->config(), *gemv, target_machine_features_)));
+  ASSERT_OK_AND_ASSIGN(
+      bool gemv_changed,
+      RunSmallWhileLoopHoistingPass(m_gemv.get(),
+                                    /*small_buffer_access_size=*/1LL << 30));
+  EXPECT_FALSE(gemv_changed);
+
+  // A bare dot wrapped in a kOutput fusion emits the same multiple workgroups.
+  constexpr absl::string_view kParallelOutputFusionHlo = R"hlo(
+    HloModule parallel_output_dot_fusion
+
+    dot_fusion {
+      a = f32[1024,1024]{1,0} parameter(0)
+      v = f32[1024]{0} parameter(1)
+      ROOT d = f32[1024]{0} dot(a, v),
+          lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    }
+
+    while_body {
+      s = (s32[], f32[1024,1024]{1,0}, f32[1024]{0}) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      a = f32[1024,1024]{1,0} get-tuple-element(s), index=1
+      v = f32[1024]{0} get-tuple-element(s), index=2
+      next_v = f32[1024]{0} fusion(a, v), kind=kOutput, calls=dot_fusion
+      ROOT out = (s32[], f32[1024,1024]{1,0}, f32[1024]{0})
+          tuple(add(i, s32[] constant(1)), a, next_v)
+    }
+
+    while_cond {
+      s = (s32[], f32[1024,1024]{1,0}, f32[1024]{0}) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      ROOT lt = pred[] compare(i, s32[] constant(4)), direction=LT
+    }
+
+    ENTRY main {
+      a = f32[1024,1024]{1,0} parameter(0)
+      v = f32[1024]{0} parameter(1)
+      init = (s32[], f32[1024,1024]{1,0}, f32[1024]{0})
+          tuple(s32[] constant(0), a, v)
+      ROOT w = (s32[], f32[1024,1024]{1,0}, f32[1024]{0}) while(init),
+          condition=while_cond, body=while_body
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_out_fusion,
+                       ParseAndReturnVerifiedModule(kParallelOutputFusionHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool out_fusion_changed,
+      RunSmallWhileLoopHoistingPass(m_out_fusion.get(),
+                                    /*small_buffer_access_size=*/1LL << 30));
+  EXPECT_FALSE(out_fusion_changed);
+
+  // Batched GEMV whose inner LHS has 65536 > 32768 elements parallelizes across
+  // the batch dimension.
+  constexpr absl::string_view kParallelBatchDotHlo = R"hlo(
+    HloModule parallel_batch_dot
+
+    while_body {
+      s = (s32[], f32[4,256,256]{2,1,0}, f32[4,256]{1,0}) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      a = f32[4,256,256]{2,1,0} get-tuple-element(s), index=1
+      v = f32[4,256]{1,0} get-tuple-element(s), index=2
+      next_v = f32[4,256]{1,0} dot(a, v),
+          lhs_batch_dims={0}, rhs_batch_dims={0},
+          lhs_contracting_dims={2}, rhs_contracting_dims={1}
+      ROOT out = (s32[], f32[4,256,256]{2,1,0}, f32[4,256]{1,0})
+          tuple(add(i, s32[] constant(1)), a, next_v)
+    }
+
+    while_cond {
+      s = (s32[], f32[4,256,256]{2,1,0}, f32[4,256]{1,0}) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      ROOT lt = pred[] compare(i, s32[] constant(4)), direction=LT
+    }
+
+    ENTRY main {
+      a = f32[4,256,256]{2,1,0} parameter(0)
+      v = f32[4,256]{1,0} parameter(1)
+      init = (s32[], f32[4,256,256]{2,1,0}, f32[4,256]{1,0})
+          tuple(s32[] constant(0), a, v)
+      ROOT w = (s32[], f32[4,256,256]{2,1,0}, f32[4,256]{1,0}) while(init),
+          condition=while_cond, body=while_body
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_batch,
+                       ParseAndReturnVerifiedModule(kParallelBatchDotHlo));
+  const HloInstruction* bdot = FindInstruction(m_batch.get(), HloOpcode::kDot);
+  ASSERT_NE(bdot, nullptr);
+  EXPECT_EQ(cpu::GetDotOpWorkGroupDim(m_batch->config(), *bdot,
+                                      target_machine_features_)
+                .x,
+            4);
+  ASSERT_OK_AND_ASSIGN(
+      bool batch_changed,
+      RunSmallWhileLoopHoistingPass(m_batch.get(),
+                                    /*small_buffer_access_size=*/1LL << 30));
+  EXPECT_FALSE(batch_changed);
+}
+
+TEST_F(SmallWhileLoopHoistingPassTest,
+       ParallelAndTransposingCopiesPreventHoisting) {
+  auto run_copy_test =
+      [&](absl::string_view src_shape,
+          absl::string_view dst_shape) -> absl::StatusOr<bool> {
+    const std::string hlo = absl::StrCat(
+        "HloModule copy_loop\n"
+        "while_body {\n"
+        "  s = (s32[], ",
+        src_shape, ", ", dst_shape,
+        ") parameter(0)\n"
+        "  i = s32[] get-tuple-element(s), index=0\n"
+        "  a = ",
+        src_shape,
+        " get-tuple-element(s), index=1\n"
+        "  c = ",
+        dst_shape,
+        " copy(a)\n"
+        "  ROOT out = (s32[], ",
+        src_shape, ", ", dst_shape,
+        ") tuple(add(i, s32[] constant(1)), a, c)\n"
+        "}\n"
+        "while_cond {\n"
+        "  s = (s32[], ",
+        src_shape, ", ", dst_shape,
+        ") parameter(0)\n"
+        "  i = s32[] get-tuple-element(s), index=0\n"
+        "  ROOT lt = pred[] compare(i, s32[] constant(3)), direction=LT\n"
+        "}\n"
+        "ENTRY main {\n"
+        "  a = ",
+        src_shape,
+        " parameter(0)\n"
+        "  b = ",
+        dst_shape,
+        " parameter(1)\n"
+        "  init = (s32[], ",
+        src_shape, ", ", dst_shape,
+        ") tuple(s32[] constant(0), a, b)\n"
+        "  ROOT w = (s32[], ",
+        src_shape, ", ", dst_shape,
+        ") while(init), condition=while_cond, body=while_body\n"
+        "}\n");
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(hlo));
+    return RunSmallWhileLoopHoistingPass(
+        m.get(), /*small_buffer_access_size=*/1LL << 30);
+  };
+
+  // Exactly 1 MiB runs as a single block in CopyThunk and remains hoistable.
+  ASSERT_OK_AND_ASSIGN(bool hoisted_1mib,
+                       run_copy_test("f32[262144]{0}", "f32[262144]{0}"));
+  EXPECT_TRUE(hoisted_1mib);
+
+  // Just over 1 MiB splits into multiple parallel copy blocks in CopyThunk.
+  ASSERT_OK_AND_ASSIGN(bool hoisted_over_1mib,
+                       run_copy_test("f32[262145]{0}", "f32[262145]{0}"));
+  EXPECT_FALSE(hoisted_over_1mib);
+
+  // Layout changing copies use TransposePlan and cannot be emitted inline.
+  ASSERT_OK_AND_ASSIGN(bool hoisted_transpose,
+                       run_copy_test("f32[32,32]{0,1}", "f32[32,32]{1,0}"));
+  EXPECT_FALSE(hoisted_transpose);
+}
+
+TEST_F(SmallWhileLoopHoistingPassTest,
+       ManyArrayLoopFusionsRejectedWhileScalarSliceUpdatesHoist) {
+  auto build_many_reductions_hlo = [](int num_reductions) {
+    std::string fusions;
+    std::string chained;
+    for (int k = 0; k < num_reductions; ++k) {
+      absl::StrAppend(&fusions, "reduce_fusion_", k,
+                      " {\n"
+                      "  p = f32[232]{0} parameter(0)\n"
+                      "  c = f32[] constant(",
+                      k + 1,
+                      ")\n"
+                      "  cb = f32[232]{0} broadcast(c), dimensions={}\n"
+                      "  m = f32[232]{0} multiply(p, cb)\n"
+                      "  ROOT r = f32[] reduce(m, f32[] constant(0)),"
+                      " dimensions={0}, to_apply=add_f32\n"
+                      "}\n"
+                      "add_scalar_fusion_",
+                      k,
+                      " {\n"
+                      "  v = f32[232]{0} parameter(0)\n"
+                      "  s = f32[] parameter(1)\n"
+                      "  sb = f32[232]{0} broadcast(s), dimensions={}\n"
+                      "  ROOT out = f32[232]{0} add(v, sb)\n"
+                      "}\n");
+      const std::string prev = k == 0 ? "x" : absl::StrCat("x", k - 1);
+      absl::StrAppend(&chained, "  r", k, " = f32[] fusion(", prev,
+                      "), kind=kLoop, calls=reduce_fusion_", k, "\n  x", k,
+                      " = f32[232]{0} fusion(", prev, ", r", k,
+                      "), kind=kLoop, calls=add_scalar_fusion_", k, "\n");
+    }
+    return absl::StrCat(
+        "HloModule many_reductions\n"
+        "add_f32 {\n"
+        "  a = f32[] parameter(0)\n"
+        "  b = f32[] parameter(1)\n"
+        "  ROOT s = f32[] add(a, b)\n"
+        "}\n",
+        fusions,
+        "while_body {\n"
+        "  st = (s32[], f32[232]{0}) parameter(0)\n"
+        "  i = s32[] get-tuple-element(st), index=0\n"
+        "  x = f32[232]{0} get-tuple-element(st), index=1\n",
+        chained,
+        "  ROOT out = (s32[], f32[232]{0}) tuple(add(i, s32[]"
+        " constant(1)), x",
+        num_reductions - 1,
+        ")\n}\n"
+        "while_cond {\n"
+        "  st = (s32[], f32[232]{0}) parameter(0)\n"
+        "  i = s32[] get-tuple-element(st), index=0\n"
+        "  ROOT lt = pred[] compare(i, s32[] constant(10)), direction=LT\n"
+        "}\n"
+        "ENTRY main {\n"
+        "  x = f32[232]{0} parameter(0)\n"
+        "  init = (s32[], f32[232]{0}) tuple(s32[] constant(0), x)\n"
+        "  ROOT w = (s32[], f32[232]{0}) while(init),"
+        " condition=while_cond, body=while_body\n"
+        "}\n");
+  };
+
+  // A loop with 80 reduction fusions (160 array loop kernels, as in issue
+  // #52122) exceeds the hoisted loop kernel budget even under a large byte cap.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_large_body,
+                       ParseAndReturnVerifiedModule(
+                           build_many_reductions_hlo(/*num_reductions=*/80)));
+  ASSERT_OK_AND_ASSIGN(
+      bool large_body_changed,
+      RunSmallWhileLoopHoistingPass(m_large_body.get(),
+                                    /*small_buffer_access_size=*/1LL << 30));
+  EXPECT_FALSE(large_body_changed);
+
+  // By contrast, 100 scalar in place dynamic-update-slice fusions (as in
+  // jax.issue.40150.grad) contain zero array loop kernels and still hoist.
+  std::string dus_fusions;
+  std::string dus_chain;
+  for (int k = 0; k < 100; ++k) {
+    absl::StrAppend(&dus_fusions, "scalar_dus_fusion_", k,
+                    " {\n"
+                    "  arr = f32[614]{0} parameter(0)\n"
+                    "  v = f32[1]{0} parameter(1)\n"
+                    "  idx = s32[] parameter(2)\n"
+                    "  ROOT d = f32[614]{0} dynamic-update-slice(arr, v, idx)\n"
+                    "}\n");
+    const std::string prev = k == 0 ? "buf" : absl::StrCat("buf", k - 1);
+    absl::StrAppend(&dus_chain, "  buf", k, " = f32[614]{0} fusion(", prev,
+                    ", val, i), kind=kLoop, calls=scalar_dus_fusion_", k, "\n");
+  }
+  const std::string scalar_dus_hlo = absl::StrCat(
+      "HloModule many_scalar_dus\n", dus_fusions,
+      "while_body {\n"
+      "  st = (s32[], f32[614]{0}, f32[1]{0}) parameter(0)\n"
+      "  i = s32[] get-tuple-element(st), index=0\n"
+      "  buf = f32[614]{0} get-tuple-element(st), index=1\n"
+      "  val = f32[1]{0} get-tuple-element(st), index=2\n",
+      dus_chain,
+      "  ROOT out = (s32[], f32[614]{0}, f32[1]{0})"
+      " tuple(add(i, s32[] constant(1)), buf99, val)\n"
+      "}\n"
+      "while_cond {\n"
+      "  st = (s32[], f32[614]{0}, f32[1]{0}) parameter(0)\n"
+      "  i = s32[] get-tuple-element(st), index=0\n"
+      "  ROOT lt = pred[] compare(i, s32[] constant(614)), direction=LT\n"
+      "}\n"
+      "ENTRY main {\n"
+      "  buf = f32[614]{0} parameter(0)\n"
+      "  val = f32[1]{0} parameter(1)\n"
+      "  init = (s32[], f32[614]{0}, f32[1]{0})"
+      " tuple(s32[] constant(0), buf, val)\n"
+      "  ROOT w = (s32[], f32[614]{0}, f32[1]{0}) while(init),"
+      " condition=while_cond, body=while_body\n"
+      "}\n");
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_scalar_dus,
+                       ParseAndReturnVerifiedModule(scalar_dus_hlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool scalar_dus_changed,
+      RunSmallWhileLoopHoistingPass(m_scalar_dus.get(),
+                                    /*small_buffer_access_size=*/2LL << 20));
+  EXPECT_TRUE(scalar_dus_changed);
 }
 
 }  // namespace

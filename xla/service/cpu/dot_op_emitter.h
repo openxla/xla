@@ -130,6 +130,24 @@ struct DotOpWorkGroupDim {
   uint64_t y = 1;
 };
 
+// Returns whether DotKernelEmitter enables multi workgroup execution for a dot
+// kernel with or without a fused output addend.
+inline constexpr bool DotKernelAllowsParallelism(bool has_addend) {
+  return !has_addend;
+}
+
+// Returns the workgroup dimensions that EmitDotOperation emits for `dot`
+// without generating LLVM IR.
+DotOpWorkGroupDim GetDotOpWorkGroupDim(
+    const HloModuleConfig& hlo_module_config, const HloInstruction& dot,
+    const TargetMachineFeatures& target_machine_features,
+    bool allow_parallelism = true);
+
+// Returns true if `dims` dispatches more than one workgroup.
+inline constexpr bool HasMultipleDotWorkGroups(DotOpWorkGroupDim dims) {
+  return dims.x > 0 && dims.y > 0 && (dims.x > 1 || dims.y > 1);
+}
+
 // Emit LLVM IR to perform the dot operation on lhs_array and rhs_array and
 // place the result in target_array. IR is emitted at current insert point of
 // the builder. Upon completion of the method, the insert point is set to the

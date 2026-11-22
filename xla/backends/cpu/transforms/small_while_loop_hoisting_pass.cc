@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/cpu/transforms/small_while_loop_hoisting_pass.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <iterator>
 #include <vector>
@@ -27,23 +28,43 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
+#include "xla/backends/cpu/runtime/copy_thunk.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/collective_ops_utils.h"
+#include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/cpu_executable.h"
 #include "xla/service/cpu/dot_op_emitter.h"
 #include "xla/service/cpu/ir_emission_utils.h"
 #include "xla/service/hlo_cost_analysis.h"
+#include "xla/service/hlo_module_config.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
+namespace {
 
-static bool IsSupportedDotElementType(PrimitiveType type) {
+// Upper bounds on hoisted loop body complexity. Hoisting links every nested
+// kernel into a single LLVM module compiled on one thread and executes them
+// serially in one workgroup. Loops with many non trivial array kernels gain
+// negligible runtime benefit from skipping thunk dispatch while suffering
+// superlinear LLVM optimization time and losing inter op concurrency. Scalar
+// heavy loops (including tiny in place slice updates) deduplicate well and are
+// allowed a higher total kernel budget.
+constexpr int64_t kScalarKernelMaxElements = 16;
+constexpr int64_t kMaxHoistedArrayLoopKernels = 64;
+constexpr int64_t kMaxHoistedTotalKernels = 512;
+constexpr int64_t kMaxHoistedFusedInstructions = 8192;
+
+bool IsSupportedDotElementType(PrimitiveType type) {
   switch (type) {
     case PRED:
     case S8:
@@ -65,13 +86,78 @@ static bool IsSupportedDotElementType(PrimitiveType type) {
   }
 }
 
-// Hoisted loops are compiled into a single kernel, which only works for
-// instructions that ThunkEmitter lowers to kernels, copies or control flow.
-// Others (library calls, runtime state, I/O) would make ThunkEmitter emit the
-// loop as an ordinary call, so hoisting them gains nothing.
-static bool InstructionIsUnavailable(
+// Returns true if ParallelTaskAssigner partitioned `instr` into more than one
+// outer dimension workgroup.
+bool HasParallelOuterDimensionPartitions(const HloInstruction& instr) {
+  absl::StatusOr<BackendConfig> backend_config =
+      instr.backend_config<BackendConfig>();
+  if (!backend_config.ok()) {
+    return false;
+  }
+  for (int64_t dim_partitions : backend_config->outer_dimension_partitions()) {
+    if (dim_partitions > 1) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool IsUnavailableCodegenDot(
+    const HloInstruction& dot,
+    const TargetMachineFeatures& target_machine_features,
+    bool allow_parallelism) {
+  if (!IsSupportedDotElementType(dot.shape().element_type())) {
+    return true;
+  }
+  const HloModuleConfig& config = dot.GetModule()->config();
+  if (GetDotImplementationStrategy(config, dot, target_machine_features,
+                                   /*allow_runtime_calls=*/true) ==
+      DotImplementationStrategy::kEigen) {
+    return true;
+  }
+  return HasMultipleDotWorkGroups(GetDotOpWorkGroupDim(
+      config, dot, target_machine_features, allow_parallelism));
+}
+
+bool IsUnavailableOutputFusion(
+    const HloInstruction& fusion,
+    const TargetMachineFeatures& target_machine_features) {
+  const HloInstruction* root = fusion.fused_expression_root();
+  if (root->opcode() == HloOpcode::kDot) {
+    return IsUnavailableCodegenDot(
+        *root, target_machine_features,
+        DotKernelAllowsParallelism(/*has_addend=*/false));
+  }
+  if (root->opcode() != HloOpcode::kAdd) {
+    return true;
+  }
+  const bool op0_is_dot = root->operand(0)->opcode() == HloOpcode::kDot;
+  const bool op1_is_dot = root->operand(1)->opcode() == HloOpcode::kDot;
+  if (op0_is_dot == op1_is_dot) {
+    return true;
+  }
+  const HloInstruction* dot = root->operand(op0_is_dot ? 0 : 1);
+  if (dot->dot_dimension_numbers().lhs_batch_dimensions_size() > 0 ||
+      ShapeUtil::IsScalar(dot->operand(0)->shape())) {
+    return true;
+  }
+  return IsUnavailableCodegenDot(
+      *dot, target_machine_features,
+      DotKernelAllowsParallelism(/*has_addend=*/true));
+}
+
+// Hoisted loops are compiled into a single workgroup kernel, which only works
+// for instructions that ThunkEmitter lowers to single threaded kernels, small
+// non transposing copies, or control flow. Library calls, runtime state, I/O,
+// and operations scheduled for multi threaded execution are excluded so
+// hoisting neither falls back to an ordinary call nor serializes parallel work.
+bool InstructionIsUnavailable(
     const HloInstruction* instr,
     const TargetMachineFeatures& target_machine_features) {
+  if (HasParallelOuterDimensionPartitions(*instr)) {
+    return true;
+  }
+
   switch (instr->opcode()) {
     case HloOpcode::kCustomCall:
     case HloOpcode::kInfeed:
@@ -83,16 +169,27 @@ static bool InstructionIsUnavailable(
     case HloOpcode::kRngGetAndUpdateState:
       return true;
 
-    // Custom fusions call into oneDNN or YNNPACK.
     case HloOpcode::kFusion:
-      return instr->fusion_kind() == HloInstruction::FusionKind::kCustom;
+      // Custom fusions call into oneDNN or YNNPACK.
+      if (instr->fusion_kind() == HloInstruction::FusionKind::kCustom) {
+        return true;
+      }
+      if (instr->fusion_kind() == HloInstruction::FusionKind::kOutput) {
+        return IsUnavailableOutputFusion(*instr, target_machine_features);
+      }
+      return false;
 
     case HloOpcode::kDot:
-      return !IsSupportedDotElementType(instr->shape().element_type()) ||
-             GetDotImplementationStrategy(instr->GetModule()->config(), *instr,
-                                          target_machine_features,
-                                          /*allow_runtime_calls=*/true) ==
-                 DotImplementationStrategy::kEigen;
+      return IsUnavailableCodegenDot(
+          *instr, target_machine_features,
+          DotKernelAllowsParallelism(/*has_addend=*/false));
+
+    case HloOpcode::kCopy: {
+      const Shape& src_shape = instr->operand(0)->shape();
+      const Shape& dst_shape = instr->shape();
+      return src_shape != dst_shape ||
+             CopyThunk::UsesParallelExecution(src_shape, dst_shape);
+    }
 
     // Convolutions that cannot use Eigen are wrapped into loop fusions.
     case HloOpcode::kConvolution:
@@ -106,8 +203,8 @@ static bool InstructionIsUnavailable(
 // Returns whether `computation`, or a fusion computation nested in it, has a
 // dot that would call Eigen outside a fusion. Fusion emitters lower such dots
 // inline, but inside a hoisted loop they would run on one thread.
-static bool HasEigenDot(const HloComputation& computation,
-                        const TargetMachineFeatures& target_machine_features) {
+bool HasEigenDot(const HloComputation& computation,
+                 const TargetMachineFeatures& target_machine_features) {
   for (const HloInstruction* instr : computation.instructions()) {
     if (instr->opcode() == HloOpcode::kDot &&
         GetDotImplementationStrategy(instr->GetModule()->config(), *instr,
@@ -127,7 +224,7 @@ static bool HasEigenDot(const HloComputation& computation,
 
 // Returns whether `instr` or a computation it calls contains an instruction
 // that cannot be part of a hoisted loop kernel.
-static bool ContainsUnavailableInstruction(
+bool ContainsUnavailableInstruction(
     const HloInstruction* instr,
     const TargetMachineFeatures& target_machine_features,
     absl::flat_hash_map<const HloInstruction*, bool>& has_unavailable_instr) {
@@ -142,7 +239,8 @@ static bool ContainsUnavailableInstruction(
 
   for (const HloComputation* called_comp : instr->called_computations()) {
     if (called_comp->IsFusionComputation()) {
-      if (HasEigenDot(*called_comp, target_machine_features)) {
+      if (instr->fusion_kind() != HloInstruction::FusionKind::kOutput &&
+          HasEigenDot(*called_comp, target_machine_features)) {
         return has_unavailable_instr.insert({instr, true}).first->second;
       }
       continue;
@@ -157,6 +255,207 @@ static bool ContainsUnavailableInstruction(
 
   return has_unavailable_instr.insert({instr, false}).first->second;
 }
+
+bool EmitsNoKernelOrControlFlow(HloOpcode opcode) {
+  switch (opcode) {
+    case HloOpcode::kAddDependency:
+    case HloOpcode::kAfterAll:
+    case HloOpcode::kBitcast:
+    case HloOpcode::kConstant:
+    case HloOpcode::kCopy:
+    case HloOpcode::kGetTupleElement:
+    case HloOpcode::kOptimizationBarrier:
+    case HloOpcode::kParameter:
+    case HloOpcode::kTuple:
+      return true;
+    default:
+      return false;
+  }
+}
+
+int64_t BoundedArrayElements(const Shape& shape) {
+  if (!shape.IsArray()) {
+    return 0;
+  }
+  if (shape.is_unbounded_dynamic()) {
+    return kScalarKernelMaxElements + 1;
+  }
+  int64_t total = 1;
+  for (int64_t dim : shape.dimensions()) {
+    if (dim <= 0) {
+      return 0;
+    }
+    if (dim > kScalarKernelMaxElements ||
+        total > kScalarKernelMaxElements / dim) {
+      return kScalarKernelMaxElements + 1;
+    }
+    total *= dim;
+  }
+  return total;
+}
+
+int64_t BoundedShapeElements(const Shape& shape) {
+  if (shape.IsArray()) {
+    return BoundedArrayElements(shape);
+  }
+  if (!shape.IsTuple()) {
+    return 0;
+  }
+  int64_t total = 0;
+  for (const Shape& sub : shape.tuple_shapes()) {
+    total = std::min(kScalarKernelMaxElements + 1,
+                     total + BoundedShapeElements(sub));
+  }
+  return total;
+}
+
+int64_t BoundedScatterUpdateElements(const HloScatterInstruction& scatter) {
+  int64_t total = 0;
+  for (const HloInstruction* update : scatter.scatter_updates()) {
+    total = std::min(kScalarKernelMaxElements + 1,
+                     total + BoundedArrayElements(update->shape()));
+  }
+  return total;
+}
+
+bool InstructionExceedsScalarWork(const HloInstruction& instr) {
+  switch (instr.opcode()) {
+    case HloOpcode::kDynamicUpdateSlice:
+      return BoundedArrayElements(instr.operand(1)->shape()) >
+             kScalarKernelMaxElements;
+    case HloOpcode::kScatter:
+      return BoundedScatterUpdateElements(*Cast<HloScatterInstruction>(
+                 &instr)) > kScalarKernelMaxElements;
+    case HloOpcode::kReduce:
+    case HloOpcode::kReduceWindow:
+      return BoundedArrayElements(instr.operand(0)->shape()) >
+                 kScalarKernelMaxElements ||
+             BoundedShapeElements(instr.shape()) > kScalarKernelMaxElements;
+    case HloOpcode::kDot:
+      return BoundedArrayElements(instr.operand(0)->shape()) >
+                 kScalarKernelMaxElements ||
+             BoundedArrayElements(instr.operand(1)->shape()) >
+                 kScalarKernelMaxElements ||
+             BoundedArrayElements(instr.shape()) > kScalarKernelMaxElements;
+    default:
+      return BoundedShapeElements(instr.shape()) > kScalarKernelMaxElements;
+  }
+}
+
+bool IsDirectFusionParameter(const HloInstruction* instr) {
+  while (instr->opcode() == HloOpcode::kBitcast) {
+    instr = instr->operand(0);
+  }
+  if (instr->opcode() == HloOpcode::kGetTupleElement) {
+    instr = instr->LatestNonGteAncestor();
+  }
+  return instr->opcode() == HloOpcode::kParameter;
+}
+
+bool IsRootInPlaceDus(const HloInstruction* sub, const HloInstruction* root) {
+  if (sub->opcode() != HloOpcode::kDynamicUpdateSlice ||
+      !IsDirectFusionParameter(sub->operand(0))) {
+    return false;
+  }
+  if (sub == root) {
+    return true;
+  }
+  return root->opcode() == HloOpcode::kTuple &&
+         absl::c_linear_search(root->operands(), sub);
+}
+
+void AccumulateFusionBodyComplexity(const HloInstruction& fusion,
+                                    int64_t& array_loop_kernels,
+                                    int64_t& fused_instructions) {
+  const HloComputation* body = fusion.fused_instructions_computation();
+  const HloInstruction* root = body->root_instruction();
+
+  bool is_array_loop = false;
+  for (const HloInstruction* sub : body->instructions()) {
+    const HloOpcode op = sub->opcode();
+    if (op == HloOpcode::kParameter || op == HloOpcode::kConstant ||
+        op == HloOpcode::kBitcast || op == HloOpcode::kGetTupleElement ||
+        op == HloOpcode::kTuple) {
+      continue;
+    }
+    ++fused_instructions;
+    if (is_array_loop) {
+      continue;
+    }
+    // An in place dynamic-update-slice root loops over only the update slice
+    // rather than the full destination buffer.
+    if (IsRootInPlaceDus(sub, root)) {
+      if (BoundedArrayElements(sub->operand(1)->shape()) >
+          kScalarKernelMaxElements) {
+        is_array_loop = true;
+      }
+      continue;
+    }
+    if (InstructionExceedsScalarWork(*sub)) {
+      is_array_loop = true;
+    }
+  }
+  if (is_array_loop) {
+    ++array_loop_kernels;
+  }
+}
+
+struct HoistedBodyComplexity {
+  int64_t total_kernels = 0;
+  int64_t array_loop_kernels = 0;
+  int64_t fused_instructions = 0;
+
+  bool ExceedsLimit() const {
+    return total_kernels > kMaxHoistedTotalKernels ||
+           array_loop_kernels > kMaxHoistedArrayLoopKernels ||
+           fused_instructions > kMaxHoistedFusedInstructions;
+  }
+};
+
+bool AccumulateComputationComplexity(const HloComputation& comp,
+                                     HoistedBodyComplexity& complexity) {
+  for (const HloInstruction* instr : comp.instructions()) {
+    const HloOpcode op = instr->opcode();
+    if (EmitsNoKernelOrControlFlow(op)) {
+      continue;
+    }
+    if (op == HloOpcode::kWhile || op == HloOpcode::kConditional ||
+        op == HloOpcode::kCall) {
+      for (const HloComputation* called : instr->called_computations()) {
+        if (AccumulateComputationComplexity(*called, complexity)) {
+          return true;
+        }
+      }
+      continue;
+    }
+    ++complexity.total_kernels;
+    if (op == HloOpcode::kFusion) {
+      AccumulateFusionBodyComplexity(*instr, complexity.array_loop_kernels,
+                                     complexity.fused_instructions);
+    } else {
+      ++complexity.fused_instructions;
+      if (InstructionExceedsScalarWork(*instr)) {
+        ++complexity.array_loop_kernels;
+      }
+    }
+    if (complexity.ExceedsLimit()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool ExceedsHoistedBodySizeLimit(const HloInstruction& while_instr) {
+  HoistedBodyComplexity complexity;
+  for (const HloComputation* called : while_instr.called_computations()) {
+    if (AccumulateComputationComplexity(*called, complexity)) {
+      return true;
+    }
+  }
+  return complexity.ExceedsLimit();
+}
+
+}  // namespace
 
 SmallWhileLoopHoistingPass::SmallWhileLoopHoistingPass(
     int64_t small_buffer_access_size,
@@ -220,6 +519,9 @@ absl::StatusOr<bool> SmallWhileLoopHoistingPass::RunImpl(
 
 absl::StatusOr<bool> SmallWhileLoopHoistingPass::IsSmall(
     const HloInstruction* instr) {
+  if (ExceedsHoistedBodySizeLimit(*instr)) {
+    return false;
+  }
   HloCostAnalysis cost_analysis(&CpuExecutable::ShapeSizeBytes);
   ABSL_RETURN_IF_ERROR(cost_analysis.RevisitInstruction(instr));
   return cost_analysis.bytes_accessed(*instr) < small_buffer_access_size_;

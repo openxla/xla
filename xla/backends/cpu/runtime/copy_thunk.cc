@@ -141,6 +141,15 @@ CopyThunk::ParallelBlockParams CopyThunk::ComputeParallelBlockParams(
                              CeilOfRatio(size_in_bytes, block_size)};
 }
 
+bool CopyThunk::UsesParallelExecution(const Shape& src_shape,
+                                      const Shape& dst_shape) {
+  if (src_shape != dst_shape || !src_shape.IsArray() ||
+      src_shape.is_unbounded_dynamic()) {
+    return false;
+  }
+  return ComputeParallelBlockParams(src_shape).block_count > 1;
+}
+
 tsl::AsyncValueRef<Thunk::ExecuteEvent> CopyThunk::Execute(
     const ExecuteParams& params) {
   const BufferAllocations* allocations = params.buffer_allocations;

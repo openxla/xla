@@ -97,12 +97,16 @@ std::optional<int64_t> LlvmIrGemvTilingFactor(const HloModuleConfig& config) {
 
 absl::StatusOr<int64_t> SmallWhileLoopByteThreshold(
     const HloModuleConfig& config) {
+  // Default to 2 MiB of accessed bytes per loop iteration so small single
+  // threaded loops avoid runtime dispatch overhead without serializing large
+  // unpartitioned operations or concurrent loop bodies.
+  static constexpr int64_t kDefaultSmallWhileLoopByteThreshold = 2LL << 20;
   const auto& extra_options_map =
       config.debug_options().xla_backend_extra_options();
 
   auto itr = extra_options_map.find(kSmallWhileLoopByteThreshold);
   if (itr == extra_options_map.end()) {
-    return 1000000000;  // Default value.
+    return kDefaultSmallWhileLoopByteThreshold;
   }
 
   int64_t byte_threshold;

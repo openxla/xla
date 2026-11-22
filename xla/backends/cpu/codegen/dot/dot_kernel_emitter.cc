@@ -197,7 +197,8 @@ DotKernelEmitter::EmitKernelDefinition() {
           *operands.dot, target_array, lhs_array, rhs_array, addend_array,
           {kernel_prototype.workgroup_id.x, kernel_prototype.workgroup_id.y},
           &builder, config, *target_machine_,
-          /*allow_parallelism=*/addend_array == nullptr));
+          /*allow_parallelism=*/
+          DotKernelAllowsParallelism(addend_array != nullptr)));
 
   LlvmKernelSource source(std::move(ctx), std::move(llvm_module));
 

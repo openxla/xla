@@ -17,11 +17,13 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/base/casts.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/cpu/runtime/thunk.h"
@@ -442,6 +444,43 @@ class CpuSmallWhileLoopTest : public HloInterpreterReferenceMixin<HloTestBase> {
       EXPECT_NE(thunk.kind(), Thunk::Kind::kCall);
     });
   }
+
+  // Checks that the loop remains a WhileThunk so its nested parallel work runs
+  // on the intra op thread pool instead of serially inside one kernel.
+  void ExpectNotHoisted(absl::string_view hlo_text,
+                        std::optional<int64_t> byte_threshold = std::nullopt) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                         ParseAndReturnVerifiedModule(hlo_text));
+    if (byte_threshold.has_value()) {
+      (*module->mutable_config()
+            .mutable_debug_options()
+            .mutable_xla_backend_extra_options())
+          ["xla_cpu_small_while_loop_byte_threshold"] =
+              absl::StrCat(*byte_threshold);
+    }
+    CpuCompiler compiler;
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<HloModule> optimized,
+        compiler.RunHloPasses(std::move(module), /*stream_exec=*/nullptr,
+                              /*options=*/{}));
+    for (const HloComputation* comp : optimized->computations()) {
+      for (const HloInstruction* instr : comp->instructions()) {
+        EXPECT_NE(instr->get_frontend_attribute("xla_cpu_small_call"), "true")
+            << instr->ToString();
+      }
+    }
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Executable> executable,
+        compiler.RunBackend(std::move(optimized), /*stream_exec=*/nullptr,
+                            /*options=*/{}));
+    int64_t num_whiles = 0;
+    for (const auto& thunk : absl::down_cast<CpuExecutable*>(executable.get())
+                                 ->thunks()
+                                 .thunk_sequence()) {
+      num_whiles += thunk->kind() == Thunk::Kind::kWhile;
+    }
+    EXPECT_EQ(num_whiles, 1);
+  }
 };
 
 TEST_F(CpuSmallWhileLoopTest, NestedWhileAndConditional) {
@@ -611,40 +650,360 @@ TEST_F(CpuSmallWhileLoopTest, DotOutputFusion) {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
 }
 
-// The body fusion is large enough to be split into several workgroups, which
-// the loop kernel launches in sequence on the calling thread.
+// ThunkSequenceKernelEmitter executes multi workgroup nested kernels across
+// all workgroup indices when invoked via an explicit xla_cpu_small_call.
 TEST_F(CpuSmallWhileLoopTest, MultipleWorkgroups) {
-  constexpr absl::string_view hlo_text = R"(
+  constexpr absl::string_view hlo_text = R"hlo(
     HloModule MultipleWorkgroups
 
-    body {
-      s = (s32[], f32[256,1024]) parameter(0)
-      i = s32[] get-tuple-element(s), index=0
-      x = f32[256,1024] get-tuple-element(s), index=1
+    add_step {
+      x = f32[64,16]{1,0} parameter(0)
+      i = s32[] parameter(1)
       fi = f32[] convert(i)
-      b = f32[256,1024] broadcast(fi), dimensions={}
-      iota = f32[256,1024] iota(), iota_dimension=0
-      y = f32[256,1024] add(x, multiply(iota, b))
+      b = f32[64,16]{1,0} broadcast(fi), dimensions={}
+      iota = f32[64,16]{1,0} iota(), iota_dimension=0
+      prod = f32[64,16]{1,0} multiply(iota, b)
+      ROOT y = f32[64,16]{1,0} add(x, prod)
+    }
+
+    inc_i {
+      i = s32[] parameter(0)
       one = s32[] constant(1)
-      ROOT r = (s32[], f32[256,1024]) tuple(add(i, one), y)
+      ROOT next = s32[] add(i, one)
+    }
+
+    cmp_i {
+      i = s32[] parameter(0)
+      limit = s32[] constant(4)
+      ROOT lt = pred[] compare(i, limit), direction=LT
+    }
+
+    body {
+      s = (s32[], f32[64,16]{1,0}) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      x = f32[64,16]{1,0} get-tuple-element(s), index=1
+      y = f32[64,16]{1,0} fusion(x, i), kind=kLoop, calls=add_step,
+          backend_config={"outer_dimension_partitions":["4"]}
+      next_i = s32[] fusion(i), kind=kLoop, calls=inc_i,
+          control-predecessors={y}
+      ROOT r = (s32[], f32[64,16]{1,0}) tuple(next_i, y)
     }
 
     cond {
-      s = (s32[], f32[256,1024]) parameter(0)
+      s = (s32[], f32[64,16]{1,0}) parameter(0)
       i = s32[] get-tuple-element(s), index=0
-      ROOT lt = pred[] compare(i, s32[] constant(4)), direction=LT
+      ROOT lt = pred[] fusion(i), kind=kLoop, calls=cmp_i
+    }
+
+    small_fn {
+      zero = s32[] parameter(0)
+      p = f32[64,16]{1,0} parameter(1)
+      i_init = s32[] copy(zero)
+      x_init = f32[64,16]{1,0} copy(p)
+      init = (s32[], f32[64,16]{1,0}) tuple(i_init, x_init)
+      w = (s32[], f32[64,16]{1,0}) while(init), condition=cond, body=body
+      ROOT r = f32[64,16]{1,0} get-tuple-element(w), index=1
     }
 
     ENTRY main {
-      p = f32[256,1024] parameter(0)
+      p = f32[64,16]{1,0} parameter(0)
       zero = s32[] constant(0)
-      w = (s32[], f32[256,1024]) while((s32[], f32[256,1024]) tuple(zero, p)),
-          condition=cond, body=body
-      ROOT r = f32[256,1024] get-tuple-element(w), index=1
+      ROOT r = f32[64,16]{1,0} call(zero, p), to_apply=small_fn,
+          frontend_attributes={xla_cpu_small_call="true"}
     }
-  )";
-  ExpectOneKernel(hlo_text);
+  )hlo";
+  ExpectBackendNoCallThunk(hlo_text, /*expected_kernels=*/1);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, ErrorSpec{1e-3, 1e-3}));
+}
+
+TEST_F(CpuSmallWhileLoopTest, PartitionedFusionNotHoisted) {
+  constexpr absl::string_view hlo_text = R"hlo(
+    HloModule PartitionedFusionNotHoisted
+
+    body {
+      s = (s32[], f64[8192]) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      x = f64[8192] get-tuple-element(s), index=1
+      half = f64[8192] broadcast(f64[] constant(0.5)), dimensions={}
+      scaled = f64[8192] multiply(x, half)
+      y = f64[8192] acos(scaled)
+      ROOT r = (s32[], f64[8192]) tuple(add(i, s32[] constant(1)), y)
+    }
+
+    cond {
+      s = (s32[], f64[8192]) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      ROOT lt = pred[] compare(i, s32[] constant(3)), direction=LT
+    }
+
+    ENTRY main {
+      p = f64[8192] parameter(0)
+      lo = f64[8192] broadcast(f64[] constant(-0.9)), dimensions={}
+      hi = f64[8192] broadcast(f64[] constant(0.9)), dimensions={}
+      clamped = f64[8192] clamp(lo, p, hi)
+      w = (s32[], f64[8192]) while((s32[], f64[8192]) tuple(
+          s32[] constant(0), clamped)), condition=cond, body=body
+      ROOT r = f64[8192] get-tuple-element(w), index=1
+    }
+  )hlo";
+  ExpectNotHoisted(hlo_text, /*byte_threshold=*/1LL << 30);
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
+}
+
+TEST_F(CpuSmallWhileLoopTest, PartitionedIndexWithScatterNotHoisted) {
+  constexpr absl::string_view hlo_text = R"hlo(
+    HloModule PartitionedIndexWithScatterNotHoisted
+
+    add_f32 {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT s = f32[] add(a, b)
+    }
+
+    body {
+      s = (s32[], f32[16], f64[8192]) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      hist = f32[16] get-tuple-element(s), index=1
+      x = f64[8192] get-tuple-element(s), index=2
+      angle = f64[8192] acos(x)
+      step = f64[8192] broadcast(f64[] convert(i)), dimensions={}
+      four = f64[8192] broadcast(f64[] constant(4.0)), dimensions={}
+      scaled = f64[8192] add(f64[8192] multiply(angle, four), step)
+      raw_idx = s32[8192] convert(scaled)
+      idx_lo = s32[8192] broadcast(s32[] constant(0)), dimensions={}
+      idx_hi = s32[8192] broadcast(s32[] constant(15)), dimensions={}
+      clamped_idx = s32[8192] clamp(idx_lo, raw_idx, idx_hi)
+      idx = s32[8192,1] reshape(clamped_idx)
+      ones = f32[8192] broadcast(f32[] constant(1.0)), dimensions={}
+      next_hist = f32[16] scatter(hist, idx, ones),
+          update_window_dims={}, inserted_window_dims={0},
+          scatter_dims_to_operand_dims={0}, index_vector_dim=1,
+          to_apply=add_f32
+      half = f64[8192] broadcast(f64[] constant(0.5)), dimensions={}
+      next_x = f64[8192] multiply(x, half)
+      ROOT r = (s32[], f32[16], f64[8192])
+          tuple(add(i, s32[] constant(1)), next_hist, next_x)
+    }
+
+    cond {
+      s = (s32[], f32[16], f64[8192]) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      ROOT lt = pred[] compare(i, s32[] constant(3)), direction=LT
+    }
+
+    ENTRY main {
+      p = f64[8192] parameter(0)
+      lo = f64[8192] broadcast(f64[] constant(-0.9)), dimensions={}
+      hi = f64[8192] broadcast(f64[] constant(0.9)), dimensions={}
+      x = f64[8192] clamp(lo, p, hi)
+      hist = f32[16] broadcast(f32[] constant(0.0)), dimensions={}
+      w = (s32[], f32[16], f64[8192]) while((s32[], f32[16], f64[8192])
+          tuple(s32[] constant(0), hist, x)), condition=cond, body=body
+      ROOT r = f32[16] get-tuple-element(w), index=1
+    }
+  )hlo";
+  ExpectNotHoisted(hlo_text, /*byte_threshold=*/1LL << 30);
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
+}
+
+TEST_F(CpuSmallWhileLoopTest, ParallelGemvAndCopyNotHoisted) {
+  constexpr absl::string_view gemv_hlo = R"hlo(
+    HloModule ParallelGemvNotHoisted
+
+    body {
+      s = (s32[], f32[1024,1024], f32[1024]) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      a = f32[1024,1024] get-tuple-element(s), index=1
+      v = f32[1024] get-tuple-element(s), index=2
+      scale = f32[1024] broadcast(f32[] constant(0.001)), dimensions={}
+      dv = f32[1024] dot(a, v),
+          lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      next_v = f32[1024] multiply(dv, scale)
+      ROOT r = (s32[], f32[1024,1024], f32[1024])
+          tuple(add(i, s32[] constant(1)), a, next_v)
+    }
+
+    cond {
+      s = (s32[], f32[1024,1024], f32[1024]) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      ROOT lt = pred[] compare(i, s32[] constant(3)), direction=LT
+    }
+
+    ENTRY main {
+      a = f32[1024,1024] parameter(0)
+      v = f32[1024] parameter(1)
+      w = (s32[], f32[1024,1024], f32[1024]) while(
+          (s32[], f32[1024,1024], f32[1024]) tuple(s32[] constant(0), a, v)),
+          condition=cond, body=body
+      ROOT r = f32[1024] get-tuple-element(w), index=2
+    }
+  )hlo";
+  ExpectNotHoisted(gemv_hlo, /*byte_threshold=*/1LL << 30);
+  EXPECT_TRUE(RunAndCompare(gemv_hlo, ErrorSpec{1e-2, 1e-2}));
+
+  constexpr absl::string_view batch_dot_hlo = R"hlo(
+    HloModule ParallelBatchDotNotHoisted
+
+    body {
+      s = (s32[], f32[4,256,256], f32[4,256]) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      a = f32[4,256,256] get-tuple-element(s), index=1
+      v = f32[4,256] get-tuple-element(s), index=2
+      scale = f32[4,256] broadcast(f32[] constant(0.004)), dimensions={}
+      dv = f32[4,256] dot(a, v),
+          lhs_batch_dims={0}, rhs_batch_dims={0},
+          lhs_contracting_dims={2}, rhs_contracting_dims={1}
+      next_v = f32[4,256] multiply(dv, scale)
+      ROOT r = (s32[], f32[4,256,256], f32[4,256])
+          tuple(add(i, s32[] constant(1)), a, next_v)
+    }
+
+    cond {
+      s = (s32[], f32[4,256,256], f32[4,256]) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      ROOT lt = pred[] compare(i, s32[] constant(3)), direction=LT
+    }
+
+    ENTRY main {
+      a = f32[4,256,256] parameter(0)
+      v = f32[4,256] parameter(1)
+      w = (s32[], f32[4,256,256], f32[4,256]) while(
+          (s32[], f32[4,256,256], f32[4,256]) tuple(s32[] constant(0), a, v)),
+          condition=cond, body=body
+      ROOT r = f32[4,256] get-tuple-element(w), index=2
+    }
+  )hlo";
+  ExpectNotHoisted(batch_dot_hlo, /*byte_threshold=*/1LL << 30);
+  EXPECT_TRUE(RunAndCompare(batch_dot_hlo, ErrorSpec{1e-2, 1e-2}));
+
+  // Ring buffer rotation forces CopyInsertion to emit > 1 MiB CopyThunks inside
+  // the loop body, which must not be serialized by hoisting even with a large
+  // byte threshold.
+  constexpr absl::string_view copy_hlo = R"hlo(
+    HloModule ParallelCopyNotHoisted
+
+    body {
+      s = (s32[], f32[300000], f32[300000]) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      a = f32[300000] get-tuple-element(s), index=1
+      b = f32[300000] get-tuple-element(s), index=2
+      ROOT r = (s32[], f32[300000], f32[300000])
+          tuple(add(i, s32[] constant(1)), b, a)
+    }
+
+    cond {
+      s = (s32[], f32[300000], f32[300000]) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      ROOT lt = pred[] compare(i, s32[] constant(3)), direction=LT
+    }
+
+    ENTRY main {
+      a = f32[300000] parameter(0)
+      b = f32[300000] parameter(1)
+      w = (s32[], f32[300000], f32[300000]) while(
+          (s32[], f32[300000], f32[300000]) tuple(s32[] constant(0), a, b)),
+          condition=cond, body=body
+      ROOT r = f32[300000] get-tuple-element(w), index=1
+    }
+  )hlo";
+  ExpectNotHoisted(copy_hlo, /*byte_threshold=*/1LL << 30);
+  EXPECT_TRUE(RunAndCompare(copy_hlo, ErrorSpec{0}));
+}
+
+TEST_F(CpuSmallWhileLoopTest, LargeScatterAndManyReductionBodyNotHoisted) {
+  // A single threaded scatter whose per iteration byte footprint exceeds the
+  // default byte threshold stays an ordinary WhileThunk.
+  constexpr absl::string_view large_scatter_hlo = R"hlo(
+    HloModule LargeScatterNotHoisted
+
+    add_s32 {
+      a = s32[] parameter(0)
+      b = s32[] parameter(1)
+      ROOT s = s32[] add(a, b)
+    }
+
+    body {
+      s = (s32[], s32[128], s32[300000,1], s32[300000]) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      hist = s32[128] get-tuple-element(s), index=1
+      idx = s32[300000,1] get-tuple-element(s), index=2
+      upd = s32[300000] get-tuple-element(s), index=3
+      next_hist = s32[128] scatter(hist, idx, upd),
+          update_window_dims={}, inserted_window_dims={0},
+          scatter_dims_to_operand_dims={0}, index_vector_dim=1,
+          to_apply=add_s32
+      ROOT r = (s32[], s32[128], s32[300000,1], s32[300000])
+          tuple(add(i, s32[] constant(1)), next_hist, idx, upd)
+    }
+
+    cond {
+      s = (s32[], s32[128], s32[300000,1], s32[300000]) parameter(0)
+      i = s32[] get-tuple-element(s), index=0
+      ROOT lt = pred[] compare(i, s32[] constant(2)), direction=LT
+    }
+
+    ENTRY main {
+      hist = s32[128] parameter(0)
+      raw_idx = s32[300000,1] parameter(1)
+      lo = s32[300000,1] broadcast(s32[] constant(0)), dimensions={}
+      hi = s32[300000,1] broadcast(s32[] constant(127)), dimensions={}
+      idx = s32[300000,1] clamp(lo, raw_idx, hi)
+      upd = s32[300000] parameter(2)
+      w = (s32[], s32[128], s32[300000,1], s32[300000]) while(
+          (s32[], s32[128], s32[300000,1], s32[300000])
+          tuple(s32[] constant(0), hist, idx, upd)),
+          condition=cond, body=body
+      ROOT r = s32[128] get-tuple-element(w), index=1
+    }
+  )hlo";
+  ExpectNotHoisted(large_scatter_hlo);
+  EXPECT_TRUE(RunAndCompare(large_scatter_hlo, ErrorSpec{0}));
+
+  // A body with 40 fused array reductions and 40 array updates (> 64 array loop
+  // kernels, as in issue #52122) exceeds the hoisted body complexity bound even
+  // under a large byte threshold.
+  std::string body_chain;
+  for (int k = 0; k < 40; ++k) {
+    const std::string prev = k == 0 ? "x" : absl::StrCat("x", k - 1);
+    absl::StrAppend(
+        &body_chain, "  c1_", k, " = f32[64] broadcast(f32[] constant(",
+        0.01 * (k + 1), ")), dimensions={}\n  c2_", k,
+        " = f32[64] broadcast(f32[] constant(", 0.01 * (k + 2),
+        ")), dimensions={}\n  t_", k, " = f32[64] add(multiply(sn, c1_", k,
+        "), multiply(cs, c2_", k, "))\n  red_", k, " = f32[] reduce(t_", k,
+        ", f32[] constant(0.0)), dimensions={0}, to_apply=add_f32\n  rb_", k,
+        " = f32[64] broadcast(red_", k, "), dimensions={}\n  x", k,
+        " = f32[64] add(", prev, ", rb_", k, ")\n");
+  }
+  const std::string many_reductions_hlo = absl::StrCat(
+      "HloModule ManyReductionsNotHoisted\n"
+      "add_f32 {\n"
+      "  a = f32[] parameter(0)\n"
+      "  b = f32[] parameter(1)\n"
+      "  ROOT s = f32[] add(a, b)\n"
+      "}\n"
+      "body {\n"
+      "  st = (s32[], f32[64]) parameter(0)\n"
+      "  i = s32[] get-tuple-element(st), index=0\n"
+      "  x = f32[64] get-tuple-element(st), index=1\n"
+      "  sn = f32[64] sine(x)\n"
+      "  cs = f32[64] cosine(x)\n",
+      body_chain,
+      "  ROOT r = (s32[], f32[64]) tuple(add(i, s32[] constant(1)), x39)\n"
+      "}\n"
+      "cond {\n"
+      "  st = (s32[], f32[64]) parameter(0)\n"
+      "  i = s32[] get-tuple-element(st), index=0\n"
+      "  ROOT lt = pred[] compare(i, s32[] constant(2)), direction=LT\n"
+      "}\n"
+      "ENTRY main {\n"
+      "  x = f32[64] parameter(0)\n"
+      "  w = (s32[], f32[64]) while((s32[], f32[64])"
+      " tuple(s32[] constant(0), x)), condition=cond, body=body\n"
+      "  ROOT r = f32[64] get-tuple-element(w), index=1\n"
+      "}\n");
+  ExpectNotHoisted(many_reductions_hlo, /*byte_threshold=*/1LL << 30);
+  EXPECT_TRUE(RunAndCompare(many_reductions_hlo, ErrorSpec{1e-2, 1e-2}));
 }
 
 TEST_F(CpuSmallWhileLoopTest, InPlaceDynamicUpdateSlice) {
