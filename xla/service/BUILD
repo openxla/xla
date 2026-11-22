@@ -1034,6 +1034,7 @@ cc_library(
         ":platform_util",
         ":service",
         "//xla:debug_options_flags",
+        "//xla:shape_util",
         "//xla:status_macros",
         "//xla:types",
         "//xla:util",
@@ -1825,6 +1826,7 @@ xla_cc_test(
     srcs = ["hlo_creation_utils_test.cc"],
     deps = [
         ":hlo_creation_utils",
+        ":hlo_module_util",
         ":pattern_matcher",
         "//xla:array2d",
         "//xla:literal",
@@ -1840,6 +1842,7 @@ xla_cc_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",

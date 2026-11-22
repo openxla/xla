@@ -6094,6 +6094,42 @@ TEST_F(HloParserTest, ParseShapeStringWithSplitConfigLayout) {
       << "actual:   " << ShapeUtil::HumanStringWithLayout(actual);
 }
 
+TEST_F(HloParserTest, ParseShapeStringWithBitPlanesLayout) {
+  const std::string valid_shapes[] = {
+      "f6e3m2fn[16,128]{1,0:T(16,128)BP(4:(8,1))(2:(16,1))}",
+      "f6e2m3fn[256,128]{1,0:T(256,128)(16,128)BP(4:(8,1))(2:(16,1))S(1)}",
+      "f6e3m2fn[20,128]{1,0:T(d,128)(16,128)BP(4:(8,1))(2:(16,1))}",
+      "f6e3m2fn[130]{0:T(2048)BP(4:(128)(8,1))(2:(128)(16,1))}",
+      "f6e3m2fn[16,128]{1,0:T(16,128)BP(2@4:(16,1))(4@0:(8,1))}",
+      "s64[10,130]{1,0:BP(32:(8,128))(32:(8,128))M(64)}",
+      "s64[]{:BP(32:(128))(32:(128))}",
+      "s64[100]{0:L(128)BP(32:(1))(32:(1))}",
+      "s64[16,128]{1,0:T(16,128)BP(32)(32)}",
+  };
+  for (const std::string& shape_string : valid_shapes) {
+    ASSERT_OK_AND_ASSIGN(Shape parsed, ParseShape(shape_string));
+    EXPECT_EQ(ShapeUtil::HumanStringWithLayout(parsed), shape_string);
+    EXPECT_THAT(LayoutUtil::ValidateLayoutInShape(parsed), absl_testing::IsOk())
+        << shape_string;
+  }
+
+  const std::pair<std::string, std::string> invalid_shapes[] = {
+      {"f6e3m2fn[16,128]{1,0:T(16,128)BP(0:(8,1))(6:(16,1))}",
+       "bit_plane bit_width must be positive"},
+      {"f6e3m2fn[16,128]{1,0:T(16,128)BP(4@-1:(8,1))(2:(16,1))}",
+       "bit_plane bit_offset must be non-negative"},
+      {"f6e3m2fn[16,128]{1,0:T(16,128)BP(4:)(2:(16,1))}",
+       "expects '(' to start bit_plane tile"},
+      {"f32[1]{0:BP(9223372036854775807)(1)}", "bit_plane bit range overflows"},
+  };
+  for (const auto& [bad, expected_error] : invalid_shapes) {
+    EXPECT_THAT(ParseShape(bad),
+                absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                                       HasSubstr(expected_error)))
+        << bad;
+  }
+}
+
 TEST_F(HloParserTest, ParseOpaqueType) {
   ASSERT_OK_AND_ASSIGN(Shape actual, ParseShape("opaque[]"));
   Shape expected = ShapeUtil::MakeOpaqueShape();
@@ -9293,6 +9329,12 @@ ENTRY e {
       result.status().message(),
       "failed to infer shape for opcode: get-tuple-element, error: "
       "Cannot infer shape: attempt to index out of tuple bounds: -1");
+}
+
+TEST_F(HloParserTest, RejectsAutoLayoutWithBitPlanesOnNonScalar) {
+  EXPECT_THAT(ParseShape("f6e3m2fn[16,128]{:BP(4:(8,1))(2:(16,1))S(1)}"),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("minor to major size is 0")));
 }
 
 }  // namespace

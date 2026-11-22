@@ -99,11 +99,12 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
 
     Shape normalized_shape = Normalize(shape);
     *literal.mutable_shape_do_not_use() = normalized_shape;
-    // Ensure element_size_in_bits of literal is 0, because literals do not
-    // support packed values.
+    // Ensure element_size_in_bits and bit_planes of literal are cleared,
+    // because literals do not support packed or bit-plane layouts.
     literal.mutable_shape_do_not_use()
         ->mutable_layout()
         ->set_element_size_in_bits(0);
+    literal.mutable_shape_do_not_use()->mutable_layout()->clear_bit_planes();
 
     *hlo->mutable_shape() = normalized_shape;
     HloInstruction* bc_to_orig = MaybeBitcast(hlo, shape);

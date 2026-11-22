@@ -334,7 +334,8 @@ HloInstruction* MakeConvertToHlo(HloInstruction* hlo, PrimitiveType type,
     return hlo;
   }
   Shape shape = ShapeUtil::ChangeElementType(hlo->shape(), type);
-  if (primitive_util::IsSubByteNonPredType(shape.element_type())) {
+  if (primitive_util::IsSubByteNonPredType(shape.element_type()) &&
+      shape.layout().bit_planes().empty()) {
     shape.mutable_layout()->set_element_size_in_bits(
         primitive_util::BitWidth(shape.element_type()));
   } else {

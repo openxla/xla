@@ -879,6 +879,12 @@ PJRT_RecvCallbackInfo CppRecvCallbackToCRecvCallback(
 
 absl::StatusOr<BufferMemoryLayoutData> ConvertToBufferMemoryLayoutData(
     const xla::Layout& cpp_layout) {
+  if (!cpp_layout.bit_planes().empty()) {
+    return absl::UnimplementedError(absl::StrCat(
+        "PJRT C API PJRT_Buffer_MemoryLayout_Tiled does not support bit-plane "
+        "layouts: ",
+        cpp_layout.ToString()));
+  }
   BufferMemoryLayoutData layout_data;
   layout_data.c_layout.type =
       PJRT_Buffer_MemoryLayout_Type::PJRT_Buffer_MemoryLayout_Type_Tiled;

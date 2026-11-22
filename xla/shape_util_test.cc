@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -1500,6 +1501,131 @@ TEST(ShapeUtilTest, Int4ShapeToHostShape) {
   EXPECT_EQ(host_shape.layout().element_size_in_bits(), 0);
 }
 
+TEST(ShapeUtilTest, BitPlaneSizesAndHostShapeConversions) {
+  const std::vector<BitPlane> fp6_2d_planes = {
+      BitPlane(0, 4, {Tile({8, 1})}),
+      BitPlane(4, 2, {Tile({16, 1})}),
+  };
+  Shape single_strip = ShapeUtil::MakeShapeWithDenseLayout(
+      F6E2M3FN, {3, 128}, {1, 0},
+      {Tile({Tile::kMatchDimension, 128}), Tile({16, 128})},
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/0, /*split_configs=*/{}, fp6_2d_planes);
+  EXPECT_EQ(ShapeUtil::ElementSizeInBits(single_strip), 6);
+  EXPECT_EQ(ShapeUtil::ArraySize(single_strip), 1536);
+  EXPECT_EQ(ShapeUtil::ByteStrides(single_strip), std::nullopt);
+  EXPECT_FALSE(ShapeUtil::DeviceShapeIsHostShape(single_strip));
+  Shape host_shape = ShapeUtil::DeviceShapeToHostShape(single_strip);
+  EXPECT_TRUE(ShapeUtil::DeviceShapeIsHostShape(host_shape));
+  EXPECT_TRUE(host_shape.layout().bit_planes().empty());
+
+  // UpdateElementSizeInBits must keep element_size_in_bits == 0 when bit_planes
+  // is present on a sub-byte type.
+  Shape subbyte_with_planes = ShapeUtil::MakeShapeWithDenseLayout(
+      U4, {16, 128}, {1, 0}, {Tile({16, 128})},
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/0, /*split_configs=*/{}, fp6_2d_planes);
+  ShapeUtil::UpdateElementSizeInBits(&subbyte_with_planes,
+                                     /*pack_subbyte_types=*/true);
+  EXPECT_EQ(subbyte_with_planes.layout().element_size_in_bits(), 0);
+  EXPECT_EQ(subbyte_with_planes.layout().bit_planes().size(), 2);
+
+  // MakeValidatedShapeWithDescendingLayoutAndSamePhysicalLayout preserves
+  // bit_planes across both per-strip and whole-tensor bit-plane layouts.
+  Shape col_major_fp6 = ShapeUtil::MakeShapeWithDenseLayout(
+      F6E3M2FN, {128, 16}, {0, 1}, {Tile({16, 128})},
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/1, /*split_configs=*/{}, fp6_2d_planes);
+  ASSERT_OK_AND_ASSIGN(
+      Shape descending_fp6,
+      ShapeUtil::MakeValidatedShapeWithDescendingLayoutAndSamePhysicalLayout(
+          col_major_fp6));
+  EXPECT_EQ(ShapeUtil::HumanStringWithLayout(descending_fp6),
+            "f6e3m2fn[16,128]{1,0:T(16,128)BP(4:(8,1))(2:(16,1))S(1)}");
+  EXPECT_EQ(ShapeUtil::ArraySize(descending_fp6), 1536);
+
+  Shape col_major_s64 = ShapeUtil::MakeShapeWithDenseLayout(
+      S64, {128, 16}, {0, 1}, /*tiles=*/{},
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/0, /*split_configs=*/{},
+      {BitPlane(0, 32, {Tile({8, 128})}), BitPlane(32, 32, {Tile({8, 128})})});
+  ASSERT_OK_AND_ASSIGN(
+      Shape descending_s64,
+      ShapeUtil::MakeValidatedShapeWithDescendingLayoutAndSamePhysicalLayout(
+          col_major_s64));
+  EXPECT_EQ(ShapeUtil::HumanStringWithLayout(descending_s64),
+            "s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))}");
+  EXPECT_EQ(ShapeUtil::ArraySize(descending_s64), 16384);
+
+  // ChangeElementType preserves bit_planes across same-bitwidth types and
+  // clears them when bitwidth changes.
+  Shape changed_same_width =
+      ShapeUtil::ChangeElementType(single_strip, F6E3M2FN);
+  EXPECT_EQ(changed_same_width.layout().bit_planes().size(), 2);
+  Shape changed_bf16 = ShapeUtil::ChangeElementType(single_strip, BF16);
+  EXPECT_TRUE(changed_bf16.layout().bit_planes().empty());
+
+  Shape two_strips = ShapeUtil::MakeShapeWithDenseLayout(
+      F6E3M2FN, {17, 64}, {1, 0},
+      {Tile({Tile::kMatchDimension, 128}), Tile({16, 128})},
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/0, /*split_configs=*/{}, fp6_2d_planes);
+  EXPECT_EQ(ShapeUtil::ArraySize(two_strips), 3072);
+
+  Shape zero_rows = ShapeUtil::MakeShapeWithDenseLayout(
+      F6E2M3FN, {0, 128}, {1, 0},
+      {Tile({Tile::kMatchDimension, 128}), Tile({16, 128})},
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/0, /*split_configs=*/{}, fp6_2d_planes);
+  EXPECT_EQ(ShapeUtil::ArraySize(zero_rows), 0);
+  EXPECT_EQ(ShapeUtil::ArrayDataSize(zero_rows), 0);
+
+  // 2D partial row: row 0 lane 127 in plane 1 ends at bit 8192 + 2033*2 = 12258
+  // -> 1533 bytes.
+  Shape one_row = ShapeUtil::MakeShapeWithDenseLayout(
+      F6E3M2FN, {1, 128}, {1, 0}, {Tile({16, 128})}, 1, 0, 0, {},
+      fp6_2d_planes);
+  EXPECT_EQ(ShapeUtil::ArraySize(one_row), 1536);
+  EXPECT_EQ(ShapeUtil::ArrayDataSize(one_row), 1533);
+
+  // 1D box-maxima regression: index 129 lands at byte 1028, whereas live index
+  // 127 (row 0, lane 127) lands at byte 1532 (1533 bytes total live span).
+  Shape fp6_1d = ShapeUtil::MakeShapeWithDenseLayout(
+      F6E3M2FN, {130}, {0}, {Tile({2048})}, 1, 0, 0, {},
+      {BitPlane(0, 4, {Tile({128}), Tile({8, 1})}),
+       BitPlane(4, 2, {Tile({128}), Tile({16, 1})})});
+  EXPECT_EQ(ShapeUtil::ArraySize(fp6_1d), 1536);
+  EXPECT_EQ(ShapeUtil::ArrayDataSize(fp6_1d), 1533);
+
+  // Empty outer tiles (whole-tensor S64 split): 2D, 0D scalar, and L(128).
+  Shape s64_2d = ShapeUtil::MakeShapeWithDenseLayout(
+      S64, {10, 130}, {1, 0}, {}, 1, 0, 0, {},
+      {BitPlane(0, 32, {Tile({8, 128})}), BitPlane(32, 32, {Tile({8, 128})})});
+  EXPECT_EQ(ShapeUtil::ElementSizeInBits(s64_2d), 64);
+  EXPECT_EQ(ShapeUtil::ArraySize(s64_2d), 32768);
+
+  Shape s64_0d = ShapeUtil::MakeShapeWithDenseLayout(
+      S64, {}, {}, {}, 1, 0, 0, {},
+      {BitPlane(0, 32, {Tile({128})}), BitPlane(32, 32, {Tile({128})})});
+  EXPECT_EQ(ShapeUtil::ArraySize(s64_0d), 1024);
+  EXPECT_EQ(ShapeUtil::ArrayDataSize(s64_0d), 516);
+
+  Shape s64_linear = ShapeUtil::MakeShapeWithDenseLayout(
+      S64, {100}, {0}, {}, /*tail_padding_alignment_in_elements=*/128, 0, 0, {},
+      {BitPlane(0, 32, {Tile({1})}), BitPlane(32, 32, {Tile({1})})});
+  EXPECT_EQ(ShapeUtil::ArraySize(s64_linear), 1024);
+  EXPECT_EQ(ShapeUtil::ArrayDataSize(s64_linear), 512 + 100 * 4);
+
+  // Combined 2x3 = 6 rows (max row 5, lane 127): in plane 1's (16, 1) subtile,
+  // (lane=127, row=5) is index 127*16 + 5 = 2037 -> bit end 8192 + 2038*2 =
+  // 12268 -> CeilOfRatio(12268, 8) = 1534 bytes.
+  Shape combined_fp6 = ShapeUtil::MakeShapeWithDenseLayout(
+      F6E3M2FN, {2, 3, 128}, {2, 1, 0},
+      {Tile({Tile::kCombineDimension, 16, 128})}, 1, 0, 0, {}, fp6_2d_planes);
+  EXPECT_EQ(ShapeUtil::ArraySize(combined_fp6), 1536);
+  EXPECT_EQ(ShapeUtil::ArrayDataSize(combined_fp6), 1534);
+}
+
 TEST(XlaShapeUtilTest, ZeroSize) {
   // Verify that if any one dimension is 0 we have a zero byte buffer.
   std::vector<std::vector<int64_t>> test_cases = {
@@ -2231,6 +2357,44 @@ TEST(ShapeUtilTest, MakeValidatedShapeNonArrayAndInvalidInputs) {
   EXPECT_THAT(ShapeUtil::MakeValidatedShapeWithDenseLayout(F32, {2, 3}, {0, 0}),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("duplicate values")));
+}
+
+TEST(ShapeUtilBitPlaneNearMaxBitsTest, NearMaxInt64BitCountDoesNotOverflow) {
+  // Verify BitsToBytesCeil handles bit counts near INT64_MAX (where
+  // (bits + CHAR_BIT - 1) / CHAR_BIT would overflow signed int64_t).
+  const int64_t elems = (std::numeric_limits<int64_t>::max() / 6) & ~2047LL;
+  Shape large_1d = ShapeUtil::MakeShapeWithDenseLayout(
+      F6E3M2FN, {elems}, {0}, {Tile({2048})},
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/0, /*split_configs=*/{},
+      {BitPlane(0, 4, {Tile({128}), Tile({8, 1})}),
+       BitPlane(4, 2, {Tile({128}), Tile({16, 1})})});
+  ASSERT_THAT(LayoutUtil::ValidateLayoutInShape(large_1d),
+              absl_testing::IsOk());
+  const int64_t expected_bits = elems * 6;
+  const int64_t expected_bytes =
+      expected_bits / 8 + (expected_bits % 8 != 0 ? 1 : 0);
+  EXPECT_EQ(ShapeUtil::ArraySize(large_1d), expected_bytes);
+  EXPECT_EQ(ShapeUtil::ArrayDataSize(large_1d), expected_bytes);
+  EXPECT_EQ(LayoutUtil::BitOffsetForBitPlane(large_1d, {0}, 0), 0);
+}
+
+TEST(ShapeUtilBitPlaneNearMaxBitsTest,
+     BitPlaneShapesAreNotDecomposableBitcasts) {
+  const Shape whole_tensor_bp = ShapeUtil::MakeShapeWithDenseLayout(
+      S64, {16, 128}, {1, 0}, /*tiles=*/{},
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/0, /*split_configs=*/{},
+      {BitPlane(0, 32, {Tile({8, 128})}), BitPlane(32, 32, {Tile({8, 128})})});
+  const Shape untiled =
+      ShapeUtil::MakeShapeWithDenseLayout(S64, {128, 16}, {1, 0});
+
+  EXPECT_FALSE(ShapeUtil::IsDecomposableBitcast(whole_tensor_bp, untiled));
+  EXPECT_FALSE(ShapeUtil::IsDecomposableBitcast(untiled, whole_tensor_bp));
+  EXPECT_EQ(ShapeUtil::DecomposeBitcast(whole_tensor_bp, untiled),
+            std::nullopt);
+  EXPECT_EQ(ShapeUtil::DecomposeBitcastToTrt(whole_tensor_bp, untiled),
+            std::nullopt);
 }
 
 }  // namespace

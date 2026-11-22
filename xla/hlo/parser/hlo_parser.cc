@@ -606,6 +606,7 @@ class HloParserImpl : public HloParser {
   bool ParseDimLevelTypes(
       absl::InlinedVector<DimLevelType, InlineRank()>* dim_level_types);
   bool ParseTiles(std::vector<Tile>* tiles);
+  bool ParseBitPlanes(std::vector<BitPlane>* bit_planes);
   bool ParseSplitConfigs(std::vector<SplitConfig>& split_configs);
   bool ParsePhysicalShape(Shape* physical_shape);
   bool ParseOpcode(HloOpcode* opcode,
@@ -7322,6 +7323,59 @@ bool HloParserImpl::ParseTiles(std::vector<Tile>* tiles) {
   return true;
 }
 
+// bit_planes
+//   ::= /*empty*/
+//   ::= 'BP' ('(' int64_t ('@' int64_t)? (':' ('(' dim_list ')')+)? ')')+
+bool HloParserImpl::ParseBitPlanes(std::vector<BitPlane>* bit_planes) {
+  int64_t running_offset = 0;
+  do {
+    if (!ParseToken(TokKind::kLparen,
+                    StrCat("expects bit_planes entry to start with ",
+                           TokKindToString(TokKind::kLparen)))) {
+      return false;
+    }
+    LocTy width_loc = lexer_.GetLoc();
+    int64_t bit_width = 0;
+    if (!ParseInt64(&bit_width)) {
+      return false;
+    }
+    if (bit_width <= 0) {
+      return Error(width_loc, "bit_plane bit_width must be positive");
+    }
+    int64_t bit_offset = running_offset;
+    LocTy offset_loc = width_loc;
+    if (EatIfPresent(TokKind::kAt)) {
+      offset_loc = lexer_.GetLoc();
+      if (!ParseInt64(&bit_offset)) {
+        return false;
+      }
+      if (bit_offset < 0) {
+        return Error(offset_loc, "bit_plane bit_offset must be non-negative");
+      }
+    }
+    if (bit_offset > std::numeric_limits<int64_t>::max() - bit_width) {
+      return Error(offset_loc, "bit_plane bit range overflows");
+    }
+    running_offset = bit_offset + bit_width;
+    std::vector<Tile> plane_tiles;
+    if (EatIfPresent(TokKind::kColon)) {
+      if (lexer_.GetKind() != TokKind::kLparen) {
+        return TokenError("expects '(' to start bit_plane tile");
+      }
+      if (!ParseTiles(&plane_tiles)) {
+        return false;
+      }
+    }
+    if (!ParseToken(TokKind::kRparen,
+                    StrCat("expects bit_planes entry to end with ",
+                           TokKindToString(TokKind::kRparen)))) {
+      return false;
+    }
+    bit_planes->emplace_back(bit_offset, bit_width, plane_tiles);
+  } while (lexer_.GetKind() == TokKind::kLparen);
+  return true;
+}
+
 // physical_shape
 //   ::= /*empty*/
 //   ::= 'P' '(' shape ')'
@@ -7423,6 +7477,7 @@ bool HloParserImpl::ParseSplitConfigs(std::vector<SplitConfig>& split_configs) {
 //            tiles
 //            tail_padding_alignment_in_elements
 //            element_size_in_bits
+//            bit_planes
 //            memory_space
 //            split_configs
 //            physical_shape
@@ -7431,6 +7486,9 @@ bool HloParserImpl::ParseSplitConfigs(std::vector<SplitConfig>& split_configs) {
 // element_size_in_bits
 //   ::= /*empty*/
 //   ::= 'E' '(' int64_t ')'
+// bit_planes
+//   ::= /*empty*/
+//   ::= 'BP' ('(' int64_t ('@' int64_t)? (':' ('(' dim_list ')')+)? ')')+
 // memory_space
 //   ::= /*empty*/
 //   ::= 'S' '(' int64_t ')'
@@ -7438,6 +7496,7 @@ bool HloParserImpl::ParseLayout(Layout* layout) {
   absl::InlinedVector<int64_t, InlineRank()> minor_to_major;
   DimLevelTypeVector dim_level_types;
   std::vector<Tile> tiles;
+  std::vector<BitPlane> bit_planes;
   PrimitiveType index_primitive_type = PRIMITIVE_TYPE_INVALID;
   PrimitiveType pointer_primitive_type = PRIMITIVE_TYPE_INVALID;
   int64_t element_size_in_bits = 0;
@@ -7519,6 +7578,13 @@ bool HloParserImpl::ParseLayout(Layout* layout) {
         ParseLayoutIntAttribute(&element_size_in_bits, "element size in bits");
       }
 
+      if (lexer_.GetKind() == TokKind::kIdent && lexer_.GetStrVal() == "BP") {
+        lexer_.Lex();
+        if (!ParseBitPlanes(&bit_planes)) {
+          return false;
+        }
+      }
+
       if (lexer_.GetKind() == TokKind::kIdent && lexer_.GetStrVal() == "S") {
         lexer_.Lex();
         ParseLayoutIntAttribute(&memory_space, "memory space");
@@ -7556,7 +7622,7 @@ bool HloParserImpl::ParseLayout(Layout* layout) {
       minor_to_major, vec_tiles, tail_padding_alignment_in_elements,
       index_primitive_type, pointer_primitive_type, element_size_in_bits,
       memory_space, split_configs, std::move(physical_shape),
-      dynamic_shape_metadata_prefix_bytes);
+      dynamic_shape_metadata_prefix_bytes, bit_planes);
   return true;
 }
 
@@ -7653,7 +7719,8 @@ bool HloParserImpl::ParseShape(Shape* result,
       return false;
     }
     if (layout.minor_to_major().size() != result->dimensions().size()) {
-      if (layout.minor_to_major().empty() && layout.memory_space() != 0) {
+      if (layout.minor_to_major().empty() && layout.memory_space() != 0 &&
+          layout.bit_planes().empty()) {
         // AUTO layout with non-default memory space.
       } else {
         return Error(

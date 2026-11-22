@@ -813,6 +813,16 @@ inline constexpr int BitWidth(PrimitiveType type) {
   return internal::WidthForType<internal::kBitWidths>(type);
 }
 
+// Returns the logical bit width of a given array type (6 for F6 types whose
+// host container has BitWidth() == 8, and BitWidth(type) otherwise). Crashes if
+// the type is not an array type.
+constexpr int LogicalBitWidth(PrimitiveType type) {
+  if (IsF6Type(type)) {
+    return 6;
+  }
+  return BitWidth(type);
+}
+
 // Returns the number of bits in the storage representation for a given type.
 // Currently this is the same as BitWidth() except for PRED type. Crashes if the
 // type is not an array type.
