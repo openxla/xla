@@ -3090,7 +3090,6 @@ cc_library(
         "//xla/core/collectives",
         "//xla/core/collectives:collectives_registry",
         "//xla/runtime:device_id",
-        "//xla/service:computation_placer",
         "//xla/service:device_assignment",
         "//xla/service:executable",
         "//xla/stream_executor:stream",

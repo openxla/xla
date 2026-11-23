@@ -30,7 +30,7 @@ limitations under the License.
 #include "xla/core/collectives/collectives_registry.h"
 #include "xla/executable_run_options.h"
 #include "xla/runtime/device_id.h"
-#include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/statusor.h"
