@@ -149,7 +149,7 @@ tf_http_archive(
 )
 ```
 
-Both `strip_prefix` values must use the same `<SHA>`; both hashes must come
+Both `strip_prefix` and `urls` values must use the same `<SHA>`; both hashes must come
 from the identical archive downloaded in Step 2 (just encoded differently).
 
 ## Step 5: Bazel Sanity Check
