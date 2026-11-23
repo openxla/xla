@@ -71,7 +71,6 @@ limitations under the License.
 #include "llvm/Transforms/Instrumentation/DataFlowSanitizer.h"
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
 #include "xla/backends/cpu/codegen/object_buffer_identifier.h"
-#include "xla/backends/cpu/codegen/polynomial_approximations.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/codegen/intrinsic/intrinsic.h"
 #include "xla/codegen/intrinsic/intrinsic_compiler_lib.h"
@@ -374,8 +373,6 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
   llvm::Triple target_triple(target_machine->getTargetTriple());
   auto target_library_info_impl =
       std::make_unique<llvm::TargetLibraryInfoImpl>(target_triple);
-  target_library_info_impl->addVectorizableFunctions(
-      PolynomialApproximationsVectorization());
 
   int prefer_vector_width = 0;
   for (const auto& func : module) {
@@ -467,7 +464,6 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
   }
 
   auto replaced_functions = intrinsic_lib.DefineIntrinsicFunctions(module);
-  RewriteToPolynomialApproximations(&module, options_.fast_math_flags);
   if (!replaced_functions.empty()) {
     codegen::intrinsic::RemoveFromCompilerUsed(
         module, [&](auto n) { return intrinsic_lib.IsIntrinsicFunction(n); });
