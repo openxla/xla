@@ -38,6 +38,8 @@ package_group(
         "//xla:native_custom_call_handler_allowlist",
     ],
     packages = [
+        # Embedded CUDA CUB radix sort native custom-call handler.
+        "//xla/backends/gpu/libraries/cub:__pkg__",
         # Demonstrator / test-only handler.
         "//xla/backends/gpu/libraries/native_custom_call_thunks/...",
     ],
