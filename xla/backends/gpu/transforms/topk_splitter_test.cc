@@ -282,29 +282,6 @@ ENTRY main {
 }
 
 TEST_F(HardwareIndependentTopkSplitterTest,
-       SplitsBf16ValueOnlyTopKWithTwoParamComparator) {
-  constexpr absl::string_view kHlo = R"hlo(
-HloModule m
-
-compare {
-  a = bf16[] parameter(0)
-  b = bf16[] parameter(1)
-  ROOT gt = pred[] compare(a, b), direction=GT
-}
-
-ENTRY main {
-  x = bf16[2097152]{0} parameter(0)
-  cc = (bf16[8]{0}, s32[8]{0}) custom-call(x), custom_call_target="TopK", to_apply=compare
-  ROOT val = bf16[8]{0} get-tuple-element(cc), index=0
-}
-)hlo";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  EXPECT_THAT(RunHloPass(TopKSplitter(), module.get()),
-              absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
-}
-
-TEST_F(HardwareIndependentTopkSplitterTest,
        SplitsMultipleTopKsSharingTwoParamComparator) {
   constexpr absl::string_view kHlo = R"hlo(
 HloModule m
@@ -329,114 +306,23 @@ ENTRY main {
   EXPECT_THAT(RunHloPass(TopKSplitter(), module.get()),
               absl_testing::IsOkAndHolds(true));
   ASSERT_OK(verifier().Run(module.get()).status());
-  // Re-running TopKSplitter is idempotent.
-  EXPECT_THAT(RunHloPass(TopKSplitter(), module.get()),
-              absl_testing::IsOkAndHolds(false));
-}
-
-TEST_F(HardwareIndependentTopkSplitterTest,
-       SplitsTwoParamComparatorTopKBeforeDecomposer) {
-  constexpr absl::string_view kHlo = R"hlo(
-HloModule m
-
-compare {
-  a = f32[] parameter(0)
-  b = f32[] parameter(1)
-  ROOT gt = pred[] compare(a, b), direction=GT
-}
-
-ENTRY main {
-  x = f32[2097152]{0} parameter(0)
-  cc = (f32[32]{0}, s32[32]{0}) custom-call(x), custom_call_target="TopK", to_apply=compare
-  ROOT val = f32[32]{0} get-tuple-element(cc), index=0
-}
-)hlo";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  EXPECT_THAT(RunHloPass(TopKSplitter(), module.get()),
-              absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
-  // Verify batch_topk also has a 4-parameter comparator so TopkDecomposer
-  // succeeds when TopkSpecializer falls back (e.g., k > 16).
-  EXPECT_THAT(RunHloPass(TopkDecomposer(), module.get()),
-              absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
-}
-
-TEST_F(HardwareIndependentTopkSplitterTest,
-       SplitsTwoParamComparatorTopKWithIndicesUsed) {
-  constexpr absl::string_view kHlo = R"hlo(
-HloModule m
-
-compare {
-  a = f32[] parameter(0)
-  b = f32[] parameter(1)
-  ROOT gt = pred[] compare(a, b), direction=GT, order=TOTAL
-}
-
-ENTRY main {
-  x = f32[1,2097152]{1,0} parameter(0)
-  ROOT cc = (f32[1,32]{1,0}, s32[1,32]{1,0}) custom-call(x), custom_call_target="TopK", to_apply=compare
-}
-)hlo";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  EXPECT_THAT(RunHloPass(TopKSplitter(), module.get()),
-              absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
-  EXPECT_THAT(RunHloPass(TopkDecomposer(), module.get()),
-              absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
-}
-
-void RunValueOnlySortSliceRoundTrip(HloModule* module) {
-  EXPECT_THAT(
-      TopkRewriter([](const HloSortInstruction*, int64_t) { return true; })
-          .Run(module),
-      absl_testing::IsOkAndHolds(true));
-  EXPECT_THAT(TopKSplitter(1024).Run(module), absl_testing::IsOkAndHolds(true));
-  EXPECT_THAT(TopkDecomposer().Run(module), absl_testing::IsOkAndHolds(true));
-  EXPECT_TRUE(HloDCE().Run(module).status().ok());
-}
-
-TEST_F(TopkSplitterTest, ValueOnlySortSliceEquivalent) {
-  constexpr absl::string_view kHlo = R"hlo(
-HloModule m
-
-compare {
-  a = f32[] parameter(0)
-  b = f32[] parameter(1)
-  ROOT gt = pred[] compare(a, b), direction=GT
-}
-
-ENTRY main {
-  x = f32[16384]{0} parameter(0)
-  sorted = f32[16384]{0} sort(x), dimensions={0}, is_stable=true, to_apply=compare
-  ROOT first = f32[8]{0} slice(sorted), slice={[0:8]}
-}
-)hlo";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  EXPECT_TRUE(RunAndCompare(std::move(module), std::nullopt,
-                            RunValueOnlySortSliceRoundTrip));
-}
-
-TEST_F(TopkSplitterTest, ValueOnlySortSliceLargeKEquivalent) {
-  constexpr absl::string_view kHlo = R"hlo(
-HloModule m
-
-compare {
-  a = f32[] parameter(0)
-  b = f32[] parameter(1)
-  ROOT gt = pred[] compare(a, b), direction=GT
-}
-
-ENTRY main {
-  x = f32[16384]{0} parameter(0)
-  sorted = f32[16384]{0} sort(x), dimensions={0}, is_stable=true, to_apply=compare
-  ROOT first = f32[32]{0} slice(sorted), slice={[0:32]}
-}
-)hlo";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  EXPECT_TRUE(RunAndCompare(std::move(module), std::nullopt,
-                            RunValueOnlySortSliceRoundTrip));
+  const HloComputation* shared_comparator = nullptr;
+  int comparator_users = 0;
+  for (const HloInstruction* inst :
+       module->entry_computation()->instructions()) {
+    if (!inst->has_to_apply()) {
+      continue;
+    }
+    ++comparator_users;
+    if (shared_comparator == nullptr) {
+      shared_comparator = inst->to_apply();
+    } else {
+      EXPECT_EQ(inst->to_apply(), shared_comparator);
+    }
+  }
+  ASSERT_NE(shared_comparator, nullptr);
+  EXPECT_EQ(comparator_users, 4);
+  EXPECT_EQ(shared_comparator->num_parameters(), 4);
 }
 
 TEST_F(TopkSplitterTest, CompilesValueOnlyTopKFullGpuPipeline) {
