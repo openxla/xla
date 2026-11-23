@@ -95,11 +95,6 @@ bool IsIntraNVLinkDomain(const HloModuleConfig& config, int64_t slice_size);
 // symmetric memory.
 bool IsLsaPossible(const GpuTopology& gpu_topology);
 
-// Returns true if `device_description` is a ROCm device whose runtime ships
-// the RCCL symmetric memory window APIs (ROCm 10.0+, i.e. HIP runtime 7.15+).
-bool IsRocmSymmetricMemorySupported(
-    const se::DeviceDescription& device_description);
-
 // Returns the size of the block of consecutive global device ids that a
 // collective kernel may span: one NVLink partition (slice) if LSA is supported,
 // xla_gpu_unsupported_use_cross_host_one_shot_kernel is enabled for `op_type`,

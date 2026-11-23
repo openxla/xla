@@ -1284,7 +1284,7 @@ cc_library(
         "//xla/core/collectives:rank_id",
         "//xla/core/collectives:symmetric_memory",
         "//xla/stream_executor:device_address",
-        "//xla/stream_executor/rocm:rocm_cumem",
+        "//xla/stream_executor/rocm:rocm_vmm_allocator",
         "//xla/tsl/concurrency:executor",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
