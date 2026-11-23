@@ -28,12 +28,14 @@ drifted out of sync, each building a different `rules_ml_toolchain` commit.
 
 - If the user gave an explicit commit SHA, use it verbatim - but it must be
   the full 40-character lowercase hex commit SHA, not an abbreviated SHA or
-  a branch/tag name. GitHub's `/archive/<ref>.tar.gz` endpoint names the
-  extracted top-level directory after whatever `<ref>` you requested, and
-  `strip_prefix` must match that directory exactly - an abbreviated SHA
-  breaks Bazel archive extraction. If the user gives you something shorter
-  than 40 hex characters, resolve it to the full SHA yourself (e.g. `git
-  ls-remote https://github.com/google-ml-infra/rules_ml_toolchain <short-ref>`)
+  a branch/tag name. For an abbreviated SHA, GitHub's `/archive/<sha>.tar.gz`
+  endpoint still extracts to `rules_ml_toolchain-<40-char-SHA>/`, so plugging
+  an abbreviated SHA into `strip_prefix` breaks Bazel archive extraction. If
+  the user gives a branch/tag, resolve it with `git ls-remote
+  https://github.com/google-ml-infra/rules_ml_toolchain <ref>`; if they give
+  an abbreviated SHA, resolve it via the GitHub API (`curl -fsSL -H
+  "Accept: application/vnd.github.sha"
+  "https://api.github.com/repos/google-ml-infra/rules_ml_toolchain/commits/<short-sha>"`)
   before proceeding.
 - If the user asked for "latest", resolve it yourself - don't guess:
   `git ls-remote https://github.com/google-ml-infra/rules_ml_toolchain HEAD`
