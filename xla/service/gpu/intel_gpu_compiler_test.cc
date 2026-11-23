@@ -31,7 +31,7 @@ TEST_F(IntelGpuCompilerTest, CheckCompiler) {
             stream_executor::sycl::kSyclPlatformId);
 }
 
-// Checks that SyclGemmWorkspacePass rewrites the cuBLASLt matmul workspace
+// Checks that SyclOneDnnWorkspacePass rewrites the cuBLASLt matmul workspace
 // from the 4 MiB default to the oneDNN scratchpad size (0 for a tiny matmul).
 TEST_F(IntelGpuCompilerTest, ResizesMatmulWorkspace) {
   const char* hlo_text = R"(
@@ -73,6 +73,28 @@ TEST_F(IntelGpuCompilerTest, SkipsWorkspaceResizeForComplexMatmul) {
   )";
   MatchOptimizedHlo(
       hlo_text, absl::Substitute(check_pattern, GemmConfig::kDefaultWorkspace));
+}
+
+// Checks that the convolution workspace, zero-sized by default, is resized to
+// a non-zero size. The autotuner does not run for convolutions on Intel GPU,
+// so only SyclOneDnnWorkspacePass can resize it.
+TEST_F(IntelGpuCompilerTest, ResizesConvWorkspace) {
+  const char* hlo_text = R"(
+    HloModule conv
+
+    ENTRY main {
+      input = f32[1,56,56,64] parameter(0)
+      filter = f32[3,3,64,64] parameter(1)
+      ROOT conv = f32[1,56,56,64] convolution(input, filter),
+        window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f
+    }
+  )";
+
+  const char* check_pattern = R"(
+    CHECK: (f32[1,56,56,64]{3,2,1,0}, u8[{{[1-9][0-9]*}}]{0}) custom-call
+    CHECK-SAME: custom_call_target="__cudnn$convForward"
+  )";
+  MatchOptimizedHlo(hlo_text, check_pattern);
 }
 
 }  // namespace

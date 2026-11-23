@@ -26,16 +26,16 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// Resizes the cuBLASLt matmul workspace to the size oneDNN's matmul primitive
-// requires for its scratchpad (oneDNN's term for workspace).
-// Added only by IntelGpuCompiler, after the generic GPU post-layout-assignment
-// pipeline.
-class SyclGemmWorkspacePass : public HloModulePass {
+// Resizes the workspace of cuBLASLt matmul and DNN convolution custom calls to
+// what the oneDNN primitive behind them needs at run time. For matmul that is
+// the scratchpad; for convolution it is the scratchpad plus the pre-packed
+// filter. Added only by IntelGpuCompiler, after layout assignment.
+class OneDnnWorkspacePass : public HloModulePass {
  public:
-  explicit SyclGemmWorkspacePass(se::GpuComputeCapability gpu_version)
+  explicit OneDnnWorkspacePass(se::GpuComputeCapability gpu_version)
       : gpu_version_(gpu_version) {}
 
-  absl::string_view name() const override { return "sycl-gemm-workspace"; }
+  absl::string_view name() const override { return "onednn-workspace"; }
 
  protected:
   absl::StatusOr<bool> RunImpl(

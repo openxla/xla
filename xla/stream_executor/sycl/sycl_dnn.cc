@@ -15,6 +15,11 @@ limitations under the License.
 
 #include "xla/stream_executor/sycl/sycl_dnn.h"
 
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <utility>
+
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -52,93 +57,85 @@ absl::StatusOr<dnn::VersionInfo> OnednnSupport::GetVersion() {
 namespace {
 class OnednnConvRunner : public dnn::ConvRunner {
  public:
-  OnednnConvRunner(OneDnnConvPrimitiveDesc onednn_conv_primitive_desc,
-                   size_t workspace_size)
-      : onednn_conv_primitive_desc_(std::move(onednn_conv_primitive_desc)),
-        workspace_size_(workspace_size) {}
+  explicit OnednnConvRunner(OneDnnConvPrimitiveDesc onednn_conv_primitive_desc)
+      : onednn_conv_primitive_desc_(std::move(onednn_conv_primitive_desc)) {}
   std::string ToString() const override { return "OnednnConvRunner"; }
 
-  size_t GetWorkspaceSize() const override { return workspace_size_; }
+  size_t GetWorkspaceSize() const override {
+    return onednn_conv_primitive_desc_.workspace.total_size;
+  }
 
   absl::StatusOr<dnn::AlgorithmDesc> ToAlgorithmDesc() const override {
-    return dnn::AlgorithmDesc(-1, false, workspace_size_);
+    return dnn::AlgorithmDesc(-1, false, GetWorkspaceSize());
   }
 
   absl::Status operator()(Stream* stream,
                           dnn::ProfileResult* output_profile_result,
-                          [[maybe_unused]] DeviceAddressBase scratch_memory,
+                          DeviceAddressBase scratch_memory,
                           DeviceAddressBase input_data,
                           DeviceAddressBase filter_data,
                           DeviceAddressBase output_data) const override {
-    // TODO(intel-tf): Create the oneDNN primitives once in the runner and
-    // report the scratchpad size via GetWorkspaceSize() to avoid per-call
-    // primitive creation, USM allocation, and host callback.
+    // TODO(intel-tf): Create the oneDNN primitives once in the runner to
+    // avoid per-call primitive creation.
     ABSL_ASSIGN_OR_RETURN(
         auto onednn_conv_primitive,
         CreateOneDnnConvPrimitive(
             onednn_conv_primitive_desc_, stream,
             OnednnConvBufferPointers{const_cast<void*>(input_data.opaque()),
                                      const_cast<void*>(filter_data.opaque()),
-                                     const_cast<void*>(output_data.opaque())}));
-    // Execute the oneDNN convolution primitive.
-    ABSL_RETURN_IF_ERROR(DoOneDnnConv(onednn_conv_primitive));
-    // Keep the oneDNN convolution primitive alive until the host callback is
-    // executed.
-    return stream->DoHostCallback(
-        [primitive = std::move(onednn_conv_primitive)] {});
+                                     const_cast<void*>(output_data.opaque())},
+            scratch_memory));
+    // The scratchpad and pre-packed filter live in the XLA-owned workspace,
+    // so the primitive can be released as soon as it is enqueued.
+    return DoOneDnnConv(onednn_conv_primitive);
   }
 
  private:
   OneDnnConvPrimitiveDesc onednn_conv_primitive_desc_;
-  size_t workspace_size_ = 0;
 };
 
 class OnednnFusedConvRunner : public dnn::FusedConvRunner {
  public:
-  OnednnFusedConvRunner(OneDnnConvPrimitiveDesc onednn_conv_primitive_desc,
-                        size_t workspace_size)
-      : onednn_conv_primitive_desc_(std::move(onednn_conv_primitive_desc)),
-        workspace_size_(workspace_size) {}
+  explicit OnednnFusedConvRunner(
+      OneDnnConvPrimitiveDesc onednn_conv_primitive_desc)
+      : onednn_conv_primitive_desc_(std::move(onednn_conv_primitive_desc)) {}
   std::string ToString() const override { return "OnednnFusedConvRunner"; }
 
-  size_t GetWorkspaceSize() const override { return workspace_size_; }
+  size_t GetWorkspaceSize() const override {
+    return onednn_conv_primitive_desc_.workspace.total_size;
+  }
 
   absl::StatusOr<dnn::AlgorithmDesc> ToAlgorithmDesc() const override {
-    return dnn::AlgorithmDesc(-1, false, workspace_size_);
+    return dnn::AlgorithmDesc(-1, false, GetWorkspaceSize());
   }
 
   absl::Status operator()(Stream* stream,
                           dnn::ProfileResult* output_profile_result,
-                          [[maybe_unused]] DeviceAddressBase scratch_memory,
+                          DeviceAddressBase scratch_memory,
                           DeviceAddressBase input_data,
                           DeviceAddressBase filter_data,
                           DeviceAddressBase side_input_data,
                           DeviceAddressBase bias_data,
                           DeviceAddressBase output_data) const override {
-    // TODO(intel-tf): Create the oneDNN primitives once in the runner and
-    // report the scratchpad size via GetWorkspaceSize() to avoid per-call
-    // primitive creation, USM allocation, and host callback.
-    ABSL_ASSIGN_OR_RETURN(
-        auto onednn_conv_primitive,
-        CreateOneDnnConvPrimitive(
-            onednn_conv_primitive_desc_, stream,
-            OnednnConvBufferPointers{
-                const_cast<void*>(input_data.opaque()),
-                const_cast<void*>(filter_data.opaque()),
-                const_cast<void*>(output_data.opaque()),
-                const_cast<void*>(bias_data.opaque()),
-                const_cast<void*>(side_input_data.opaque())}));
-    // Execute the oneDNN convolution primitive.
-    ABSL_RETURN_IF_ERROR(DoOneDnnConv(onednn_conv_primitive));
-    // Keep the oneDNN convolution primitive alive until the host callback is
-    // executed.
-    return stream->DoHostCallback(
-        [primitive = std::move(onednn_conv_primitive)] {});
+    // TODO(intel-tf): Create the oneDNN primitives once in the runner to
+    // avoid per-call primitive creation.
+    ABSL_ASSIGN_OR_RETURN(auto onednn_conv_primitive,
+                          CreateOneDnnConvPrimitive(
+                              onednn_conv_primitive_desc_, stream,
+                              OnednnConvBufferPointers{
+                                  const_cast<void*>(input_data.opaque()),
+                                  const_cast<void*>(filter_data.opaque()),
+                                  const_cast<void*>(output_data.opaque()),
+                                  const_cast<void*>(bias_data.opaque()),
+                                  const_cast<void*>(side_input_data.opaque())},
+                              scratch_memory));
+    // The scratchpad and pre-packed filter live in the XLA-owned workspace,
+    // so the primitive can be released as soon as it is enqueued.
+    return DoOneDnnConv(onednn_conv_primitive);
   }
 
  private:
   OneDnnConvPrimitiveDesc onednn_conv_primitive_desc_;
-  size_t workspace_size_ = 0;
 };
 }  // namespace
 
@@ -157,9 +154,7 @@ OnednnSupport::ConvolveRunnerFromDesc(
                            filter_descriptor, output_descriptor,
                            convolution_descriptor},
           stream));
-  size_t workspace_size = 0;
-  return std::make_unique<OnednnConvRunner>(std::move(primitive_desc),
-                                            workspace_size);
+  return std::make_unique<OnednnConvRunner>(std::move(primitive_desc));
 }
 
 absl::StatusOr<std::unique_ptr<const dnn::FusedConvRunner>>
@@ -184,9 +179,7 @@ OnednnSupport::FusedConvolveRunnerFromDesc(
               OneDnnConvConfig::Fusion{activation_mode, side_input_scale,
                                        leakyrelu_alpha}},
           stream));
-  size_t workspace_size = 0;
-  return std::make_unique<OnednnFusedConvRunner>(std::move(primitive_desc),
-                                                 workspace_size);
+  return std::make_unique<OnednnFusedConvRunner>(std::move(primitive_desc));
 }
 
 void initialize_onednn() {

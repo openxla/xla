@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_SYCL_SYCL_CONV_UTILS_H_
 #define XLA_STREAM_EXECUTOR_SYCL_SYCL_CONV_UTILS_H_
 
+#include <cstddef>
 #include <optional>
 #include <unordered_map>
 #include <variant>
@@ -79,6 +80,24 @@ struct OneDnnConvPrimitive {
   std::optional<ReorderOp> side_input_reorder;
 };
 
+// Byte layout of the workspace buffer that XLA allocates for a convolution.
+// The pre-packed filter is present only when the primitive prefers a filter
+// layout other than XLA's. The pad rounds the scratchpad offset up to XLA's
+// buffer alignment. A region with zero size is absent.
+//
+//   0                                  scratchpad_offset         total_size
+//   v                                  v                         v
+//   +----------------------------+-----+-------------------------+
+//   |     pre-packed filter      | pad |    oneDNN scratchpad    |
+//   +----------------------------+-----+-------------------------+
+//   |<-- internal_filter_size -->|     |<--- scratchpad_size --->|
+struct OneDnnConvWorkspaceLayout {
+  size_t internal_filter_size = 0;
+  size_t scratchpad_offset = 0;
+  size_t scratchpad_size = 0;
+  size_t total_size = 0;
+};
+
 // Everything the oneDNN convolution execution path needs that is derivable
 // from an OneDnnConvConfig alone (no device buffers).
 struct OneDnnConvPrimitiveDesc {
@@ -104,6 +123,7 @@ struct OneDnnConvPrimitiveDesc {
                dnnl::convolution_backward_data::primitive_desc,
                dnnl::convolution_backward_weights::primitive_desc>
       conv_pd;
+  OneDnnConvWorkspaceLayout workspace;
 };
 
 // Static convolution properties used by the oneDNN backend.
@@ -133,12 +153,26 @@ struct OnednnConvBufferPointers {
   void* side_input_data = nullptr;
 };
 
+// Binds the caller's buffers to the primitive. The scratchpad and the
+// pre-packed filter live inside workspace, which must be at least
+// pd.workspace.total_size bytes and stay valid until the primitive finishes
+// executing on the stream.
 absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
     const OneDnnConvPrimitiveDesc& pd, Stream* stream,
-    const OnednnConvBufferPointers& buffer_pointers);
+    const OnednnConvBufferPointers& buffer_pointers,
+    DeviceAddressBase workspace);
+
+absl::StatusOr<OneDnnConvPrimitiveDesc> CreateOneDnnConvPrimitiveDesc(
+    const OneDnnConvConfig& config, const dnnl::engine& engine);
 
 absl::StatusOr<OneDnnConvPrimitiveDesc> CreateOneDnnConvPrimitiveDesc(
     const OneDnnConvConfig& config, Stream* stream);
+
+// Returns the workspace size, in bytes, that a convolution with this config
+// needs at run time. Used by the compiler, which has no stream, so the
+// primitive descriptor is built on the default oneDNN GPU engine.
+absl::StatusOr<size_t> ComputeOneDnnConvWorkspaceSize(
+    const OneDnnConvConfig& config);
 
 absl::Status DoOneDnnConv(const OneDnnConvPrimitive& onednn_primitive);
 

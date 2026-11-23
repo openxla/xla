@@ -119,7 +119,7 @@ absl::Status IntelGpuCompiler::OptimizeHloPostLayoutAssignment(
 
   HloPassPipeline post_pipeline("Intel GPU post-layout_assignment",
                                 compilation_stats);
-  post_pipeline.AddPass<SyclGemmWorkspacePass>(
+  post_pipeline.AddPass<OneDnnWorkspacePass>(
       gpu_topology.gpu_target_config()
           .device_description.gpu_compute_capability());
   return post_pipeline.Run(hlo_module).status();
