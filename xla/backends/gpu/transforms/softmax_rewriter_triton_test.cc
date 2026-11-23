@@ -53,6 +53,7 @@ namespace {
 
 namespace m = ::xla::match;
 
+using ::absl_testing::IsOk;
 using ::absl_testing::IsOkAndHolds;
 using ::testing::HasSubstr;
 
@@ -1205,6 +1206,88 @@ ENTRY main {
       module->entry_computation()->root_instruction(),
       GmockMatch(
           m::Fusion(m::Parameter()).WithPredicate(HasBlockLevelFusionConfig)));
+}
+
+TEST_F(SoftmaxRewriterTritonTest,
+       FusesSplitTwoStageTreeReductionNormalizationDiamond) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule split_rmsnorm
+
+add_f32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT res = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  x_in = bf16[8,65536]{1,0} parameter(0)
+  x_f32 = f32[8,65536]{1,0} convert(x_in)
+  x_sq = f32[8,65536]{1,0} multiply(x_f32, x_f32)
+  x_sq_3d = f32[8,256,256]{2,1,0} bitcast(x_sq)
+  c0 = f32[] constant(0)
+  r1 = f32[8,256]{1,0} reduce(x_sq_3d, c0), dimensions={2}, to_apply=add_f32
+  r2 = f32[8]{0} reduce(r1, c0), dimensions={1}, to_apply=add_f32
+  inv_n = f32[] constant(1.52587891e-05)
+  inv_n_b = f32[8]{0} broadcast(inv_n), dimensions={}
+  mean = f32[8]{0} multiply(r2, inv_n_b)
+  eps = f32[] constant(1e-06)
+  eps_b = f32[8]{0} broadcast(eps), dimensions={}
+  var_eps = f32[8]{0} add(mean, eps_b)
+  rsq = f32[8]{0} rsqrt(var_eps)
+  rsq_b = f32[8,65536]{1,0} broadcast(rsq), dimensions={0}
+  norm = f32[8,65536]{1,0} multiply(x_f32, rsq_b)
+  ROOT out = bf16[8,65536]{1,0} convert(norm)
+})hlo";
+
+  se::DeviceDescription b200_info = TestGpuDeviceInfo::B200SXMDeviceInfo();
+  GpuAliasInfo b200_alias_info(b200_info);
+  SoftmaxRewriterTriton rewriter_with_cost_model(
+      b200_info, HloCostAnalysis::DefaultShapeSize, &b200_alias_info,
+      &mlir_context_, /*only_fuse_if_profitable=*/true);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  EXPECT_THAT(rewriter_with_cost_model.Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(verifier().Run(module.get()).status(), IsOk());
+
+  // Stage-1 `r1` stays outside while Stage-2 `r2` is fused into the Triton
+  // normalization consumer alongside `x_f32 = convert(x_in)`.
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Convert(m::Fusion(m::Convert(m::Parameter()), m::Reduce())
+                                .WithPredicate(HasBlockLevelFusionConfig))));
+}
+
+TEST_F(SoftmaxRewriterTritonTest,
+       DoesNotFuseSplitTreeReductionWhenStageOneHasOtherUsers) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule split_rmsnorm_shared_stage_one
+
+add_f32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT res = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  x_in = bf16[8,65536]{1,0} parameter(0)
+  x_f32 = f32[8,65536]{1,0} convert(x_in)
+  x_sq = f32[8,65536]{1,0} multiply(x_f32, x_f32)
+  x_sq_3d = f32[8,256,256]{2,1,0} bitcast(x_sq)
+  c0 = f32[] constant(0)
+  r1 = f32[8,256]{1,0} reduce(x_sq_3d, c0), dimensions={2}, to_apply=add_f32
+  r2 = f32[8]{0} reduce(r1, c0), dimensions={1}, to_apply=add_f32
+  rsq = f32[8]{0} rsqrt(r2)
+  rsq_b = f32[8,65536]{1,0} broadcast(rsq), dimensions={0}
+  norm = f32[8,65536]{1,0} multiply(x_f32, rsq_b)
+  ROOT out = (f32[8,65536]{1,0}, f32[8,256]{1,0}) tuple(norm, r1)
+})hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  // `r1` is also a module output, so the diamond is not a pure split
+  // reduction and must not be matched.
+  EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
 }  // anonymous namespace
