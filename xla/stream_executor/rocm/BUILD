@@ -1010,15 +1010,6 @@ cc_library(
 )
 
 cc_library(
-    name = "rocm_cumem",
-    srcs = ["rocm_cumem.cc"],
-    hdrs = ["rocm_cumem.h"],
-    deps = [
-        "//xla/tsl/util:env_var",
-    ],
-)
-
-cc_library(
     name = "rocm_version_parser",
     srcs = ["rocm_version_parser.cc"],
     hdrs = ["rocm_version_parser.h"],
@@ -1861,6 +1852,7 @@ cc_library(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/util:env_var",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",

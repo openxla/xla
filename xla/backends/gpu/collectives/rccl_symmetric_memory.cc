@@ -32,7 +32,7 @@ limitations under the License.
 #include "xla/core/collectives/rank_id.h"
 #include "xla/future.h"
 #include "xla/stream_executor/device_address.h"
-#include "xla/stream_executor/rocm/rocm_cumem.h"
+#include "xla/stream_executor/rocm/rocm_vmm_allocator.h"
 #include "xla/tsl/concurrency/executor.h"
 #include "xla/util.h"
 
@@ -106,7 +106,7 @@ RcclSymmetricMemory::Create(ncclComm_t comm,
   // Require NCCL_CUMEM_ENABLE=1 before touching the window-registration path.
   // Without it RCCL's comm->symmetricSupport is false and the registration
   // below silently downgrades to a non-symmetric window.
-  if (!stream_executor::IsNcclCuMemEnabled()) {
+  if (!stream_executor::gpu::IsNcclCuMemEnabled()) {
     LOG_FIRST_N(WARNING, 1) << kCuMemDisabledError;
     return absl::FailedPreconditionError(kCuMemDisabledError);
   }
