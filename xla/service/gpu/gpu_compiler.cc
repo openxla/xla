@@ -314,7 +314,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu/gpu_pipeline.h"
-#include "xla/service/gpu/hlo_fusion_stats.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/kernel_reuse_cache.pb.h"
@@ -1470,13 +1469,6 @@ absl::Status RunFusionPasses(HloModule* hlo_module,
                      mlir_context_pool)
           .Run(hlo_module, {HloInstruction::kMainExecutionThread})
           .status());
-
-  if (VLOG_IS_ON(2)) {
-    HloFusionStatsVisitor stats;
-    ABSL_RETURN_IF_ERROR(hlo_module->entry_computation()->Accept(&stats));
-    VLOG(2) << stats.ToString();
-  }
-
   return absl::OkStatus();
 }
 
