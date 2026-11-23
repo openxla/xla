@@ -91,6 +91,7 @@ limitations under the License.
 #include "xla/pjrt/raw_pjrt_client.h"
 #include "xla/pjrt/staging_buffer.h"
 #include "xla/pjrt/strided_gather.h"
+#include "xla/pjrt/swap_raw_buffer.h"
 #include "xla/pjrt/tiled_linearizer.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/pjrt/undonatable_common_pjrt_buffer.h"
@@ -2260,6 +2261,14 @@ void CommonPjRtRawBufferImpl::ScheduleCopyTo(
     PjRtDeviceEventPromiseRef definition_event_promise,
     PjRtDeviceEventPromiseRef src_usage_event_promise,
     absl::AnyInvocable<void(absl::Status) &&> allocation_event) {
+  if (auto* dst_swap = dst_raw_buffer->down_cast<SwapRawBuffer>();
+      dst_swap != nullptr) {
+    dst_swap->ScheduleCopyFrom(
+        std::move(transfer_dependency_events), tsl::FormRef(this),
+        std::move(definition_event_promise), std::move(src_usage_event_promise),
+        std::move(allocation_event));
+    return;
+  }
   PjRtDeviceEventSpan events_span(transfer_dependency_events);
   CommonPjRtClient* client =
       absl::down_cast<CommonPjRtClient*>(memory_space()->client());
