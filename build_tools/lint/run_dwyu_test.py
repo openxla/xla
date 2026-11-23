@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 
 from build_tools.lint import check_dwyu
@@ -190,13 +191,13 @@ cc_library(name = "unrelated", srcs = ["unrelated.cc"])
   def test_conditional_onednn_dependency_has_no_false_positive(self):
     self.write_file(
         "xla/consumer/BUILD",
-        """\
-cc_library(
-    name = "consumer",
-    srcs = ["consumer.cc"],
-    deps = if_onednn(["//xla/platform:errors"]),
-)
-""",
+        textwrap.dedent("""\
+            cc_library(
+                name = "consumer",
+                srcs = ["consumer.cc"],
+                deps = if_onednn(["//xla/platform:errors"]),
+            )
+            """),
     )
     result = self.check_targets("//xla/consumer:consumer")
     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
