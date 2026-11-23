@@ -444,7 +444,7 @@ InvokeContext CustomCallThunk::BuildInvokeContext(
       execution_context,
       custom_options,
       /*extension_start=*/nullptr,
-      collective_params ? &collective_params->logical_device_context : nullptr};
+      collective_params};
 }
 
 absl::Status CustomCallThunk::ExecuteFfiHandler(

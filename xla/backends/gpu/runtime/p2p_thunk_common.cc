@@ -145,12 +145,10 @@ P2PConfig GetP2PConfigForSendRecv(const HloSendRecvInstruction* instr,
 // executing device.
 absl::StatusOr<const int64_t> GetCollectiveCurrentId(
     CollectiveParams* collective_params, const P2PConfig& config) {
-  GlobalDeviceId global_device_id =
-      collective_params->logical_device_context.global_device_id;
+  GlobalDeviceId global_device_id = collective_params->global_device_id;
   ABSL_ASSIGN_OR_RETURN(
       const DeviceAssignment::LogicalID current_logical_id,
-      collective_params->logical_device_context.device_assignment
-          ->LogicalIdForDevice(global_device_id));
+      collective_params->device_assn->LogicalIdForDevice(global_device_id));
   const int64_t current_id =
       config.config.group_mode ==
               CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA

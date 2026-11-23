@@ -166,9 +166,9 @@ absl::Duration CollectiveThunk::DefaultCollectiveTimeout() {
 absl::StatusOr<RendezvousKey> CollectiveThunk::GetRendezvousKey(
     const Thunk::CollectiveExecuteParams& params) {
   const LogicalDeviceContext& placement = params.logical_device_context;
-  TF_RET_CHECK(placement.device_assignment) << "Device assignment is null";
+  TF_RET_CHECK(placement.device_assn) << "Device assignment is null";
 
-  const DeviceAssignment& device_assignment = *placement.device_assignment;
+  const DeviceAssignment& device_assignment = *placement.device_assn;
   RendezvousKey::CollectiveOpKind op_kind = op_params_.has_channel_id
                                                 ? RendezvousKey::kCrossModule
                                                 : RendezvousKey::kCrossReplica;

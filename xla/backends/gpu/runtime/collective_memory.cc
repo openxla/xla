@@ -263,13 +263,12 @@ AcquireSymmetricMemory(
     activation = params.executor->Activate();
   }
 
-  const auto global_device_id = params.logical_device_context.global_device_id;
   for (const CollectiveMemoryRequests::CollectiveAllocations& r : allocs) {
-    std::optional<RankId> rank = r.clique.rank(global_device_id);
+    std::optional<RankId> rank = r.clique.rank(params.global_device_id);
 
     if (!rank.has_value()) {
       return Internal("Can't find global device id %v in clique key %v",
-                      global_device_id, r.clique);
+                      params.global_device_id, r.clique);
     }
 
     // TODO(ezhulenev): All of the buffer allocations that we make symmetric
@@ -350,13 +349,12 @@ absl::StatusOr<PeerMemoryMap> AcquirePeerMemory(
 
   PeerMemoryMap peer_memories;
 
-  const auto global_device_id = params.logical_device_context.global_device_id;
   for (const CollectiveMemoryRequests::CollectiveAllocations& r : allocs) {
-    std::optional<RankId> rank = r.clique.rank(global_device_id);
+    std::optional<RankId> rank = r.clique.rank(params.global_device_id);
 
     if (!rank.has_value()) {
       return Internal("[%d] Can't find global device id %v in clique key %v",
-                      device_ordinal, global_device_id, r.clique);
+                      device_ordinal, params.global_device_id, r.clique);
     }
 
     // We rely on in-process rendezvous to exchange peer memory with all ranks.
@@ -438,11 +436,11 @@ absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
                             /*peer_memories=*/{});
   }
 
-  const auto global_device_id = params.logical_device_context.global_device_id;
   XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
       " Acquire collective memory for global device id %v: run_id=%v "
       "symmetric=%d peer=%d",
-      global_device_id, params.run_id, sym_allocs.size(), peer_allocs.size());
+      params.global_device_id, params.run_id, sym_allocs.size(),
+      peer_allocs.size());
   absl::Time start = absl::Now();
 
   for (size_t i = 0; i < sym_allocs.size(); ++i) {
@@ -450,7 +448,7 @@ absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
     XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
         "    symmetric memory #%d (global device %v): id=%d; clique=%v; "
         "allocations=[%s]",
-        i, global_device_id, r.id, r.clique,
+        i, params.global_device_id, r.id, r.clique,
         absl::StrJoin(r.allocations, ", "));
   }
 
@@ -459,7 +457,7 @@ absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
     XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
         "    peer memory #%d (global device %v): id=%d; clique=%v; "
         "allocations=[%s]",
-        i, global_device_id, r.id, r.clique,
+        i, params.global_device_id, r.id, r.clique,
         absl::StrJoin(r.allocations, ", "));
   }
 
@@ -481,7 +479,7 @@ absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
   XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
       "Acquired collective memory in %s for global device id %v; "
       "run_id=%v symmetric=%d peer=%d",
-      absl::FormatDuration(absl::Now() - start), global_device_id,
+      absl::FormatDuration(absl::Now() - start), params.global_device_id,
       params.run_id, sym_allocs.size(), peer_allocs.size());
 
   return CollectiveMemory(requests.buffers(), std::move(sym_memories),

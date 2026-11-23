@@ -38,7 +38,7 @@ namespace xla {
 LogicalDeviceContext::LogicalDeviceContext(
     const DeviceAssignment* device_assignment, GlobalDeviceId global_device_id,
     std::optional<DeviceAssignment::LogicalID> logical_id)
-    : device_assignment(device_assignment),
+    : device_assn(device_assignment),
       global_device_id(global_device_id),
       logical_device_id(logical_id) {
   if (logical_device_id || device_assignment == nullptr) {

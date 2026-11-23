@@ -620,11 +620,9 @@ static absl::Status AllReduce(se::Stream* stream,
           CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID));
 
   // Get the communicator for the requested clique.
-  ABSL_ASSIGN_OR_RETURN(
-      Communicator * comm,
-      collective_cliques->GetComm(
-          clique_key,
-          collective_params->logical_device_context.global_device_id));
+  ABSL_ASSIGN_OR_RETURN(Communicator * comm,
+                        collective_cliques->GetComm(
+                            clique_key, collective_params->global_device_id));
 
   // Synchronize communication stream with the main stream: make the
   // communication stream wait for all prior work on the main stream.
@@ -667,8 +665,7 @@ static absl::Status DeviceAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
   TF_RET_CHECK(sym_src && sym_dst);
 
   // Get requested device communicator for a given clique.
-  auto rank = clique_key.rank(
-      collective_params->logical_device_context.global_device_id);
+  auto rank = clique_key.rank(collective_params->global_device_id);
   ABSL_ASSIGN_OR_RETURN(
       GpuDeviceCommunicator * dev_comm,
       collective_cliques->GetDeviceComm(
@@ -732,8 +729,7 @@ static absl::Status ExecuteMultiGpuBarrier(
           *collective_params, {AllDevices()},
           CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID));
 
-  auto rank = clique_key.rank(
-      collective_params->logical_device_context.global_device_id);
+  auto rank = clique_key.rank(collective_params->global_device_id);
   ABSL_ASSIGN_OR_RETURN(GpuCommunicator * comm,
                         collective_cliques->GetComm(clique_key, *rank));
 

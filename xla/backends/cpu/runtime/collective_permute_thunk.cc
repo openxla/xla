@@ -77,9 +77,9 @@ CollectivePermuteThunk::Execute(const ExecuteParams& params) {
 
   const LogicalDeviceContext& placement =
       collective_params->logical_device_context;
-  ABSL_ASSIGN_OR_RETURN(DeviceAssignment::LogicalID logical_id,
-                        placement.device_assignment->LogicalIdForDevice(
-                            placement.global_device_id));
+  ABSL_ASSIGN_OR_RETURN(
+      DeviceAssignment::LogicalID logical_id,
+      placement.device_assn->LogicalIdForDevice(placement.global_device_id));
 
   int32_t logical_device_id = op_params().has_channel_id
                                   ? logical_id.computation_id

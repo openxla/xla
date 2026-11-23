@@ -98,7 +98,7 @@ struct LogicalDeviceContext {
       GlobalDeviceId global_device_id,
       std::optional<DeviceAssignment::LogicalID> logical_id = std::nullopt);
 
-  const DeviceAssignment* device_assignment;
+  const DeviceAssignment* device_assn;
   GlobalDeviceId global_device_id;
   std::optional<DeviceAssignment::LogicalID> logical_device_id;
 };

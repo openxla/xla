@@ -2058,8 +2058,7 @@ class RecordCollectiveParamsThunk : public Thunk {
       *local_device_id_ = params.collective_params->local_device_id;
     }
     if (global_device_id_ != nullptr) {
-      *global_device_id_ =
-          params.collective_params->logical_device_context.global_device_id;
+      *global_device_id_ = params.collective_params->global_device_id;
     }
     if (cache_nccl_window_in_communicator_ != nullptr) {
       *cache_nccl_window_in_communicator_ =

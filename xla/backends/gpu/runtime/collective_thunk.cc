@@ -377,9 +377,8 @@ absl::StatusOr<CollectiveThunk::Buffer> CollectiveThunk::Buffer::FromProto(
 }
 
 absl::Status CollectiveThunk::Prepare(const PrepareParams& params) {
-  TF_RET_CHECK(
-      params.collective_params &&
-      params.collective_params->logical_device_context.device_assignment)
+  TF_RET_CHECK(params.collective_params &&
+               params.collective_params->device_assn)
       << "Collective parameters and device assignment are required for "
          "collective thunk execution";
 
@@ -388,8 +387,8 @@ absl::Status CollectiveThunk::Prepare(const PrepareParams& params) {
   // PjRtExecutable and never changes between executions). Compute once.
   absl::call_once(device_groups_once_, [&] {
     device_groups_ = GetParticipatingDevicesGroups(
-        *params.collective_params->logical_device_context.device_assignment,
-        config().replica_groups, config().group_mode);
+        *params.collective_params->device_assn, config().replica_groups,
+        config().group_mode);
     if (device_groups_.ok()) {
       absl::c_for_each(*device_groups_, [](auto& g) { absl::c_sort(g); });
       absl::c_sort(*device_groups_);
@@ -434,8 +433,7 @@ absl::Status CollectiveThunk::FirstCallRendezvous(
 
   int32_t device_ordinal = params.stream->parent()->device_ordinal();
   size_t num_local_participants = clique_key.num_local_participants();
-  auto global_device_id =
-      params.collective_params->logical_device_context.global_device_id;
+  auto global_device_id = params.collective_params->global_device_id;
   RankId rank = clique_key.rank(global_device_id).value_or(RankId(-1));
 
   XLA_VLOG_DEVICE(1, device_ordinal) << absl::StreamFormat(
@@ -473,8 +471,7 @@ absl::Status CollectiveThunk::RunWithCommAndRendezvous(
   ABSL_ASSIGN_OR_RETURN(
       Communicator * comm,
       params.collective_cliques->GetComm(
-          clique_key,
-          params.collective_params->logical_device_context.global_device_id));
+          clique_key, params.collective_params->global_device_id));
   DCHECK(comm) << "Failed to get communicator for collective operation";
 
   ABSL_RETURN_IF_ERROR(FirstCallRendezvous(params, clique_key, "before",
@@ -552,11 +549,9 @@ absl::StatusOr<GpuCliqueKey> CollectiveThunk::GetCliqueKey(
 
 std::string CollectiveThunk::GetDeviceString(
     const CollectiveParams& collective_params) {
-  GlobalDeviceId global_device_id =
-      collective_params.logical_device_context.global_device_id;
+  GlobalDeviceId global_device_id = collective_params.global_device_id;
   DeviceAssignment::LogicalID logical_id =
-      collective_params.logical_device_context.device_assignment
-          ->LogicalIdForDevice(global_device_id)
+      collective_params.device_assn->LogicalIdForDevice(global_device_id)
           .value();
   return absl::StrFormat("(r%d, p%d) : GlobalID %d, ord %d",
                          logical_id.replica_id, logical_id.computation_id,

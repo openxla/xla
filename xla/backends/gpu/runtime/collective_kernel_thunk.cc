@@ -538,9 +538,8 @@ absl::Status CollectiveKernelThunk::IsSupported(
 }
 
 absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
-  TF_RET_CHECK(
-      params.collective_params &&
-      params.collective_params->logical_device_context.device_assignment);
+  TF_RET_CHECK(params.collective_params &&
+               params.collective_params->device_assn);
 
   ABSL_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
@@ -600,9 +599,9 @@ absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
 
   ABSL_ASSIGN_OR_RETURN(
       std::vector<std::vector<GlobalDeviceId>> device_groups,
-      GetParticipatingDevicesGroups(
-          *params.collective_params->logical_device_context.device_assignment,
-          collective_config_.replica_groups, collective_config_.group_mode));
+      GetParticipatingDevicesGroups(*params.collective_params->device_assn,
+                                    collective_config_.replica_groups,
+                                    collective_config_.group_mode));
 
   // Sort device groups: RequestClique expects pre-sorted groups.
   absl::c_for_each(device_groups, [](auto& group) { absl::c_sort(group); });
@@ -663,11 +662,11 @@ absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
   ABSL_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
       GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_));
-  const GlobalDeviceId global_device_id =
-      params.collective_params->logical_device_context.global_device_id;
-  const std::optional<RankId> rank = clique_key.rank(global_device_id);
+  const std::optional<RankId> rank =
+      clique_key.rank(params.collective_params->global_device_id);
   TF_RET_CHECK(rank.has_value())
-      << "Device " << global_device_id << "is not in the clique.";
+      << "Device " << params.collective_params->global_device_id
+      << "is not in the clique.";
   const int64_t num_devices = clique_key.num_devices();
   const KernelSpecLayout layout = BuildKernelSpecLayout(kernel_spec_, buffers_);
   const int64_t num_parameters = layout.symmetric_params.size();
@@ -864,11 +863,11 @@ CollectiveKernelThunk::PrepareLaunch(const ExecuteParams& params) {
       GpuCliqueKey clique_key,
       GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_));
 
-  const GlobalDeviceId global_device_id =
-      params.collective_params->logical_device_context.global_device_id;
-  const std::optional<RankId> rank = clique_key.rank(global_device_id);
+  const std::optional<RankId> rank =
+      clique_key.rank(params.collective_params->global_device_id);
   TF_RET_CHECK(rank.has_value())
-      << "Device " << global_device_id << "is not in the clique.";
+      << "Device " << params.collective_params->global_device_id
+      << "is not in the clique.";
   StreamState* state =
       per_device_state_.Find(stream->parent()->device_ordinal());
   TF_RET_CHECK(state != nullptr) << "Stream not found in per_device_state_";

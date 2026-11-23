@@ -140,11 +140,10 @@ absl::Status AllToAllThunk::Initialize(const InitializeParams& params) {
         GetGpuCliqueKey(*params.collective_params, config().replica_groups,
                         config().group_mode, communication_id()));
 
-    const auto global_device_id =
-        params.collective_params->logical_device_context.global_device_id;
     ABSL_ASSIGN_OR_RETURN(
         Communicator * comm,
-        params.collective_cliques->GetComm(clique_key, global_device_id));
+        params.collective_cliques->GetComm(
+            clique_key, params.collective_params->global_device_id));
 
     ABSL_ASSIGN_OR_RETURN(int32_t num_ranks, comm->NumRanks());
 
@@ -159,7 +158,8 @@ absl::Status AllToAllThunk::Initialize(const InitializeParams& params) {
     if (!state->event) {
       ABSL_ASSIGN_OR_RETURN(state->event, executor->CreateEvent());
     }
-    std::optional<RankId> rank = clique_key.rank(global_device_id);
+    std::optional<RankId> rank =
+        clique_key.rank(params.collective_params->global_device_id);
     size_t chunk_element_count = buffers()[0].element_count / num_ranks;
     ABSL_ASSIGN_OR_RETURN(
         std::vector<DeviceBufferPair> device_buffers,
@@ -235,8 +235,8 @@ absl::Status AllToAllThunk::RunCollective(const ExecuteParams& params,
     TF_RET_CHECK(state != nullptr);
     uint64_t* receive_pointer_map = reinterpret_cast<uint64_t*>(
         state->receive_pointer_map->address().opaque());
-    std::optional<RankId> rank = clique_key.rank(
-        params.collective_params->logical_device_context.global_device_id);
+    std::optional<RankId> rank =
+        clique_key.rank(params.collective_params->global_device_id);
     return xla::gpu::RunMemCpyAllToAll(config_.has_split_dimension,
                                        device_buffers, stream, comm,
                                        receive_pointer_map, clique_key, *rank,

@@ -373,11 +373,11 @@ static XLA_FFI_Error* XLA_FFI_LogicalDeviceInfo_Get(
   }
 
   const LogicalDeviceContext* logical = args->ctx->logical_device_context;
-  if (logical == nullptr || logical->device_assignment == nullptr) {
+  if (logical == nullptr || logical->device_assn == nullptr) {
     return new XLA_FFI_Error{FailedPrecondition(
         "Logical device information requires an execution device assignment")};
   }
-  const DeviceAssignment& assignment = *logical->device_assignment;
+  const DeviceAssignment& assignment = *logical->device_assn;
   std::optional<DeviceAssignment::LogicalID> id = logical->logical_device_id;
   if (!id) {
     // Setup retains only successful lookups. Recover the diagnostic on demand.

@@ -151,13 +151,11 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
     return CollectiveCliques();
   }
 
-  const GlobalDeviceId global_device_id =
-      params.logical_device_context.global_device_id;
   XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
       "[run=%v] Acquire %d collective cliques for global device id %v; "
       "max number of channels for collectives %d; max number of "
       "channels for p2p %d; use_minimal_resource=%v",
-      params.run_id, ordered_cliques.size(), global_device_id,
+      params.run_id, ordered_cliques.size(), params.global_device_id,
       params.collective_max_nchannels, params.p2p_max_nchannels,
       params.collective_use_minimal_resource);
 
@@ -166,7 +164,7 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
     XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
         "    clique #%d (global device %v): num_local_participants=%d; id=%d; "
         "key=%v; dev_comms=[%s]",
-        i, global_device_id, r.key.num_local_participants(), r.id, r.key,
+        i, params.global_device_id, r.key.num_local_participants(), r.id, r.key,
         absl::StrJoin(r.dev_comms, ", "));
   }
 
@@ -179,11 +177,11 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
   auto start_micros = tsl::Env::Default()->NowMicros();
 
   for (const CollectiveCliqueRequests::CliqueRequest& r : ordered_cliques) {
-    std::optional<RankId> rank = r.key.rank(global_device_id);
+    std::optional<RankId> rank = r.key.rank(params.global_device_id);
 
     if (!rank.has_value()) {
       return Internal("Can't find global device id %v in clique key %v",
-                      global_device_id, r.key);
+                      params.global_device_id, r.key);
     }
 
     // Default clique id callback that generates a unique clique id for the
@@ -229,7 +227,7 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
   auto end_micros = tsl::Env::Default()->NowMicros();
   XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
       "[global_device=%v] [run=%v] Acquired %d collective cliques in %s; ",
-      global_device_id, params.run_id, cliques_map.size(),
+      params.global_device_id, params.run_id, cliques_map.size(),
       absl::FormatDuration(absl::Microseconds(end_micros - start_micros)));
 
   std::unique_ptr<se::MemoryAllocator> collective_alloc = nullptr;
@@ -249,7 +247,7 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
   // but luckily we already are inside the collective function, so we can safely
   // create missing communicators here.
   for (const CollectiveCliqueRequests::CliqueRequest& r : ordered_cliques) {
-    std::optional<RankId> rank = r.key.rank(global_device_id);
+    std::optional<RankId> rank = r.key.rank(params.global_device_id);
     std::shared_ptr<LockableGpuClique::Lock> clique = cliques_map.at(r.key);
 
     GpuDeviceCommunicator* lsa_dev_comm = nullptr;

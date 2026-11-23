@@ -97,7 +97,7 @@ LogicalIdThunk<logical_id_kind>::Execute(const ExecuteParams& params) {
       params.collective_params->logical_device_context;
   ABSL_ASSIGN_OR_RETURN(
       int32_t logical_id,
-      GetIdForDevice(placement.device_assignment, placement.global_device_id));
+      GetIdForDevice(placement.device_assn, placement.global_device_id));
 
   VLOG(3) << absl::StreamFormat("%s id: %d", ToString<logical_id_kind>(),
                                 logical_id);
