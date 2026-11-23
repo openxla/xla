@@ -27,9 +27,9 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_interface.h"
 namespace xla::cpu {
 
-// Hoists small while loops into a separate function.
-// This pass enables the thunk emitter to emit small while loops as a single
-// kernel instead of a series of thunks.
+// Hoists small while loops into a separate function so that ThunkEmitter can
+// emit them as a single kernel instead of a series of thunks. Loops exceeding
+// the accessed byte or body complexity limits remain regular while loops.
 class SmallWhileLoopHoistingPass final : public HloModulePass {
  public:
   SmallWhileLoopHoistingPass(

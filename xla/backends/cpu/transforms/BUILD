@@ -233,6 +233,7 @@ cc_library(
     srcs = ["small_while_loop_hoisting_pass.cc"],
     hdrs = ["small_while_loop_hoisting_pass.h"],
     deps = [
+        "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/codegen:target_machine_features",
@@ -266,7 +267,6 @@ xla_cc_test(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test",
         "//xla/service:hlo_module_config",
-        "//xla/service/cpu:backend_config_proto_cc",
         "//xla/service/cpu:dot_op_emitter",
         "//xla/service/cpu:target_machine_features_stub",
         "@com_google_absl//absl/status:statusor",

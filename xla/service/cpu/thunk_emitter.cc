@@ -42,6 +42,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/DebugStringHelper.h"
+#include "tsl/platform/cpu_info.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/codegen/computation_kernel_arguments.h"
@@ -78,12 +79,14 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/rng_state_thunk.h"
 #include "xla/backends/cpu/runtime/sort_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
+#include "xla/backends/cpu/runtime/thunk_executor.h"
 #include "xla/backends/cpu/runtime/topk_thunk.h"
 #include "xla/backends/cpu/runtime/while_thunk.h"
 #include "xla/backends/cpu/runtime/ynnpack/ynn_fusion_thunk.h"
 #include "xla/backends/cpu/runtime/ynnpack/ynn_interop.h"
 #include "xla/backends/cpu/ynn_emitter.h"
 #include "xla/backends/cpu/ynn_support.h"
+#include "xla/codegen/device_spec.h"
 #include "xla/codegen/emitters/computation_fingerprint.h"
 #include "xla/codegen/emitters/kernel_api_builder.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
@@ -102,6 +105,7 @@ limitations under the License.
 #include "xla/hlo/utils/sort_utils.h"
 #include "xla/layout_util.h"
 #include "xla/primitive_util.h"
+#include "xla/runtime/execution_graph.h"
 #include "xla/runtime/resource_use.h"
 #include "xla/runtime/work_group.h"
 #include "xla/service/buffer_assignment.h"
@@ -145,13 +149,188 @@ namespace {
 absl::StatusOr<std::string> GetFusionFingerprint(
     const HloFusionInstruction& fusion,
     const BufferAssignment& buffer_assignment,
-    const emitters::KernelArguments::BufferAlignment& buffer_alignment) {
-  ABSL_ASSIGN_OR_RETURN(
-      auto args, emitters::KernelArguments::Create(buffer_assignment,
-                                                   buffer_alignment, &fusion));
+    const emitters::KernelArguments::BufferAlignment& buffer_alignment,
+    const CpuDeviceSpec& cpu_device_spec) {
+  ABSL_ASSIGN_OR_RETURN(emitters::KernelArguments args,
+                        emitters::KernelArguments::Create(
+                            buffer_assignment, buffer_alignment, &fusion));
 
+  std::string discriminator = fusion.raw_backend_config_string();
+  if (fusion.fused_expression_root()->opcode() == HloOpcode::kScatter) {
+    const int64_t effective_workgroups = GetCpuScatterEffectiveWorkGroups(
+        fusion, GetCpuScatterRequestedWorkGroups(fusion), cpu_device_spec,
+        &buffer_assignment, buffer_alignment.xla_allocated_buffer_align_bytes);
+    absl::StrAppend(&discriminator, "|scatter_wg=", effective_workgroups);
+  }
   return emitters::GetComputationFingerprint(
-      fusion.fused_instructions_computation(), args.args());
+      fusion.fused_instructions_computation(), args.args(), discriminator);
+}
+
+// Minimum buffer bytes touched by each of two independent kernels in a
+// concurrent ThunkExecutor before falling back from single kernel lowering to
+// preserve inter op concurrency.
+constexpr int64_t kConcurrentKernelMinBytes = 256 * 1024;
+
+bool HasMultipleWorkGroups(const NumWorkGroups& num_workgroups) {
+  return num_workgroups.x > 0 && num_workgroups.y > 0 && num_workgroups.z > 0 &&
+         (num_workgroups.x > 1 || num_workgroups.y > 1 || num_workgroups.z > 1);
+}
+
+int64_t KernelTouchedBytes(const KernelThunkBase& kernel) {
+  int64_t bytes = 0;
+  for (const ShapedSlice& buffer : kernel.arguments_buffers()) {
+    bytes += buffer.slice.size();
+  }
+  for (const ShapedSlice& buffer : kernel.results_buffers()) {
+    bytes += buffer.slice.size();
+  }
+  return bytes;
+}
+
+// Returns true if `graph` has a directed path from `src` to `dst`.
+// ExecutionGraph nodes are topologically ordered (`u < v` for every edge), so
+// any path from `src` to `dst` stays inside `[src, dst]`.
+bool IsReachable(const ExecutionGraph& graph, ExecutionGraph::NodeId src,
+                 ExecutionGraph::NodeId dst) {
+  if (src == dst) {
+    return true;
+  }
+  if (src > dst) {
+    return false;
+  }
+  std::vector<bool> visited(dst - src + 1, false);
+  std::vector<ExecutionGraph::NodeId> stack = {src};
+  visited[0] = true;
+  while (!stack.empty()) {
+    const ExecutionGraph::NodeId node = stack.back();
+    stack.pop_back();
+    for (const ExecutionGraph::NodeEdge& edge : graph.out_edges(node)) {
+      if (edge.id == dst) {
+        return true;
+      }
+      if (edge.id > dst) {
+        break;
+      }
+      if (!visited[edge.id - src]) {
+        visited[edge.id - src] = true;
+        stack.push_back(edge.id);
+      }
+    }
+  }
+  return false;
+}
+
+// Returns true if `executor` runs concurrently and has at least two independent
+// kernels that each touch at least `kConcurrentKernelMinBytes`.
+bool HasConcurrentHeavyKernels(const ThunkExecutor& executor) {
+  if (executor.is_sequential()) {
+    return false;
+  }
+  const ThunkSequence& thunks = executor.thunk_sequence();
+  std::vector<ExecutionGraph::NodeId> heavy_kernels;
+  for (ExecutionGraph::NodeId i = 0;
+       i < static_cast<ExecutionGraph::NodeId>(thunks.size()); ++i) {
+    if (thunks[i]->kind() != Thunk::Kind::kKernel) {
+      continue;
+    }
+    const auto& kernel = absl::down_cast<const KernelThunkBase&>(*thunks[i]);
+    if (KernelTouchedBytes(kernel) >= kConcurrentKernelMinBytes) {
+      heavy_kernels.push_back(i);
+    }
+  }
+  if (heavy_kernels.size() < 2) {
+    return false;
+  }
+  const ExecutionGraph& graph = executor.execution_graph();
+  // In a topologically ordered DAG, a subset of nodes has an independent pair
+  // if and only if consecutive sorted nodes do not form a chain.
+  for (size_t i = 0; i + 1 < heavy_kernels.size(); ++i) {
+    if (!IsReachable(graph, heavy_kernels[i], heavy_kernels[i + 1])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Checks whether lowering `thunks` into a single workgroup kernel would
+// serialize multi workgroup kernels, parallel copies, or concurrent heavy
+// kernels in nested ThunkExecutors.
+Decision CheckSmallCallParallelism(const ThunkSequence& thunks) {
+  auto check_executor = [](const ThunkExecutor& executor,
+                           absl::string_view label,
+                           absl::string_view op_name) -> Decision {
+    if (HasConcurrentHeavyKernels(executor)) {
+      return Decision::Forbid(absl::StrCat(
+          label, " ", op_name, " executes independent kernels concurrently"));
+    }
+    return CheckSmallCallParallelism(executor.thunk_sequence());
+  };
+
+  for (const std::unique_ptr<Thunk>& thunk : thunks) {
+    switch (thunk->kind()) {
+      case Thunk::Kind::kKernel: {
+        const auto& kernel = absl::down_cast<const KernelThunkBase&>(*thunk);
+        const NumWorkGroups& wg = kernel.num_workgroups();
+        if (HasMultipleWorkGroups(wg)) {
+          return Decision::Forbid(absl::StrCat(
+              "Nested kernel ", kernel.kernel_name(),
+              " uses multiple workgroups (", wg.x, "x", wg.y, "x", wg.z, ")"));
+        }
+        break;
+      }
+      case Thunk::Kind::kCopy: {
+        const auto& copy = absl::down_cast<const CopyThunk&>(*thunk);
+        if (copy.src_buffer() != copy.dst_buffer() && copy.is_parallel()) {
+          return Decision::Forbid(absl::StrCat(
+              "Nested copy ", copy.info().op_name, " runs in parallel"));
+        }
+        break;
+      }
+      case Thunk::Kind::kWhile: {
+        const auto& while_thunk = absl::down_cast<const WhileThunk&>(*thunk);
+        if (!while_thunk.trip_count().has_value()) {
+          if (Decision d =
+                  check_executor(while_thunk.cond_executor(), "While condition",
+                                 while_thunk.info().op_name);
+              d.IsForbidden()) {
+            return d;
+          }
+        }
+        if (Decision d =
+                check_executor(while_thunk.body_executor(), "While body",
+                               while_thunk.info().op_name);
+            d.IsForbidden()) {
+          return d;
+        }
+        break;
+      }
+      case Thunk::Kind::kConditional: {
+        const auto& cond_thunk =
+            absl::down_cast<const ConditionalThunk&>(*thunk);
+        for (const ThunkExecutor& branch : cond_thunk.branch_executors()) {
+          if (Decision d = check_executor(branch, "Conditional branch",
+                                          cond_thunk.info().op_name);
+              d.IsForbidden()) {
+            return d;
+          }
+        }
+        break;
+      }
+      case Thunk::Kind::kCall: {
+        const auto& call_thunk = absl::down_cast<const CallThunk&>(*thunk);
+        if (Decision d =
+                check_executor(call_thunk.called_executor(), "Nested call",
+                               call_thunk.info().op_name);
+            d.IsForbidden()) {
+          return d;
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return Decision::Allow();
 }
 
 }  // namespace
@@ -165,7 +344,8 @@ static FusionCompiler::Options FusionCompilerOptions(
       debug_options.xla_cpu_emitter_verification_level(),
       debug_options.xla_cpu_enable_fast_min_max(),
       llvm_ir::GetCpuFastMathFlags(config),
-      target_machine_features.get_target_feature_string()};
+      target_machine_features.get_target_feature_string(),
+      target_machine_features.cpu_device_spec()};
 }
 
 static FusionCompiler FusionCompilerFactory(
@@ -690,6 +870,20 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSmallCallThunk(
                                         std::move(thunks));
   }
 
+  const int64_t max_parallelism =
+      hlo_module_config_.intra_op_parallelism_threads() > 0
+          ? hlo_module_config_.intra_op_parallelism_threads()
+          : tsl::port::NumSchedulableCPUs();
+  if (!options_.is_aot_compilation && max_parallelism > 1) {
+    if (Decision decision = CheckSmallCallParallelism(thunks);
+        decision.IsForbidden()) {
+      VLOG(1) << "Emitting small call " << instruction->name()
+              << " as a call thunk: " << decision.Explain();
+      return ThunkSequence::Of<CallThunk>(ThunkInfo(instruction),
+                                          std::move(thunks));
+    }
+  }
+
   std::vector<std::string> nested_kernels;
   absl::flat_hash_set<std::string> seen;
   thunks.ForEach([&](const Thunk& thunk) {
@@ -806,9 +1000,11 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFusionKernelThunk(
   auto* fusion = Cast<HloFusionInstruction>(instruction);
 
   if (FusionRoutesToMlirEmitter(fusion)) {
-    ABSL_ASSIGN_OR_RETURN(std::string fingerprint,
-                          GetFusionFingerprint(*fusion, buffer_assignment_,
-                                               GetDefaultBufferAlignment()));
+    ABSL_ASSIGN_OR_RETURN(
+        std::string fingerprint,
+        GetFusionFingerprint(*fusion, buffer_assignment_,
+                             GetDefaultBufferAlignment(),
+                             target_machine_features_.cpu_device_spec()));
     if (const auto itr = kernel_spec_cache_.find(fingerprint);
         itr != kernel_spec_cache_.end()) {
       const auto& kernel_spec = itr->second;

@@ -2427,16 +2427,8 @@ TEST(PjRtCpuClientTest, CustomIntraOpThreadPoolInClientOptions) {
   static constexpr char kProgram[] = R"hlo(
 HloModule ParallelElementwise
 ENTRY main {
-  p0 = f32[65536] parameter(0)
-  m1 = f32[65536] multiply(p0, p0)
-  m2 = f32[65536] multiply(m1, p0)
-  m3 = f32[65536] multiply(m2, p0)
-  m4 = f32[65536] multiply(m3, p0)
-  m5 = f32[65536] multiply(m4, p0)
-  m6 = f32[65536] multiply(m5, p0)
-  m7 = f32[65536] multiply(m6, p0)
-  m8 = f32[65536] multiply(m7, p0)
-  ROOT m9 = f32[65536] add(m8, p0)
+  p0 = f32[524288] parameter(0)
+  ROOT out = f32[524288] add(p0, p0)
 }
 )hlo";
 
@@ -2460,8 +2452,8 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtLoadedExecutable> executable,
                        client->CompileAndLoad(xla_computation, {}));
 
-  Shape shape = ShapeUtil::MakeShape(F32, {65536});
-  std::vector<float> input_data(65536, 1.0f);
+  Shape shape = ShapeUtil::MakeShape(F32, {524288});
+  std::vector<float> input_data(524288, 1.0f);
   ASSERT_OK_AND_ASSIGN(
       PjRtMemorySpace * memory_space,
       client->addressable_devices()[0]->default_memory_space());
@@ -2487,16 +2479,8 @@ TEST(PjRtCpuClientTest, CustomIntraOpThreadPoolInExecuteContext) {
   static constexpr char kProgram[] = R"hlo(
 HloModule ParallelElementwise
 ENTRY main {
-  p0 = f32[65536] parameter(0)
-  m1 = f32[65536] multiply(p0, p0)
-  m2 = f32[65536] multiply(m1, p0)
-  m3 = f32[65536] multiply(m2, p0)
-  m4 = f32[65536] multiply(m3, p0)
-  m5 = f32[65536] multiply(m4, p0)
-  m6 = f32[65536] multiply(m5, p0)
-  m7 = f32[65536] multiply(m6, p0)
-  m8 = f32[65536] multiply(m7, p0)
-  ROOT m9 = f32[65536] add(m8, p0)
+  p0 = f32[524288] parameter(0)
+  ROOT out = f32[524288] add(p0, p0)
 }
 )hlo";
 
@@ -2518,8 +2502,8 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtLoadedExecutable> executable,
                        client->CompileAndLoad(xla_computation, {}));
 
-  Shape shape = ShapeUtil::MakeShape(F32, {65536});
-  std::vector<float> input_data(65536, 1.0f);
+  Shape shape = ShapeUtil::MakeShape(F32, {524288});
+  std::vector<float> input_data(524288, 1.0f);
   ASSERT_OK_AND_ASSIGN(
       PjRtMemorySpace * memory_space,
       client->addressable_devices()[0]->default_memory_space());
