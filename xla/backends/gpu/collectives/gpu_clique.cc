@@ -20,12 +20,17 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/container/btree_map.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -38,6 +43,7 @@ limitations under the License.
 #include "xla/service/lockable.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
 
@@ -54,6 +60,68 @@ GpuClique::GpuClique(
       peer_access_enabled_(peer_access_enabled),
       cancel_(std::move(cancel)),
       parent_key_(std::move(parent_key)) {}
+
+GpuClique::~GpuClique() {
+  // Destruction happens after the last acquired lock is released. Move state
+  // out so user callbacks never run under the resource-map mutex.
+  absl::btree_map<RankId, NamedResources> resources;
+  {
+    absl::MutexLock lock(mu_);
+    resources.swap(resources_);
+  }
+  if (resources.empty()) {
+    return;
+  }
+  const bool healthy = !IsCancelled() && HealthCheck().ok();
+  auto retire = [healthy](NamedResources& named_resources) {
+    for (auto& [name, resource] : named_resources) {
+      resource->Retire(healthy);
+    }
+  };
+  if (!healthy || resources.size() == 1) {
+    for (auto& [rank, named_resources] : resources) {
+      retire(named_resources);
+    }
+    return;
+  }
+  // Collective destructors on one local rank may wait for another local rank.
+  // Thread destruction joins all callbacks before base-class communicators die.
+  std::vector<std::unique_ptr<tsl::Thread>> threads;
+  for (auto& [rank, named_resources] : resources) {
+    threads.emplace_back(tsl::Env::Default()->StartThread(
+        {}, "collective_resource_retirement",
+        [&, resources = &named_resources] { retire(*resources); }));
+  }
+}
+
+absl::StatusOr<GpuClique::Resource*> GpuClique::GetOrCreateResource(
+    RankId rank, absl::string_view name,
+    absl::FunctionRef<absl::StatusOr<std::unique_ptr<Resource>>()> create) {
+  if (name.empty()) {
+    return InvalidArgument("Communicator resource name must not be empty");
+  }
+  if (!comm(rank).has_value()) {
+    return InvalidArgument("No communicator for resource rank %v", rank);
+  }
+  absl::MutexLock lock(mu_);
+  if (IsCancelled()) {
+    return FailedPrecondition("Cannot access resources of a cancelled clique");
+  }
+  auto rank_resources = resources_.find(rank);
+  if (rank_resources != resources_.end()) {
+    auto resource = rank_resources->second.find(name);
+    if (resource != rank_resources->second.end()) {
+      return resource->second.get();
+    }
+  }
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Resource> resource, create());
+  if (resource == nullptr) {
+    return InvalidArgument("Communicator resource factory returned null");
+  }
+  Resource* borrowed = resource.get();
+  resources_[rank].emplace(std::string(name), std::move(resource));
+  return borrowed;
+}
 
 std::optional<GpuDeviceCommunicator*> GpuClique::device_comm(
     RankId rank, const GpuDeviceCommunicator::Requirements& reqs) const {
@@ -106,6 +174,8 @@ absl::Status GpuClique::HealthCheck() const {
 }
 
 absl::Status GpuClique::Abort() {
+  // Mark cancellation even if a backend fails to abort its communicators.
+  cancel_->Cancel();
   VLOG(1) << "Aborting GpuClique " << key();
   absl::Status result = absl::OkStatus();
   ForEachComm([this, &result](RankId rank, Communicator* comm) {

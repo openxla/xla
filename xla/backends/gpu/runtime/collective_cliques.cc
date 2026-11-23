@@ -26,12 +26,14 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "tsl/platform/casts.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -68,6 +70,17 @@ namespace xla::gpu {
 
 CollectiveCliques::CollectiveCliques(AcquiredCliquesMap cliques_map)
     : cliques_map_(std::move(cliques_map)) {}
+
+absl::StatusOr<GpuClique::Resource*> CollectiveCliques::GetOrCreateResource(
+    const GpuCliqueKey& clique_key, RankId rank, absl::string_view name,
+    absl::FunctionRef<absl::StatusOr<std::unique_ptr<GpuClique::Resource>>()>
+        create) const {
+  auto clique = cliques_map_.find(clique_key);
+  if (clique == cliques_map_.end()) {
+    return NotFound("No clique found for clique key: %v", clique_key);
+  }
+  return (*clique->second)->GetOrCreateResource(rank, name, create);
+}
 
 absl::StatusOr<GpuCommunicator*> CollectiveCliques::GetComm(
     const GpuCliqueKey& clique_key, RankId rank) const {

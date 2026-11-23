@@ -21,8 +21,11 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/functional/function_ref.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -41,6 +44,11 @@ class CollectiveCliques {
  public:
   CollectiveCliques() = default;
   explicit CollectiveCliques(AcquiredCliquesMap cliques_map);
+
+  absl::StatusOr<GpuClique::Resource*> GetOrCreateResource(
+      const GpuCliqueKey& clique_key, RankId rank, absl::string_view name,
+      absl::FunctionRef<absl::StatusOr<std::unique_ptr<GpuClique::Resource>>()>
+          create) const;
 
   absl::StatusOr<GpuCommunicator*> GetComm(const GpuCliqueKey& clique_key,
                                            RankId rank) const;
