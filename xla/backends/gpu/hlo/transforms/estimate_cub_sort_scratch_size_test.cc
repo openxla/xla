@@ -18,37 +18,42 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include <string>
+#include <cstdint>
+#include <memory>
+#include <optional>
 
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "xla/service/platform_util.h"
-#include "xla/stream_executor/platform.h"
-#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
-#include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/backends/gpu/libraries/cub/cub_sort_planner.h"
+#include "xla/ffi/ffi.h"
+#include "xla/ffi/ffi_api.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
 
-class EstimateCubSortScratchSizeTest
-    : public HloInterpreterReferenceMixin<HloTestBase> {
- public:
-  void SetUp() override {
-    HloInterpreterReferenceMixin<HloTestBase>::SetUp();
-    ASSERT_OK_AND_ASSIGN(test_platform_, PlatformUtil::GetPlatform("gpu"));
-  }
+using ::absl_testing::IsOkAndHolds;
+using ::absl_testing::StatusIs;
 
+class EstimateCubSortScratchSizeTest : public HloHardwareIndependentTestBase {
+ public:
   void RunAndCheck(absl::string_view hlo, absl::string_view expected) {
     RunAndFilecheckHloRewrite(
-        hlo, EstimateCubSortScratchSize(GetTestPlatform()->Name()), expected);
+        hlo,
+        EstimateCubSortScratchSize(
+            "CUDA", stream_executor::GpuComputeCapability(
+                        stream_executor::CudaComputeCapability(9, 0))),
+        expected);
   }
-
-  const stream_executor::Platform* GetTestPlatform() const {
-    return test_platform_;
-  }
-
- private:
-  stream_executor::Platform* test_platform_ = nullptr;
 };
 
 TEST_F(EstimateCubSortScratchSizeTest, U32_F32) {
@@ -311,6 +316,218 @@ TEST_F(EstimateCubSortScratchSizeTest, U64_F64) {
     // CHECK-SAME: custom_call_target="xla.gpu.ext.cub_sort_pairs"
     // CHECK-SAME: backend_config={descending = false, batch_size = 16 : i64}
   )");
+}
+
+TEST_F(EstimateCubSortScratchSizeTest, SingleTileClampsZeroScratchToOneByte) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule m
+    ENTRY main {
+      %keys = f32[1000] parameter(0)
+      %custom-call = (f32[1000]{0}, u8[1]{0})
+        custom-call(%keys),
+        custom_call_target="xla.gpu.ext.cub_sort_unassigned_scratch_size",
+        backend_config={"descending":false}
+      ROOT %t = f32[1000]{0} get-tuple-element(%custom-call), index=0
+  })";
+  const stream_executor::CudaComputeCapability cc(9, 0);
+  ASSERT_OK_AND_ASSIGN(
+      int64_t planned_scratch,
+      ComputeCudaCubSortScratchSize(cc, F32, std::nullopt, 1000, 1));
+  EXPECT_EQ(planned_scratch, 0);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_THAT(EstimateCubSortScratchSize(
+                  "CUDA", stream_executor::GpuComputeCapability(cc))
+                  .Run(module.get()),
+              IsOkAndHolds(true));
+  const HloInstruction* call =
+      module->entry_computation()->root_instruction()->operand(0);
+  EXPECT_EQ(call->shape().tuple_shapes(1).element_type(), U8);
+  EXPECT_EQ(call->shape().tuple_shapes(1).dimensions(0), 1);
+}
+
+TEST_F(EstimateCubSortScratchSizeTest, OnesweepWritesExactNonTrivialScratch) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule m
+    ENTRY main {
+      %keys = u32[65536] parameter(0)
+      %values = f32[65536] parameter(1)
+      %custom-call = (u32[65536]{0}, f32[65536]{0}, u8[1]{0})
+        custom-call(%keys, %values),
+        custom_call_target="xla.gpu.ext.cub_sort_unassigned_scratch_size",
+        backend_config={"descending":false}
+      ROOT %t = u32[65536]{0} get-tuple-element(%custom-call), index=0
+  })";
+  const stream_executor::CudaComputeCapability cc(9, 0);
+  ASSERT_OK_AND_ASSIGN(int64_t expected_scratch,
+                       ComputeCudaCubSortScratchSize(cc, U32, F32, 65536, 1));
+  ASSERT_GT(expected_scratch, 1);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_THAT(EstimateCubSortScratchSize(
+                  "CUDA", stream_executor::GpuComputeCapability(cc))
+                  .Run(module.get()),
+              IsOkAndHolds(true));
+  const HloInstruction* call =
+      module->entry_computation()->root_instruction()->operand(0);
+  EXPECT_EQ(call->shape().tuple_shapes(2).element_type(), U8);
+  EXPECT_EQ(call->shape().tuple_shapes(2).dimensions(0), expected_scratch);
+}
+
+TEST_F(EstimateCubSortScratchSizeTest, SegmentedWritesExactNonTrivialScratch) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule m
+    ENTRY main {
+      %keys = f32[16,10000] parameter(0)
+      %custom-call = (f32[16,10000]{1,0}, u8[1]{0})
+        custom-call(%keys),
+        custom_call_target="xla.gpu.ext.cub_sort_unassigned_scratch_size",
+        backend_config={"descending":true}
+      ROOT %t = f32[16,10000]{1,0} get-tuple-element(%custom-call), index=0
+  })";
+  const stream_executor::CudaComputeCapability cc(9, 0);
+  ASSERT_OK_AND_ASSIGN(
+      int64_t expected_scratch,
+      ComputeCudaCubSortScratchSize(cc, F32, std::nullopt, 160000, 16));
+  ASSERT_GT(expected_scratch, 1);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_THAT(EstimateCubSortScratchSize(
+                  "CUDA", stream_executor::GpuComputeCapability(cc))
+                  .Run(module.get()),
+              IsOkAndHolds(true));
+  const HloInstruction* call =
+      module->entry_computation()->root_instruction()->operand(0);
+  EXPECT_EQ(call->shape().tuple_shapes(1).element_type(), U8);
+  EXPECT_EQ(call->shape().tuple_shapes(1).dimensions(0), expected_scratch);
+}
+
+TEST_F(EstimateCubSortScratchSizeTest, RejectsEmptyAndSingleElementSorts) {
+  const stream_executor::CudaComputeCapability cc(9, 0);
+  for (absl::string_view hlo : {
+           absl::string_view(R"(
+             HloModule m
+             ENTRY main {
+               %keys = f32[] parameter(0)
+               %custom-call = (f32[], u8[1]{0})
+                 custom-call(%keys),
+                 custom_call_target="xla.gpu.ext.cub_sort_unassigned_scratch_size",
+                 backend_config={"descending":false}
+               ROOT %t = f32[] get-tuple-element(%custom-call), index=0
+             })"),
+           absl::string_view(R"(
+             HloModule m
+             ENTRY main {
+               %keys = f32[0,4096] parameter(0)
+               %custom-call = (f32[0,4096]{1,0}, u8[1]{0})
+                 custom-call(%keys),
+                 custom_call_target="xla.gpu.ext.cub_sort_unassigned_scratch_size",
+                 backend_config={"descending":false}
+               ROOT %t = f32[0,4096]{1,0} get-tuple-element(%custom-call), index=0
+             })"),
+           absl::string_view(R"(
+             HloModule m
+             ENTRY main {
+               %keys = f32[10,0] parameter(0)
+               %custom-call = (f32[10,0]{1,0}, u8[1]{0})
+                 custom-call(%keys),
+                 custom_call_target="xla.gpu.ext.cub_sort_unassigned_scratch_size",
+                 backend_config={"descending":false}
+               ROOT %t = f32[10,0]{1,0} get-tuple-element(%custom-call), index=0
+             })"),
+           absl::string_view(R"(
+             HloModule m
+             ENTRY main {
+               %keys = f32[16,1] parameter(0)
+               %custom-call = (f32[16,1]{1,0}, u8[1]{0})
+                 custom-call(%keys),
+                 custom_call_target="xla.gpu.ext.cub_sort_unassigned_scratch_size",
+                 backend_config={"descending":false}
+               ROOT %t = f32[16,1]{1,0} get-tuple-element(%custom-call), index=0
+             })"),
+       }) {
+    SCOPED_TRACE(hlo);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                         ParseAndReturnVerifiedModule(hlo));
+    EXPECT_THAT(EstimateCubSortScratchSize(
+                    "CUDA", stream_executor::GpuComputeCapability(cc))
+                    .Run(module.get()),
+                StatusIs(absl::StatusCode::kInvalidArgument));
+  }
+}
+
+absl::StatusOr<std::unique_ptr<int64_t>> FakeCubSortKeysInstantiate(
+    ffi::AnyBuffer, ffi::Result<ffi::AnyBuffer>, ffi::Result<ffi::BufferR1<U8>>,
+    bool /*descending*/, int64_t batch_size) {
+  return std::make_unique<int64_t>(batch_size * 1024);
+}
+
+absl::Status FakeCubSortDummyExecute() { return absl::OkStatus(); }
+
+XLA_FFI_DEFINE_HANDLER(kFakeCubSortKeysInstantiate, FakeCubSortKeysInstantiate,
+                       ffi::Ffi::BindInstantiate()
+                           .Arg<ffi::AnyBuffer>()
+                           .Ret<ffi::AnyBuffer>()
+                           .Ret<ffi::BufferR1<U8>>()
+                           .Attr<bool>("descending")
+                           .Attr<int64_t>("batch_size"));
+
+XLA_FFI_DEFINE_HANDLER(kFakeCubSortDummyExecute, FakeCubSortDummyExecute,
+                       ffi::Ffi::Bind());
+
+XLA_FFI_REGISTER_HANDLER(
+    ffi::GetXlaFfiApi(),
+    kCubDeviceRadixSortKeysUnassignedScratchSizeTarget.data(), "TEST_ROCM",
+    {/*instantiate=*/kFakeCubSortKeysInstantiate, /*prepare=*/nullptr,
+     /*initialize=*/nullptr, /*execute=*/kFakeCubSortDummyExecute});
+
+TEST_F(EstimateCubSortScratchSizeTest, NonCudaInvokesFfiInstantiateHandler) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule m
+    ENTRY main {
+      %keys = f32[4,1000] parameter(0)
+      %custom-call = (f32[4,1000]{1,0}, u8[1]{0})
+        custom-call(%keys),
+        custom_call_target="xla.gpu.ext.cub_sort_unassigned_scratch_size",
+        backend_config={"descending":true}
+      ROOT %t = f32[4,1000]{1,0} get-tuple-element(%custom-call), index=0
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  const stream_executor::GpuComputeCapability rocm_cc(
+      stream_executor::RocmComputeCapability("gfx942"));
+  ASSERT_THAT(
+      EstimateCubSortScratchSize("TEST_ROCM", rocm_cc).Run(module.get()),
+      IsOkAndHolds(true));
+  const HloInstruction* call =
+      module->entry_computation()->root_instruction()->operand(0);
+  EXPECT_EQ(call->custom_call_target(), kCubDeviceRadixSortKeysTarget);
+  EXPECT_EQ(call->shape().tuple_shapes(1).element_type(), U8);
+  EXPECT_EQ(call->shape().tuple_shapes(1).dimensions(0), 4096);
+}
+
+TEST_F(EstimateCubSortScratchSizeTest,
+       NonCudaMissingFfiHandlerReturnsNotFound) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule m
+    ENTRY main {
+      %keys = f32[1000] parameter(0)
+      %custom-call = (f32[1000]{0}, u8[1]{0})
+        custom-call(%keys),
+        custom_call_target="xla.gpu.ext.cub_sort_unassigned_scratch_size",
+        backend_config={"descending":false}
+      ROOT %t = f32[1000]{0} get-tuple-element(%custom-call), index=0
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  const stream_executor::GpuComputeCapability rocm_cc(
+      stream_executor::RocmComputeCapability("gfx942"));
+  EXPECT_THAT(EstimateCubSortScratchSize("UNREGISTERED_PLATFORM", rocm_cc)
+                  .Run(module.get()),
+              StatusIs(absl::StatusCode::kNotFound));
 }
 
 }  // namespace

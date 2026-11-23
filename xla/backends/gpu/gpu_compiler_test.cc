@@ -2244,16 +2244,27 @@ class GpuCompilerSelectKTest
                     ElementsAre(Thunk::Kind::kCopy, Thunk::Kind::kCustomKernel,
                                 Thunk::Kind::kCopy, Thunk::Kind::kCopy)));
         } else if (kinds.size() == 4) {
-          // CUB sort via FFI custom call; for batch == 1 the contiguous output
+          // CUB sort: embedded kCustomKernel on CUDA (single-tile), or FFI
+          // kCustomCall on ROCm/SYCL; for batch == 1 the contiguous output
           // slices lower to device-to-device kCopy thunks.
+          Thunk::Kind sort_kind =
+              device_description().gpu_compute_capability().IsCuda()
+                  ? Thunk::Kind::kCustomKernel
+                  : Thunk::Kind::kCustomCall;
           EXPECT_THAT(
               kinds,
-              AnyOf(ElementsAre(
-                        Thunk::Kind::kCustomKernel, Thunk::Kind::kCustomCall,
-                        Thunk::Kind::kCustomKernel, Thunk::Kind::kCustomKernel),
-                    ElementsAre(Thunk::Kind::kCustomKernel,
-                                Thunk::Kind::kCustomCall, Thunk::Kind::kCopy,
-                                Thunk::Kind::kCopy)));
+              AnyOf(ElementsAre(Thunk::Kind::kCustomKernel, sort_kind,
+                                Thunk::Kind::kCustomKernel,
+                                Thunk::Kind::kCustomKernel),
+                    ElementsAre(Thunk::Kind::kCustomKernel, sort_kind,
+                                Thunk::Kind::kCopy, Thunk::Kind::kCopy)));
+        } else if (device_description().gpu_compute_capability().IsCuda() &&
+                   kinds.size() > 4) {
+          // Multi-pass CUB sort on CUDA emits multiple embedded kCustomKernel
+          // thunks between the setup kernel and the output slices.
+          EXPECT_EQ(kinds.front(), Thunk::Kind::kCustomKernel);
+          EXPECT_THAT(kinds, Each(AnyOf(Thunk::Kind::kCustomKernel,
+                                        Thunk::Kind::kCopy)));
         } else {
           FAIL() << "Unexpected thunk sequence size: " << kinds.size();
         }

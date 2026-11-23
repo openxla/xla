@@ -364,10 +364,7 @@ struct SegmentedPlanResult {
 //   - When `total_bits` is not an exact multiple of `segmented.radix_bits`,
 //     the initial passes use the 1-bit-narrower `alt_segmented` policy to
 //     lower register and shared-memory usage without adding extra passes.
-absl::StatusOr<SegmentedPlanResult> PlanSegmentedSort(
-    const CubRadixSortPolicySpec& policy, int64_t num_items, int64_t batch_size,
-    int64_t segment_size, int key_byte_size, int value_byte_size,
-    int32_t max_grid_x) {
+int64_t MaxSegmentedSegmentSizeForPolicy(const CubRadixSortPolicySpec& policy) {
   // CUB's `DeviceSegmentedRadixSortKernel` asserts `INT32_MAX > segment_size`,
   // and `AgentRadixSortDownsweep::ProcessTile<false>` with `int32_t` offsets
   // advances `bin_offset` by up to `TILE_ITEMS` on a final partial tile.
@@ -375,9 +372,15 @@ absl::StatusOr<SegmentedPlanResult> PlanSegmentedSort(
   // invariant and prevents signed `int32_t` overflow UB.
   const int64_t max_tile_items = std::max(policy.segmented.tile_items(),
                                           policy.alt_segmented.tile_items());
-  const int64_t max_segment_size =
-      static_cast<int64_t>(std::numeric_limits<int32_t>::max()) -
-      max_tile_items;
+  return static_cast<int64_t>(std::numeric_limits<int32_t>::max()) -
+         max_tile_items;
+}
+
+absl::StatusOr<SegmentedPlanResult> PlanSegmentedSort(
+    const CubRadixSortPolicySpec& policy, int64_t num_items, int64_t batch_size,
+    int64_t segment_size, int key_byte_size, int value_byte_size,
+    int32_t max_grid_x) {
+  const int64_t max_segment_size = MaxSegmentedSegmentSizeForPolicy(policy);
   if (segment_size > max_segment_size) {
     return absl::InvalidArgumentError(
         absl::StrCat("Batched CUDA CUB sort segment_size (", segment_size,
@@ -402,6 +405,20 @@ absl::StatusOr<SegmentedPlanResult> PlanSegmentedSort(
 }
 
 }  // namespace
+
+absl::StatusOr<int64_t> MaxCudaCubSortSegmentedSegmentSize(
+    const stream_executor::CudaComputeCapability& cc, PrimitiveType key_type,
+    std::optional<PrimitiveType> value_type) {
+  ABSL_RETURN_IF_ERROR(ValidateCubSortTypes(key_type, value_type));
+  const int key_byte_size = primitive_util::ByteWidth(key_type);
+  const int value_byte_size =
+      value_type.has_value() ? primitive_util::ByteWidth(*value_type) : 0;
+  const int sm_version = CanonicalCubSortPolicySmVersion(cc.major);
+  const CubRadixSortPolicySpec policy =
+      GetCubRadixSortPolicySpec(sm_version, key_byte_size, value_byte_size,
+                                /*is_float32_key=*/key_type == F32);
+  return MaxSegmentedSegmentSizeForPolicy(policy);
+}
 
 absl::StatusOr<CubSortExecutionPlan> PlanCubSortExecution(
     const stream_executor::CudaComputeCapability& cc, PrimitiveType key_type,

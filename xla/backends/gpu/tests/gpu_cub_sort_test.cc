@@ -72,6 +72,9 @@ class CubSortTestBase
   std::optional<std::string> DevicelessSkipReason(
       PrimitiveType key_type, std::optional<PrimitiveType> value_type,
       int batch_size, int64_t num_items = kTestDataSize) {
+    if (device_description().gpu_compute_capability().IsCuda()) {
+      return std::nullopt;
+    }
     std::string device_name = device_description().name();
     auto cub_version = device_description().cub_version();
 

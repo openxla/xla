@@ -31,10 +31,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/libraries/cub/cub_sort_policy.h"
 #include "xla/backends/gpu/libraries/cub/cub_sort_types.h"
@@ -307,6 +309,608 @@ class CubSortKernelsTest : public ::testing::Test {
     EXPECT_EQ(h_vals_out, expected_vals);
   }
 
+  template <typename Key>
+  void RunOnesweepKeys(PrimitiveType key_type, const std::vector<Key>& keys_in,
+                       bool descending, int32_t portion_size_override = 0) {
+    ASSERT_OK_AND_ASSIGN(
+        CubSortOnesweepKernelSpecs specs,
+        GetCubSortOnesweepKernelSpecs(key_type, std::nullopt, descending, cc_));
+    const std::optional<se::CudaCubinInMemory> cubin =
+        specs.histogram.cuda_cubin_in_memory();
+    ASSERT_TRUE(cubin.has_value());
+    if (se::cuda::IsCudaElf(cubin->cubin_bytes)) {
+      ASSERT_TRUE(specs.histogram_attrs.has_value());
+      EXPECT_GT(specs.histogram_attrs->num_regs, 0);
+      EXPECT_GT(specs.histogram_attrs->static_shared_size_bytes, 0);
+    }
+
+    using HistogramFactory =
+        se::TypedKernelFactory<se::DeviceAddressBase, se::DeviceAddressBase,
+                               CubGlobalOffset, int32_t, int32_t>;
+    using ExclusiveSumFactory =
+        se::TypedKernelFactory<se::DeviceAddressBase, se::DeviceAddressBase,
+                               se::DeviceAddressBase, int32_t>;
+    using OnesweepFactory =
+        se::TypedKernelFactory<se::DeviceAddressBase, se::DeviceAddressBase,
+                               se::DeviceAddressBase, se::DeviceAddressBase,
+                               se::DeviceAddressBase, se::DeviceAddressBase,
+                               int64_t, int32_t, int32_t, int32_t>;
+
+    ASSERT_OK_AND_ASSIGN(auto histogram_kernel,
+                         HistogramFactory::Create(executor_, specs.histogram));
+    ASSERT_OK_AND_ASSIGN(
+        auto exclusive_sum_kernel,
+        ExclusiveSumFactory::Create(executor_, specs.exclusive_sum));
+    ASSERT_OK_AND_ASSIGN(auto onesweep_kernel,
+                         OnesweepFactory::Create(executor_, specs.onesweep));
+
+    const CubRadixSortPolicySpec policy = GetCubRadixSortPolicySpec(
+        sm_version_, sizeof(Key), /*value_byte_size=*/0,
+        std::is_same_v<Key, float>);
+    const int64_t num_items = keys_in.size();
+    const int num_passes = static_cast<int>(sizeof(Key));
+    const int32_t tile_items = policy.onesweep.tile_items();
+    const int32_t portion_size =
+        portion_size_override > 0
+            ? portion_size_override
+            : (kCubSortMaxPortionLimit / tile_items) * tile_items;
+    const int64_t num_portions = (num_items + portion_size - 1) / portion_size;
+    const int32_t max_blocks =
+        (std::min<int64_t>(num_items, portion_size) + tile_items - 1) /
+        tile_items;
+
+    const int64_t key_bytes = num_items * sizeof(Key);
+    const int64_t bins_pass_bytes =
+        num_passes * kCubSortOnesweepRadixDigits * sizeof(CubGlobalOffset);
+    const int64_t lookback_bytes = static_cast<int64_t>(max_blocks) *
+                                   kCubSortOnesweepRadixDigits *
+                                   sizeof(int32_t);
+    const int64_t counters_all_bytes = static_cast<int64_t>(num_passes) *
+                                       num_portions *
+                                       kCubSortScratchAlignmentBytes;
+
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> keys_in_buffer,
+                         Allocate(key_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> keys_out_buffer,
+                         Allocate(key_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> keys_tmp_buffer,
+                         Allocate(key_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> bins_raw_buffer,
+                         Allocate(bins_pass_bytes));
+    std::vector<se::ScopedDeviceAddress<uint8_t>> bins_portion_buffers;
+    bins_portion_buffers.reserve(num_portions);
+    for (int64_t p = 0; p < num_portions; ++p) {
+      ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> buf,
+                           Allocate(bins_pass_bytes));
+      bins_portion_buffers.push_back(std::move(buf));
+    }
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> lookback_buffer,
+                         Allocate(lookback_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> counters_buffer,
+                         Allocate(counters_all_bytes));
+
+    ASSERT_OK(stream_->Memcpy(keys_in_buffer.ptr(), keys_in.data(), key_bytes));
+    ASSERT_OK(stream_->MemZero(bins_raw_buffer.ptr(), bins_pass_bytes));
+    // Poison counters_buffer with non-zero bytes to verify ExclusiveSum zeroes
+    // all counter slots.
+    ASSERT_OK(stream_->Memset32(counters_buffer.ptr(), 0x5a5a5a5au,
+                                counters_all_bytes));
+
+    const int64_t histogram_grid =
+        std::min<int64_t>(executor_->GetDeviceDescription().core_count() * 2,
+                          (num_items + policy.histogram.tile_items() - 1) /
+                              policy.histogram.tile_items());
+    ASSERT_OK(histogram_kernel.Launch(
+        se::ThreadDim(policy.histogram.block_threads),
+        se::BlockDim(histogram_grid), /*shmem_bytes=*/0, stream_.get(),
+        *bins_raw_buffer, *keys_in_buffer,
+        static_cast<CubGlobalOffset>(num_items), int32_t{0},
+        static_cast<int32_t>(sizeof(Key) * 8)));
+    ASSERT_OK(exclusive_sum_kernel.Launch(
+        se::ThreadDim(policy.exclusive_sum.block_threads),
+        se::BlockDim(num_passes), /*shmem_bytes=*/0, stream_.get(),
+        *bins_raw_buffer, *bins_portion_buffers[0], *counters_buffer,
+        static_cast<int32_t>(num_portions)));
+
+    for (int pass = 0; pass < num_passes; ++pass) {
+      const int remaining_passes = num_passes - 1 - pass;
+      se::DeviceAddressBase dst =
+          (remaining_passes % 2 == 0) ? *keys_out_buffer : *keys_tmp_buffer;
+      se::DeviceAddressBase src =
+          (pass == 0) ? *keys_in_buffer
+                      : ((remaining_passes % 2 == 0) ? *keys_tmp_buffer
+                                                     : *keys_out_buffer);
+      const int64_t pass_bin_byte_offset = static_cast<int64_t>(pass) *
+                                           kCubSortOnesweepRadixDigits *
+                                           sizeof(CubGlobalOffset);
+
+      for (int64_t portion = 0; portion < num_portions; ++portion) {
+        const int64_t item_offset = portion * portion_size;
+        const int32_t portion_items = static_cast<int32_t>(
+            std::min<int64_t>(num_items - item_offset, portion_size));
+        const int32_t num_blocks =
+            (portion_items + tile_items - 1) / tile_items;
+
+        ASSERT_OK(stream_->MemZero(lookback_buffer.ptr(), lookback_bytes));
+
+        const int64_t counter_slot = portion * num_passes + pass;
+        se::DeviceAddressBase counter_slice(
+            static_cast<char*>(counters_buffer->opaque()) +
+                counter_slot * kCubSortScratchAlignmentBytes,
+            sizeof(int32_t));
+        se::DeviceAddressBase bins_in_slice(
+            static_cast<char*>(bins_portion_buffers[portion]->opaque()) +
+                pass_bin_byte_offset,
+            kCubSortOnesweepRadixDigits * sizeof(CubGlobalOffset));
+        se::DeviceAddressBase bins_out_slice =
+            (portion + 1 < num_portions)
+                ? se::DeviceAddressBase(
+                      static_cast<char*>(
+                          bins_portion_buffers[portion + 1]->opaque()) +
+                          pass_bin_byte_offset,
+                      kCubSortOnesweepRadixDigits * sizeof(CubGlobalOffset))
+                : se::DeviceAddressBase(nullptr, 0);
+
+        ASSERT_OK(onesweep_kernel.Launch(
+            se::ThreadDim(policy.onesweep.block_threads),
+            se::BlockDim(num_blocks), /*shmem_bytes=*/0, stream_.get(),
+            *lookback_buffer, counter_slice, bins_out_slice, bins_in_slice, dst,
+            src, item_offset, portion_items, pass * kCubSortOnesweepRadixBits,
+            kCubSortOnesweepRadixBits));
+      }
+    }
+
+    std::vector<Key> keys_out(num_items);
+    ASSERT_OK(stream_->Memcpy(keys_out.data(), *keys_out_buffer, key_bytes));
+    ASSERT_OK(stream_->BlockHostUntilDone());
+
+    std::vector<Key> expected = keys_in;
+    absl::c_stable_sort(expected, [descending](Key a, Key b) {
+      return KeyLessThan(a, b, descending);
+    });
+    ExpectKeysBitEqual(keys_out, expected);
+  }
+
+  template <typename Key, typename Value>
+  void RunOnesweepPairs(PrimitiveType key_type, PrimitiveType val_type,
+                        const std::vector<Key>& keys_in, bool descending,
+                        int32_t portion_size_override = 0) {
+    ASSERT_OK_AND_ASSIGN(
+        CubSortOnesweepKernelSpecs specs,
+        GetCubSortOnesweepKernelSpecs(key_type, val_type, descending, cc_));
+    const std::optional<se::CudaCubinInMemory> cubin =
+        specs.histogram.cuda_cubin_in_memory();
+    ASSERT_TRUE(cubin.has_value());
+    if (se::cuda::IsCudaElf(cubin->cubin_bytes)) {
+      ASSERT_TRUE(specs.histogram_attrs.has_value());
+      EXPECT_GT(specs.histogram_attrs->num_regs, 0);
+      EXPECT_GT(specs.histogram_attrs->static_shared_size_bytes, 0);
+    }
+
+    using HistogramFactory =
+        se::TypedKernelFactory<se::DeviceAddressBase, se::DeviceAddressBase,
+                               CubGlobalOffset, int32_t, int32_t>;
+    using ExclusiveSumFactory =
+        se::TypedKernelFactory<se::DeviceAddressBase, se::DeviceAddressBase,
+                               se::DeviceAddressBase, int32_t>;
+    using OnesweepFactory =
+        se::TypedKernelFactory<se::DeviceAddressBase, se::DeviceAddressBase,
+                               se::DeviceAddressBase, se::DeviceAddressBase,
+                               se::DeviceAddressBase, se::DeviceAddressBase,
+                               se::DeviceAddressBase, se::DeviceAddressBase,
+                               int64_t, int32_t, int32_t, int32_t>;
+
+    ASSERT_OK_AND_ASSIGN(auto histogram_kernel,
+                         HistogramFactory::Create(executor_, specs.histogram));
+    ASSERT_OK_AND_ASSIGN(
+        auto exclusive_sum_kernel,
+        ExclusiveSumFactory::Create(executor_, specs.exclusive_sum));
+    ASSERT_OK_AND_ASSIGN(auto onesweep_kernel,
+                         OnesweepFactory::Create(executor_, specs.onesweep));
+
+    const CubRadixSortPolicySpec policy = GetCubRadixSortPolicySpec(
+        sm_version_, sizeof(Key), sizeof(Value), std::is_same_v<Key, float>);
+    const int64_t num_items = keys_in.size();
+    std::vector<Value> values_in(num_items);
+    for (int64_t i = 0; i < num_items; ++i) {
+      values_in[i] = static_cast<Value>(i);
+    }
+
+    const int num_passes = static_cast<int>(sizeof(Key));
+    const int32_t tile_items = policy.onesweep.tile_items();
+    const int32_t portion_size =
+        portion_size_override > 0
+            ? portion_size_override
+            : (kCubSortMaxPortionLimit / tile_items) * tile_items;
+    const int64_t num_portions = (num_items + portion_size - 1) / portion_size;
+    const int32_t max_blocks =
+        (std::min<int64_t>(num_items, portion_size) + tile_items - 1) /
+        tile_items;
+
+    const int64_t key_bytes = num_items * sizeof(Key);
+    const int64_t val_bytes = num_items * sizeof(Value);
+    const int64_t bins_pass_bytes =
+        num_passes * kCubSortOnesweepRadixDigits * sizeof(CubGlobalOffset);
+    const int64_t lookback_bytes = static_cast<int64_t>(max_blocks) *
+                                   kCubSortOnesweepRadixDigits *
+                                   sizeof(int32_t);
+    const int64_t counters_all_bytes = static_cast<int64_t>(num_passes) *
+                                       num_portions *
+                                       kCubSortScratchAlignmentBytes;
+
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> keys_in_buffer,
+                         Allocate(key_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> keys_out_buffer,
+                         Allocate(key_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> keys_tmp_buffer,
+                         Allocate(key_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> values_in_buffer,
+                         Allocate(val_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> values_out_buffer,
+                         Allocate(val_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> values_tmp_buffer,
+                         Allocate(val_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> bins_raw_buffer,
+                         Allocate(bins_pass_bytes));
+    std::vector<se::ScopedDeviceAddress<uint8_t>> bins_portion_buffers;
+    bins_portion_buffers.reserve(num_portions);
+    for (int64_t p = 0; p < num_portions; ++p) {
+      ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> buf,
+                           Allocate(bins_pass_bytes));
+      bins_portion_buffers.push_back(std::move(buf));
+    }
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> lookback_buffer,
+                         Allocate(lookback_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> counters_buffer,
+                         Allocate(counters_all_bytes));
+
+    ASSERT_OK(stream_->Memcpy(keys_in_buffer.ptr(), keys_in.data(), key_bytes));
+    ASSERT_OK(
+        stream_->Memcpy(values_in_buffer.ptr(), values_in.data(), val_bytes));
+    ASSERT_OK(stream_->MemZero(bins_raw_buffer.ptr(), bins_pass_bytes));
+    ASSERT_OK(stream_->Memset32(counters_buffer.ptr(), 0x5a5a5a5au,
+                                counters_all_bytes));
+
+    const int64_t histogram_grid =
+        std::min<int64_t>(executor_->GetDeviceDescription().core_count() * 2,
+                          (num_items + policy.histogram.tile_items() - 1) /
+                              policy.histogram.tile_items());
+    ASSERT_OK(histogram_kernel.Launch(
+        se::ThreadDim(policy.histogram.block_threads),
+        se::BlockDim(histogram_grid), /*shmem_bytes=*/0, stream_.get(),
+        *bins_raw_buffer, *keys_in_buffer,
+        static_cast<CubGlobalOffset>(num_items), int32_t{0},
+        static_cast<int32_t>(sizeof(Key) * 8)));
+    ASSERT_OK(exclusive_sum_kernel.Launch(
+        se::ThreadDim(policy.exclusive_sum.block_threads),
+        se::BlockDim(num_passes), /*shmem_bytes=*/0, stream_.get(),
+        *bins_raw_buffer, *bins_portion_buffers[0], *counters_buffer,
+        static_cast<int32_t>(num_portions)));
+
+    for (int pass = 0; pass < num_passes; ++pass) {
+      const int remaining_passes = num_passes - 1 - pass;
+      se::DeviceAddressBase keys_dst =
+          (remaining_passes % 2 == 0) ? *keys_out_buffer : *keys_tmp_buffer;
+      se::DeviceAddressBase keys_src =
+          (pass == 0) ? *keys_in_buffer
+                      : ((remaining_passes % 2 == 0) ? *keys_tmp_buffer
+                                                     : *keys_out_buffer);
+      se::DeviceAddressBase values_dst =
+          (remaining_passes % 2 == 0) ? *values_out_buffer : *values_tmp_buffer;
+      se::DeviceAddressBase values_src =
+          (pass == 0) ? *values_in_buffer
+                      : ((remaining_passes % 2 == 0) ? *values_tmp_buffer
+                                                     : *values_out_buffer);
+      const int64_t pass_bin_byte_offset = static_cast<int64_t>(pass) *
+                                           kCubSortOnesweepRadixDigits *
+                                           sizeof(CubGlobalOffset);
+
+      for (int64_t portion = 0; portion < num_portions; ++portion) {
+        const int64_t item_offset = portion * portion_size;
+        const int32_t portion_items = static_cast<int32_t>(
+            std::min<int64_t>(num_items - item_offset, portion_size));
+        const int32_t num_blocks =
+            (portion_items + tile_items - 1) / tile_items;
+
+        ASSERT_OK(stream_->MemZero(lookback_buffer.ptr(), lookback_bytes));
+
+        const int64_t counter_slot = portion * num_passes + pass;
+        se::DeviceAddressBase counter_slice(
+            static_cast<char*>(counters_buffer->opaque()) +
+                counter_slot * kCubSortScratchAlignmentBytes,
+            sizeof(int32_t));
+        se::DeviceAddressBase bins_in_slice(
+            static_cast<char*>(bins_portion_buffers[portion]->opaque()) +
+                pass_bin_byte_offset,
+            kCubSortOnesweepRadixDigits * sizeof(CubGlobalOffset));
+        se::DeviceAddressBase bins_out_slice =
+            (portion + 1 < num_portions)
+                ? se::DeviceAddressBase(
+                      static_cast<char*>(
+                          bins_portion_buffers[portion + 1]->opaque()) +
+                          pass_bin_byte_offset,
+                      kCubSortOnesweepRadixDigits * sizeof(CubGlobalOffset))
+                : se::DeviceAddressBase(nullptr, 0);
+
+        ASSERT_OK(onesweep_kernel.Launch(
+            se::ThreadDim(policy.onesweep.block_threads),
+            se::BlockDim(num_blocks), /*shmem_bytes=*/0, stream_.get(),
+            *lookback_buffer, counter_slice, bins_out_slice, bins_in_slice,
+            keys_dst, keys_src, values_dst, values_src, item_offset,
+            portion_items, pass * kCubSortOnesweepRadixBits,
+            kCubSortOnesweepRadixBits));
+      }
+    }
+
+    std::vector<Key> keys_out(num_items);
+    std::vector<Value> values_out(num_items);
+    ASSERT_OK(stream_->Memcpy(keys_out.data(), *keys_out_buffer, key_bytes));
+    ASSERT_OK(
+        stream_->Memcpy(values_out.data(), *values_out_buffer, val_bytes));
+    ASSERT_OK(stream_->BlockHostUntilDone());
+
+    std::vector<std::pair<Key, Value>> pairs(num_items);
+    for (int64_t i = 0; i < num_items; ++i) {
+      pairs[i] = {keys_in[i], values_in[i]};
+    }
+    absl::c_stable_sort(pairs, [descending](const auto& a, const auto& b) {
+      return KeyLessThan(a.first, b.first, descending);
+    });
+    std::vector<Key> expected_keys(num_items);
+    std::vector<Value> expected_values(num_items);
+    for (int64_t i = 0; i < num_items; ++i) {
+      expected_keys[i] = pairs[i].first;
+      expected_values[i] = pairs[i].second;
+    }
+    ExpectKeysBitEqual(keys_out, expected_keys);
+    EXPECT_EQ(values_out, expected_values);
+  }
+
+  template <typename Key>
+  void RunSegmentedMultiPassKeys(PrimitiveType key_type,
+                                 const std::vector<Key>& keys_in,
+                                 int32_t segment_size, int64_t batch_size,
+                                 bool descending) {
+    ASSERT_OK_AND_ASSIGN(CubSortSegmentedKernelSpecs specs,
+                         GetCubSortSegmentedKernelSpecs(key_type, std::nullopt,
+                                                        descending, cc_));
+
+    using SegmentedSortFactory =
+        se::TypedKernelFactory<se::DeviceAddressBase, se::DeviceAddressBase,
+                               int32_t, int32_t, int32_t>;
+    ASSERT_OK_AND_ASSIGN(auto primary_kernel, SegmentedSortFactory::Create(
+                                                  executor_, specs.primary));
+    ASSERT_OK_AND_ASSIGN(auto alt_kernel,
+                         SegmentedSortFactory::Create(executor_, specs.alt));
+
+    const CubRadixSortPolicySpec policy = GetCubRadixSortPolicySpec(
+        sm_version_, sizeof(Key), /*value_byte_size=*/0,
+        std::is_same_v<Key, float>);
+    const int total_bits = static_cast<int>(sizeof(Key) * 8);
+    const int primary_bits = policy.segmented.radix_bits;
+    const int alt_bits = policy.alt_segmented.radix_bits;
+    const int num_passes = (total_bits + primary_bits - 1) / primary_bits;
+    const int max_alt_passes = num_passes * primary_bits - total_bits;
+    const int alt_end_bit = std::min(total_bits, max_alt_passes * alt_bits);
+
+    const int64_t total_items = batch_size * segment_size;
+    ASSERT_EQ(keys_in.size(), total_items);
+    const int64_t key_bytes = total_items * sizeof(Key);
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> keys_in_buffer,
+                         Allocate(key_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> keys_out_buffer,
+                         Allocate(key_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> keys_tmp_buffer,
+                         Allocate(key_bytes));
+    ASSERT_OK(stream_->Memcpy(keys_in_buffer.ptr(), keys_in.data(), key_bytes));
+    ASSERT_OK(stream_->MemZero(keys_out_buffer.ptr(), key_bytes));
+    ASSERT_OK(stream_->MemZero(keys_tmp_buffer.ptr(), key_bytes));
+
+    int current_bit = 0;
+    for (int pass = 0; pass < num_passes; ++pass) {
+      const bool use_alt = current_bit < alt_end_bit;
+      const int radix_bits = use_alt ? alt_bits : primary_bits;
+      const int pass_bits = std::min(radix_bits, total_bits - current_bit);
+      const int block_threads = use_alt ? policy.alt_segmented.block_threads
+                                        : policy.segmented.block_threads;
+      auto& kernel = use_alt ? alt_kernel : primary_kernel;
+
+      const int remaining_passes = num_passes - 1 - pass;
+      se::DeviceAddressBase keys_dst =
+          (remaining_passes % 2 == 0) ? *keys_out_buffer : *keys_tmp_buffer;
+      se::DeviceAddressBase keys_src =
+          (pass == 0) ? *keys_in_buffer
+                      : ((remaining_passes % 2 == 0) ? *keys_tmp_buffer
+                                                     : *keys_out_buffer);
+
+      const int64_t first_chunk = std::max<int64_t>(1, batch_size / 2);
+      ASSERT_OK(kernel.Launch(se::ThreadDim(block_threads),
+                              se::BlockDim(first_chunk), /*shmem_bytes=*/0,
+                              stream_.get(), keys_src, keys_dst, segment_size,
+                              current_bit, pass_bits));
+      if (batch_size > first_chunk) {
+        const int64_t key_offset = first_chunk * segment_size * sizeof(Key);
+        se::DeviceAddressBase keys_src_second(
+            static_cast<char*>(keys_src.opaque()) + key_offset,
+            key_bytes - key_offset);
+        se::DeviceAddressBase keys_dst_second(
+            static_cast<char*>(keys_dst.opaque()) + key_offset,
+            key_bytes - key_offset);
+        ASSERT_OK(kernel.Launch(se::ThreadDim(block_threads),
+                                se::BlockDim(batch_size - first_chunk),
+                                /*shmem_bytes=*/0, stream_.get(),
+                                keys_src_second, keys_dst_second, segment_size,
+                                current_bit, pass_bits));
+      }
+      current_bit += pass_bits;
+    }
+
+    std::vector<Key> keys_out(total_items);
+    std::vector<Key> keys_in_after(total_items);
+    ASSERT_OK(stream_->Memcpy(keys_out.data(), *keys_out_buffer, key_bytes));
+    ASSERT_OK(
+        stream_->Memcpy(keys_in_after.data(), *keys_in_buffer, key_bytes));
+    ASSERT_OK(stream_->BlockHostUntilDone());
+
+    // Verify input buffer was not mutated.
+    ExpectKeysBitEqual(keys_in_after, keys_in);
+
+    std::vector<Key> expected_keys = keys_in;
+    for (int64_t b = 0; b < batch_size; ++b) {
+      auto begin = expected_keys.begin() + b * segment_size;
+      std::stable_sort(begin, begin + segment_size, [descending](Key a, Key b) {
+        return KeyLessThan(a, b, descending);
+      });
+    }
+    ExpectKeysBitEqual(keys_out, expected_keys);
+  }
+
+  template <typename Key, typename Value>
+  void RunSegmentedMultiPassPairs(PrimitiveType key_type,
+                                  PrimitiveType val_type,
+                                  const std::vector<Key>& keys_in,
+                                  int32_t segment_size, int64_t batch_size,
+                                  bool descending) {
+    ASSERT_OK_AND_ASSIGN(
+        CubSortSegmentedKernelSpecs specs,
+        GetCubSortSegmentedKernelSpecs(key_type, val_type, descending, cc_));
+
+    using SegmentedSortFactory =
+        se::TypedKernelFactory<se::DeviceAddressBase, se::DeviceAddressBase,
+                               se::DeviceAddressBase, se::DeviceAddressBase,
+                               int32_t, int32_t, int32_t>;
+    ASSERT_OK_AND_ASSIGN(auto primary_kernel, SegmentedSortFactory::Create(
+                                                  executor_, specs.primary));
+    ASSERT_OK_AND_ASSIGN(auto alt_kernel,
+                         SegmentedSortFactory::Create(executor_, specs.alt));
+
+    const CubRadixSortPolicySpec policy = GetCubRadixSortPolicySpec(
+        sm_version_, sizeof(Key), sizeof(Value), std::is_same_v<Key, float>);
+    const int total_bits = static_cast<int>(sizeof(Key) * 8);
+    const int primary_bits = policy.segmented.radix_bits;
+    const int alt_bits = policy.alt_segmented.radix_bits;
+    const int num_passes = (total_bits + primary_bits - 1) / primary_bits;
+    const int max_alt_passes = num_passes * primary_bits - total_bits;
+    const int alt_end_bit = std::min(total_bits, max_alt_passes * alt_bits);
+
+    const int64_t total_items = batch_size * segment_size;
+    ASSERT_EQ(keys_in.size(), total_items);
+    std::vector<Value> values_in(total_items);
+    for (int64_t i = 0; i < total_items; ++i) {
+      values_in[i] = static_cast<Value>(i);
+    }
+
+    const int64_t key_bytes = total_items * sizeof(Key);
+    const int64_t val_bytes = total_items * sizeof(Value);
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> keys_in_buffer,
+                         Allocate(key_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> keys_out_buffer,
+                         Allocate(key_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> keys_tmp_buffer,
+                         Allocate(key_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> values_in_buffer,
+                         Allocate(val_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> values_out_buffer,
+                         Allocate(val_bytes));
+    ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> values_tmp_buffer,
+                         Allocate(val_bytes));
+    ASSERT_OK(stream_->Memcpy(keys_in_buffer.ptr(), keys_in.data(), key_bytes));
+    ASSERT_OK(
+        stream_->Memcpy(values_in_buffer.ptr(), values_in.data(), val_bytes));
+    ASSERT_OK(stream_->MemZero(keys_out_buffer.ptr(), key_bytes));
+    ASSERT_OK(stream_->MemZero(values_out_buffer.ptr(), val_bytes));
+
+    int current_bit = 0;
+    for (int pass = 0; pass < num_passes; ++pass) {
+      const bool use_alt = current_bit < alt_end_bit;
+      const int radix_bits = use_alt ? alt_bits : primary_bits;
+      const int pass_bits = std::min(radix_bits, total_bits - current_bit);
+      const int block_threads = use_alt ? policy.alt_segmented.block_threads
+                                        : policy.segmented.block_threads;
+      auto& kernel = use_alt ? alt_kernel : primary_kernel;
+
+      const int remaining_passes = num_passes - 1 - pass;
+      se::DeviceAddressBase keys_dst =
+          (remaining_passes % 2 == 0) ? *keys_out_buffer : *keys_tmp_buffer;
+      se::DeviceAddressBase keys_src =
+          (pass == 0) ? *keys_in_buffer
+                      : ((remaining_passes % 2 == 0) ? *keys_tmp_buffer
+                                                     : *keys_out_buffer);
+      se::DeviceAddressBase values_dst =
+          (remaining_passes % 2 == 0) ? *values_out_buffer : *values_tmp_buffer;
+      se::DeviceAddressBase values_src =
+          (pass == 0) ? *values_in_buffer
+                      : ((remaining_passes % 2 == 0) ? *values_tmp_buffer
+                                                     : *values_out_buffer);
+
+      // Exercise chunked grid launching with host-offset slices.
+      const int64_t first_chunk = std::max<int64_t>(1, batch_size / 2);
+      ASSERT_OK(kernel.Launch(
+          se::ThreadDim(block_threads), se::BlockDim(first_chunk),
+          /*shmem_bytes=*/0, stream_.get(), keys_src, keys_dst, values_src,
+          values_dst, segment_size, current_bit, pass_bits));
+      if (batch_size > first_chunk) {
+        const int64_t key_offset = first_chunk * segment_size * sizeof(Key);
+        const int64_t val_offset = first_chunk * segment_size * sizeof(Value);
+        se::DeviceAddressBase keys_src_second(
+            static_cast<char*>(keys_src.opaque()) + key_offset,
+            key_bytes - key_offset);
+        se::DeviceAddressBase keys_dst_second(
+            static_cast<char*>(keys_dst.opaque()) + key_offset,
+            key_bytes - key_offset);
+        se::DeviceAddressBase values_src_second(
+            static_cast<char*>(values_src.opaque()) + val_offset,
+            val_bytes - val_offset);
+        se::DeviceAddressBase values_dst_second(
+            static_cast<char*>(values_dst.opaque()) + val_offset,
+            val_bytes - val_offset);
+        ASSERT_OK(kernel.Launch(
+            se::ThreadDim(block_threads),
+            se::BlockDim(batch_size - first_chunk), /*shmem_bytes=*/0,
+            stream_.get(), keys_src_second, keys_dst_second, values_src_second,
+            values_dst_second, segment_size, current_bit, pass_bits));
+      }
+      current_bit += pass_bits;
+    }
+
+    std::vector<Key> keys_out(total_items);
+    std::vector<Value> values_out(total_items);
+    std::vector<Key> keys_in_after(total_items);
+    std::vector<Value> values_in_after(total_items);
+    ASSERT_OK(stream_->Memcpy(keys_out.data(), *keys_out_buffer, key_bytes));
+    ASSERT_OK(
+        stream_->Memcpy(values_out.data(), *values_out_buffer, val_bytes));
+    ASSERT_OK(
+        stream_->Memcpy(keys_in_after.data(), *keys_in_buffer, key_bytes));
+    ASSERT_OK(
+        stream_->Memcpy(values_in_after.data(), *values_in_buffer, val_bytes));
+    ASSERT_OK(stream_->BlockHostUntilDone());
+
+    // Verify input buffers were not mutated across odd or even pass counts.
+    ExpectKeysBitEqual(keys_in_after, keys_in);
+    EXPECT_EQ(values_in_after, values_in);
+
+    std::vector<std::pair<Key, Value>> pairs(total_items);
+    for (int64_t i = 0; i < total_items; ++i) {
+      pairs[i] = {keys_in[i], values_in[i]};
+    }
+    for (int64_t b = 0; b < batch_size; ++b) {
+      auto begin = pairs.begin() + b * segment_size;
+      std::stable_sort(begin, begin + segment_size,
+                       [descending](const auto& a, const auto& b) {
+                         return KeyLessThan(a.first, b.first, descending);
+                       });
+    }
+    std::vector<Key> expected_keys(total_items);
+    std::vector<Value> expected_values(total_items);
+    for (int64_t i = 0; i < total_items; ++i) {
+      expected_keys[i] = pairs[i].first;
+      expected_values[i] = pairs[i].second;
+    }
+    ExpectKeysBitEqual(keys_out, expected_keys);
+    EXPECT_EQ(values_out, expected_values);
+  }
+
   se::StreamExecutor* executor_ = nullptr;
   std::unique_ptr<se::Stream> stream_;
   std::unique_ptr<se::StreamExecutorAddressAllocator> allocator_;
@@ -374,6 +978,181 @@ TEST_F(CubSortKernelsTest, SingleTilePairsAllTypes) {
                                         512, 2, descending);
     RunSingleTilePairs<float, uint64_t>(F32, U64, GenerateKeys<float>(300, 18),
                                         300, 1, descending);
+  }
+}
+
+TEST_F(CubSortKernelsTest, OnesweepKeysAndPairsBoundarySizes) {
+  const CubRadixSortPolicySpec f32_policy =
+      GetCubRadixSortPolicySpec(sm_version_, 4, 0, /*is_float32_key=*/true);
+  const int32_t tile = f32_policy.onesweep.tile_items();
+  for (int32_t n : {f32_policy.single_tile.tile_items() + 1, tile - 1, tile,
+                    tile + 1, 2 * tile + 17}) {
+    RunOnesweepKeys<float>(F32, GenerateKeys<float>(n, n),
+                           /*descending=*/false);
+    RunOnesweepKeys<float>(F32, GenerateKeys<float>(n, n + 1),
+                           /*descending=*/true);
+  }
+
+  // Exercise all 12 keys-only and all 18 key-value pair Onesweep shards.
+  for (bool descending : {false, true}) {
+    RunOnesweepKeys<uint8_t>(U8, GenerateKeys<uint8_t>(10000, 101), descending);
+    RunOnesweepKeys<int8_t>(S8, GenerateKeys<int8_t>(10000, 102), descending);
+    RunOnesweepKeys<bfloat16>(BF16, GenerateKeys<bfloat16>(10000, 103),
+                              descending);
+    RunOnesweepKeys<half>(F16, GenerateKeys<half>(10000, 104), descending);
+    RunOnesweepKeys<int16_t>(S16, GenerateKeys<int16_t>(10000, 107),
+                             descending);
+    RunOnesweepKeys<uint16_t>(U16, GenerateKeys<uint16_t>(10000, 108),
+                              descending);
+    RunOnesweepKeys<int32_t>(S32, GenerateKeys<int32_t>(16384, 105),
+                             descending);
+    RunOnesweepKeys<uint32_t>(U32, GenerateKeys<uint32_t>(16384, 109),
+                              descending);
+    RunOnesweepKeys<int64_t>(S64, GenerateKeys<int64_t>(10000, 110),
+                             descending);
+    RunOnesweepKeys<uint64_t>(U64, GenerateKeys<uint64_t>(10000, 111),
+                              descending);
+    RunOnesweepKeys<double>(F64, GenerateKeys<double>(10000, 106), descending);
+
+    RunOnesweepPairs<uint8_t, uint16_t>(
+        U8, U16, GenerateKeys<uint8_t>(10000, 200), descending);
+    RunOnesweepPairs<uint8_t, uint32_t>(
+        U8, U32, GenerateKeys<uint8_t>(10000, 201), descending);
+    RunOnesweepPairs<uint8_t, uint64_t>(
+        U8, U64, GenerateKeys<uint8_t>(10000, 206), descending);
+
+    RunOnesweepPairs<uint16_t, uint16_t>(
+        U16, U16, GenerateKeys<uint16_t>(10000, 207), descending);
+    RunOnesweepPairs<uint16_t, uint32_t>(
+        U16, U32, GenerateKeys<uint16_t>(10000, 208), descending);
+    RunOnesweepPairs<uint16_t, uint64_t>(
+        U16, U64, GenerateKeys<uint16_t>(10000, 202), descending);
+
+    RunOnesweepPairs<int32_t, uint16_t>(
+        S32, U16, GenerateKeys<int32_t>(10000, 209), descending);
+    RunOnesweepPairs<int32_t, uint32_t>(
+        S32, U32, GenerateKeys<int32_t>(16384, 203), descending);
+    RunOnesweepPairs<int32_t, uint64_t>(
+        S32, U64, GenerateKeys<int32_t>(10000, 210), descending);
+
+    RunOnesweepPairs<uint32_t, uint16_t>(
+        U32, U16, GenerateKeys<uint32_t>(10000, 211), descending);
+    RunOnesweepPairs<uint32_t, uint32_t>(
+        U32, U32, GenerateKeys<uint32_t>(10000, 212), descending);
+    RunOnesweepPairs<uint32_t, uint64_t>(
+        U32, U64, GenerateKeys<uint32_t>(10000, 213), descending);
+
+    RunOnesweepPairs<uint64_t, uint16_t>(
+        U64, U16, GenerateKeys<uint64_t>(10000, 214), descending);
+    RunOnesweepPairs<uint64_t, uint32_t>(
+        U64, U32, GenerateKeys<uint64_t>(10000, 215), descending);
+    RunOnesweepPairs<uint64_t, uint64_t>(
+        U64, U64, GenerateKeys<uint64_t>(10000, 205), descending);
+
+    RunOnesweepPairs<float, uint16_t>(F32, U16, GenerateKeys<float>(10000, 216),
+                                      descending);
+    RunOnesweepPairs<float, uint32_t>(F32, U32, GenerateKeys<float>(16384, 204),
+                                      descending);
+    RunOnesweepPairs<float, uint64_t>(F32, U64, GenerateKeys<float>(10000, 217),
+                                      descending);
+  }
+}
+
+TEST_F(CubSortKernelsTest, OnesweepMultiPortionChaining) {
+  // CUB's Onesweep requires every non-final portion size to be an exact
+  // multiple of that configuration's Onesweep tile size (only the final
+  // portion, where d_bins_out == nullptr, may contain a partial tail tile).
+  const CubRadixSortPolicySpec s32_keys_policy =
+      GetCubRadixSortPolicySpec(sm_version_, 4, 0, /*is_float32_key=*/false);
+  const int32_t s32_portion = 2 * s32_keys_policy.onesweep.tile_items();
+  const int32_t s32_num_items = 2 * s32_portion + 137;
+
+  const CubRadixSortPolicySpec f32_pair_policy =
+      GetCubRadixSortPolicySpec(sm_version_, 4, 4, /*is_float32_key=*/true);
+  const int32_t f32_portion = 2 * f32_pair_policy.onesweep.tile_items();
+  const int32_t f32_num_items = 2 * f32_portion + 137;
+
+  for (bool descending : {false, true}) {
+    RunOnesweepKeys<int32_t>(S32, GenerateKeys<int32_t>(s32_num_items, 301),
+                             descending, /*portion_size_override=*/s32_portion);
+    RunOnesweepPairs<float, uint32_t>(
+        F32, U32, GenerateKeys<float>(f32_num_items, 302), descending,
+        /*portion_size_override=*/f32_portion);
+    // All-equal keys exercise AgentRadixSortOnesweep::ShortCircuitCopy +
+    // UpdateBinsGlobal across portions.
+    RunOnesweepKeys<int32_t>(S32, std::vector<int32_t>(s32_num_items, 42),
+                             descending, /*portion_size_override=*/s32_portion);
+    RunOnesweepPairs<float, uint32_t>(
+        F32, U32, std::vector<float>(f32_num_items, -3.5f), descending,
+        /*portion_size_override=*/f32_portion);
+  }
+}
+
+TEST_F(CubSortKernelsTest, ExclusiveSumMultiIterationAnd64BitBins) {
+  ASSERT_OK_AND_ASSIGN(CubSortOnesweepKernelSpecs specs,
+                       GetCubSortOnesweepKernelSpecs(
+                           U64, std::nullopt, /*descending=*/false, cc_));
+  using ExclusiveSumFactory =
+      se::TypedKernelFactory<se::DeviceAddressBase, se::DeviceAddressBase,
+                             se::DeviceAddressBase, int32_t>;
+  ASSERT_OK_AND_ASSIGN(
+      auto exclusive_sum_kernel,
+      ExclusiveSumFactory::Create(executor_, specs.exclusive_sum));
+
+  constexpr int kNumPasses = 8;
+  constexpr int32_t kNumPortions = 300;  // > 256 exercises loop stride.
+  constexpr int64_t kTotalBins = kNumPasses * kCubSortOnesweepRadixDigits;
+  constexpr int64_t kBinsBytes = kTotalBins * sizeof(CubGlobalOffset);
+  constexpr int64_t kCountersBytes = static_cast<int64_t>(kNumPasses) *
+                                     kNumPortions *
+                                     kCubSortScratchAlignmentBytes;
+
+  std::vector<CubGlobalOffset> bins_in(kTotalBins);
+  std::vector<CubGlobalOffset> expected_bins_out(kTotalBins);
+  for (int pass = 0; pass < kNumPasses; ++pass) {
+    CubGlobalOffset running = 0;
+    for (int bin = 0; bin < kCubSortOnesweepRadixDigits; ++bin) {
+      const int idx = pass * kCubSortOnesweepRadixDigits + bin;
+      // Values exceed UINT32_MAX to verify 64-bit BlockScan accumulation.
+      bins_in[idx] = (CubGlobalOffset{1} << 32) +
+                     static_cast<CubGlobalOffset>(pass * 1000 + bin);
+      expected_bins_out[idx] = running;
+      running += bins_in[idx];
+    }
+  }
+
+  ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> bins_in_buffer,
+                       Allocate(kBinsBytes));
+  ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> bins_out_buffer,
+                       Allocate(kBinsBytes));
+  ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> counters_out_buffer,
+                       Allocate(kCountersBytes));
+  ASSERT_OK(stream_->Memcpy(bins_in_buffer.ptr(), bins_in.data(), kBinsBytes));
+  ASSERT_OK(stream_->MemZero(bins_out_buffer.ptr(), kBinsBytes));
+  ASSERT_OK(stream_->Memset32(counters_out_buffer.ptr(), 0x5a5a5a5au,
+                              kCountersBytes));
+
+  ASSERT_OK(exclusive_sum_kernel.Launch(
+      se::ThreadDim(kCubSortExclusiveSumBlockThreads), se::BlockDim(kNumPasses),
+      /*shmem_bytes=*/0, stream_.get(), *bins_in_buffer, *bins_out_buffer,
+      *counters_out_buffer, kNumPortions));
+
+  std::vector<CubGlobalOffset> bins_out(kTotalBins);
+  std::vector<int32_t> counters_out(kCountersBytes / sizeof(int32_t));
+  ASSERT_OK(stream_->Memcpy(bins_out.data(), *bins_out_buffer, kBinsBytes));
+  ASSERT_OK(stream_->Memcpy(counters_out.data(), *counters_out_buffer,
+                            kCountersBytes));
+  ASSERT_OK(stream_->BlockHostUntilDone());
+
+  EXPECT_EQ(bins_out, expected_bins_out);
+  constexpr int64_t kCounterStrideInt32 =
+      kCubSortScratchAlignmentBytes / static_cast<int64_t>(sizeof(int32_t));
+  for (int32_t p = 0; p < kNumPortions; ++p) {
+    for (int pass = 0; pass < kNumPasses; ++pass) {
+      const int64_t slot = static_cast<int64_t>(p) * kNumPasses + pass;
+      ASSERT_EQ(counters_out[slot * kCounterStrideInt32], 0)
+          << "portion=" << p << " pass=" << pass;
+    }
   }
 }
 
@@ -461,6 +1240,116 @@ TEST_F(CubSortKernelsTest, FloatEdgeCasesAndNegativeZeroStability) {
     RunSingleTileKeysWithInput<double>(F64, f64_edge, f64_edge.size(), 1,
                                        descending);
   }
+
+  // Onesweep stability (repeat pattern past SingleTile threshold).
+  std::vector<float> large;
+  large.reserve(8192);
+  while (large.size() < 8192) {
+    for (float v : base) {
+      if (large.size() < 8192) {
+        large.push_back(v);
+      }
+    }
+  }
+  for (bool descending : {false, true}) {
+    RunOnesweepPairs<float, uint32_t>(F32, U32, large, descending);
+  }
+
+  // SegmentedMultiPass stability (2 segments of 8000 floats each, exceeding
+  // SegmentedPolicy::tile_items() = 7488 so primary passes span multiple
+  // tiles).
+  std::vector<float> segmented;
+  segmented.reserve(16000);
+  while (segmented.size() < 16000) {
+    for (float v : base) {
+      if (segmented.size() < 16000) {
+        segmented.push_back(v);
+      }
+    }
+  }
+  for (bool descending : {false, true}) {
+    RunSegmentedMultiPassPairs<float, uint32_t>(F32, U32, segmented, 8000, 2,
+                                                descending);
+  }
+}
+
+TEST_F(CubSortKernelsTest, SegmentedMultiPassKeysAllTypes) {
+  for (bool descending : {false, true}) {
+    RunSegmentedMultiPassKeys<bfloat16>(
+        BF16, GenerateKeys<bfloat16>(3 * 8000, 411), 8000, 3, descending);
+    RunSegmentedMultiPassKeys<half>(F16, GenerateKeys<half>(3 * 8000, 412),
+                                    8000, 3, descending);
+    RunSegmentedMultiPassKeys<float>(F32, GenerateKeys<float>(3 * 8000, 413),
+                                     8000, 3, descending);
+    RunSegmentedMultiPassKeys<double>(F64, GenerateKeys<double>(3 * 4000, 414),
+                                      4000, 3, descending);
+    RunSegmentedMultiPassKeys<int8_t>(S8, GenerateKeys<int8_t>(3 * 5200, 415),
+                                      5200, 3, descending);
+    RunSegmentedMultiPassKeys<int16_t>(
+        S16, GenerateKeys<int16_t>(3 * 8000, 416), 8000, 3, descending);
+    RunSegmentedMultiPassKeys<int32_t>(
+        S32, GenerateKeys<int32_t>(3 * 8000, 417), 8000, 3, descending);
+    RunSegmentedMultiPassKeys<int64_t>(
+        S64, GenerateKeys<int64_t>(3 * 4000, 418), 4000, 3, descending);
+    RunSegmentedMultiPassKeys<uint8_t>(U8, GenerateKeys<uint8_t>(3 * 5200, 419),
+                                       5200, 3, descending);
+    RunSegmentedMultiPassKeys<uint16_t>(
+        U16, GenerateKeys<uint16_t>(3 * 8000, 420), 8000, 3, descending);
+    RunSegmentedMultiPassKeys<uint32_t>(
+        U32, GenerateKeys<uint32_t>(3 * 8000, 421), 8000, 3, descending);
+    RunSegmentedMultiPassKeys<uint64_t>(
+        U64, GenerateKeys<uint64_t>(3 * 4000, 422), 4000, 3, descending);
+  }
+}
+
+TEST_F(CubSortKernelsTest, SegmentedMultiPassPairsAndTileBoundaries) {
+  const CubRadixSortPolicySpec f32_u32_policy =
+      GetCubRadixSortPolicySpec(sm_version_, 4, 4, /*is_float32_key=*/true);
+  const int32_t tile_4b = f32_u32_policy.segmented.tile_items();
+  const CubRadixSortPolicySpec f32_u64_policy =
+      GetCubRadixSortPolicySpec(sm_version_, 4, 8, /*is_float32_key=*/true);
+  const int32_t tile_8b = f32_u64_policy.segmented.tile_items();
+
+  // Exercise exact full-tile and multi-tile boundaries (ProcessFullTile +
+  // bin_offset carry-over) for both 4B and 8B dominant types.
+  for (int32_t seg : {tile_4b - 1, tile_4b, tile_4b + 1, 2 * tile_4b + 17}) {
+    RunSegmentedMultiPassKeys<int32_t>(
+        S32, GenerateKeys<int32_t>(2 * seg, 430 + seg), seg, 2,
+        /*descending=*/false);
+    RunSegmentedMultiPassPairs<float, uint32_t>(
+        F32, U32, GenerateKeys<float>(2 * seg, 440 + seg), seg, 2,
+        /*descending=*/true);
+  }
+  for (int32_t seg : {tile_8b - 1, tile_8b, tile_8b + 1, 2 * tile_8b + 17}) {
+    RunSegmentedMultiPassPairs<float, uint64_t>(
+        F32, U64, GenerateKeys<float>(2 * seg, 450 + seg), seg, 2,
+        /*descending=*/false);
+  }
+
+  // Exercise AgentRadixSortUpsweep's UNROLLED_ELEMENTS counter-flush loop
+  // (6 * 7488 = 44,928 on SM60..SM100) and AgentRadixSortDownsweep::Copy
+  // short-circuit path (all-equal keys).
+  for (bool descending : {false, true}) {
+    RunSegmentedMultiPassPairs<float, uint32_t>(
+        F32, U32, GenerateKeys<float>(2 * 50000, 460), 50000, 2, descending);
+    RunSegmentedMultiPassKeys<int32_t>(S32, std::vector<int32_t>(2 * 8000, 77),
+                                       8000, 2, descending);
+    RunSegmentedMultiPassPairs<float, uint32_t>(
+        F32, U32, std::vector<float>(2 * 8000, 1.25f), 8000, 2, descending);
+
+    RunSegmentedMultiPassPairs<uint8_t, uint32_t>(
+        U8, U32, GenerateKeys<uint8_t>(5 * 8000, 401), 8000, 5, descending);
+    RunSegmentedMultiPassPairs<uint16_t, uint16_t>(
+        U16, U16, GenerateKeys<uint16_t>(4 * 8000, 402), 8000, 4, descending);
+    RunSegmentedMultiPassPairs<int32_t, uint32_t>(
+        S32, U32, GenerateKeys<int32_t>(3 * 8000, 403), 8000, 3, descending);
+    RunSegmentedMultiPassPairs<uint32_t, uint32_t>(
+        U32, U32, GenerateKeys<uint32_t>(3 * 8000, 406), 8000, 3, descending);
+    RunSegmentedMultiPassPairs<float, uint64_t>(
+        F32, U64, GenerateKeys<float>(3 * 4000, 404), 4000, 3, descending);
+    RunSegmentedMultiPassPairs<uint64_t, uint32_t>(
+        U64, U32, GenerateKeys<uint64_t>(3 * 4000, 405), 4000, 3, descending);
+  }
 }
 
 TEST_F(CubSortKernelsTest, SingleTileBoundarySizesAndValueDispatch) {
@@ -511,6 +1400,14 @@ TEST_F(CubSortKernelsTest, SingleArchCubinExtractionAndUnsupportedArchError) {
   EXPECT_THAT(
       GetCubSortSingleTileKernelSpec(F32, std::nullopt, /*descending=*/false,
                                      se::CudaComputeCapability(5, 0)),
+      StatusIs(absl::StatusCode::kFailedPrecondition));
+  EXPECT_THAT(
+      GetCubSortOnesweepKernelSpecs(F32, std::nullopt, /*descending=*/false,
+                                    se::CudaComputeCapability(3, 0)),
+      StatusIs(absl::StatusCode::kFailedPrecondition));
+  EXPECT_THAT(
+      GetCubSortSegmentedKernelSpecs(F32, std::nullopt, /*descending=*/false,
+                                     se::CudaComputeCapability(3, 0)),
       StatusIs(absl::StatusCode::kFailedPrecondition));
 }
 
@@ -639,19 +1536,28 @@ TEST_F(CubSortKernelsTest, KernelSpecSupportMatchesCubSortTypesAcrossAllTypes) {
                           std::optional<PrimitiveType> val_type) {
     const bool supported = IsCubSortSupported(key_type, val_type);
     for (bool descending : {false, true}) {
-      const auto single_tile =
-          GetCubSortSingleTileKernelSpec(key_type, val_type, descending, cc_);
-      if (supported) {
-        EXPECT_THAT(single_tile, IsOk())
-            << PrimitiveType_Name(key_type) << ", "
-            << (val_type ? PrimitiveType_Name(*val_type) : "keys-only")
-            << ", descending=" << descending;
-      } else {
-        EXPECT_THAT(single_tile, StatusIs(absl::StatusCode::kInvalidArgument))
-            << PrimitiveType_Name(key_type) << ", "
-            << (val_type ? PrimitiveType_Name(*val_type) : "keys-only")
-            << ", descending=" << descending;
-      }
+      auto check_support = [&](const auto& result, absl::string_view kind) {
+        if (supported) {
+          EXPECT_THAT(result, IsOk())
+              << kind << ": " << PrimitiveType_Name(key_type) << ", "
+              << (val_type ? PrimitiveType_Name(*val_type) : "keys-only")
+              << ", descending=" << descending;
+        } else {
+          EXPECT_THAT(result, StatusIs(absl::StatusCode::kInvalidArgument))
+              << kind << ": " << PrimitiveType_Name(key_type) << ", "
+              << (val_type ? PrimitiveType_Name(*val_type) : "keys-only")
+              << ", descending=" << descending;
+        }
+      };
+      check_support(
+          GetCubSortSingleTileKernelSpec(key_type, val_type, descending, cc_),
+          "single_tile");
+      check_support(
+          GetCubSortOnesweepKernelSpecs(key_type, val_type, descending, cc_),
+          "onesweep");
+      check_support(
+          GetCubSortSegmentedKernelSpecs(key_type, val_type, descending, cc_),
+          "segmented");
     }
   };
 

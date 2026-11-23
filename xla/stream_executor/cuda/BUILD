@@ -3381,10 +3381,8 @@ cuda_library(
 
 cc_library(
     name = "cub_sort_kernel_cuda",
-    srcs = [
-        "cub_sort_kernel_cuda.cc",
-        "cub_sort_kernel_cuda.h",
-    ],
+    srcs = ["cub_sort_kernel_cuda.cc"],
+    hdrs = ["cub_sort_kernel_cuda.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "cuda-only",
@@ -3395,7 +3393,6 @@ cc_library(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu:ffi",
-        "//xla/backends/gpu/libraries/cub:cub_sort_utils",
         "//xla/ffi",
         "//xla/ffi:ffi_api",
         "//xla/service/gpu:cublas_cudnn",
@@ -3409,6 +3406,39 @@ cc_library(
         for typename in get_cub_sort_kernel_types()
     ],
     alwayslink = 1,
+)
+
+xla_test(
+    name = "cub_sort_kernel_cuda_test",
+    srcs = ["cub_sort_kernel_cuda_test.cc"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        ":cub_sort_kernel_cuda",
+        ":cuda_platform",
+        ":cuda_status",
+        "//xla:xla_data_proto_cc",
+        "//xla/ffi",
+        "//xla/ffi:call_frame",
+        "//xla/ffi:ffi_registry",
+        "//xla/ffi:invoke",
+        "//xla/ffi/api:c_api",
+        "//xla/service/gpu:cublas_cudnn",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
 )
 
 cuda_library(

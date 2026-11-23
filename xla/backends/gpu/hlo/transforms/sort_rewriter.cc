@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -33,6 +34,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/libraries/cub/cub_scratch_size_deviceless_lookup.h"
+#include "xla/backends/gpu/libraries/cub/cub_sort_planner.h"
 #include "xla/backends/gpu/libraries/cub/cub_sort_types.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -431,8 +433,8 @@ HloInstruction* UnpackNumpySortPairs(
       HloInstruction::CreateTuple({values, original_keys}));
 }
 
-bool IsCubSortFasterOnH100(int bitwidth, int batch_size, int num_elements,
-                           int sm_count) {
+bool IsCubSortFasterOnH100(int bitwidth, int64_t batch_size,
+                           int64_t num_elements, int sm_count) {
   // The numbers below are based on extensive benchmarks: see
   // b/407689882#comment35 and b/410480351 for more details.
   switch (bitwidth) {
@@ -469,8 +471,8 @@ bool IsCubSortFasterOnH100(int bitwidth, int batch_size, int num_elements,
   }
 }
 
-bool IsCubSortFasterOnA100(int bitwidth, int batch_size, int num_elements,
-                           int sm_count) {
+bool IsCubSortFasterOnA100(int bitwidth, int64_t batch_size,
+                           int64_t num_elements, int sm_count) {
   // The numbers below are based on extensive benchmarks: see
   // b/410480351#comment4 for more details.
   switch (bitwidth) {
@@ -507,8 +509,9 @@ bool IsCubSortFasterOnA100(int bitwidth, int batch_size, int num_elements,
   }
 }
 
-bool IsCubSortFasterOnBlackwell(int bitwidth, int batch_size, int num_elements,
-                                int sm_count, bool has_values) {
+bool IsCubSortFasterOnBlackwell(int bitwidth, int64_t batch_size,
+                                int64_t num_elements, int sm_count,
+                                bool has_values) {
   // TODO(b/527496803): Run a full set of benchmarks to determine the optimal
   // heuristic, similar to A100 and H100. The heuristic should be independent
   // and not fallback to H100.
@@ -579,7 +582,7 @@ bool ShouldRewriteCompatibleSort(
   }
 
   const Shape& operand_shape = sort_op->operand(0)->shape();
-  int num_elements = operand_shape.dimensions().back();
+  const int64_t num_elements = operand_shape.dimensions().back();
   if (num_elements == 0) {
     return false;
   }
@@ -588,7 +591,7 @@ bool ShouldRewriteCompatibleSort(
     if (auto* cuda_cc = device_description.gpu_compute_capability()
                             .cuda_compute_capability()) {
       int bitwidth = primitive_util::BitWidth(operand_shape.element_type());
-      int batch_size = Product(operand_shape.dimensions()) / num_elements;
+      int64_t batch_size = Product(operand_shape.dimensions()) / num_elements;
 
       if (cuda_cc->IsBlackwell()) {
         return IsCubSortFasterOnBlackwell(bitwidth, batch_size, num_elements,
@@ -696,7 +699,12 @@ bool IsCubCompatibleSort(const se::DeviceDescription& device_description,
             << operand_shape.ToString();
     return false;
   }
-
+  if (total_items / segment_size > 1 &&
+      segment_size > std::numeric_limits<int32_t>::max()) {
+    VLOG(2) << "Batched sort segment size exceeds int32_t limit: "
+            << segment_size;
+    return false;
+  }
   if (!ShouldRewriteCompatibleSort(device_description, sort_op)) {
     VLOG(2) << "Tensor shape and type will not see an improvement.";
     return false;
@@ -715,6 +723,22 @@ bool IsCubCompatibleSort(const se::DeviceDescription& device_description,
                     : "");
     return false;
   }
+  if (total_items / segment_size > 1) {
+    if (const auto* cuda_cc = device_description.gpu_compute_capability()
+                                  .cuda_compute_capability()) {
+      absl::StatusOr<int64_t> max_segment_size =
+          MaxCudaCubSortSegmentedSegmentSize(*cuda_cc, sort_analysis->key_type,
+                                             sort_analysis->value_type);
+      if (!max_segment_size.ok() || segment_size > *max_segment_size) {
+        VLOG(2) << "Batched CUDA CUB sort segment size (" << segment_size
+                << ") exceeds planner limit ("
+                << (max_segment_size.ok() ? absl::StrCat(*max_segment_size)
+                                          : max_segment_size.status().message())
+                << ")";
+        return false;
+      }
+    }
+  }
   VLOG(2) << "Sort operation is compatible";
   return true;
 }
@@ -726,6 +750,13 @@ absl::StatusOr<bool> ShouldRewriteSort(
     DebugOptions::DevicelessCubMode deviceless_cub_mode) {
   if (!IsCubCompatibleSort(device_description, &sort)) {
     return false;
+  }
+
+  // On CUDA, CUB sort scratch sizing and kernel emission are computed purely
+  // in C++ from the target compute capability without a live device or lookup
+  // tables.
+  if (device_description.gpu_compute_capability().IsCuda()) {
+    return true;
   }
 
   // When compiling CUB sorts we need to determine the scratch size needed. The
@@ -991,6 +1022,7 @@ absl::StatusOr<bool> SortRewriter::RunImpl(
   auto deviceless_cub_mode =
       module->config().debug_options().xla_gpu_deviceless_cub_mode();
   if (is_deviceless_ && !is_early_exit_with_layouts_ &&
+      !device_description_.gpu_compute_capability().IsCuda() &&
       deviceless_cub_mode == DebugOptions::DEVICELESS_CUB_DISABLED) {
     LOG(WARNING) << "Using fallback sort algorithm rather than SortRewriter, "
                     "which will be slower at runtime. To avoid this, "

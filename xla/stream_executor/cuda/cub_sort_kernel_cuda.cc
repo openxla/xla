@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -30,7 +29,6 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
 #include "xla/backends/gpu/ffi.h"
-#include "xla/backends/gpu/libraries/cub/cub_sort_utils.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"  // IWYU pragma: keep
 #include "xla/primitive_util.h"
@@ -141,31 +139,6 @@ absl::Status VerifySortPairsBuffers(ffi::AnyBuffer keys, ffi::AnyBuffer values,
                      ffi::match::Buffer().Like(values));
 }
 
-// Computes the scratch buffer size needed for CUB sort, including batch
-// offsets if batch_size > 1.
-absl::StatusOr<int64_t> ComputeScratchSize(SortKeysFn fn, int64_t num_items,
-                                           int64_t batch_size) {
-  size_t temp_bytes = 0;
-  ABSL_RETURN_IF_ERROR(ToStatus(fn(nullptr, temp_bytes, nullptr, nullptr,
-                                   num_items, false, batch_size, nullptr)));
-  int64_t scratch_size = temp_bytes;
-  scratch_size =
-      xla::gpu::AddSegmentedSortOffsetsToScratchSize(scratch_size, batch_size);
-  return scratch_size;
-}
-
-absl::StatusOr<int64_t> ComputeScratchSize(SortPairsFn fn, int64_t num_items,
-                                           int64_t batch_size) {
-  size_t temp_bytes = 0;
-  ABSL_RETURN_IF_ERROR(
-      ToStatus(fn(nullptr, temp_bytes, nullptr, nullptr, nullptr, nullptr,
-                  num_items, false, batch_size, nullptr)));
-  int64_t scratch_size = temp_bytes;
-  scratch_size =
-      xla::gpu::AddSegmentedSortOffsetsToScratchSize(scratch_size, batch_size);
-  return scratch_size;
-}
-
 // N pairs of [start_offset, end_offset) require (N+1) storage.
 int64_t GetOffsetsSize(int64_t batch_size) {
   return (batch_size + 1) * sizeof(int32_t);
@@ -189,25 +162,28 @@ absl::Status CopyOffsets(void* scratch, size_t scratch_bytes,
 }
 
 //===----------------------------------------------------------------------===//
-// CubSortKeys: instantiate + execute
+// Legacy runtime FFI execute handlers (6-month GPU AOT backward compatibility)
+//===----------------------------------------------------------------------===//
+//
+// New CUDA compilations lower CUB radix sorts directly into embedded
+// CustomKernelThunks (`xla/backends/gpu/libraries/cub/cub_sort_thunk_emitter`)
+// and compute scratch sizes in pure C++ (`cub_sort_planner`).
+//
+// These FFI execute handlers are retained strictly so that pre-existing
+// serialized GPU AOT executables containing `CustomCallThunk`s for
+// `xla.gpu.ext.cub_sort_keys` / `xla.gpu.ext.cub_sort_pairs` continue to load
+// and execute during the 6-month GPU AOT backward-compatibility window.
+//
+// TODO(b/590834757): Remove after May 2027 (along with `cub_sort_kernel_cuda*`
+// targets and the runtime dependency in `stream_executor/cuda:all_runtime`).
+
+//===----------------------------------------------------------------------===//
+// CubSortKeys: execute
 //===----------------------------------------------------------------------===//
 
 // HLO custom call layout:
 //   operands: [keys_in]
 //   results:  [keys_out, scratch]
-
-absl::StatusOr<std::unique_ptr<int64_t>> CubSortKeysInstantiate(
-    ffi::AnyBuffer d_keys_in, ffi::Result<ffi::AnyBuffer> d_keys_out,
-    ffi::Result<ffi::BufferR1<xla::U8>> d_temp_storage, bool descending,
-    int64_t batch_size) {
-  ABSL_RETURN_IF_ERROR(VerifySortKeysBuffers(d_keys_in, d_keys_out));
-
-  ABSL_ASSIGN_OR_RETURN(auto fn, GetSortKeysFn(d_keys_in.element_type()));
-  int64_t num_items = d_keys_in.element_count();
-  ABSL_ASSIGN_OR_RETURN(int64_t scratch_size,
-                        ComputeScratchSize(fn, num_items, batch_size));
-  return std::make_unique<int64_t>(scratch_size);
-}
 
 absl::Status CubSortKeysExecute(
     ffi::AnyBuffer d_keys_in, ffi::Result<ffi::AnyBuffer> d_keys_out,
@@ -229,21 +205,6 @@ absl::Status CubSortKeysExecute(
                      num_items, descending, batch_size, stream));
 }
 
-absl::Status CubSortDummyExecuteFfiHandler() {
-  return absl::InternalError("Dummy execute handler should not be called");
-}
-
-XLA_FFI_DEFINE_HANDLER(kCubSortDummyExecute, CubSortDummyExecuteFfiHandler,
-                       ffi::Ffi::Bind());
-
-XLA_FFI_DEFINE_HANDLER(kCubSortKeysInstantiate, CubSortKeysInstantiate,
-                       ffi::Ffi::BindInstantiate()
-                           .Arg<ffi::AnyBuffer>()          // d_keys_in
-                           .Ret<ffi::AnyBuffer>()          // d_keys_out
-                           .Ret<ffi::BufferR1<xla::U8>>()  // d_temp_storage
-                           .Attr<bool>("descending")
-                           .Attr<int64_t>("batch_size"));
-
 XLA_FFI_DEFINE_HANDLER(kCubSortKeysExecute, CubSortKeysExecute,
                        ffi::Ffi::Bind()
                            .Arg<ffi::AnyBuffer>()          // d_keys_in
@@ -260,40 +221,13 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(),
                           /* .initialize = */ nullptr,
                           /* .execute = */ kCubSortKeysExecute});
 
-XLA_FFI_REGISTER_HANDLER(
-    ffi::GetXlaFfiApi(),
-    xla::gpu::kCubDeviceRadixSortKeysUnassignedScratchSizeTarget.data(), "CUDA",
-    {/* .instantiate = */ kCubSortKeysInstantiate,
-     /* .prepare = */ nullptr,
-     /* .initialize = */ nullptr,
-     /* .execute = */ kCubSortDummyExecute});
-
 //===----------------------------------------------------------------------===//
-// CubSortPairs: instantiate + execute
+// CubSortPairs: execute
 //===----------------------------------------------------------------------===//
 
 // HLO custom call layout:
 //   operands: [keys_in, values_in]
 //   results:  [keys_out, values_out, scratch]
-
-absl::StatusOr<std::unique_ptr<int64_t>> CubSortPairsInstantiate(
-    ffi::AnyBuffer d_keys_in, ffi::AnyBuffer d_values_in,
-    ffi::Result<ffi::AnyBuffer> d_keys_out,
-    ffi::Result<ffi::AnyBuffer> d_values_out,
-    ffi::Result<ffi::BufferR1<xla::U8>> d_temp_storage, bool descending,
-    int64_t batch_size) {
-  ABSL_RETURN_IF_ERROR(
-      VerifySortPairsBuffers(d_keys_in, d_values_in, d_keys_out, d_values_out));
-
-  ABSL_ASSIGN_OR_RETURN(
-      auto fn, GetSortPairsFn(
-                   d_keys_in.element_type(),
-                   xla::primitive_util::BitWidth(d_values_in.element_type())));
-  int64_t num_items = d_keys_in.element_count();
-  ABSL_ASSIGN_OR_RETURN(int64_t scratch_size,
-                        ComputeScratchSize(fn, num_items, batch_size));
-  return std::make_unique<int64_t>(scratch_size);
-}
 
 absl::Status CubSortPairsExecute(
     ffi::AnyBuffer d_keys_in, ffi::AnyBuffer d_values_in,
@@ -322,16 +256,6 @@ absl::Status CubSortPairsExecute(
                      num_items, descending, batch_size, stream));
 }
 
-XLA_FFI_DEFINE_HANDLER(kCubSortPairsInstantiate, CubSortPairsInstantiate,
-                       ffi::Ffi::BindInstantiate()
-                           .Arg<ffi::AnyBuffer>()          // d_keys_in
-                           .Arg<ffi::AnyBuffer>()          // d_values_in
-                           .Ret<ffi::AnyBuffer>()          // d_keys_out
-                           .Ret<ffi::AnyBuffer>()          // d_values_out
-                           .Ret<ffi::BufferR1<xla::U8>>()  // d_temp_storage
-                           .Attr<bool>("descending")
-                           .Attr<int64_t>("batch_size"));
-
 XLA_FFI_DEFINE_HANDLER(kCubSortPairsExecute, CubSortPairsExecute,
                        ffi::Ffi::Bind()
                            .Arg<ffi::AnyBuffer>()          // d_keys_in
@@ -350,15 +274,6 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(),
                           /* .prepare = */ nullptr,
                           /* .initialize = */ nullptr,
                           /* .execute = */ kCubSortPairsExecute});
-
-XLA_FFI_REGISTER_HANDLER(
-    ffi::GetXlaFfiApi(),
-    xla::gpu::kCubDeviceRadixSortPairsUnassignedScratchSizeTarget.data(),
-    "CUDA",
-    {/* .instantiate = */ kCubSortPairsInstantiate,
-     /* .prepare = */ nullptr,
-     /* .initialize = */ nullptr,
-     /* .execute = */ kCubSortDummyExecute});
 
 }  // namespace
 }  // namespace cuda
