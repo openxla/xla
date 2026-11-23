@@ -13,12 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
@@ -62,6 +61,9 @@ TEST_F(AllToAllMultiProcessE2ETest, OneShotAllToAll2Processes) {
                                                      .cuda_compute_capability()
                                                      ->IsAtLeastAmpere()) {
     GTEST_SKIP() << "One-shot all-to-all requires Ampere+ for CUDA.";
+  }
+  if (!desc.symmetric_memory_supported()) {
+    GTEST_SKIP() << "One-shot all-to-all requires symmetric memory support.";
   }
 
   ASSERT_EQ(client()->addressable_device_count(), 1);

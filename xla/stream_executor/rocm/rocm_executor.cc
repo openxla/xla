@@ -84,6 +84,7 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_stream.h"
 #include "xla/stream_executor/rocm/rocm_timer.h"
 #include "xla/stream_executor/rocm/rocm_version_parser.h"
+#include "xla/stream_executor/rocm/rocm_vmm_allocator.h"
 #include "xla/stream_executor/rocm/rocm_xgmi_topology.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream.h"
@@ -1043,6 +1044,12 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
                                   "Failed call to hipRuntimeGetVersion"));
     desc.set_runtime_version(
         ParseRocmVersion(runtime_version).value_or(SemanticVersion{0, 0, 0}));
+    // RCCL ships the symmetric memory window APIs from ROCm 10.0, which
+    // reports HIP runtime 7.15, and only uses them when its cuMem allocator is
+    // enabled.
+    desc.set_symmetric_memory_supported(desc.runtime_version() >=
+                                            SemanticVersion{7, 15, 0} &&
+                                        IsNcclCuMemEnabled());
   }
   {
     int32_t driver_version;

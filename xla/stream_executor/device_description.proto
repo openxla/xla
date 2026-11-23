@@ -103,6 +103,7 @@ message GpuDeviceInfoProto {
   // Number of physical locality domains exposed by the device. Values less
   // than two do not provide non-default locality-domain memory placement.
   int32 locality_domain_count = 49;
+  bool symmetric_memory_supported = 50;
 }
 
 message RuntimeVersionProto {

@@ -1888,6 +1888,10 @@ xla_test(
     backends = [
         "gpu",
     ],
+    # RCCL symmetric memory (NCCL windows) requires NCCL_CUMEM_ENABLE=1 on ROCm,
+    # where it defaults to 0. Without it the one-shot collective kernel path fails
+    # at runtime.
+    env = {"NCCL_CUMEM_ENABLE": "1"},
     deps = [
         ":multi_process_gpu_test_base",
         ":multi_process_gpu_test_main",
@@ -1961,6 +1965,10 @@ xla_test(
     backends = [
         "gpu",
     ],
+    # RCCL symmetric memory (NCCL windows) requires NCCL_CUMEM_ENABLE=1 on ROCm,
+    # where it defaults to 0. Without it the one-shot collective kernel path fails
+    # at runtime.
+    env = {"NCCL_CUMEM_ENABLE": "1"},
     deps = [
         ":multi_process_gpu_test_base",
         ":multi_process_gpu_test_main",
@@ -2002,6 +2010,10 @@ xla_test(
     backends = [
         "gpu",
     ],
+    # RCCL symmetric memory (NCCL windows) requires NCCL_CUMEM_ENABLE=1 on ROCm,
+    # where it defaults to 0. Without it the one-shot collective kernel path fails
+    # at runtime.
+    env = {"NCCL_CUMEM_ENABLE": "1"},
     deps = [
         ":multi_process_gpu_test_base",
         ":multi_process_gpu_test_main",

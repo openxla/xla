@@ -352,8 +352,7 @@ bool IsSpmdGenerated(const HloInstruction& instr) {
 bool IsLsaPossible(const GpuTopology& gpu_topology) {
   return gpu_topology.has_gpu_target_config() &&
          gpu_topology.gpu_target_config()
-             .device_description.gpu_compute_capability()
-             .IsCuda();
+             .device_description.symmetric_memory_supported();
 }
 
 int64_t GetCollectiveKernelDomainSize(

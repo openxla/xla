@@ -183,6 +183,7 @@ cc_library(
         ":rocm_stream",
         ":rocm_timer",
         ":rocm_version_parser",
+        ":rocm_vmm_allocator",
         ":rocm_xgmi_topology",
         "//xla:util",
         "//xla/backends/gpu/collectives:gpu_collectives",
