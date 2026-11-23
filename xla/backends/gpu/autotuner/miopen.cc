@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -248,8 +249,14 @@ absl::Status ApplyConfigToFusedMIOpenCustomCall(
       {conv_bias_act, instr.AddInstruction(HloInstruction::CreateConstant(
                           LiteralUtil::CreateR1<uint8_t>({})))}));
 
+  HloComputation* computation = instr.parent();
+
   for (auto user : users) {
     ABSL_RETURN_IF_ERROR(instr.ReplaceUseWith(user, new_result));
+  }
+
+  if (computation->root_instruction() == &instr) {
+    computation->set_root_instruction(new_result);
   }
 
   absl::InlinedVector<HloInstruction*, 3> new_operands(instr.operands().begin(),
@@ -263,7 +270,7 @@ absl::Status ApplyConfigToFusedMIOpenCustomCall(
   ABSL_RETURN_IF_ERROR(new_conv->set_backend_config(gpu_config));
   // Preserve old name to make it obvious that we decomposed fused conv
   new_conv->SetAndSanitizeName(instr.name());
-  ABSL_RETURN_IF_ERROR(instr.parent()->ReplaceInstruction(&instr, new_conv));
+  ABSL_RETURN_IF_ERROR(computation->ReplaceInstruction(&instr, new_conv));
 
   return ApplyConfigToMIOpenCustomCall(*new_conv, config);
 }
@@ -386,32 +393,30 @@ MIOpenBackend::GetFusedConvolutionCustomCallConfigs(
 
   ABSL_ASSIGN_OR_RETURN(auto owned_stream, stream_executor->CreateStream());
 
-  std::vector<std::unique_ptr<const se::dnn::FusedConvRunner>> runners;
-  ABSL_RETURN_IF_ERROR(dnn->GetFusedConvolveRunners(
-      se::dnn::ConvolutionKind::FORWARD, input_type, output_type, output_type,
-      gpu_conv_config.conv_result_scale,
-      gpu_conv_config.fusion->side_input_scale,
-      gpu_conv_config.fusion->leakyrelu_alpha, owned_stream.get(),
-      gpu_conv_config.input_descriptor, gpu_conv_config.filter_descriptor,
-      gpu_conv_config.bias_descriptor, gpu_conv_config.output_descriptor,
-      gpu_conv_config.conv_desc,
-      /* use_fallback */ false, gpu_conv_config.fusion->mode,
-      /* numeric_options */ {}, &runners));
+  std::vector<std::unique_ptr<BackendConfig>> fused_configs;
+  if (debug_options().xla_gpu_enable_miopen_fused_convs() &&
+      !do_not_autotune_) {
+    std::vector<std::unique_ptr<const se::dnn::FusedConvRunner>> runners;
+    ABSL_RETURN_IF_ERROR(dnn->GetFusedConvolveRunners(
+        se::dnn::ConvolutionKind::FORWARD, input_type, output_type, output_type,
+        gpu_conv_config.conv_result_scale,
+        gpu_conv_config.fusion->side_input_scale,
+        gpu_conv_config.fusion->leakyrelu_alpha, owned_stream.get(),
+        gpu_conv_config.input_descriptor, gpu_conv_config.filter_descriptor,
+        gpu_conv_config.bias_descriptor, gpu_conv_config.output_descriptor,
+        gpu_conv_config.conv_desc,
+        /* use_fallback */ false, gpu_conv_config.fusion->mode,
+        /* numeric_options */ {}, &runners));
 
-  if (!runners.empty()) {
-    std::vector<std::unique_ptr<BackendConfig>> configs;
-    configs.reserve(runners.size());
+    fused_configs.reserve(runners.size());
     for (const auto& runner : runners) {
       auto config = std::make_unique<BackendConfig>();
       auto desc = runner->ToAlgorithmDesc();
       CHECK_LT(desc->algo_id(), 0);
       *config->mutable_algorithm() = desc->ToProto();
-      configs.push_back(std::move(config));
+      fused_configs.push_back(std::move(config));
     }
-    return configs;
   }
-
-  // No algorithm found. Try finding algorithm for unfused conv.
 
   CHECK(gpu_conv_config.conv_result_scale == 1.0 &&
         gpu_conv_config.fusion->side_input_scale == 0.0 &&
@@ -431,9 +436,17 @@ MIOpenBackend::GetFusedConvolutionCustomCallConfigs(
   backend_config.set_activation_mode(se::dnn::ActivationMode::kNone);
   ABSL_RETURN_IF_ERROR(new_conv->set_backend_config(gpu_config));
 
-  return GetConvolutionCustomCallConfigs(
-      static_cast<HloCustomCallInstruction*>(new_conv.get()), module,
-      stream_executor, allocator, owned_stream.get());
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<std::unique_ptr<BackendConfig>> configs,
+      GetConvolutionCustomCallConfigs(
+          static_cast<HloCustomCallInstruction*>(new_conv.get()), module,
+          stream_executor, allocator, owned_stream.get()));
+
+  configs.insert(configs.begin(),
+                 std::make_move_iterator(fused_configs.begin()),
+                 std::make_move_iterator(fused_configs.end()));
+
+  return configs;
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
