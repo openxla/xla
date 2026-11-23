@@ -367,12 +367,6 @@ class DeviceDescription {
   // Returns whether ECC is enabled.
   bool ecc_enabled() const { return ecc_enabled_; }
 
-  // Returns whether the device supports symmetric memory, i.e. buffers that
-  // peers can access with plain load/store instructions.
-  bool symmetric_memory_supported() const {
-    return symmetric_memory_supported_;
-  }
-
   // Returns the device vendor string, e.g., "NVIDIA Corporation", "Advanced
   // Micro Devices, Inc.", or "GenuineIntel".
   const std::string& device_vendor() const { return device_vendor_; }
@@ -601,9 +595,6 @@ class DeviceDescription {
   void set_core_count(int value) { core_count_ = value; }
   void set_fpus_per_core(int value) { fpus_per_core_ = value; }
   void set_ecc_enabled(bool value) { ecc_enabled_ = value; }
-  void set_symmetric_memory_supported(bool value) {
-    symmetric_memory_supported_ = value;
-  }
   void set_collective_memory_granularity(uint64_t value) {
     collective_memory_granularity_ = value;
   }
@@ -688,7 +679,6 @@ class DeviceDescription {
   int core_count_ = kUninitialized<int>;
   int fpus_per_core_ = kUninitialized<int>;
   bool ecc_enabled_ = false;
-  bool symmetric_memory_supported_ = false;
 
   std::optional<ExecutionUnitDescription> scalar_unit_description_;
   std::optional<ExecutionUnitDescription> matrix_unit_description_;

@@ -48,7 +48,6 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::RTXA6000DeviceInfo(
   b.set_registers_per_core_limit(65536);
   b.set_registers_per_block_limit(65536);
   b.set_runtime_version(stream_executor::SemanticVersion{12, 4, 0});
-  b.set_symmetric_memory_supported(true);
   b.set_driver_version(stream_executor::SemanticVersion{12, 4, 0});
   return b;
 }
@@ -75,7 +74,6 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::A100SXMDeviceInfo(
   b.set_registers_per_core_limit(65536);
   b.set_registers_per_block_limit(65536);
   b.set_runtime_version(stream_executor::SemanticVersion{12, 8, 0});
-  b.set_symmetric_memory_supported(true);
   b.set_driver_version(stream_executor::SemanticVersion{12, 8, 0});
 
   b.set_fpus_per_core(stream_executor::gpu::GetFpusPerCore(cc));
@@ -107,7 +105,6 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::H100SXMDeviceInfo(
   b.set_registers_per_core_limit(65536);
   b.set_registers_per_block_limit(65536);
   b.set_runtime_version(stream_executor::SemanticVersion{12, 8, 0});
-  b.set_symmetric_memory_supported(true);
   b.set_driver_version(stream_executor::SemanticVersion{12, 8, 0});
 
   b.set_fpus_per_core(stream_executor::gpu::GetFpusPerCore(cc));
@@ -140,7 +137,6 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::B200SXMDeviceInfo(
   b.set_registers_per_core_limit(65536);
   b.set_registers_per_block_limit(65536);
   b.set_runtime_version(stream_executor::SemanticVersion{13, 2, 0});
-  b.set_symmetric_memory_supported(true);
   b.set_driver_version(stream_executor::SemanticVersion{13, 2, 0});
 
   b.set_fpus_per_core(stream_executor::gpu::GetFpusPerCore(cc));
@@ -174,7 +170,6 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::VRNVL72DeviceInfo(
   b.set_registers_per_core_limit(65536);
   b.set_registers_per_block_limit(65536);
   b.set_runtime_version(stream_executor::SemanticVersion{13, 4, 0});
-  b.set_symmetric_memory_supported(true);
   b.set_driver_version(stream_executor::SemanticVersion{13, 4, 0});
 
   b.set_fpus_per_core(

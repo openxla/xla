@@ -84,11 +84,6 @@ absl::StatusOr<RocmVmmAllocationParams> GetRocmVmmAllocationParams(
 absl::StatusOr<hipMemGenericAllocationHandle_t> CreateRocmVmmPhysicalAllocation(
     hipMemAllocationProp prop, uint64_t padded_size);
 
-// Returns true if NCCL_CUMEM_ENABLE >= 1, the variable RCCL honors to decide
-// whether it allocates through VMM (cuMem), which its symmetric memory windows
-// require. Defaults to 0 on ROCm. Read once, like RCCL's ncclCuMemEnable().
-bool IsNcclCuMemEnabled();
-
 }  // namespace stream_executor::gpu
 
 #endif  // XLA_STREAM_EXECUTOR_ROCM_ROCM_VMM_ALLOCATOR_H_

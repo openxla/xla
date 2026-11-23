@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/tests/multi_process_gpu_test_base.h"
+#include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -62,8 +63,10 @@ TEST_F(AllToAllMultiProcessE2ETest, OneShotAllToAll2Processes) {
                                                      ->IsAtLeastAmpere()) {
     GTEST_SKIP() << "One-shot all-to-all requires Ampere+ for CUDA.";
   }
-  if (!desc.symmetric_memory_supported()) {
-    GTEST_SKIP() << "One-shot all-to-all requires symmetric memory support.";
+  if (desc.gpu_compute_capability().IsRocm() &&
+      !gpu::IsRocmSymmetricMemorySupported(desc)) {
+    GTEST_SKIP() << "One-shot all-to-all requires ROCm 10.0+ (HIP runtime "
+                    "7.15+).";
   }
 
   ASSERT_EQ(client()->addressable_device_count(), 1);

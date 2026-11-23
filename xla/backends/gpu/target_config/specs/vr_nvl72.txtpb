@@ -13,7 +13,6 @@
 # limitations under the License.
 
 gpu_device_info {
-  symmetric_memory_supported: true
   threads_per_block_limit: 1024
   threads_per_warp: 32
   shared_memory_per_block: 49152

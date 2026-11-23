@@ -28,11 +28,11 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "rocm/rocm_config.h"  // defines TF_ROCM_VERSION
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/rccl_errors.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/future.h"
 #include "xla/stream_executor/device_address.h"
-#include "xla/stream_executor/rocm/rocm_vmm_allocator.h"
 #include "xla/tsl/concurrency/executor.h"
 #include "xla/util.h"
 
@@ -106,7 +106,7 @@ RcclSymmetricMemory::Create(ncclComm_t comm,
   // Require NCCL_CUMEM_ENABLE=1 before touching the window-registration path.
   // Without it RCCL's comm->symmetricSupport is false and the registration
   // below silently downgrades to a non-symmetric window.
-  if (!stream_executor::gpu::IsNcclCuMemEnabled()) {
+  if (!IsNcclCuMemEnabled()) {
     LOG_FIRST_N(WARNING, 1) << kCuMemDisabledError;
     return absl::FailedPreconditionError(kCuMemDisabledError);
   }

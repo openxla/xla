@@ -37,7 +37,6 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_status.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tsl/util/env_var.h"
 #include "xla/util.h"
 
 namespace stream_executor::gpu {
@@ -273,19 +272,6 @@ absl::StatusOr<std::unique_ptr<MemoryAllocation>> RocmVmmAllocator::Allocate(
 
   return std::make_unique<RocmVmmMemoryAllocation>(executor_, ptr, size,
                                                    padded_size, handle);
-}
-
-bool IsNcclCuMemEnabled() {
-  static const int64_t value = [] {
-    int64_t value = 0;
-    // An unparsable value leaves the allocator disabled.
-    return tsl::ReadInt64FromEnvVar("NCCL_CUMEM_ENABLE", /*default_val=*/0,
-                                    &value)
-                   .ok()
-               ? value
-               : 0;
-  }();
-  return value >= 1;
 }
 
 }  // namespace stream_executor::gpu
