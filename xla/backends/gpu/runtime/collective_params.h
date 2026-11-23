@@ -64,9 +64,8 @@ struct CollectiveParams {
   absl::InlinedVector<se::Stream*, 4> async_streams;
 
   LocalDeviceId local_device_id;
-  GlobalDeviceId global_device_id;
+  LogicalDeviceContext logical_device_context;
 
-  const DeviceAssignment* device_assn;
   const GlobalDeviceIdMap* global_device_id_map;
   const CliqueIdCallback* clique_id_callback;
   const absl::flat_hash_map<GlobalDeviceId, IncarnationId>* incarnations;
@@ -81,7 +80,6 @@ struct CollectiveParams {
   // Whether symmetric memory windows are cached on the GPU communicator (see
   // `xla_gpu_experimental_cache_nccl_window_in_communicator`).
   bool cache_nccl_window_in_communicator = false;
-  std::optional<DeviceAssignment::LogicalID> logical_device_id;
 
  private:
   CollectiveParams(

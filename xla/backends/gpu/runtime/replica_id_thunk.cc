@@ -41,11 +41,12 @@ namespace gpu {
 
 absl::StatusOr<uint32_t> ReplicaOrPartitionIdThunk::ComputeId(
     const ExecuteParams& params) const {
-  GlobalDeviceId global_device_id = params.collective_params->global_device_id;
+  GlobalDeviceId global_device_id =
+      params.collective_params->logical_device_context.global_device_id;
   ABSL_ASSIGN_OR_RETURN(
       const DeviceAssignment::LogicalID logical_id,
-      params.collective_params->device_assn->LogicalIdForDevice(
-          global_device_id));
+      params.collective_params->logical_device_context.device_assignment
+          ->LogicalIdForDevice(global_device_id));
   return static_cast<uint32_t>(kind() == Kind::kReplicaId
                                    ? logical_id.replica_id
                                    : logical_id.computation_id);

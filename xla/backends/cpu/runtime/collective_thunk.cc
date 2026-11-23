@@ -49,7 +49,7 @@ limitations under the License.
 #include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
@@ -165,9 +165,10 @@ absl::Duration CollectiveThunk::DefaultCollectiveTimeout() {
 
 absl::StatusOr<RendezvousKey> CollectiveThunk::GetRendezvousKey(
     const Thunk::CollectiveExecuteParams& params) {
-  TF_RET_CHECK(params.device_assignment) << "Device assignment is null";
+  const LogicalDeviceContext& placement = params.logical_device_context;
+  TF_RET_CHECK(placement.device_assignment) << "Device assignment is null";
 
-  const DeviceAssignment& device_assignment = *params.device_assignment;
+  const DeviceAssignment& device_assignment = *placement.device_assignment;
   RendezvousKey::CollectiveOpKind op_kind = op_params_.has_channel_id
                                                 ? RendezvousKey::kCrossModule
                                                 : RendezvousKey::kCrossReplica;
@@ -179,7 +180,7 @@ absl::StatusOr<RendezvousKey> CollectiveThunk::GetRendezvousKey(
 
   ABSL_ASSIGN_OR_RETURN(
       std::vector<GlobalDeviceId> participating_devices,
-      GetParticipatingDevices(params.global_device_id, device_assignment,
+      GetParticipatingDevices(placement.global_device_id, device_assignment,
                               op_params_.group, group_mode));
 
   int num_local_participants = participating_devices.size();
@@ -214,8 +215,9 @@ Future<> CollectiveThunk::ExecuteWithCommunicator(
 
   // Find out rendezvous key and rank in global devices for the current device.
   ABSL_ASSIGN_OR_RETURN(RendezvousKey key, GetRendezvousKey(*params));
-  ABSL_ASSIGN_OR_RETURN(int32_t rank,
-                        RankInGlobalDevices(key, params->global_device_id));
+  ABSL_ASSIGN_OR_RETURN(
+      int32_t rank, RankInGlobalDevices(
+                        key, params->logical_device_context.global_device_id));
 
   VLOG(3) << absl::StreamFormat("  rank=%d, key=%s", rank, key.ToString());
 

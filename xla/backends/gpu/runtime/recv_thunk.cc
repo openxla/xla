@@ -149,12 +149,13 @@ absl::Status RecvThunk::RunCollective(const ExecuteParams& params,
       recv_buffer.source_memory_space,
       recv_buffer.destination_memory_space};
 
-  GlobalDeviceId global_device_id = params.collective_params->global_device_id;
+  GlobalDeviceId global_device_id =
+      params.collective_params->logical_device_context.global_device_id;
 
   ABSL_ASSIGN_OR_RETURN(
       const DeviceAssignment::LogicalID current_logical_id,
-      params.collective_params->device_assn->LogicalIdForDevice(
-          global_device_id));
+      params.collective_params->logical_device_context.device_assignment
+          ->LogicalIdForDevice(global_device_id));
   const int64_t current_id =
       config_.config.group_mode ==
               CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA

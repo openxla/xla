@@ -120,15 +120,16 @@ absl::StatusOr<GpuCliqueKey> GetCliqueKey(
 absl::StatusOr<std::vector<std::vector<GlobalDeviceId>>> GetDeviceGroups(
     const CollectiveParams& params, XLA_FFI_CollectiveGroupMode group_mode,
     const std::vector<ReplicaGroup>& replica_groups) {
-  TF_RET_CHECK(params.device_assn != nullptr)
+  TF_RET_CHECK(params.logical_device_context.device_assignment != nullptr)
       << "Device assignment is required for GPU communicator FFI calls";
 
   ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode mode,
                         ToCollectiveOpGroupMode(group_mode));
 
-  ABSL_ASSIGN_OR_RETURN(
-      std::vector<std::vector<GlobalDeviceId>> device_groups,
-      GetParticipatingDevicesGroups(*params.device_assn, replica_groups, mode));
+  ABSL_ASSIGN_OR_RETURN(std::vector<std::vector<GlobalDeviceId>> device_groups,
+                        GetParticipatingDevicesGroups(
+                            *params.logical_device_context.device_assignment,
+                            replica_groups, mode));
 
   for (auto& group : device_groups) {
     absl::c_sort(group);
@@ -211,7 +212,8 @@ absl::Status CommunicatorGetImpl(const XLA_FFI_Collectives_Extension* self,
       GpuCliqueKey clique_key,
       GetCliqueKey(*state->collective_params, args->group_mode, replica_groups,
                    args->communication_id));
-  GlobalDeviceId device_id = state->collective_params->global_device_id;
+  GlobalDeviceId device_id =
+      state->collective_params->logical_device_context.global_device_id;
   std::optional<RankId> rank = clique_key.rank(device_id);
   if (!rank.has_value()) {
     return InvalidArgument("Rank not found for device %v", device_id);

@@ -58,9 +58,10 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
     CollectiveOpGroupMode group_mode, CommunicationId communication_id) {
   TF_RET_CHECK(params.collectives) << "Collectives API is not provided";
 
-  GlobalDeviceId global_device_id = params.global_device_id;
+  GlobalDeviceId global_device_id =
+      params.logical_device_context.global_device_id;
 
-  if (params.device_assn == nullptr) {
+  if (params.logical_device_context.device_assignment == nullptr) {
     return InvalidArgument(
         "Device assignment is null, but must be specified when running a "
         "collective thunk. If running multi-device HLO , make sure you're not "
@@ -71,7 +72,8 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
   // operation.
   ABSL_ASSIGN_OR_RETURN(
       std::vector<GlobalDeviceId> devices,
-      GetParticipatingDevices(global_device_id, *params.device_assn,
+      GetParticipatingDevices(global_device_id,
+                              *params.logical_device_context.device_assignment,
                               replica_groups, group_mode));
 
   int64_t num_local_participants = GetNumLocalParticipants(params, devices);

@@ -76,7 +76,7 @@ struct BackendVisitor {
 
 static XLA_FFI_InvokeContext CreateExecutionContext(
     const InvokeContext& context) {
-  XLA_FFI_InvokeContext result{
+  return XLA_FFI_InvokeContext{
       context.run_id,
       context.device_ordinal,
       std::visit(BackendVisitor{}, context.backend_context),
@@ -87,14 +87,8 @@ static XLA_FFI_InvokeContext CreateExecutionContext(
       internal::ScopedExecutionContext::GetCallExecutionContext(context),
       context.custom_options,
       /*encoded_custom_options=*/nullptr,
-      context.extension_start};
-  if (context.logical_device_context.has_value()) {
-    const auto& logical = *context.logical_device_context;
-    result.logical_device_context = XLA_FFI_InvokeContext::LogicalDeviceContext{
-        logical.device_assignment, logical.global_device_id,
-        logical.logical_device_id};
-  }
-  return result;
+      context.extension_start,
+      context.logical_device_context};
 }
 
 template <typename Handler>

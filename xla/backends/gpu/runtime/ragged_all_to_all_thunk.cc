@@ -806,8 +806,8 @@ absl::Status RaggedAllToAllThunk::Initialize(const InitializeParams& params) {
         ABSL_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
                               GetCollectiveGpuCliqueKey(
                                   *params.collective_params, config_.config));
-        const std::optional<RankId> rank =
-            clique_key.rank(params.collective_params->global_device_id);
+        const std::optional<RankId> rank = clique_key.rank(
+            params.collective_params->logical_device_context.global_device_id);
 
         *state = RaggedAllToAllStreamState(executor->device_ordinal(),
                                            rank.value(), std::move(clique_key));
@@ -951,7 +951,8 @@ absl::StatusOr<const se::CommandBuffer::Command*> RaggedAllToAllThunk::Record(
 
   int device_ordinal = executor->device_ordinal();
   const std::optional<RankId> rank_opt =
-      clique_key.rank(execute_params.collective_params->global_device_id);
+      clique_key.rank(execute_params.collective_params->logical_device_context
+                          .global_device_id);
   TF_RET_CHECK(rank_opt.has_value())
       << "RaggedAllToAllThunk::Record: Current device is not part of the "
          "clique";

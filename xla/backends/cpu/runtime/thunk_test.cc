@@ -119,19 +119,22 @@ TEST(ThunkTest, LogicalDeviceIdUsesCurrentPlacement) {
                                     DeviceAssignment::LogicalID{1, 1});
   ASSERT_OK_AND_ASSIGN(auto params,
                        Thunk::CollectiveExecuteParams::Create(&run_options));
-  EXPECT_THAT(params.logical_device_id, Optional(FieldsAre(1, 1)));
+  EXPECT_THAT(params.logical_device_context.logical_device_id,
+              Optional(FieldsAre(1, 1)));
 
   assignment(0, 0) = 7;
   assignment(1, 1) = 4;
   run_options.set_device_assignment(&assignment);
   ASSERT_OK_AND_ASSIGN(params,
                        Thunk::CollectiveExecuteParams::Create(&run_options));
-  EXPECT_THAT(params.logical_device_id, Optional(FieldsAre(0, 0)));
+  EXPECT_THAT(params.logical_device_context.logical_device_id,
+              Optional(FieldsAre(0, 0)));
 
   run_options.set_device_ordinal(4);
   ASSERT_OK_AND_ASSIGN(params,
                        Thunk::CollectiveExecuteParams::Create(&run_options));
-  EXPECT_THAT(params.logical_device_id, Optional(FieldsAre(1, 1)));
+  EXPECT_THAT(params.logical_device_context.logical_device_id,
+              Optional(FieldsAre(1, 1)));
 }
 
 TEST(ThunkTest, LogicalDeviceIdErrorsDoNotPreventExecutionSetup) {
@@ -139,14 +142,14 @@ TEST(ThunkTest, LogicalDeviceIdErrorsDoNotPreventExecutionSetup) {
   run_options.set_device_ordinal(7);
   ASSERT_OK_AND_ASSIGN(auto params,
                        Thunk::CollectiveExecuteParams::Create(&run_options));
-  EXPECT_EQ(params.logical_device_id, std::nullopt);
+  EXPECT_EQ(params.logical_device_context.logical_device_id, std::nullopt);
 
   DeviceAssignment assignment(/*replica_count=*/1, /*computation_count=*/1);
   assignment(0, 0) = 8;
   run_options.set_device_assignment(&assignment);
   ASSERT_OK_AND_ASSIGN(params,
                        Thunk::CollectiveExecuteParams::Create(&run_options));
-  EXPECT_EQ(params.logical_device_id, std::nullopt);
+  EXPECT_EQ(params.logical_device_context.logical_device_id, std::nullopt);
 }
 
 }  // namespace

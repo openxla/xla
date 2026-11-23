@@ -83,7 +83,8 @@ Thunk::BufferUses CollectiveGroupThunk::buffer_uses() const {
 
 absl::Status CollectiveGroupThunk::ExecuteOnStream(
     const Thunk::ExecuteParams& params) {
-  GlobalDeviceId global_device_id = params.collective_params->global_device_id;
+  GlobalDeviceId global_device_id =
+      params.collective_params->logical_device_context.global_device_id;
 
   // Collect all communicators used by non-degenerate collective thunks.
   // Degenerate collectives are emitted as device-to-device copies.

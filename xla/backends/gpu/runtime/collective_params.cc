@@ -117,8 +117,7 @@ CollectiveParams::CollectiveParams(
       run_id(run_id),
       async_streams(async_streams.begin(), async_streams.end()),
       local_device_id(local_device_id),
-      global_device_id(global_device_id),
-      device_assn(device_assn),
+      logical_device_context(device_assn, global_device_id, logical_id),
       global_device_id_map(global_device_id_map),
       clique_id_callback(clique_id_callback),
       incarnations(incarnations),
@@ -126,14 +125,6 @@ CollectiveParams::CollectiveParams(
       p2p_max_nchannels(p2p_max_nchannels),
       local_device_count(local_device_count),
       collective_use_minimal_resource(collective_use_minimal_resource),
-      nccl_window_symmetric(nccl_window_symmetric),
-      logical_device_id(logical_id) {
-  if (!logical_device_id && device_assn != nullptr) {
-    auto id = device_assn->LogicalIdForDevice(global_device_id);
-    if (id.ok()) {
-      logical_device_id = *id;
-    }
-  }
-}
+      nccl_window_symmetric(nccl_window_symmetric) {}
 
 }  // namespace xla::gpu

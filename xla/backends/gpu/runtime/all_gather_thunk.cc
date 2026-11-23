@@ -216,8 +216,8 @@ absl::Status AllGatherThunk::RunCollective(const ExecuteParams& params,
     if (config_.enable_gxl && gpu_comm->gxl_communicator() != nullptr) {
       GxlCommunicator* gxl_nccl_comm = gpu_comm->gxl_communicator();
 
-      const std::optional<RankId> rank =
-          clique_key.rank(params.collective_params->global_device_id);
+      const std::optional<RankId> rank = clique_key.rank(
+          params.collective_params->logical_device_context.global_device_id);
 
       return gxl_nccl_comm->RunAllGatherGxl(
           &stream, device_buffers[0].element_type,
@@ -262,7 +262,8 @@ static absl::Status RunOneSidedAllGather(
     Communicator& comm) {
   int device_ordinal = stream.parent()->device_ordinal();
 
-  auto global_device_id = params.collective_params->global_device_id;
+  auto global_device_id =
+      params.collective_params->logical_device_context.global_device_id;
   auto rank = clique_key.rank(global_device_id);
   if (!rank.has_value()) {
     return Internal("Device %d not found in clique %v",

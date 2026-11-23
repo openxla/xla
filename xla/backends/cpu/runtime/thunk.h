@@ -226,11 +226,8 @@ class Thunk {
     RunId run_id;
 
     int64_t local_device_ordinal;
-    GlobalDeviceId global_device_id;
-
-    const DeviceAssignment* device_assignment = nullptr;
+    LogicalDeviceContext logical_device_context;
     CpuCollectives* collectives = nullptr;
-    std::optional<DeviceAssignment::LogicalID> logical_device_id;
 
     CollectiveExecuteParams(
         RunId run_id, int64_t local_device_ordinal,

@@ -35,6 +35,21 @@ using absl::StrAppend;
 
 namespace xla {
 
+LogicalDeviceContext::LogicalDeviceContext(
+    const DeviceAssignment* device_assignment, GlobalDeviceId global_device_id,
+    std::optional<DeviceAssignment::LogicalID> logical_id)
+    : device_assignment(device_assignment),
+      global_device_id(global_device_id),
+      logical_device_id(logical_id) {
+  if (logical_device_id || device_assignment == nullptr) {
+    return;
+  }
+  auto id = device_assignment->LogicalIdForDevice(global_device_id);
+  if (id.ok()) {
+    logical_device_id = *id;
+  }
+}
+
 absl::StatusOr<DeviceAssignment::LogicalID>
 DeviceAssignment::LogicalIdForDevice(GlobalDeviceId device_id) const {
   std::optional<LogicalID> res;

@@ -135,17 +135,8 @@ Thunk::CollectiveExecuteParams::CollectiveExecuteParams(
     std::optional<DeviceAssignment::LogicalID> logical_id)
     : run_id(run_id),
       local_device_ordinal(local_device_ordinal),
-      global_device_id(global_device_id),
-      device_assignment(device_assignment),
-      collectives(collectives),
-      logical_device_id(logical_id) {
-  if (!logical_device_id && device_assignment != nullptr) {
-    auto id = device_assignment->LogicalIdForDevice(global_device_id);
-    if (id.ok()) {
-      logical_device_id = *id;
-    }
-  }
-}
+      logical_device_context(device_assignment, global_device_id, logical_id),
+      collectives(collectives) {}
 
 absl::StatusOr<Thunk::CustomCallExecuteParams>
 Thunk::CustomCallExecuteParams::Create(

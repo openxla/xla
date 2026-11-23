@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "absl/container/flat_hash_map.h"
@@ -88,6 +89,18 @@ class DeviceAssignment : public Array2D<int64_t> {
   friend void AbslStringify(Sink& sink, const DeviceAssignment& assignment) {
     return sink.Append(assignment.ToString());
   }
+};
+
+// Placement of the executing device. The assignment is borrowed for the run.
+struct LogicalDeviceContext {
+  LogicalDeviceContext(
+      const DeviceAssignment* device_assignment,
+      GlobalDeviceId global_device_id,
+      std::optional<DeviceAssignment::LogicalID> logical_id = std::nullopt);
+
+  const DeviceAssignment* device_assignment;
+  GlobalDeviceId global_device_id;
+  std::optional<DeviceAssignment::LogicalID> logical_device_id;
 };
 
 }  // namespace xla

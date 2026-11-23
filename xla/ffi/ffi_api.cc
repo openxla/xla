@@ -372,9 +372,8 @@ static XLA_FFI_Error* XLA_FFI_LogicalDeviceInfo_Get(
         InvalidArgument("XLA FFI invocation context is null")};
   }
 
-  const std::optional<XLA_FFI_InvokeContext::LogicalDeviceContext>& logical =
-      args->ctx->logical_device_context;
-  if (!logical.has_value() || logical->device_assignment == nullptr) {
+  const LogicalDeviceContext* logical = args->ctx->logical_device_context;
+  if (logical == nullptr || logical->device_assignment == nullptr) {
     return new XLA_FFI_Error{FailedPrecondition(
         "Logical device information requires an execution device assignment")};
   }

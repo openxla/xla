@@ -295,12 +295,12 @@ absl::Status CollectivePermuteThunk::RunCollective(
       P2PConfig::GetSourceTarget(config_.id_to_source_target, current_id);
 
   // Remap source/target to clique-local ranks.
+  const auto& placement = params.collective_params->logical_device_context;
   ABSL_ASSIGN_OR_RETURN(
       P2PConfig::SourceTargetRanks source_target_ranks,
       RemapSourceTargetToCliqueRanks(
-          source_target, clique_key, *params.collective_params->device_assn,
-          config_.config.group_mode,
-          params.collective_params->global_device_id));
+          source_target, clique_key, *placement.device_assignment,
+          config_.config.group_mode, placement.global_device_id));
 
   // One-sided mode: use Put + Signal to write directly to peer symmetric
   // memory without host-side rendezvous or pointer exchange.
@@ -410,7 +410,8 @@ static absl::Status RunPeerAccessPermute(
     const P2PConfig::SourceTargetRanks& source_target,
     const std::vector<DeviceBufferPair>& device_buffers, se::Stream& stream,
     const GpuCliqueKey& clique_key, const Thunk::ExecuteParams& params) {
-  GlobalDeviceId gid = params.collective_params->global_device_id;
+  GlobalDeviceId gid =
+      params.collective_params->logical_device_context.global_device_id;
   std::optional<RankId> rank = clique_key.rank(gid);
   if (!rank.has_value()) {
     return Internal("Device %v not found in clique key %v", gid, clique_key);
