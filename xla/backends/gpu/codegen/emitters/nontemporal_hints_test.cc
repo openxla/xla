@@ -535,10 +535,9 @@ ENTRY e {
                        EmitKernelApi(*mlir_module, *fusion, assignment.get(),
                                      {16, 16, 16}, "entry"));
 
-  ASSERT_THAT(AnnotateNontemporalHintFacts(*mlir_module, "entry", *fusion,
-                                           &assignment->dataflow_analysis(),
-                                           /*contiguous_output=*/true),
-              absl_testing::IsOk());
+  AnnotateNontemporalHintFacts(*mlir_module, "entry", *fusion,
+                               &assignment->dataflow_analysis(),
+                               OutputContiguity::kContiguous);
 
   EXPECT_THAT(entry->getAttr(kXlaContiguousOutputAttr), NotNull());
   EXPECT_THAT(entry.getArgAttr(0, kXlaStreamedOnceAttr), NotNull());
@@ -583,10 +582,9 @@ ENTRY e {
                        EmitKernelApi(*mlir_module, *fusion, assignment.get(),
                                      {16, 16, 16}, "entry"));
 
-  ASSERT_THAT(AnnotateNontemporalHintFacts(*mlir_module, "entry", *fusion,
-                                           &assignment->dataflow_analysis(),
-                                           /*contiguous_output=*/false),
-              absl_testing::IsOk());
+  AnnotateNontemporalHintFacts(*mlir_module, "entry", *fusion,
+                               &assignment->dataflow_analysis(),
+                               OutputContiguity::kNonContiguous);
   EXPECT_THAT(entry->getAttr(kXlaContiguousOutputAttr), IsNull());
   EXPECT_THAT(entry.getArgAttr(0, kXlaStreamedOnceAttr), NotNull());
 }

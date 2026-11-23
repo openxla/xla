@@ -45,12 +45,12 @@ xla_cc_binary(
         "//xla/backends/gpu/codegen/emitters/ir:xla_gpu",
         "//xla/backends/gpu/codegen/emitters/transforms:passes",
         "//xla/codegen/emitters/ir:xla",
-        "//xla/codegen/emitters/transforms:convert_pure_call_ops_pass",
+        "//xla/codegen/emitters/transforms:convert_pure_call_ops_pass",  # keep: provides implementations for shared passes.h.
         "//xla/codegen/emitters/transforms:lower_to_llvm_gpu_pass",
         "//xla/codegen/emitters/transforms:pass_pipelines",
-        "//xla/codegen/emitters/transforms:passes",
-        "//xla/codegen/emitters/transforms:simplify_affine_pass",
-        "//xla/codegen/emitters/transforms:simplify_arith_pass",
+        "//xla/codegen/emitters/transforms:passes",  # keep: provides implementations for shared passes.h.
+        "//xla/codegen/emitters/transforms:simplify_affine_pass",  # keep: provides implementations for shared passes.h.
+        "//xla/codegen/emitters/transforms:simplify_arith_pass",  # keep: provides implementations for shared passes.h.
         "//xla/codegen/xtile/ir:xtile",
         "//xla/codegen/xtile/ir/transforms:passes",
         "//xla/mlir_hlo",

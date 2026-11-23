@@ -14,9 +14,6 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -24,6 +21,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -33,6 +32,7 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Triple.h"
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -44,14 +44,25 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"
+#include "xla/backends/cpu/target_machine_options.h"
+#include "xla/backends/gpu/codegen/emitters/concatenate.h"
 #include "xla/backends/gpu/codegen/emitters/loop.h"
+#include "xla/backends/gpu/codegen/gpu_kernel_spec.h"
+#include "xla/backends/gpu/codegen/kernel_compiler.h"
+#include "xla/backends/gpu/codegen/triton/triton_kernel_source.h"
+#include "xla/backends/gpu/codegen/triton/triton_wrapper_result.h"
+#include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/codegen/llvm_kernel_source.h"
 #include "xla/codegen/mlir_kernel_source.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
+#include "xla/future.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/filecheck.h"
@@ -61,11 +72,15 @@ limitations under the License.
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
+#include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/mlir_context_pool.h"
+#include "xla/service/gpu_topology.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/device_description.pb.h"
 #include "xla/xla.pb.h"
 
 namespace xla {
@@ -370,20 +385,24 @@ constexpr absl::string_view kLargeCopyModule = R"(
         calls=fused_computation
     })";
 
+absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
+    HloModule& module) {
+  AliasInfo alias_info;
+  return BufferAssigner::Run(
+      &module, std::make_unique<DependencyHloOrdering>(&module),
+      [](const BufferValue& buffer) {
+        return ShapeUtil::ByteSizeOf(buffer.shape(), sizeof(void*));
+      },
+      &alias_info, [](LogicalBuffer::Color) { return 0; },
+      BufferAssigner::Options{.allocate_buffers_for_constants = true});
+}
+
 absl::StatusOr<std::string> EmitLlvmIrWithBufferAssignment(
     HloModule& module, const se::DeviceDescription& device_info,
     std::unique_ptr<MlirKernelEmitter> kernel_emitter =
         std::make_unique<ContiguousCopyEmitter>()) {
-  AliasInfo alias_info;
-  ABSL_ASSIGN_OR_RETURN(
-      std::unique_ptr<BufferAssignment> assignment,
-      BufferAssigner::Run(
-          &module, std::make_unique<DependencyHloOrdering>(&module),
-          [](const BufferValue& buffer) {
-            return ShapeUtil::ByteSizeOf(buffer.shape(), sizeof(void*));
-          },
-          &alias_info, [](LogicalBuffer::Color) { return 0; },
-          BufferAssigner::Options{.allocate_buffers_for_constants = true}));
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<BufferAssignment> assignment,
+                        RunBufferAssignment(module));
 
   std::unique_ptr<mlir::MLIRContext> mlir_context = CreateMlirContext();
   MlirKernelFusion emitter(std::move(kernel_emitter));
@@ -435,8 +454,9 @@ TEST_F(MlirKernelFusionTest, NoNontemporalHintsWhenFlagDisabled) {
               absl_testing::IsOkAndHolds(true));
 }
 
-// Emits the root fusion of `module` with the loop emitter on MI300.
-absl::StatusOr<std::string> EmitLoopFusionOnMI300(HloModule& module) {
+// Emits the root fusion of `module` with an `Emitter` on MI300.
+template <typename Emitter>
+absl::StatusOr<std::string> EmitFusionOnMI300(HloModule& module) {
   const se::DeviceDescription device_info =
       TestGpuDeviceInfo::AMDMI300DeviceInfo();
   HloFusionAnalysis analysis = HloFusionAnalysis::Create(
@@ -444,7 +464,7 @@ absl::StatusOr<std::string> EmitLoopFusionOnMI300(HloModule& module) {
           module.entry_computation()->root_instruction()),
       device_info);
   return EmitLlvmIrWithBufferAssignment(module, device_info,
-                                        std::make_unique<LoopFusion>(analysis));
+                                        std::make_unique<Emitter>(analysis));
 }
 
 TEST_F(MlirKernelFusionTest, NontemporalLoadsOfWholeLinesOnMI300) {
@@ -463,7 +483,8 @@ TEST_F(MlirKernelFusionTest, NontemporalLoadsOfWholeLinesOnMI300) {
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_enable_nontemporal_hints(true);
-  ASSERT_OK_AND_ASSIGN(std::string llvm_ir, EmitLoopFusionOnMI300(*module));
+  ASSERT_OK_AND_ASSIGN(std::string llvm_ir,
+                       EmitFusionOnMI300<LoopFusion>(*module));
   EXPECT_THAT(RunFileCheck(llvm_ir, R"(
     // CHECK: load {{.*}}!nontemporal
     // CHECK: store {{.*}}!nontemporal
@@ -489,7 +510,8 @@ TEST_F(MlirKernelFusionTest, NoNontemporalLoadsOfLinesReadInPiecesOnMI300) {
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_enable_nontemporal_hints(true);
-  ASSERT_OK_AND_ASSIGN(std::string llvm_ir, EmitLoopFusionOnMI300(*module));
+  ASSERT_OK_AND_ASSIGN(std::string llvm_ir,
+                       EmitFusionOnMI300<LoopFusion>(*module));
   EXPECT_THAT(RunFileCheck(llvm_ir, R"(
     // CHECK-NOT: load {{.*}}!nontemporal
   )"),
@@ -518,7 +540,8 @@ TEST_F(MlirKernelFusionTest, NoNontemporalLoadsAfterLeadingPadOnMI300) {
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_enable_nontemporal_hints(true);
-  ASSERT_OK_AND_ASSIGN(std::string llvm_ir, EmitLoopFusionOnMI300(*module));
+  ASSERT_OK_AND_ASSIGN(std::string llvm_ir,
+                       EmitFusionOnMI300<LoopFusion>(*module));
   EXPECT_THAT(RunFileCheck(llvm_ir, R"(
     // CHECK-NOT: load {{.*}}!nontemporal
   )"),
@@ -545,7 +568,8 @@ TEST_F(MlirKernelFusionTest, NoNontemporalLoadsOfSubByteElementsOnMI300) {
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_enable_nontemporal_hints(true);
-  ASSERT_OK_AND_ASSIGN(std::string llvm_ir, EmitLoopFusionOnMI300(*module));
+  ASSERT_OK_AND_ASSIGN(std::string llvm_ir,
+                       EmitFusionOnMI300<LoopFusion>(*module));
   EXPECT_THAT(RunFileCheck(llvm_ir, R"(
     // CHECK-NOT: load {{.*}}!nontemporal
   )"),
@@ -554,6 +578,158 @@ TEST_F(MlirKernelFusionTest, NoNontemporalLoadsOfSubByteElementsOnMI300) {
     // CHECK: store {{.*}}!nontemporal
   )"),
               absl_testing::IsOkAndHolds(true));
+}
+
+TEST_F(MlirKernelFusionTest,
+       NontemporalLoadsOfNarrowerConcatenateOperandOnMI300) {
+  // The emitter indexes both operands like the wider %p0. Within its own rows,
+  // %p1 is read in whole lines too.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    fused_computation {
+      %p0 = f32[524288,64] parameter(0)
+      %p1 = f32[524288,48] parameter(1)
+      ROOT %concat = f32[524288,112] concatenate(%p0, %p1), dimensions={1}
+    }
+
+    ENTRY main {
+      %p0 = f32[524288,64] parameter(0)
+      %p1 = f32[524288,48] parameter(1)
+      ROOT fusion = f32[524288,112] fusion(%p0, %p1), kind=kLoop,
+        calls=fused_computation
+    })"));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_nontemporal_hints(true);
+  ASSERT_OK_AND_ASSIGN(std::string llvm_ir,
+                       EmitFusionOnMI300<ConcatenateFusion>(*module));
+  EXPECT_THAT(RunFileCheck(llvm_ir, R"(
+    // CHECK: define void @fusion(ptr {{.*}}%[[P0:[0-9]+]], ptr {{.*}}%[[P1:[0-9]+]], ptr
+    // CHECK: %[[P0_PTR:[0-9]+]] = getelementptr {{.*}}, ptr %[[P0]],
+    // CHECK-NEXT: load {{.*}}, ptr %[[P0_PTR]], {{.*}}!nontemporal
+    // CHECK: %[[P1_PTR:[0-9]+]] = getelementptr {{.*}}, ptr %[[P1]],
+    // CHECK-NEXT: load {{.*}}, ptr %[[P1_PTR]], {{.*}}!nontemporal
+  )"),
+              absl_testing::IsOkAndHolds(true));
+}
+
+// Counts the kernels it compiles, to empty binaries.
+class CountingKernelCompiler : public KernelCompiler {
+ public:
+  Future<std::unique_ptr<Thunk>> Compile(Thunk::ThunkInfo, MlirKernelDefinition,
+                                         absl::string_view, BorrowedMlirContext,
+                                         const HloModule&, int) override {
+    return absl::UnimplementedError("Compile");
+  }
+
+  Future<TritonWrapperResult> CompileTritonToLlvm(
+      absl::string_view, const HloModule&, const se::DeviceDescription&,
+      const xtile::BlockLevelParameters&, const llvm::Triple&,
+      const std::string&, TritonKernelSource, BorrowedMlirContext,
+      bool) override {
+    return absl::UnimplementedError("CompileTritonToLlvm");
+  }
+
+  Future<std::vector<uint8_t>> CompileToTargetBinary(MlirKernelDefinition,
+                                                     absl::string_view,
+                                                     BorrowedMlirContext,
+                                                     const HloModule&,
+                                                     int) override {
+    ++num_compiled_kernels_;
+    return std::vector<uint8_t>();
+  }
+
+  Future<std::vector<uint8_t>> CompileToTargetBinary(
+      LlvmKernelSource, absl::string_view,
+      std::optional<GpuKernelSpec>) override {
+    return absl::UnimplementedError("CompileToTargetBinary");
+  }
+
+  int num_compiled_kernels() const { return num_compiled_kernels_; }
+
+ private:
+  int num_compiled_kernels_ = 0;
+};
+
+// Emits the fusions of `module` on MI300 and returns how many kernels they
+// compile; the other fusions reuse those kernels.
+absl::StatusOr<int> CountCompiledKernelsOnMI300(HloModule& module) {
+  se::GpuTargetConfigProto target_config_proto;
+  *target_config_proto.mutable_gpu_device_info() =
+      TestGpuDeviceInfo::AMDMI300DeviceInfo().ToProto();
+  ABSL_ASSIGN_OR_RETURN(GpuTargetConfig target_config,
+                        GpuTargetConfig::FromProto(target_config_proto));
+  const GpuTopology gpu_topology(
+      /*platform_version=*/"", /*num_partitions=*/1,
+      /*num_hosts_per_partition=*/1, /*num_devices_per_host=*/1,
+      std::move(target_config));
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<BufferAssignment> assignment,
+                        RunBufferAssignment(module));
+  std::unique_ptr<mlir::MLIRContext> mlir_context = CreateMlirContext();
+  MlirContextPool mlir_context_pool([]() { return CreateMlirContext(); });
+  CountingKernelCompiler kernel_compiler;
+  IrEmitterContext ir_emitter_context(
+      &module, assignment.get(), /*execution_stream_assignment=*/nullptr,
+      /*platform_name=*/"ROCM", gpu_topology, mlir_context.get(),
+      llvm::Triple("amdgcn-amd-amdhsa"), /*data_layout=*/"", &kernel_compiler,
+      xla::cpu::TargetMachineOptions{}, &mlir_context_pool);
+  MlirKernelFusion emitter(std::make_unique<DummyCopyEmitter>());
+  for (const HloInstruction* instruction :
+       module.entry_computation()->instructions()) {
+    if (const auto* fusion = DynCast<HloFusionInstruction>(instruction)) {
+      ABSL_RETURN_IF_ERROR(
+          emitter.Emit(ir_emitter_context, *fusion).Await().status());
+    }
+  }
+  return kernel_compiler.num_compiled_kernels();
+}
+
+// Three copies of a fusion. Another instruction also reads the operand of
+// %fusion2.
+constexpr absl::string_view kFusionsWithOtherReaders = R"(
+    fused_computation0 {
+      ROOT %p0 = f32[100] parameter(0)
+    }
+
+    fused_computation1 {
+      ROOT %p0 = f32[100] parameter(0)
+    }
+
+    fused_computation2 {
+      ROOT %p0 = f32[100] parameter(0)
+    }
+
+    ENTRY main {
+      %p0 = f32[100] parameter(0)
+      %p1 = f32[100] parameter(1)
+      %p2 = f32[100] parameter(2)
+      %fusion0 = f32[100] fusion(%p0), kind=kLoop, calls=fused_computation0
+      %fusion1 = f32[100] fusion(%p1), kind=kLoop, calls=fused_computation1
+      %fusion2 = f32[100] fusion(%p2), kind=kLoop, calls=fused_computation2
+      %neg = f32[100] negate(%p2)
+      ROOT %tuple = (f32[100], f32[100], f32[100], f32[100])
+        tuple(%fusion0, %fusion1, %fusion2, %neg)
+    })";
+
+TEST_F(MlirKernelFusionTest, OperandsReadElsewhereGetOwnKernelOnMI300) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kFusionsWithOtherReaders));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_nontemporal_hints(true);
+  // %fusion0 and %fusion1 share a kernel.
+  EXPECT_THAT(CountCompiledKernelsOnMI300(*module),
+              absl_testing::IsOkAndHolds(2));
+}
+
+TEST_F(MlirKernelFusionTest, OtherReadersShareKernelWhenHintsDisabled) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kFusionsWithOtherReaders));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_nontemporal_hints(false);
+  EXPECT_THAT(CountCompiledKernelsOnMI300(*module),
+              absl_testing::IsOkAndHolds(1));
 }
 
 }  // namespace

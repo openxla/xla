@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
-#include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
@@ -67,13 +66,17 @@ bool ReadsLinesInPieces(const IndexingMap& thread_id_to_index,
                         int64_t wavefront_size, int64_t element_bytes,
                         int64_t buffer_bytes);
 
+// Whether the kernel writes each output element once, as loop and concatenate
+// emitters do.
+enum class OutputContiguity { kNonContiguous, kContiguous };
+
 // Sets the read facts (see xla/codegen/emitters/ir/xla_ops.h) on the entry's
-// operand args, and xla.contiguous_output if `contiguous_output`.
-absl::Status AnnotateNontemporalHintFacts(mlir::ModuleOp module,
-                                          absl::string_view entry_function_name,
-                                          const HloInstruction& hlo_instruction,
-                                          const HloDataflowAnalysis* dataflow,
-                                          bool contiguous_output);
+// operand args, and xla.contiguous_output for a contiguous output.
+void AnnotateNontemporalHintFacts(mlir::ModuleOp module,
+                                  absl::string_view entry_function_name,
+                                  const HloInstruction& hlo_instruction,
+                                  const HloDataflowAnalysis* dataflow,
+                                  OutputContiguity output_contiguity);
 
 }  // namespace xla::gpu
 

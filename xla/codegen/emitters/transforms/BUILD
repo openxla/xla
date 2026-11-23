@@ -386,8 +386,8 @@ cc_library(
     srcs = ["pass_pipelines.cc"],
     hdrs = ["pass_pipelines.h"],
     deps = [
-        ":passes",
-        ":simplify_arith_pass",
+        ":passes",  # keep: provides implementations for shared passes.h.
+        ":simplify_arith_pass",  # keep: provides implementations for shared passes.h.
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Transforms",

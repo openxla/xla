@@ -18,12 +18,12 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/StringRef.h"
@@ -258,6 +258,201 @@ bool LinearIndexReadsOnce(const IndexingMap& map,
   return true;
 }
 
+// Thread x, y, z and block x, y, z.
+constexpr int64_t kNumThreadIdDims = 6;
+
+// Evaluates a thread-id-to-index map at a thread of a block and an iteration of
+// the inner loop, the innermost range variable. Other symbols stay at their
+// lower bounds.
+class ThreadIdToIndex {
+ public:
+  explicit ThreadIdToIndex(const IndexingMap& map)
+      : map_(map),
+        result_(map.GetSymbolicMap().GetResult(0)),
+        inner_(map.GetRangeVarsCount() - 1),
+        inner_bounds_(inner_ >= 0 ? map.GetRangeVar(inner_).bounds
+                                  : Interval{0, 0}),
+        vars_(kNumThreadIdDims + map.GetSymbolCount(), 0) {
+    for (int64_t i = 0; i < map.GetSymbolCount(); ++i) {
+      vars_[kNumThreadIdDims + i] = map.GetSymbolBound(i).lower;
+    }
+  }
+
+  int64_t block_threads() const { return Extent(0) * Extent(1) * Extent(2); }
+  int64_t num_blocks() const { return Extent(3); }
+  bool has_inner_loop() const { return inner_ >= 0; }
+  // 1 without an inner loop.
+  int64_t inner_count() const { return inner_bounds_.GetLoopTripCount(); }
+
+  // Whether `thread` of `block` satisfies the constraints in iteration `k`.
+  bool IsActive(int64_t block, int64_t thread, int64_t k) {
+    Select(block, thread, k);
+    for (const auto& [expr, interval] : map_.GetSymbolicConstraints()) {
+      if (!interval.Contains(expr.Evaluate(vars_))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // The index `thread` of `block` reads in iteration `k`, if active.
+  std::optional<int64_t> ActiveIndex(int64_t block, int64_t thread, int64_t k) {
+    if (!IsActive(block, thread, k)) {
+      return std::nullopt;
+    }
+    return result_.Evaluate(vars_);
+  }
+
+ private:
+  int64_t Extent(int64_t dim) const {
+    return map_.GetDimVar(dim).bounds.GetLoopTripCount();
+  }
+
+  void Select(int64_t block, int64_t thread, int64_t k) {
+    vars_[0] = map_.GetDimVar(0).bounds.lower + thread % Extent(0);
+    vars_[1] = map_.GetDimVar(1).bounds.lower + thread / Extent(0) % Extent(1);
+    vars_[2] =
+        map_.GetDimVar(2).bounds.lower + thread / (Extent(0) * Extent(1));
+    vars_[3] = map_.GetDimVar(3).bounds.lower + block;
+    vars_[4] = map_.GetDimVar(4).bounds.lower;
+    vars_[5] = map_.GetDimVar(5).bounds.lower;
+    if (has_inner_loop()) {
+      vars_[kNumThreadIdDims + inner_] = inner_bounds_.lower + k;
+    }
+  }
+
+  const IndexingMap& map_;
+  const SymbolicExpr result_;
+  const int64_t inner_;
+  const Interval inner_bounds_;
+  std::vector<int64_t> vars_;
+};
+
+// Threads [first_thread, end_thread) of a block.
+struct Wavefront {
+  int64_t block;
+  int64_t first_thread;
+  int64_t end_thread;
+};
+
+bool HasActiveThread(ThreadIdToIndex& indexing, int64_t block,
+                     int64_t num_threads) {
+  for (int64_t thread = 0; thread < num_threads; ++thread) {
+    for (int64_t k = 0; k < indexing.inner_count(); ++k) {
+      if (indexing.IsActive(block, thread, k)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// The first two wavefronts of the first two blocks with an active thread, or
+// nullopt if the scan reaches block 1024 first. A leading pad can leave the
+// first blocks without active threads.
+std::optional<std::vector<Wavefront>> SampleActiveWavefronts(
+    ThreadIdToIndex& indexing, int64_t wavefront_size) {
+  constexpr int64_t kMaxScannedBlocks = 1024;
+  const int64_t block_threads = indexing.block_threads();
+  const int64_t sampled_threads =
+      std::min<int64_t>(block_threads, 2 * wavefront_size);
+  std::vector<Wavefront> wavefronts;
+  int64_t sampled_blocks = 0;
+  for (int64_t block = 0; block < indexing.num_blocks() && sampled_blocks < 2;
+       ++block) {
+    if (block == kMaxScannedBlocks) {
+      return std::nullopt;
+    }
+    if (!HasActiveThread(indexing, block, sampled_threads)) {
+      continue;
+    }
+    ++sampled_blocks;
+    for (int64_t first = 0; first < sampled_threads; first += wavefront_size) {
+      wavefronts.push_back(
+          {block, first, std::min(first + wavefront_size, block_threads)});
+    }
+  }
+  return wavefronts;
+}
+
+// Whether each thread reads its inner loop with one vector load: at most 16
+// bytes at consecutive indices. A thread with some iterations masked reads
+// value by value.
+bool LoadsInnerLoopAsVector(ThreadIdToIndex& indexing,
+                            absl::Span<const Wavefront> wavefronts,
+                            int64_t element_bytes) {
+  constexpr int64_t kMaxVectorBytes = 16;
+  const int64_t inner_count = indexing.inner_count();
+  if (!indexing.has_inner_loop() || inner_count <= 1 ||
+      inner_count * element_bytes > kMaxVectorBytes) {
+    return false;
+  }
+  for (const Wavefront& wavefront : wavefronts) {
+    for (int64_t thread = wavefront.first_thread; thread < wavefront.end_thread;
+         ++thread) {
+      int64_t previous = 0;
+      int64_t num_active = 0;
+      for (int64_t k = 0; k < inner_count; ++k) {
+        std::optional<int64_t> index =
+            indexing.ActiveIndex(wavefront.block, thread, k);
+        if (!index.has_value()) {
+          continue;
+        }
+        if (num_active > 0 && *index != previous + 1) {
+          return false;
+        }
+        previous = *index;
+        ++num_active;
+      }
+      if (num_active != 0 && num_active != inner_count) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// The elements load `load` of `wavefront` reads: the whole inner loop for a
+// vector load, iteration `load` for a scalar one.
+std::vector<int64_t> LoadedElements(ThreadIdToIndex& indexing,
+                                    const Wavefront& wavefront, int64_t load,
+                                    bool vector_inner) {
+  const int64_t first_k = vector_inner ? 0 : load;
+  const int64_t end_k = vector_inner ? indexing.inner_count() : load + 1;
+  std::vector<int64_t> elements;
+  for (int64_t thread = wavefront.first_thread; thread < wavefront.end_thread;
+       ++thread) {
+    for (int64_t k = first_k; k < end_k; ++k) {
+      if (std::optional<int64_t> index =
+              indexing.ActiveIndex(wavefront.block, thread, k)) {
+        elements.push_back(*index);
+      }
+    }
+  }
+  return elements;
+}
+
+// Whether `elements` cover part of a 128-byte line. The last line ends at the
+// end of the buffer.
+bool CoversPartOfLine(std::vector<int64_t> elements, int64_t element_bytes,
+                      int64_t buffer_bytes) {
+  constexpr int64_t kLineBytes = 128;
+  absl::c_sort(elements);
+  elements.erase(std::unique(elements.begin(), elements.end()), elements.end());
+  absl::flat_hash_map<int64_t, int64_t> line_bytes;
+  for (int64_t element : elements) {
+    line_bytes[llvm::divideFloorSigned(element * element_bytes, kLineBytes)] +=
+        element_bytes;
+  }
+  for (const auto& [line, bytes] : line_bytes) {
+    const int64_t line_end = std::min((line + 1) * kLineBytes, buffer_bytes);
+    if (bytes < line_end - line * kLineBytes) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 std::vector<bool> ComputeReadElsewhere(const HloFusionInstruction& fusion,
@@ -302,8 +497,7 @@ bool ReadsEachElementAtMostOnce(const IndexingMap& map, const Shape& shape) {
   orders.push_back(std::move(logical));
 
   for (int64_t i = 0; i < static_cast<int64_t>(orders.size()); ++i) {
-    if (std::find(orders.begin(), orders.begin() + i, orders[i]) !=
-        orders.begin() + i) {
+    if (absl::c_contains(absl::MakeConstSpan(orders).first(i), orders[i])) {
       continue;
     }
     std::vector<int64_t> dims;
@@ -383,172 +577,56 @@ std::vector<OperandReads> ComputeOperandReads(
 bool ReadsLinesInPieces(const IndexingMap& thread_id_to_index,
                         int64_t wavefront_size, int64_t element_bytes,
                         int64_t buffer_bytes) {
-  constexpr int64_t kLineBytes = 128;
-  constexpr int64_t kMaxVectorBytes = 16;
   constexpr int64_t kMaxScalarLoads = 4;
-  constexpr int64_t kNumDims = 6;
   const IndexingMap& map = thread_id_to_index;
   if (map.IsUndefined() || map.IsKnownEmpty() ||
-      map.GetDimVarsCount() != kNumDims ||
+      map.GetDimVarsCount() != kNumThreadIdDims ||
       map.GetSymbolicMap().GetNumResults() != 1 || element_bytes <= 0 ||
       wavefront_size <= 0) {
     return false;
   }
-  const int64_t num_symbols = map.GetSymbolCount();
-  std::vector<int64_t> vars(kNumDims + num_symbols, 0);
-  for (int64_t i = 0; i < num_symbols; ++i) {
-    vars[kNumDims + i] = map.GetSymbolBound(i).lower;
-  }
-  const SymbolicExpr result = map.GetSymbolicMap().GetResult(0);
-  auto active = [&]() {
-    for (const auto& [expr, interval] : map.GetSymbolicConstraints()) {
-      if (!interval.Contains(expr.Evaluate(vars))) {
-        return false;
-      }
-    }
+  ThreadIdToIndex indexing(map);
+  std::optional<std::vector<Wavefront>> wavefronts =
+      SampleActiveWavefronts(indexing, wavefront_size);
+  if (!wavefronts.has_value()) {
     return true;
-  };
-  auto extent = [&](int64_t dim) {
-    return map.GetDimVar(dim).bounds.GetLoopTripCount();
-  };
-  const int64_t block_threads = extent(0) * extent(1) * extent(2);
-  auto set_thread = [&](int64_t block, int64_t thread) {
-    vars[0] = map.GetDimVar(0).bounds.lower + thread % extent(0);
-    vars[1] = map.GetDimVar(1).bounds.lower + thread / extent(0) % extent(1);
-    vars[2] = map.GetDimVar(2).bounds.lower + thread / (extent(0) * extent(1));
-    vars[3] = map.GetDimVar(3).bounds.lower + block;
-    vars[4] = map.GetDimVar(4).bounds.lower;
-    vars[5] = map.GetDimVar(5).bounds.lower;
-  };
-  const int64_t inner = map.GetRangeVarsCount() - 1;
-  const Interval inner_bounds =
-      inner >= 0 ? map.GetRangeVar(inner).bounds : Interval{0, 0};
-  const int64_t inner_count = inner_bounds.GetLoopTripCount();
-  const int64_t sampled_threads =
-      std::min<int64_t>(block_threads, 2 * wavefront_size);
-  auto has_active_thread = [&](int64_t block) {
-    for (int64_t t = 0; t < sampled_threads; ++t) {
-      set_thread(block, t);
-      for (int64_t k = 0; k < inner_count; ++k) {
-        if (inner >= 0) {
-          vars[kNumDims + inner] = inner_bounds.lower + k;
-        }
-        if (active()) {
-          return true;
-        }
-      }
-    }
-    return false;
-  };
-
-  struct Wavefront {
-    int64_t block;
-    int64_t first_thread;
-  };
-  // A leading pad can leave the first blocks without active threads.
-  constexpr int64_t kMaxScannedBlocks = 1024;
-  std::vector<Wavefront> wavefronts;
-  int64_t sampled_blocks = 0;
-  for (int64_t block = 0; block < extent(3) && sampled_blocks < 2; ++block) {
-    if (block == kMaxScannedBlocks) {
-      return true;
-    }
-    if (!has_active_thread(block)) {
-      continue;
-    }
-    ++sampled_blocks;
-    for (int64_t first = 0; first < sampled_threads; first += wavefront_size) {
-      wavefronts.push_back({block, first});
-    }
   }
-  auto end_thread = [&](const Wavefront& wavefront) {
-    return std::min(wavefront.first_thread + wavefront_size, block_threads);
-  };
-  bool vector_inner = inner >= 0 && inner_count > 1 &&
-                      inner_count * element_bytes <= kMaxVectorBytes;
-  // Vector loads need consecutive lanes; a masked lane is read value by value.
-  for (const Wavefront& wavefront : wavefronts) {
-    for (int64_t t = wavefront.first_thread;
-         vector_inner && t < end_thread(wavefront); ++t) {
-      set_thread(wavefront.block, t);
-      int64_t previous = 0;
-      int64_t num_active = 0;
-      for (int64_t k = 0; k < inner_count; ++k) {
-        vars[kNumDims + inner] = inner_bounds.lower + k;
-        if (!active()) {
-          continue;
-        }
-        const int64_t index = result.Evaluate(vars);
-        if (num_active > 0 && index != previous + 1) {
-          vector_inner = false;
-          break;
-        }
-        previous = index;
-        ++num_active;
-      }
-      if (num_active != 0 && num_active != inner_count) {
-        vector_inner = false;
-      }
-    }
-  }
-
-  const int64_t num_instructions =
-      vector_inner ? 1 : std::min(inner_count, kMaxScalarLoads);
-  for (const Wavefront& wavefront : wavefronts) {
-    for (int64_t instruction = 0; instruction < num_instructions;
-         ++instruction) {
-      std::vector<int64_t> elements;
-      for (int64_t t = wavefront.first_thread; t < end_thread(wavefront); ++t) {
-        set_thread(wavefront.block, t);
-        for (int64_t k = 0; k < (vector_inner ? inner_count : 1); ++k) {
-          if (inner >= 0) {
-            vars[kNumDims + inner] =
-                inner_bounds.lower + (vector_inner ? k : instruction);
-          }
-          if (active()) {
-            elements.push_back(result.Evaluate(vars));
-          }
-        }
-      }
-      std::sort(elements.begin(), elements.end());
-      elements.erase(std::unique(elements.begin(), elements.end()),
-                     elements.end());
-      absl::flat_hash_map<int64_t, int64_t> line_bytes;
-      for (int64_t element : elements) {
-        line_bytes[llvm::divideFloorSigned(element * element_bytes,
-                                           kLineBytes)] += element_bytes;
-      }
-      for (const auto& [line, bytes] : line_bytes) {
-        const int64_t line_end =
-            std::min((line + 1) * kLineBytes, buffer_bytes);
-        if (bytes < line_end - line * kLineBytes) {
-          return true;
-        }
+  const bool vector_inner =
+      LoadsInnerLoopAsVector(indexing, *wavefronts, element_bytes);
+  // One vector load per thread, or one scalar load per inner iteration.
+  const int64_t num_loads =
+      vector_inner ? 1 : std::min(indexing.inner_count(), kMaxScalarLoads);
+  for (const Wavefront& wavefront : *wavefronts) {
+    for (int64_t load = 0; load < num_loads; ++load) {
+      if (CoversPartOfLine(
+              LoadedElements(indexing, wavefront, load, vector_inner),
+              element_bytes, buffer_bytes)) {
+        return true;
       }
     }
   }
   return false;
 }
 
-absl::Status AnnotateNontemporalHintFacts(mlir::ModuleOp module,
-                                          absl::string_view entry_function_name,
-                                          const HloInstruction& hlo_instruction,
-                                          const HloDataflowAnalysis* dataflow,
-                                          bool contiguous_output) {
+void AnnotateNontemporalHintFacts(mlir::ModuleOp module,
+                                  absl::string_view entry_function_name,
+                                  const HloInstruction& hlo_instruction,
+                                  const HloDataflowAnalysis* dataflow,
+                                  OutputContiguity output_contiguity) {
   auto entry = module.lookupSymbol<mlir::func::FuncOp>(
       llvm::StringRef(entry_function_name.data(), entry_function_name.size()));
   if (!entry) {
-    return absl::OkStatus();
+    return;
   }
 
   mlir::Builder builder(module.getContext());
-  if (contiguous_output) {
+  if (output_contiguity == OutputContiguity::kContiguous) {
     entry->setAttr(emitters::kXlaContiguousOutputAttr, builder.getUnitAttr());
   }
 
   const auto* fusion = DynCast<HloFusionInstruction>(&hlo_instruction);
   if (fusion == nullptr) {
-    return absl::OkStatus();
+    return;
   }
 
   const std::vector<OperandReads> reads =
@@ -570,7 +648,6 @@ absl::Status AnnotateNontemporalHintFacts(mlir::ModuleOp module,
                        builder.getUnitAttr());
     }
   }
-  return absl::OkStatus();
 }
 
 }  // namespace xla::gpu

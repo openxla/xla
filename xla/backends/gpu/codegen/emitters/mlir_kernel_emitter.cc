@@ -24,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -84,7 +85,6 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
 #include "stablehlo/transforms/Passes.h"
-#include "tsl/platform/platform.h"
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
 #include "xla/backends/gpu/codegen/emitters/nontemporal_hints.h"
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
@@ -114,9 +114,7 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
-#include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
-#include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -145,6 +143,7 @@ limitations under the License.
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/platform.h"
 
 namespace xla::gpu {
 namespace {
@@ -535,10 +534,8 @@ void AnnotatePiecewiseReads(mlir::ModuleOp module,
     return;
   }
   // Scatter operands have no indexing maps (see ComputeOperandReads).
-  bool has_scatter = false;
-  for (const HloInstruction* instr : fusion.fused_instructions()) {
-    has_scatter |= instr->opcode() == HloOpcode::kScatter;
-  }
+  const bool has_scatter = absl::c_any_of(
+      fusion.fused_instructions(), HloPredicateIsOp<HloOpcode::kScatter>);
   std::vector<const HloInstruction*> operands(fusion.operands().begin(),
                                               fusion.operands().end());
   llvm::SmallVector<IndexingMap, 4> logical_to_linearized =
@@ -547,24 +544,10 @@ void AnnotatePiecewiseReads(mlir::ModuleOp module,
   const int64_t num_roots =
       analysis != nullptr && !has_scatter ? analysis->fusion_root_count() : 0;
   for (int64_t root = 0; root < num_roots; ++root) {
-    std::optional<std::vector<IndexingMap>> hero_maps =
+    const std::optional<std::vector<IndexingMap>> hero_maps =
         emitter.ComputeThreadIdToInputIndexing(root, mlir_context);
     if (!hero_maps.has_value()) {
       continue;
-    }
-    // Concatenate returns the largest operand's map for every operand; the
-    // kernel reads only the indices inside each operand.
-    const HloInstruction& hero = analysis->fusion_hero(root).instruction();
-    if (hero.opcode() == HloOpcode::kConcatenate) {
-      for (auto [map, operand] : llvm::zip(*hero_maps, hero.operands())) {
-        const llvm::SmallVector<SymbolicExpr> results(
-            map.GetSymbolicMap().GetResults());
-        for (auto [result, dim] :
-             llvm::zip(results, operand->shape().dimensions())) {
-          map.AddConstraint(result, Interval{0, dim - 1});
-        }
-        map.Simplify();
-      }
     }
     GetThreadIdToInputMemoryLayoutsMaps(
         analysis->fusion(), *hero_maps, analysis->fusion_hero(root), operands,
@@ -630,11 +613,13 @@ absl::StatusOr<MlirKernelSource> MlirKernelFusion::EmitMlirSource(
 
   // Facts for the ROCm non-temporal hints.
   if (NontemporalHintsEnabled(fusion, device)) {
-    ABSL_RETURN_IF_ERROR(AnnotateNontemporalHintFacts(
-        source.module(), entry_function_name, fusion,
-        buffer_assignment != nullptr ? &buffer_assignment->dataflow_analysis()
+    AnnotateNontemporalHintFacts(source.module(), entry_function_name, fusion,
+                                 buffer_assignment != nullptr
+                                     ? &buffer_assignment->dataflow_analysis()
                                      : nullptr,
-        emitter_->WritesOutputsContiguously()));
+                                 emitter_->WritesOutputsContiguously()
+                                     ? OutputContiguity::kContiguous
+                                     : OutputContiguity::kNonContiguous);
     if (emitters::GetNontemporalHintTargets(device).loads) {
       AnnotatePiecewiseReads(source.module(), entry_function_name, fusion,
                              device, *emitter_, &mlir_context);
