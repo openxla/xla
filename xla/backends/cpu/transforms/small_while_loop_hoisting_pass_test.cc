@@ -23,6 +23,7 @@ limitations under the License.
 #include <string>
 
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
@@ -31,7 +32,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
-#include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/dot_op_emitter.h"
 #include "xla/service/cpu/target_machine_features_stub.h"
 #include "xla/service/hlo_module_config.h"
@@ -537,6 +537,127 @@ TEST_F(SmallWhileLoopHoistingPassTest, PreservesControlDependencies) {
   EXPECT_EQ(call_instr->control_predecessors()[0], pred_op);
   ASSERT_EQ(succ_op->control_predecessors().size(), 1);
   EXPECT_EQ(succ_op->control_predecessors()[0], call_instr);
+}
+
+TEST_F(SmallWhileLoopHoistingPassTest,
+       ManyArrayLoopFusionsRejectedWhileScalarSliceUpdatesHoist) {
+  auto build_many_reductions_hlo = [](int num_reductions) {
+    std::string fusions;
+    std::string chained;
+    for (int k = 0; k < num_reductions; ++k) {
+      absl::StrAppend(&fusions, "reduce_fusion_", k,
+                      " {\n"
+                      "  p = f32[232]{0} parameter(0)\n"
+                      "  c = f32[] constant(",
+                      k + 1,
+                      ")\n"
+                      "  cb = f32[232]{0} broadcast(c), dimensions={}\n"
+                      "  m = f32[232]{0} multiply(p, cb)\n"
+                      "  ROOT r = f32[] reduce(m, f32[] constant(0)),"
+                      " dimensions={0}, to_apply=add_f32\n"
+                      "}\n"
+                      "add_scalar_fusion_",
+                      k,
+                      " {\n"
+                      "  v = f32[232]{0} parameter(0)\n"
+                      "  s = f32[] parameter(1)\n"
+                      "  sb = f32[232]{0} broadcast(s), dimensions={}\n"
+                      "  ROOT out = f32[232]{0} add(v, sb)\n"
+                      "}\n");
+      const std::string prev = k == 0 ? "x" : absl::StrCat("x", k - 1);
+      absl::StrAppend(&chained, "  r", k, " = f32[] fusion(", prev,
+                      "), kind=kLoop, calls=reduce_fusion_", k, "\n  x", k,
+                      " = f32[232]{0} fusion(", prev, ", r", k,
+                      "), kind=kLoop, calls=add_scalar_fusion_", k, "\n");
+    }
+    return absl::StrCat(
+        "HloModule many_reductions\n"
+        "add_f32 {\n"
+        "  a = f32[] parameter(0)\n"
+        "  b = f32[] parameter(1)\n"
+        "  ROOT s = f32[] add(a, b)\n"
+        "}\n",
+        fusions,
+        "while_body {\n"
+        "  st = (s32[], f32[232]{0}) parameter(0)\n"
+        "  i = s32[] get-tuple-element(st), index=0\n"
+        "  x = f32[232]{0} get-tuple-element(st), index=1\n",
+        chained,
+        "  ROOT out = (s32[], f32[232]{0}) tuple(add(i, s32[]"
+        " constant(1)), x",
+        num_reductions - 1,
+        ")\n}\n"
+        "while_cond {\n"
+        "  st = (s32[], f32[232]{0}) parameter(0)\n"
+        "  i = s32[] get-tuple-element(st), index=0\n"
+        "  ROOT lt = pred[] compare(i, s32[] constant(10)), direction=LT\n"
+        "}\n"
+        "ENTRY main {\n"
+        "  x = f32[232]{0} parameter(0)\n"
+        "  init = (s32[], f32[232]{0}) tuple(s32[] constant(0), x)\n"
+        "  ROOT w = (s32[], f32[232]{0}) while(init),"
+        " condition=while_cond, body=while_body\n"
+        "}\n");
+  };
+
+  // A loop with 80 reduction fusions (160 array loop kernels, as in issue
+  // #52122) exceeds the hoisted loop kernel budget even under a large byte cap.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_large_body,
+                       ParseAndReturnVerifiedModule(
+                           build_many_reductions_hlo(/*num_reductions=*/80)));
+  ASSERT_OK_AND_ASSIGN(
+      bool large_body_changed,
+      RunSmallWhileLoopHoistingPass(m_large_body.get(),
+                                    /*small_buffer_access_size=*/1LL << 30));
+  EXPECT_FALSE(large_body_changed);
+
+  // By contrast, 100 scalar in place dynamic-update-slice fusions (as in
+  // jax.issue.40150.grad) contain zero array loop kernels and still hoist.
+  std::string dus_fusions;
+  std::string dus_chain;
+  for (int k = 0; k < 100; ++k) {
+    absl::StrAppend(&dus_fusions, "scalar_dus_fusion_", k,
+                    " {\n"
+                    "  arr = f32[614]{0} parameter(0)\n"
+                    "  v = f32[1]{0} parameter(1)\n"
+                    "  idx = s32[] parameter(2)\n"
+                    "  ROOT d = f32[614]{0} dynamic-update-slice(arr, v, idx)\n"
+                    "}\n");
+    const std::string prev = k == 0 ? "buf" : absl::StrCat("buf", k - 1);
+    absl::StrAppend(&dus_chain, "  buf", k, " = f32[614]{0} fusion(", prev,
+                    ", val, i), kind=kLoop, calls=scalar_dus_fusion_", k, "\n");
+  }
+  const std::string scalar_dus_hlo = absl::StrCat(
+      "HloModule many_scalar_dus\n", dus_fusions,
+      "while_body {\n"
+      "  st = (s32[], f32[614]{0}, f32[1]{0}) parameter(0)\n"
+      "  i = s32[] get-tuple-element(st), index=0\n"
+      "  buf = f32[614]{0} get-tuple-element(st), index=1\n"
+      "  val = f32[1]{0} get-tuple-element(st), index=2\n",
+      dus_chain,
+      "  ROOT out = (s32[], f32[614]{0}, f32[1]{0})"
+      " tuple(add(i, s32[] constant(1)), buf99, val)\n"
+      "}\n"
+      "while_cond {\n"
+      "  st = (s32[], f32[614]{0}, f32[1]{0}) parameter(0)\n"
+      "  i = s32[] get-tuple-element(st), index=0\n"
+      "  ROOT lt = pred[] compare(i, s32[] constant(614)), direction=LT\n"
+      "}\n"
+      "ENTRY main {\n"
+      "  buf = f32[614]{0} parameter(0)\n"
+      "  val = f32[1]{0} parameter(1)\n"
+      "  init = (s32[], f32[614]{0}, f32[1]{0})"
+      " tuple(s32[] constant(0), buf, val)\n"
+      "  ROOT w = (s32[], f32[614]{0}, f32[1]{0}) while(init),"
+      " condition=while_cond, body=while_body\n"
+      "}\n");
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_scalar_dus,
+                       ParseAndReturnVerifiedModule(scalar_dus_hlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool scalar_dus_changed,
+      RunSmallWhileLoopHoistingPass(m_scalar_dus.get(),
+                                    /*small_buffer_access_size=*/2LL << 20));
+  EXPECT_TRUE(scalar_dus_changed);
 }
 
 }  // namespace

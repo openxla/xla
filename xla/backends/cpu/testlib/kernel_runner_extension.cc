@@ -110,16 +110,25 @@ NB_MODULE(_extension, kernel_runner_module) {
                                   {});
       });
 
-  kernel_runner_module.def("lower_to_llvm", [](MlirKernelSource& source) {
-    absl::StatusOr<LlvmKernelSource> llvm_kernel_source = LowerToLlvm(source);
+  kernel_runner_module.def(
+      "lower_to_llvm",
+      [](MlirKernelSource& source,
+         const TargetMachineFeatures* target_machine_features) {
+        const llvm::TargetMachine* target_machine =
+            target_machine_features != nullptr
+                ? target_machine_features->target_machine()
+                : nullptr;
+        absl::StatusOr<LlvmKernelSource> llvm_kernel_source =
+            LowerToLlvm(source, target_machine);
 
-    if (!llvm_kernel_source.ok()) {
-      throw std::runtime_error(
-          std::string(llvm_kernel_source.status().message()));
-    }
+        if (!llvm_kernel_source.ok()) {
+          throw std::runtime_error(
+              std::string(llvm_kernel_source.status().message()));
+        }
 
-    return std::move(llvm_kernel_source).value();
-  });
+        return std::move(llvm_kernel_source).value();
+      },
+      nb::arg("source"), nb::arg("target_machine_features") = nb::none());
 
   nb::class_<CpuCompiler>(kernel_runner_module, "HloCompiler")
       .def(nb::init<>())

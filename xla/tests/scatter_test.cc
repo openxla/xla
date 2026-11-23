@@ -976,6 +976,60 @@ ENTRY main {
   RunTest(hlo_text, &operand, &scatter_indices, &updates);
 }
 
+TEST_F(ScatterTest, ScatterMultiUpdateIntoScalar) {
+  constexpr absl::string_view kS32Hlo = R"hlo(
+HloModule ScatterMultiUpdateIntoScalarS32
+
+add_s32 {
+  lhs = s32[] parameter(0)
+  rhs = s32[] parameter(1)
+  ROOT sum = s32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  operand = s32[] parameter(0)
+  indices = s32[2,3,0]{2,1,0} parameter(1)
+  updates = s32[2,3]{1,0} parameter(2)
+  ROOT scatter = s32[] scatter(operand, indices, updates),
+      update_window_dims={},
+      inserted_window_dims={},
+      scatter_dims_to_operand_dims={},
+      index_vector_dim=2,
+      to_apply=add_s32
+}
+)hlo";
+  Literal s32_operand = LiteralUtil::CreateR0<int32_t>(10);
+  Literal s32_indices(ShapeUtil::MakeShape(S32, {2, 3, 0}));
+  Literal s32_updates = LiteralUtil::CreateR2<int32_t>({{1, 2, 3}, {4, 5, -6}});
+  RunTest(kS32Hlo, &s32_operand, &s32_indices, &s32_updates);
+
+  constexpr absl::string_view kF32Hlo = R"hlo(
+HloModule ScatterMultiUpdateIntoScalarF32
+
+add_f32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT sum = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  operand = f32[] parameter(0)
+  indices = s32[3,0]{1,0} parameter(1)
+  updates = f32[3]{0} parameter(2)
+  ROOT scatter = f32[] scatter(operand, indices, updates),
+      update_window_dims={},
+      inserted_window_dims={},
+      scatter_dims_to_operand_dims={},
+      index_vector_dim=1,
+      to_apply=add_f32
+}
+)hlo";
+  Literal f32_operand = LiteralUtil::CreateR0<float>(10.0f);
+  Literal f32_indices(ShapeUtil::MakeShape(S32, {3, 0}));
+  Literal f32_updates = LiteralUtil::CreateR1<float>({1.0f, 2.0f, 4.0f});
+  RunTest(kF32Hlo, &f32_operand, &f32_indices, &f32_updates);
+}
+
 TEST_F(ScatterTest, Multioutput) {
   constexpr char hlo_text[] = R"(
 HloModule MultioutputScatter
@@ -1316,6 +1370,434 @@ ENTRY main {
 
 INSTANTIATE_TEST_SUITE_P(EdgeCases, ScatterEdgeCaseTestP,
                          ::testing::Values("minimum", "maximum", "add"));
+
+TEST_F(ScatterTest, LargeParallelHistogramCollisions) {
+  constexpr int64_t kNumUpdates = 131072;
+  constexpr int64_t kRealBins = 16384;
+  constexpr int64_t kComplexBins = 8192;
+
+  constexpr absl::string_view kRealHlo = R"hlo(
+    HloModule LargeParallelHistogramCollisionsReal
+
+    add_s32 {
+      lhs = s32[] parameter(0)
+      rhs = s32[] parameter(1)
+      ROOT sum = s32[] add(lhs, rhs)
+    }
+
+    add_f32 {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT sum = f32[] add(lhs, rhs)
+    }
+
+    ENTRY main {
+      s32_init = s32[16384] parameter(0)
+      f32_init = f32[16384] parameter(1)
+      idx = s32[131072,1] parameter(2)
+      s32_upd = s32[131072] parameter(3)
+      f32_upd = f32[131072] parameter(4)
+      s32_out = s32[16384] scatter(s32_init, idx, s32_upd),
+          update_window_dims={},
+          inserted_window_dims={0},
+          scatter_dims_to_operand_dims={0},
+          index_vector_dim=1,
+          to_apply=add_s32
+      f32_out = f32[16384] scatter(f32_init, idx, f32_upd),
+          update_window_dims={},
+          inserted_window_dims={0},
+          scatter_dims_to_operand_dims={0},
+          index_vector_dim=1,
+          to_apply=add_f32
+      ROOT out = (s32[16384], f32[16384]) tuple(s32_out, f32_out)
+    }
+  )hlo";
+
+  Literal s32_init(ShapeUtil::MakeShape(S32, {kRealBins}));
+  Literal f32_init(ShapeUtil::MakeShape(F32, {kRealBins}));
+  absl::Span<int32_t> s32_init_data = s32_init.data<int32_t>();
+  absl::Span<float> f32_init_data = f32_init.data<float>();
+  std::vector<int32_t> expected_s32(kRealBins);
+  std::vector<double> expected_f32(kRealBins);
+  for (int64_t b = 0; b < kRealBins; ++b) {
+    s32_init_data[b] = static_cast<int32_t>(b * 3 - 500);
+    f32_init_data[b] = static_cast<float>((b % 97) - 48) * 0.25f;
+    expected_s32[b] = s32_init_data[b];
+    expected_f32[b] = static_cast<double>(f32_init_data[b]);
+  }
+
+  Literal real_idx(ShapeUtil::MakeShape(S32, {kNumUpdates, 1}));
+  Literal s32_upd(ShapeUtil::MakeShape(S32, {kNumUpdates}));
+  Literal f32_upd(ShapeUtil::MakeShape(F32, {kNumUpdates}));
+  absl::Span<int32_t> real_idx_data = real_idx.data<int32_t>();
+  absl::Span<int32_t> s32_upd_data = s32_upd.data<int32_t>();
+  absl::Span<float> f32_upd_data = f32_upd.data<float>();
+  for (int64_t k = 0; k < kNumUpdates; ++k) {
+    int32_t bin = 0;
+    if (k % 37 == 0) {
+      // Negative out of bounds indices must be ignored.
+      bin = -static_cast<int32_t>((k % 512) + 1);
+    } else if (k % 41 == 0) {
+      // Positive out of bounds indices must be ignored.
+      bin = static_cast<int32_t>(kRealBins + (k % 1024));
+    } else if (k % 7 == 0) {
+      // High collision hot bins.
+      bin = static_cast<int32_t>((k * 13) % 64);
+    } else {
+      bin = static_cast<int32_t>((k * 7919 + 101) & (kRealBins - 1));
+    }
+    real_idx_data[k] = bin;
+    s32_upd_data[k] = static_cast<int32_t>((k % 29) - 11);
+    f32_upd_data[k] = static_cast<float>((k % 17) - 8) * 0.1f + 0.03f;
+    if (bin >= 0 && bin < kRealBins) {
+      expected_s32[bin] += s32_upd_data[k];
+      expected_f32[bin] += static_cast<double>(f32_upd_data[k]);
+    }
+  }
+
+  HloModuleConfig real_config;
+  real_config.set_debug_options(GetDebugOptionsForTest());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> real_module,
+                       ParseAndReturnVerifiedModule(kRealHlo, real_config));
+  ASSERT_OK_AND_ASSIGN(
+      Literal real_result,
+      Execute(std::move(real_module),
+              {&s32_init, &f32_init, &real_idx, &s32_upd, &f32_upd}));
+  std::vector<Literal> real_outputs = real_result.DecomposeTuple();
+  ASSERT_EQ(real_outputs.size(), 2);
+  absl::Span<const int32_t> s32_out_data = real_outputs[0].data<int32_t>();
+  absl::Span<const float> f32_out_data = real_outputs[1].data<float>();
+  ASSERT_EQ(s32_out_data.size(), kRealBins);
+  ASSERT_EQ(f32_out_data.size(), kRealBins);
+  for (int64_t b = 0; b < kRealBins; ++b) {
+    ASSERT_EQ(s32_out_data[b], expected_s32[b]) << "s32 bin " << b;
+    ASSERT_NEAR(f32_out_data[b], static_cast<float>(expected_f32[b]), 1e-3f)
+        << "f32 bin " << b;
+  }
+
+  if (!test::BackendSupportsComplex128()) {
+    return;
+  }
+
+  constexpr absl::string_view kComplexHlo = R"hlo(
+    HloModule LargeParallelHistogramCollisionsC128
+
+    add_c128 {
+      lhs = c128[] parameter(0)
+      rhs = c128[] parameter(1)
+      ROOT sum = c128[] add(lhs, rhs)
+    }
+
+    ENTRY main {
+      init = c128[8192] parameter(0)
+      idx = s32[131072,1] parameter(1)
+      upd = c128[131072] parameter(2)
+      ROOT out = c128[8192] scatter(init, idx, upd),
+          update_window_dims={},
+          inserted_window_dims={0},
+          scatter_dims_to_operand_dims={0},
+          index_vector_dim=1,
+          to_apply=add_c128
+    }
+  )hlo";
+
+  Literal c128_init(ShapeUtil::MakeShape(C128, {kComplexBins}));
+  absl::Span<complex128> c128_init_data = c128_init.data<complex128>();
+  std::vector<complex128> expected_c128(kComplexBins);
+  for (int64_t b = 0; b < kComplexBins; ++b) {
+    c128_init_data[b] =
+        complex128(static_cast<double>(b), static_cast<double>(-2 * b));
+    expected_c128[b] = c128_init_data[b];
+  }
+
+  Literal c128_idx(ShapeUtil::MakeShape(S32, {kNumUpdates, 1}));
+  Literal c128_upd(ShapeUtil::MakeShape(C128, {kNumUpdates}));
+  absl::Span<int32_t> c128_idx_data = c128_idx.data<int32_t>();
+  absl::Span<complex128> c128_upd_data = c128_upd.data<complex128>();
+  for (int64_t k = 0; k < kNumUpdates; ++k) {
+    int32_t bin = 0;
+    if (k % 43 == 0) {
+      bin = -static_cast<int32_t>((k % 256) + 1);
+    } else if (k % 47 == 0) {
+      bin = static_cast<int32_t>(kComplexBins + (k % 512));
+    } else if (k % 9 == 0) {
+      bin = static_cast<int32_t>((k * 7) % 32);
+    } else {
+      bin = static_cast<int32_t>((k * 6151 + 53) & (kComplexBins - 1));
+    }
+    c128_idx_data[k] = bin;
+    // Integer valued components stay well within exact f64 mantissa range so
+    // atomic reordering still yields exact sums.
+    c128_upd_data[k] = complex128(static_cast<double>((k % 19) - 9),
+                                  static_cast<double>((k % 23) - 10));
+    if (bin >= 0 && bin < kComplexBins) {
+      expected_c128[bin] += c128_upd_data[k];
+    }
+  }
+
+  HloModuleConfig c128_config;
+  c128_config.set_debug_options(GetDebugOptionsForTest());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> c128_module,
+                       ParseAndReturnVerifiedModule(kComplexHlo, c128_config));
+  ASSERT_OK_AND_ASSIGN(
+      Literal c128_result,
+      Execute(std::move(c128_module), {&c128_init, &c128_idx, &c128_upd}));
+  absl::Span<const complex128> c128_out_data = c128_result.data<complex128>();
+  ASSERT_EQ(c128_out_data.size(), kComplexBins);
+  for (int64_t b = 0; b < kComplexBins; ++b) {
+    ASSERT_EQ(c128_out_data[b], expected_c128[b]) << "c128 bin " << b;
+  }
+}
+
+TEST_F(ScatterTest, LargeParallelUniqueIndicesSingleAndVariadic) {
+  constexpr int64_t kNumElems = 65536;
+  constexpr int64_t kNumUpdates = 65535;
+
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule LargeParallelUniqueIndicesSingleAndVariadic
+
+    add_f32 {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT sum = f32[] add(lhs, rhs)
+    }
+
+    add_pair {
+      lhs_s = s32[] parameter(0)
+      lhs_f = f32[] parameter(1)
+      rhs_s = s32[] parameter(2)
+      rhs_f = f32[] parameter(3)
+      ROOT out = (s32[], f32[]) tuple(s32[] add(lhs_s, rhs_s),
+                                      f32[] add(lhs_f, rhs_f))
+    }
+
+    ENTRY main {
+      s_init = s32[65536] parameter(0)
+      f_init = f32[65536] parameter(1)
+      single_init = f32[65536] parameter(2)
+      idx = s32[65535,1] parameter(3)
+      s_upd = s32[65535] parameter(4)
+      f_upd = f32[65535] parameter(5)
+      single_out = f32[65536] scatter(single_init, idx, f_upd),
+          update_window_dims={},
+          inserted_window_dims={0},
+          scatter_dims_to_operand_dims={0},
+          index_vector_dim=1,
+          unique_indices=true,
+          to_apply=add_f32
+      var_out = (s32[65536], f32[65536])
+          scatter(s_init, f_init, idx, s_upd, f_upd),
+          update_window_dims={},
+          inserted_window_dims={0},
+          scatter_dims_to_operand_dims={0},
+          index_vector_dim=1,
+          unique_indices=true,
+          to_apply=add_pair
+      var_s = s32[65536] get-tuple-element(var_out), index=0
+      var_f = f32[65536] get-tuple-element(var_out), index=1
+      ROOT out = (s32[65536], f32[65536], f32[65536])
+          tuple(var_s, var_f, single_out)
+    }
+  )hlo";
+
+  Literal s_init(ShapeUtil::MakeShape(S32, {kNumElems}));
+  Literal f_init(ShapeUtil::MakeShape(F32, {kNumElems}));
+  Literal single_init(ShapeUtil::MakeShape(F32, {kNumElems}));
+  absl::Span<int32_t> s_init_data = s_init.data<int32_t>();
+  absl::Span<float> f_init_data = f_init.data<float>();
+  absl::Span<float> single_init_data = single_init.data<float>();
+  std::vector<int32_t> expected_s(kNumElems);
+  std::vector<float> expected_f(kNumElems);
+  std::vector<float> expected_single(kNumElems);
+  for (int64_t i = 0; i < kNumElems; ++i) {
+    s_init_data[i] = static_cast<int32_t>(1000 - i);
+    f_init_data[i] = static_cast<float>((i % 251) - 125) * 0.5f;
+    single_init_data[i] = static_cast<float>((i % 199) - 99) * 0.25f;
+    expected_s[i] = s_init_data[i];
+    expected_f[i] = f_init_data[i];
+    expected_single[i] = single_init_data[i];
+  }
+
+  Literal idx(ShapeUtil::MakeShape(S32, {kNumUpdates, 1}));
+  Literal s_upd(ShapeUtil::MakeShape(S32, {kNumUpdates}));
+  Literal f_upd(ShapeUtil::MakeShape(F32, {kNumUpdates}));
+  absl::Span<int32_t> idx_data = idx.data<int32_t>();
+  absl::Span<int32_t> s_upd_data = s_upd.data<int32_t>();
+  absl::Span<float> f_upd_data = f_upd.data<float>();
+  // Odd multiplier is coprime to 65536, producing 65535 distinct indices and
+  // leaving exactly one element untouched.
+  for (int64_t k = 0; k < kNumUpdates; ++k) {
+    const int32_t dst =
+        static_cast<int32_t>((k * 39989 + 12345) & (kNumElems - 1));
+    idx_data[k] = dst;
+    s_upd_data[k] = static_cast<int32_t>(k * 5 + 7);
+    f_upd_data[k] = static_cast<float>((k % 1021) - 510) * 0.125f;
+    expected_s[dst] += s_upd_data[k];
+    expected_f[dst] += f_upd_data[k];
+    expected_single[dst] += f_upd_data[k];
+  }
+
+  HloModuleConfig config;
+  config.set_debug_options(GetDebugOptionsForTest());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo, config));
+  ASSERT_OK_AND_ASSIGN(Literal result, Execute(std::move(module),
+                                               {&s_init, &f_init, &single_init,
+                                                &idx, &s_upd, &f_upd}));
+  std::vector<Literal> outputs = result.DecomposeTuple();
+  ASSERT_EQ(outputs.size(), 3);
+  absl::Span<const int32_t> out_s = outputs[0].data<int32_t>();
+  absl::Span<const float> out_f = outputs[1].data<float>();
+  absl::Span<const float> out_single = outputs[2].data<float>();
+  for (int64_t i = 0; i < kNumElems; ++i) {
+    ASSERT_EQ(out_s[i], expected_s[i]) << "variadic s32 index " << i;
+    ASSERT_EQ(out_f[i], expected_f[i]) << "variadic f32 index " << i;
+    ASSERT_EQ(out_single[i], expected_single[i]) << "single f32 index " << i;
+  }
+}
+
+TEST_F(ScatterTest, LargeParallelWindowSliceAddAndOverwrite) {
+  constexpr int64_t kRows = 4096;
+  constexpr int64_t kCols = 64;
+  constexpr int64_t kNumUpdates = 16384;
+
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule LargeParallelWindowSliceAddAndOverwrite
+
+    add_f32 {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT sum = f32[] add(lhs, rhs)
+    }
+
+    overwrite_f32 {
+      lhs = f32[] parameter(0)
+      ROOT rhs = f32[] parameter(1)
+    }
+
+    ENTRY main {
+      add_init = f32[4096,64] parameter(0)
+      ow_init = f32[4096,64] parameter(1)
+      idx = s32[16384,1] parameter(2)
+      add_upd = f32[16384,1,64] parameter(3)
+      ow_upd = f32[16384,1,64] parameter(4)
+      added = f32[4096,64] scatter(add_init, idx, add_upd),
+          update_window_dims={1,2},
+          inserted_window_dims={},
+          scatter_dims_to_operand_dims={0},
+          index_vector_dim=1,
+          to_apply=add_f32
+      overwritten = f32[4096,64] scatter(ow_init, idx, ow_upd),
+          update_window_dims={1,2},
+          inserted_window_dims={},
+          scatter_dims_to_operand_dims={0},
+          index_vector_dim=1,
+          to_apply=overwrite_f32
+      ROOT out = (f32[4096,64], f32[4096,64]) tuple(added, overwritten)
+    }
+  )hlo";
+
+  Literal add_init(ShapeUtil::MakeShape(F32, {kRows, kCols}));
+  Literal ow_init(ShapeUtil::MakeShape(F32, {kRows, kCols}));
+  absl::Span<float> add_init_data = add_init.data<float>();
+  absl::Span<float> ow_init_data = ow_init.data<float>();
+  std::vector<double> expected_add(kRows * kCols);
+  for (int64_t r = 0; r < kRows; ++r) {
+    for (int64_t c = 0; c < kCols; ++c) {
+      const int64_t offset = r * kCols + c;
+      add_init_data[offset] = static_cast<float>((r % 31) - 15) * 0.5f +
+                              static_cast<float>(c) * 0.25f;
+      // Negative sentinel distinguishes untouched rows from positive update
+      // encodings.
+      ow_init_data[offset] = -static_cast<float>(offset + 1);
+      expected_add[offset] = static_cast<double>(add_init_data[offset]);
+    }
+  }
+
+  Literal idx(ShapeUtil::MakeShape(S32, {kNumUpdates, 1}));
+  Literal add_upd(ShapeUtil::MakeShape(F32, {kNumUpdates, 1, kCols}));
+  Literal ow_upd(ShapeUtil::MakeShape(F32, {kNumUpdates, 1, kCols}));
+  absl::Span<int32_t> idx_data = idx.data<int32_t>();
+  absl::Span<float> add_upd_data = add_upd.data<float>();
+  absl::Span<float> ow_upd_data = ow_upd.data<float>();
+  std::vector<int32_t> row_hits(kRows, 0);
+  std::vector<int64_t> last_hit_update(kRows, -1);
+
+  for (int64_t k = 0; k < kNumUpdates; ++k) {
+    int32_t row = 0;
+    if (k % 29 == 0) {
+      row = -static_cast<int32_t>((k % 128) + 1);
+    } else if (k % 31 == 0) {
+      row = static_cast<int32_t>(kRows + (k % 256));
+    } else {
+      // Leave rows divisible by 16 untouched to verify preserved rows alongside
+      // unique and colliding rows.
+      const int32_t candidate =
+          static_cast<int32_t>((k * 2713 + 19) & (kRows - 1));
+      row = (candidate % 16 == 0) ? (candidate + 1) : candidate;
+    }
+    idx_data[k] = row;
+
+    for (int64_t c = 0; c < kCols; ++c) {
+      const int64_t upd_offset = k * kCols + c;
+      const float delta =
+          static_cast<float>(((k + c) % 13) - 6) * 0.25f + 0.125f;
+      add_upd_data[upd_offset] = delta;
+      // k * 64 + c + 1 <= 1048576 fits in exact f32 integer precision and
+      // uniquely identifies the writing (k, c) pair.
+      ow_upd_data[upd_offset] = static_cast<float>(k * kCols + c + 1);
+      if (row >= 0 && row < kRows) {
+        expected_add[row * kCols + c] += static_cast<double>(delta);
+      }
+    }
+    if (row >= 0 && row < kRows) {
+      ++row_hits[row];
+      last_hit_update[row] = k;
+    }
+  }
+
+  HloModuleConfig config;
+  config.set_debug_options(GetDebugOptionsForTest());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo, config));
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       Execute(std::move(module),
+                               {&add_init, &ow_init, &idx, &add_upd, &ow_upd}));
+  std::vector<Literal> outputs = result.DecomposeTuple();
+  ASSERT_EQ(outputs.size(), 2);
+  absl::Span<const float> added_data = outputs[0].data<float>();
+  absl::Span<const float> ow_data = outputs[1].data<float>();
+  ASSERT_EQ(added_data.size(), kRows * kCols);
+  ASSERT_EQ(ow_data.size(), kRows * kCols);
+
+  for (int64_t r = 0; r < kRows; ++r) {
+    for (int64_t c = 0; c < kCols; ++c) {
+      const int64_t offset = r * kCols + c;
+      ASSERT_EQ(added_data[offset], static_cast<float>(expected_add[offset]))
+          << "add row " << r << " col " << c;
+      const float actual_ow = ow_data[offset];
+      if (row_hits[r] == 0) {
+        ASSERT_EQ(actual_ow, ow_init_data[offset])
+            << "untouched row " << r << " col " << c;
+      } else if (row_hits[r] == 1) {
+        const int64_t k = last_hit_update[r];
+        ASSERT_EQ(actual_ow, ow_upd_data[k * kCols + c])
+            << "single hit row " << r << " col " << c;
+      } else {
+        ASSERT_GT(actual_ow, 0.0f) << "colliding row " << r << " col " << c;
+        const int64_t encoded = static_cast<int64_t>(actual_ow) - 1;
+        ASSERT_EQ(actual_ow, static_cast<float>(encoded + 1))
+            << "colliding row " << r << " col " << c;
+        ASSERT_EQ(encoded % kCols, c) << "colliding row " << r << " col " << c;
+        const int64_t writer = encoded / kCols;
+        ASSERT_GE(writer, 0);
+        ASSERT_LT(writer, kNumUpdates);
+        ASSERT_EQ(idx_data[writer], static_cast<int32_t>(r))
+            << "colliding row " << r << " col " << c;
+      }
+    }
+  }
+}
 
 }  // namespace
 }  // namespace xla

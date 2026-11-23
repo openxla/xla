@@ -19,47 +19,89 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
+#include "absl/base/call_once.h"
 #include "absl/log/log.h"
 #include "absl/memory/memory.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "llvm-c/Target.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/CodeGen.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Triple.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/status_macros.h"
 
 namespace xla::cpu {
 
 class TargetMachineTestBase : public HloHardwareIndependentTestBase {
- protected:
-  void SetUp() override {
-    LLVMInitializeX86Target();
-    LLVMInitializeX86TargetInfo();
-    LLVMInitializeX86TargetMC();
-    LLVMInitializeARMTarget();
-    LLVMInitializeARMTargetInfo();
-    LLVMInitializeARMTargetMC();
+ public:
+  static void InitializeTargets() {
+    static absl::once_flag init_once;
+    absl::call_once(init_once, []() {
+      LLVMInitializeX86Target();
+      LLVMInitializeX86TargetInfo();
+      LLVMInitializeX86TargetMC();
+      LLVMInitializeX86AsmPrinter();
+      LLVMInitializeARMTarget();
+      LLVMInitializeARMTargetInfo();
+      LLVMInitializeARMTargetMC();
+      LLVMInitializeARMAsmPrinter();
+      LLVMInitializeAArch64Target();
+      LLVMInitializeAArch64TargetInfo();
+      LLVMInitializeAArch64TargetMC();
+      LLVMInitializeAArch64AsmPrinter();
+    });
   }
 
-  std::unique_ptr<llvm::TargetMachine> CreateTargetMachine(
+  static absl::StatusOr<std::unique_ptr<llvm::TargetMachine>>
+  CreateTargetMachineWithOptions(
       absl::string_view triple_string, absl::string_view cpu_name,
-      absl::string_view features) {
-    llvm::Twine triple_twine(triple_string);
-    llvm::Triple triple(triple_twine);
+      absl::string_view features,
+      std::optional<llvm::Reloc::Model> reloc_model = std::nullopt,
+      llvm::CodeGenOptLevel opt_level = llvm::CodeGenOptLevel::Default) {
+    InitializeTargets();
+    llvm::Triple triple(
+        llvm::StringRef(triple_string.data(), triple_string.size()));
     std::string error;
     const llvm::Target* target =
         llvm::TargetRegistry::lookupTarget(triple, error);
     if (target == nullptr) {
-      LOG(ERROR) << "Failed to lookup target: " << error;
+      return absl::InternalError(
+          absl::StrCat("Failed to lookup target: ", error));
     }
 
     llvm::TargetOptions target_options;
-    return absl::WrapUnique(target->createTargetMachine(
-        triple, cpu_name, features, target_options, /*RM=*/std::nullopt));
+    std::unique_ptr<llvm::TargetMachine> tm =
+        absl::WrapUnique(target->createTargetMachine(
+            triple, llvm::StringRef(cpu_name.data(), cpu_name.size()),
+            llvm::StringRef(features.data(), features.size()), target_options,
+            reloc_model, /*CM=*/std::nullopt, opt_level));
+    TF_RET_CHECK(tm != nullptr) << "createTargetMachine returned null";
+    return tm;
+  }
+
+ protected:
+  void SetUp() override { InitializeTargets(); }
+
+  std::unique_ptr<llvm::TargetMachine> CreateTargetMachine(
+      absl::string_view triple_string, absl::string_view cpu_name,
+      absl::string_view features) {
+    absl::StatusOr<std::unique_ptr<llvm::TargetMachine>> tm =
+        CreateTargetMachineWithOptions(triple_string, cpu_name, features);
+    if (!tm.ok()) {
+      LOG(ERROR) << tm.status();
+      return nullptr;
+    }
+    return *std::move(tm);
   }
 
   std::unique_ptr<TargetMachineFeatures> CreateTargetMachineFeatures(
