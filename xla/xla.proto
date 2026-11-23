@@ -502,9 +502,9 @@ message DebugOptions {
     CUDNN_DEVICELESS_COMPILATION_ALWAYS = 3;
   }
 
-  // Controls CUB sort behavior during deviceless GPU compilation. CUB sort
-  // needs a scratch buffer whose size is usually queried from a live device.
-  // Deviceless compilation relies on pre-computed lookups instead.
+  // Deprecated: CUDA CUB sort scratch sizing is now computed in pure C++ from
+  // the target compute capability without lookup tables, so DevicelessCubMode
+  // and xla_gpu_deviceless_cub_mode are no-ops.
   enum DevicelessCubMode {
     DEVICELESS_CUB_UNSET = 0;
     // Disable CUB rewrites entirely in deviceless mode; fallback to slower
@@ -560,7 +560,11 @@ message DebugOptions {
   optional CudnnDevicelessCompilationMode
       xla_gpu_cudnn_deviceless_compilation_mode = 505;
 
-  optional DevicelessCubMode xla_gpu_deviceless_cub_mode = 483;
+  // Deprecated: CUDA CUB sort scratch sizing is now computed in pure C++ from
+  // the target compute capability without lookup tables, so this option is a
+  // no-op.
+  optional DevicelessCubMode xla_gpu_deviceless_cub_mode = 483
+      [deprecated = true];
 
   // Limits the thunk buffer debug instrumentation to specific thunks.
   optional ThunkBufferDebugFilter

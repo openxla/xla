@@ -990,7 +990,6 @@ xla_test(
     size = "medium",
     srcs = ["gpu_cub_sort_test.cc"],
     backends = GPU_DEFAULT_BACKENDS,
-    local_defines = ["XLA_CUB_TEST_NO_DEVICELESS"],
     shard_count = 15,
     tags = ["nodebug"],
     deps = [
@@ -998,47 +997,9 @@ xla_test(
         "//xla:error_spec",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
-        "//xla:xla_proto_cc",
         "//xla/backends/gpu/hlo/transforms:sort_rewriter",
-        "//xla/backends/gpu/libraries/cub:cub_scratch_size_deviceless_lookup",
         "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_module_config",
-        "//xla/service:hlo_runner_interface",
-        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
-        "//xla/tests:hlo_pjrt_test_base",
-        "@com_google_absl//absl/status:status_macros",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
-xla_test(
-    name = "gpu_cub_sort_deviceless_test",
-    # This test may break when the CUB deviceless data is out of date, and we don't want to break
-    # XLA when that happens. So we mark it as enormous so that the XLA TAP skips it, but the
-    # xla_gpu_deviceless_cub TAP project still runs it.
-    size = "enormous",
-    srcs = ["gpu_cub_sort_test.cc"],
-    backends = GPU_DEFAULT_BACKENDS,
-    local_defines = ["XLA_CUB_TEST_DEVICELESS_ONLY"],
-    shard_count = 15,
-    tags = [
-        "nodebug",
-    ],
-    deps = [
-        ":hlo_pjrt_gpu_test_base",
-        "//xla:error_spec",
-        "//xla:shape_util",
-        "//xla:xla_data_proto_cc",
-        "//xla:xla_proto_cc",
-        "//xla/backends/gpu/hlo/transforms:sort_rewriter",
-        "//xla/backends/gpu/libraries/cub:cub_scratch_size_deviceless_lookup",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_module_config",
-        "//xla/service:hlo_runner_interface",
-        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
-        "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tests:hlo_interpreter_reference_mixin",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -2007,6 +1968,9 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu:target_machine_options",
         "//xla/backends/gpu:ffi",
+        "//xla/backends/gpu/codegen:gpu_kernel_spec_proto_cc",
+        "//xla/backends/gpu/codegen/kernels:custom_kernel_proto_cc",
+        "//xla/backends/gpu/runtime:thunk_proto_cc",
         "//xla/backends/gpu/target_config",
         "//xla/ffi",
         "//xla/hlo/ir:hlo",
@@ -2017,8 +1981,10 @@ xla_cc_test(
         "//xla/service:gpu_topology",
         "//xla/service:hlo_module_config",
         "//xla/service:platform_util",
+        "//xla/service/gpu:gpu_executable_proto_cc",
         "//xla/stream_executor:device_description_proto_cc",
         "//xla/stream_executor:platform_id",
+        "//xla/util/split_proto:split_proto_reader",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
@@ -2027,6 +1993,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+        "@riegeli//riegeli/bytes:string_reader",
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:all_runtime",  # buildcleaner: keep
     ]) + if_rocm_is_configured([

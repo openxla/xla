@@ -3115,10 +3115,8 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         "xla_gpu_deviceless_cub_mode", setter_for_xla_gpu_deviceless_cub_mode,
         DebugOptions::DevicelessCubMode_Name(
             debug_options->xla_gpu_deviceless_cub_mode()),
-        "Control CUB behavior during deviceless compilation. "
-        "Available options: DEVICELESS_CUB_DISABLED, "
-        "DEVICELESS_CUB_WITH_FALLBACK, DEVICELESS_CUB_NO_FALLBACK, "
-        "DEVICELESS_CUB_FORCE_ON_NO_FALLBACK."));
+        "Deprecated (no-op): CUDA CUB sorts no longer rely on deviceless "
+        "scratch size lookup tables."));
     flag_list->push_back(tsl::Flag(
         "xla_gpu_threshold_for_windowed_einsum_mib",
         int64_setter_for(

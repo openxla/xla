@@ -16,9 +16,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
 #include <tuple>
 
@@ -28,17 +26,11 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "xla/backends/gpu/hlo/transforms/sort_rewriter.h"
-#include "xla/backends/gpu/libraries/cub/cub_scratch_size_deviceless_lookup.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/primitive_util.h"
-#include "xla/service/hlo_module_config.h"
-#include "xla/service/hlo_runner_interface.h"
-#include "xla/shape_util.h"
-#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
-#include "xla/tests/hlo_pjrt_test_base.h"
-#include "xla/xla.pb.h"
+#include "xla/tests/hlo_interpreter_reference_mixin.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -68,70 +60,15 @@ class CubSortTestBase
     }
     return false;
   }
-
-  std::optional<std::string> DevicelessSkipReason(
-      PrimitiveType key_type, std::optional<PrimitiveType> value_type,
-      int batch_size, int64_t num_items = kTestDataSize) {
-    std::string device_name = device_description().name();
-    auto cub_version = device_description().cub_version();
-
-    int32_t key_type_size = ShapeUtil::ByteSizeOfPrimitiveType(key_type);
-    std::optional<int32_t> value_type_size;
-    if (value_type.has_value()) {
-      value_type_size = ShapeUtil::ByteSizeOfPrimitiveType(*value_type);
-    }
-
-    auto lookup_or = CubScratchSizeDevicelessLookup::GetInstance();
-    if (!lookup_or.ok()) {
-      return absl::StrCat("Failed to get CubScratchSizeDevicelessLookup: ",
-                          lookup_or.status().ToString());
-    }
-    const CubScratchSizeDevicelessLookup& lookup = *lookup_or;
-
-    if (!lookup.CanLookup(cub_version, device_name, key_type_size,
-                          value_type_size, num_items, batch_size)) {
-      return absl::Substitute(
-          "Skipping deviceless CUB sort test because database lacks sizing "
-          "entries for device '$0' with key_size=$1, val_size=$2, items=$3, "
-          "batch=$4",
-          device_name, key_type_size, value_type_size.value_or(0), num_items,
-          batch_size);
-    }
-    return std::nullopt;
-  }
 };
 
 // ----- Sort keys
 
 class CubSortKeysTest : public CubSortTestBase {};
 
-class CubSortKeysParameterizedTest
-    : public CubSortKeysTest,
-      public ::testing::WithParamInterface<
-          std::tuple<PrimitiveType, bool, int, bool>> {
- public:
-  DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions options = CubSortKeysTest::GetDebugOptionsForTest();
-    if (std::get<3>(GetParam())) {
-      options.set_xla_gpu_deviceless_cub_mode(
-          DebugOptions::DEVICELESS_CUB_FORCE_ON_NO_FALLBACK);
-    }
-    return options;
-  }
-};
-
-class CubSortKeysSpecialOrderingTest
-    : public CubSortTestBase,
-      public ::testing::WithParamInterface<bool> {
- public:
-  DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions options = CubSortTestBase::GetDebugOptionsForTest();
-    if (GetParam()) {
-      options.set_xla_gpu_deviceless_cub_mode(
-          DebugOptions::DEVICELESS_CUB_FORCE_ON_NO_FALLBACK);
-    }
-    return options;
-  }
+class CubSortKeysParameterizedTest : public CubSortKeysTest,
+                                     public ::testing::WithParamInterface<
+                                         std::tuple<PrimitiveType, bool, int>> {
 };
 
 TEST_F(CubSortKeysTest, AlwaysUsesCubSort) {
@@ -139,12 +76,6 @@ TEST_F(CubSortKeysTest, AlwaysUsesCubSort) {
 }
 
 TEST_P(CubSortKeysParameterizedTest, CompareToReference) {
-  if (std::get<3>(GetParam())) {
-    if (auto skip_reason = DevicelessSkipReason(
-            std::get<0>(GetParam()), std::nullopt, std::get<2>(GetParam()))) {
-      GTEST_SKIP() << *skip_reason;
-    }
-  }
   int batch_size = std::get<2>(GetParam());
   int segment_size = kTestDataSize / batch_size;
 
@@ -172,12 +103,7 @@ ENTRY main {
   EXPECT_TRUE(RunAndCompare(hlo_str, ErrorSpec{0, 0}));
 }
 
-TEST_P(CubSortKeysSpecialOrderingTest, CompareToReferenceNumpyOrderGt) {
-  if (GetParam()) {
-    if (auto skip_reason = DevicelessSkipReason(BF16, std::nullopt, 1, 16)) {
-      GTEST_SKIP() << *skip_reason;
-    }
-  }
+TEST_F(CubSortKeysTest, CompareToReferenceNumpyOrderGt) {
   constexpr char kHlo[] = R"(
 numpy_order_comparator {
   lhs = bf16[] parameter(0)
@@ -214,12 +140,7 @@ ENTRY main {
 // Starting with release 1.12.0, Cub Device Radix sort treats +0.0 and -0.0
 // equivalently. See https://github.com/NVIDIA/cub/releases/tag/1.12.0
 // This test may break when upgrading to a newer version of Cub.
-TEST_P(CubSortKeysSpecialOrderingTest, CompareToReferenceTotalOrderLt) {
-  if (GetParam()) {
-    if (auto skip_reason = DevicelessSkipReason(F32, std::nullopt, 1, 16)) {
-      GTEST_SKIP() << *skip_reason;
-    }
-  }
+TEST_F(CubSortKeysTest, CompareToReferenceTotalOrderLt) {
   constexpr char kHlo[] = R"(
 compare {
   lhs = f32[] parameter(0)
@@ -238,36 +159,10 @@ ENTRY main {
 
   EXPECT_TRUE(RunAndCompare(kHlo, ErrorSpec{0, 0}));
 }
-#if defined(XLA_CUB_TEST_DEVICELESS_ONLY)
-constexpr std::optional<bool> kCubTestDevicelessValue = true;
-#elif defined(XLA_CUB_TEST_NO_DEVICELESS)
-constexpr std::optional<bool> kCubTestDevicelessValue = false;
-#else
-constexpr std::optional<bool> kCubTestDevicelessValue = std::nullopt;
-#endif
-
-inline ::testing::internal::ParamGenerator<bool> GetCubTestDevicelessValues() {
-  if (kCubTestDevicelessValue.has_value()) {
-    return ::testing::Values(*kCubTestDevicelessValue);
-  }
-  return ::testing::Bool();
-}
-
-INSTANTIATE_TEST_SUITE_P(CubSort, CubSortKeysSpecialOrderingTest,
-                         GetCubTestDevicelessValues(),
-                         [](const ::testing::TestParamInfo<bool>& info) {
-                           return info.param ? "deviceless" : "device";
-                         });
 
 // This test verifies an issue where sort was launched on the wrong stream,
 // causing subtle timing bugs: b/347239322.
 TEST_P(CubSortKeysParameterizedTest, SortWithSlice) {
-  if (std::get<3>(GetParam())) {
-    if (auto skip_reason = DevicelessSkipReason(
-            std::get<0>(GetParam()), std::nullopt, std::get<2>(GetParam()))) {
-      GTEST_SKIP() << *skip_reason;
-    }
-  }
   constexpr char kHloTpl[] = R"(
 cmp {
     p0 = $0[] parameter(0)
@@ -298,15 +193,13 @@ INSTANTIATE_TEST_SUITE_P(
     CubSort, CubSortKeysParameterizedTest,
     ::testing::Combine(::testing::Values(F16, F32, F64, S8, S16, S32, S64, U8,
                                          U16, U32, U64),
-                       ::testing::Bool(), ::testing::Values(1, 10),
-                       GetCubTestDevicelessValues()),
+                       ::testing::Bool(), ::testing::Values(1, 10)),
     [](const ::testing::TestParamInfo<CubSortKeysParameterizedTest::ParamType>&
            info) {
       return absl::StrCat(
           primitive_util::LowercasePrimitiveTypeName(std::get<0>(info.param)),
           std::get<1>(info.param) ? "_asc_" : "_desc_", "b",
-          std::get<2>(info.param),
-          std::get<3>(info.param) ? "_deviceless" : "_device");
+          std::get<2>(info.param));
     });
 
 // ----- Sort pairs
@@ -316,30 +209,13 @@ class CubSortPairsTest : public CubSortTestBase {};
 class CubSortPairsParameterizedTest
     : public CubSortPairsTest,
       public ::testing::WithParamInterface<
-          std::tuple<PrimitiveType, PrimitiveType, bool, int, bool>> {
- public:
-  DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions options = CubSortPairsTest::GetDebugOptionsForTest();
-    if (std::get<4>(GetParam())) {
-      options.set_xla_gpu_deviceless_cub_mode(
-          DebugOptions::DEVICELESS_CUB_FORCE_ON_NO_FALLBACK);
-    }
-    return options;
-  }
-};
+          std::tuple<PrimitiveType, PrimitiveType, bool, int>> {};
 
 TEST_F(CubSortPairsTest, AlwaysUsesCubSort) {
   EXPECT_EQ(SortRewriter::SortMode(), SortRewriter::Mode::kAlways);
 }
 
 TEST_P(CubSortPairsParameterizedTest, CompareToReference) {
-  if (std::get<4>(GetParam())) {
-    if (auto skip_reason = DevicelessSkipReason(std::get<0>(GetParam()),
-                                                std::get<1>(GetParam()),
-                                                std::get<3>(GetParam()))) {
-      GTEST_SKIP() << *skip_reason;
-    }
-  }
   int batch_size = std::get<3>(GetParam());
   int segment_size = kTestDataSize / batch_size;
 
@@ -379,13 +255,6 @@ ENTRY main {
 // This test verifies an issue where sort was launched on the wrong stream,
 // causing subtle timing bugs: b/347239322.
 TEST_P(CubSortPairsParameterizedTest, SortWithSlice) {
-  if (std::get<4>(GetParam())) {
-    if (auto skip_reason = DevicelessSkipReason(std::get<0>(GetParam()),
-                                                std::get<1>(GetParam()),
-                                                std::get<3>(GetParam()))) {
-      GTEST_SKIP() << *skip_reason;
-    }
-  }
   constexpr char kHloTpl[] = R"(
 compare {
   lhs = $0[] parameter(0)
@@ -433,15 +302,14 @@ INSTANTIATE_TEST_SUITE_P(
     CubSort, CubSortPairsParameterizedTest,
     ::testing::Combine(::testing::Values(U8, U16, U32, U64, F32),
                        ::testing::Values(F16, F32, F64), ::testing::Bool(),
-                       ::testing::Values(1, 10), GetCubTestDevicelessValues()),
+                       ::testing::Values(1, 10)),
     [](const ::testing::TestParamInfo<CubSortPairsParameterizedTest::ParamType>&
            info) {
       return absl::StrCat(
           primitive_util::LowercasePrimitiveTypeName(std::get<0>(info.param)),
           primitive_util::LowercasePrimitiveTypeName(std::get<1>(info.param)),
           std::get<2>(info.param) ? "_asc_" : "_desc_", "b",
-          std::get<3>(info.param),
-          std::get<4>(info.param) ? "_deviceless" : "_device");
+          std::get<3>(info.param));
     });
 
 }  // namespace

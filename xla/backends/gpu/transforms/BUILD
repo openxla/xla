@@ -582,13 +582,6 @@ cc_library(
 )
 
 cc_library(
-    name = "deviceless_estimate_cub_sort_scratch_size",
-    hdrs = ["deviceless_estimate_cub_sort_scratch_size.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = ["//xla/backends/gpu/hlo/transforms:deviceless_estimate_cub_sort_scratch_size"],
-)
-
-cc_library(
     name = "estimate_cub_scan_scratch_size",
     hdrs = ["estimate_cub_scan_scratch_size.h"],
     tags = if_google(["avoid_dep"]),

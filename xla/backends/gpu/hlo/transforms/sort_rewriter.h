@@ -27,7 +27,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -69,9 +68,7 @@ class SortRewriter : public HloModulePass {
 
  private:
   absl::StatusOr<bool> RunOnInstruction(HloSortInstruction* sort_op);
-  absl::StatusOr<bool> RunOnComputation(
-      HloComputation* computation,
-      DebugOptions::DevicelessCubMode deviceless_cub_mode);
+  absl::StatusOr<bool> RunOnComputation(HloComputation* computation);
 
   static inline Mode sort_mode_ = Mode::kAuto;
   se::DeviceDescription device_description_;

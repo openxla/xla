@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -28,11 +29,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
-#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/backends/gpu/libraries/cub/cub_scratch_size_deviceless_lookup.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -47,15 +45,12 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -643,63 +638,6 @@ bool ShouldRewriteCompatibleSort(
   return Product(operand_shape.dimensions()) > 16384;
 }
 
-struct DevicelessLookupParams {
-  std::string device_name;
-  se::SemanticVersion cub_version;
-  int32_t key_type_size;
-  std::optional<int32_t> value_type_size;
-  int64_t num_items;
-  int64_t batch_size;
-
-  std::string ToString() const {
-    std::string value_size_str =
-        value_type_size.has_value() ? absl::StrCat(*value_type_size) : "none";
-    return absl::StrFormat(
-        "device=%s, cub_version=%s, key_type_size=%d, value_type_size=%s, "
-        "num_items=%d, batch_size=%d",
-        device_name, cub_version.ToString(), key_type_size, value_size_str,
-        num_items, batch_size);
-  }
-};
-
-absl::StatusOr<DevicelessLookupParams> GetDevicelessLookupParams(
-    const se::DeviceDescription& device_description,
-    const HloSortInstruction& sort_op) {
-  std::optional<SortComputationAnalysis> sort_analysis = AnalyzeSortOp(sort_op);
-  // IsCubCompatibleSort already verified this will have a value.
-  TF_RET_CHECK(sort_analysis.has_value());
-
-  int32_t key_type_size =
-      ShapeUtil::ByteSizeOfPrimitiveType(sort_analysis->key_type);
-  std::optional<int32_t> value_type_size;
-  if (sort_analysis->value_type.has_value()) {
-    value_type_size =
-        ShapeUtil::ByteSizeOfPrimitiveType(*sort_analysis->value_type);
-  }
-
-  const Shape& key_shape = sort_op.operand(sort_analysis->key_operand)->shape();
-  int64_t num_items = Product(key_shape.dimensions());
-  int64_t back_dim = key_shape.dimensions().back();
-  TF_RET_CHECK(back_dim != 0);
-  int64_t batch_size = num_items / back_dim;
-
-  return DevicelessLookupParams{device_description.name(),
-                                device_description.cub_version(),
-                                key_type_size,
-                                value_type_size,
-                                num_items,
-                                batch_size};
-}
-
-absl::StatusOr<bool> DevicelessTableHasDataForSort(
-    const DevicelessLookupParams& params) {
-  ABSL_ASSIGN_OR_RETURN(const CubScratchSizeDevicelessLookup& lookup,
-                        CubScratchSizeDevicelessLookup::GetInstance());
-  return lookup.CanLookup(params.cub_version, params.device_name,
-                          params.key_type_size, params.value_type_size,
-                          params.num_items, params.batch_size);
-}
-
 bool IsCubCompatibleSort(const se::DeviceDescription& device_description,
                          const HloSortInstruction* sort_op) {
   VLOG(1) << "Sort instruction: " << sort_op->name();
@@ -718,6 +656,15 @@ bool IsCubCompatibleSort(const se::DeviceDescription& device_description,
   const Shape& operand_shape = sort_op->operand(0)->shape();
   if (sort_op->sort_dimension() != operand_shape.dimensions().size() - 1) {
     VLOG(2) << "Sort dimension should be the minor one";
+    return false;
+  }
+
+  const int64_t segment_size = operand_shape.dimensions().back();
+  const int64_t total_items = Product(operand_shape.dimensions());
+  if (segment_size > 0 && total_items / segment_size > 1 &&
+      segment_size > std::numeric_limits<int32_t>::max()) {
+    VLOG(2) << "Batched sort segment size exceeds int32_t limit: "
+            << segment_size;
     return false;
   }
 
@@ -743,72 +690,29 @@ bool IsCubCompatibleSort(const se::DeviceDescription& device_description,
   return true;
 }
 
-absl::StatusOr<bool> ShouldRewriteSort(
-    const se::DeviceDescription& device_description,
-    const HloSortInstruction& sort, bool is_deviceless,
-    bool is_early_exit_with_layouts,
-    DebugOptions::DevicelessCubMode deviceless_cub_mode) {
+bool ShouldRewriteSort(const se::DeviceDescription& device_description,
+                       const HloSortInstruction& sort, bool is_deviceless,
+                       bool is_early_exit_with_layouts) {
   if (!IsCubCompatibleSort(device_description, &sort)) {
     return false;
   }
 
-  // When compiling CUB sorts we need to determine the scratch size needed. The
-  // CUB API to do so requires a device, so we need to differentiate between
-  // deviceless and non-deviceless compilation here.
-  ABSL_ASSIGN_OR_RETURN(DevicelessLookupParams lookup_params,
-                        GetDevicelessLookupParams(device_description, sort));
-
-  if (deviceless_cub_mode ==
-      DebugOptions::DEVICELESS_CUB_FORCE_ON_NO_FALLBACK) {
-    ABSL_ASSIGN_OR_RETURN(bool has_deviceless_data,
-                          DevicelessTableHasDataForSort(lookup_params));
-    if (!has_deviceless_data) {
-      return absl::NotFoundError(absl::StrFormat(
-          "Missing deviceless CUB scratch size data for sort. Lookup "
-          "parameters: %s",
-          lookup_params.ToString()));
-    }
+  // On CUDA, CUB sort scratch sizing and kernel emission are computed purely
+  // in C++ from the target compute capability without a live device.
+  if (device_description.gpu_compute_capability().IsCuda()) {
     return true;
   }
 
-  // If we have a device we can always query the scratch space needed, so we can
-  // always use CUB.
-  if (!is_deviceless) {
-    return true;
-  }
-  // Early exit compilations will exit before we need to determine the scratch
-  // space, so its fine to re-write to CUB even without a device.
-  if (is_early_exit_with_layouts) {
-    return true;
-  }
-
-  if (deviceless_cub_mode == DebugOptions::DEVICELESS_CUB_DISABLED) {
+  // On non-CUDA backends (ROCm/SYCL), querying the scratch size requires a
+  // live device unless compilation exits early with layouts.
+  if (is_deviceless && !is_early_exit_with_layouts) {
+    LOG_EVERY_N_SEC(WARNING, 60)
+        << "Using fallback sort algorithm rather than SortRewriter, "
+           "which will be slower at runtime. To avoid this, "
+           "compile with a GPU present.";
     return false;
   }
-
-  ABSL_ASSIGN_OR_RETURN(bool has_deviceless_data,
-                        DevicelessTableHasDataForSort(lookup_params));
-  if (has_deviceless_data) {
-    return true;
-  }
-
-  if (deviceless_cub_mode == DebugOptions::DEVICELESS_CUB_NO_FALLBACK) {
-    return absl::NotFoundError(absl::StrFormat(
-        "Missing deviceless CUB scratch size data for sort. Lookup "
-        "parameters: %s",
-        lookup_params.ToString()));
-  }
-
-  TF_RET_CHECK(deviceless_cub_mode ==
-               DebugOptions::DEVICELESS_CUB_WITH_FALLBACK);
-  LOG_EVERY_N_SEC(WARNING, 60)
-      << "Missing deviceless CUB scratch size data for sort. Using "
-         "fallback sort algorithm rather than SortRewriter, "
-         "which will be slower at runtime. \n"
-         "To avoid this, compile with a GPU present, or add the "
-         "deviceless CUB data for your device and CUB version to "
-         "xla/backends/gpu/libraries/cub/data";
-  return false;
+  return true;
 }
 
 // Same signed-integer map as ComparisonExpander: negative values are xored
@@ -983,19 +887,15 @@ absl::StatusOr<bool> SortRewriter::RunOnInstruction(
 
 // Rewrites the sorts in the given computation into calls to CUB.
 absl::StatusOr<bool> SortRewriter::RunOnComputation(
-    HloComputation* computation,
-    DebugOptions::DevicelessCubMode deviceless_cub_mode) {
+    HloComputation* computation) {
   std::vector<HloSortInstruction*> sort_ops;
   for (auto* inst : computation->instructions()) {
     HloSortInstruction* sort = DynCast<HloSortInstruction>(inst);
     if (sort == nullptr) {
       continue;
     }
-    ABSL_ASSIGN_OR_RETURN(
-        bool should_rewrite,
-        ShouldRewriteSort(device_description_, *sort, is_deviceless_,
-                          is_early_exit_with_layouts_, deviceless_cub_mode));
-    if (should_rewrite) {
+    if (ShouldRewriteSort(device_description_, *sort, is_deviceless_,
+                          is_early_exit_with_layouts_)) {
       sort_ops.push_back(sort);
     }
   }
@@ -1012,20 +912,11 @@ absl::StatusOr<bool> SortRewriter::RunOnComputation(
 absl::StatusOr<bool> SortRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  auto deviceless_cub_mode =
-      module->config().debug_options().xla_gpu_deviceless_cub_mode();
-  if (is_deviceless_ && !is_early_exit_with_layouts_ &&
-      deviceless_cub_mode == DebugOptions::DEVICELESS_CUB_DISABLED) {
-    LOG(WARNING) << "Using fallback sort algorithm rather than SortRewriter, "
-                    "which will be slower at runtime. To avoid this, "
-                    "compile with a GPU present.";
-  }
   XLA_VLOG_LINES(3, "SortRewriter::RunImpl(), before:\n" + module->ToString());
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(bool result,
-                          RunOnComputation(computation, deviceless_cub_mode));
+    ABSL_ASSIGN_OR_RETURN(bool result, RunOnComputation(computation));
     changed |= result;
   }
   XLA_VLOG_LINES(3, "SortRewriter::RunImpl(), after:\n" + module->ToString());

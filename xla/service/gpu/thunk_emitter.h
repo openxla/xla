@@ -250,6 +250,9 @@ class ThunkEmitter {
   absl::StatusOr<ThunkSequence> EmitCublasLtMatmulMx(
       const HloCustomCallInstruction* instr);
 
+  absl::StatusOr<ThunkSequence> EmitCudaCubSort(
+      const HloCustomCallInstruction* instr);
+
   absl::StatusOr<ThunkSequence> EmitGenericCustomCall(
       const HloCustomCallInstruction* instr);
 
