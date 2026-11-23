@@ -18,6 +18,7 @@ limitations under the License.
 #include <optional>
 #include <utility>
 
+#include "absl/strings/string_view.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Bytecode/BytecodeOpInterface.h"     // IWYU pragma: keep
@@ -90,5 +91,30 @@ void ReplaceApplyIndexingOp(mlir::PatternRewriter& rewriter,
                             const IndexingMap& indexing_map);
 
 }  // namespace xla
+
+namespace xla::emitters {
+
+// Facts for the ROCm non-temporal hints, set by the GPU emitter on the entry
+// function and its arguments. LowerTensorsPass uses and removes them.
+
+// Read exactly once per output element, with no reuse.
+inline constexpr absl::string_view kXlaStreamedOnceAttr = "xla.streamed_once";
+
+// No map reads an element of the operand more than once.
+inline constexpr absl::string_view kXlaNotBroadcastAttr = "xla.not_broadcast";
+
+// Another instruction, or another operand of the fusion, reads the buffer too;
+// its loads stay temporal below 64x L2.
+inline constexpr absl::string_view kXlaReadElsewhereAttr = "xla.read_elsewhere";
+
+// A wavefront load reads part of a 128-byte line; other loads read the rest.
+inline constexpr absl::string_view kXlaPiecewiseReadsAttr =
+    "xla.piecewise_reads";
+
+// Each output element is written once, as loop and concatenate emitters do.
+inline constexpr absl::string_view kXlaContiguousOutputAttr =
+    "xla.contiguous_output";
+
+}  // namespace xla::emitters
 
 #endif  // XLA_CODEGEN_EMITTERS_IR_XLA_OPS_H_

@@ -66,6 +66,27 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "nontemporal_hint_targets",
+    srcs = ["nontemporal_hint_targets.cc"],
+    hdrs = ["nontemporal_hint_targets.h"],
+    deps = [
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/rocm:rocm_compute_capability",
+    ],
+)
+
+xla_cc_test(
+    name = "nontemporal_hint_targets_test",
+    srcs = ["nontemporal_hint_targets_test.cc"],
+    deps = [
+        ":nontemporal_hint_targets",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "lowering_utils",
     srcs = ["lowering_utils.cc"],
     hdrs = ["lowering_utils.h"],
@@ -227,10 +248,8 @@ cc_library(
     hdrs = ["passes.h"],
     deps = [
         ":atomic_rmw_utils",
-        ":convert_pure_call_ops_pass",
+        ":nontemporal_hint_targets",
         ":passes_inc_gen",
-        ":simplify_affine_pass",
-        ":simplify_arith_pass",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -367,7 +386,7 @@ cc_library(
     srcs = ["pass_pipelines.cc"],
     hdrs = ["pass_pipelines.h"],
     deps = [
-        ":convert_pure_call_ops_pass",
+        ":simplify_arith_pass",  # keep: provides implementations for shared passes.h.
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Transforms",

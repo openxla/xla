@@ -175,7 +175,9 @@ cc_library(
         "//xla/backends/gpu/codegen/emitters/transforms:passes",
         "//xla/backends/gpu/codegen/triton/transforms:passes",
         "//xla/backends/gpu/codegen/triton/transforms:triton_xla_implement_extern_element_wise_pass",
-        "//xla/codegen/emitters/transforms:passes",
+        "//xla/codegen/emitters/transforms:passes",  # keep: provides implementations for shared passes.h.
+        "//xla/codegen/emitters/transforms:simplify_affine_pass",  # keep: provides implementations for shared passes.h.
+        "//xla/codegen/emitters/transforms:simplify_arith_pass",  # keep: provides implementations for shared passes.h.
         "//xla/service:hlo_module_config",
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:device_description",

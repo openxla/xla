@@ -881,7 +881,7 @@ cc_binary(
         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
         "//xla/backends/gpu/codegen/triton/transforms:passes",
         "//xla/codegen/emitters/ir:xla",
-        "//xla/codegen/emitters/transforms:passes",
+        "//xla/codegen/emitters/transforms:convert_pure_call_ops_pass",  # keep: provides implementations for shared passes.h.
         "//xla/codegen/xtile/ir:xtile",
         "//xla/codegen/xtile/ir/transforms:passes",
         "//xla/mlir_hlo",
