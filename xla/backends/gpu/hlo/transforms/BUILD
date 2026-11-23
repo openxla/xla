@@ -2675,8 +2675,10 @@ xla_cc_test(
     deps = [
         ":algebraic_simplifier",
         ":reduce_scatter_creator",
+        "//xla:shape_util",
         "//xla:side_effect_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:pattern_matcher_gmock",

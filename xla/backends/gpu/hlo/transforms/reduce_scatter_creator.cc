@@ -34,11 +34,115 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
 
 namespace xla {
 namespace gpu {
+namespace {
+
+// Returns true if `instruction` is a broadcast of a scalar.
+bool IsScalarBroadcast(const HloInstruction* instruction) {
+  return instruction->opcode() == HloOpcode::kBroadcast &&
+         ShapeUtil::IsScalar(instruction->operand(0)->shape());
+}
+
+// Returns true if `user` only applies a per-element function to `operand`: it
+// is either a copy, or an elementwise operation whose remaining operands are
+// all broadcasts of scalars. Slicing commutes with such an instruction.
+bool IsSliceCommutingUser(const HloInstruction* user,
+                          const HloInstruction* operand) {
+  if (user->HasSideEffect() || user->HasControlDependencies() ||
+      !user->shape().IsArray() ||
+      !ShapeUtil::SameDimensions(user->shape(), operand->shape())) {
+    return false;
+  }
+  if (user->opcode() == HloOpcode::kCopy) {
+    return true;
+  }
+  if (!user->IsElementwise() || user->OperandIndices(operand).size() != 1) {
+    return false;
+  }
+  for (const HloInstruction* other : user->operands()) {
+    if (other != operand && !IsScalarBroadcast(other)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Rewrites
+//   dynamic-slice(f_n(...f_1(all-reduce)...), offsets)
+// into
+//   f_n(...f_1(dynamic-slice(all-reduce, offsets))...)
+// where every f_i is a copy or an elementwise operation whose other operands
+// are scalar broadcasts, and every instruction of the chain has a single user.
+// The SPMD partitioner emits such chains, for example when a gradient is scaled
+// before it is sliced to the shard of the current partition. Moving the
+// dynamic-slice next to the all-reduce exposes the reduce-scatter pattern, and
+// the elementwise operations then run on the slice only.
+absl::StatusOr<bool> SinkDynamicSliceThroughElementwise(
+    HloAllReduceInstruction* ar) {
+  if (!ar->shape().IsArray()) {
+    return false;
+  }
+  std::vector<HloInstruction*> chain;
+  HloInstruction* current = ar;
+  HloInstruction* ds = nullptr;
+  while (current->user_count() == 1) {
+    HloInstruction* user = *current->users().begin();
+    if (user->opcode() == HloOpcode::kDynamicSlice) {
+      if (user->operand(0) == current &&
+          user->OperandIndices(current).size() == 1 &&
+          !user->HasControlDependencies()) {
+        ds = user;
+      }
+      break;
+    }
+    if (!IsSliceCommutingUser(user, current)) {
+      break;
+    }
+    chain.push_back(user);
+    current = user;
+  }
+  if (ds == nullptr || chain.empty()) {
+    return false;
+  }
+
+  HloComputation* computation = ar->parent();
+  auto sliced_shape = [&](const HloInstruction* instruction) {
+    return ShapeUtil::MakeShape(instruction->shape().element_type(),
+                                ds->shape().dimensions());
+  };
+  std::vector<HloInstruction*> ds_operands(ds->operands().begin(),
+                                           ds->operands().end());
+  ds_operands[0] = ar;
+  HloInstruction* result = computation->AddInstruction(
+      ds->CloneWithNewOperands(sliced_shape(ar), ds_operands));
+  HloInstruction* previous = ar;
+  for (HloInstruction* instruction : chain) {
+    std::vector<HloInstruction*> operands;
+    operands.reserve(instruction->operand_count());
+    for (HloInstruction* operand : instruction->operands()) {
+      if (operand == previous) {
+        operands.push_back(result);
+      } else {
+        operands.push_back(
+            computation->AddInstruction(HloInstruction::CreateBroadcast(
+                sliced_shape(operand), operand->mutable_operand(0), {})));
+      }
+    }
+    result = computation->AddInstruction(
+        instruction->CloneWithNewOperands(sliced_shape(instruction), operands));
+    previous = instruction;
+  }
+  ABSL_RETURN_IF_ERROR(ds->ReplaceAllUsesWith(result));
+  ABSL_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(ds));
+  return true;
+}
+
+}  // namespace
 
 absl::StatusOr<bool> ReduceScatterCreator::RunImpl(
     HloModule* module,
@@ -55,6 +159,8 @@ absl::StatusOr<bool> ReduceScatterCreator::RunImpl(
         continue;
       }
       auto* ar = Cast<HloAllReduceInstruction>(instruction);
+      ABSL_ASSIGN_OR_RETURN(bool sunk, SinkDynamicSliceThroughElementwise(ar));
+      changed |= sunk;
       auto ar_spec = MatchReduceScatter(ar, config.num_partitions(),
                                         config.replica_count(),
                                         /*allow_multiple_split_dims=*/false,
