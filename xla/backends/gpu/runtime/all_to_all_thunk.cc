@@ -242,8 +242,10 @@ absl::Status AllToAllThunk::RunCollective(const ExecuteParams& params,
                                        receive_pointer_map, clique_key, *rank,
                                        state->event.get(), state->events);
   }
+  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                        params.TakeLaunchEvent(this, &stream));
   return xla::gpu::RunAllToAll(config_.has_split_dimension, device_buffers,
-                               stream, comm);
+                               stream, comm, launch_event);
 }
 
 absl::StatusOr<std::unique_ptr<AllToAllThunk>> AllToAllThunk::FromProto(
@@ -288,7 +290,8 @@ absl::StatusOr<ThunkProto> AllToAllThunk::ToProto() const {
 
 absl::Status RunAllToAll(bool has_split_dimension,
                          std::vector<DeviceBufferPair>& buffers,
-                         se::Stream& stream, Communicator& comm) {
+                         se::Stream& stream, Communicator& comm,
+                         se::Event* launch_event) {
   int device_ordinal = stream.parent()->device_ordinal();
   XLA_VLOG_DEVICE(3, device_ordinal)
       << "Performing all-to-all, has_split_dimension: " << has_split_dimension;
@@ -340,7 +343,8 @@ absl::Status RunAllToAll(bool has_split_dimension,
     auto future = gpu_comm->GroupExecute([&]() -> absl::Status {
       return gpu_comm->LaunchAllToAll(
           std::move(send_buffers), std::move(recv_buffers), element_type,
-          chunk_element_count, GpuCollectives::On(stream), is_rma);
+          chunk_element_count, GpuCollectives::On(stream, launch_event),
+          is_rma);
     });
     ABSL_RETURN_IF_ERROR(future.Await());
   } else {
@@ -352,7 +356,7 @@ absl::Status RunAllToAll(bool has_split_dimension,
     auto future = gpu_comm->GroupExecute([&]() -> absl::Status {
       return gpu_comm->LaunchAllToAll(
           std::move(send_buffers), std::move(recv_buffers), element_type,
-          element_count, GpuCollectives::On(stream), is_rma);
+          element_count, GpuCollectives::On(stream, launch_event), is_rma);
     });
     ABSL_RETURN_IF_ERROR(future.Await());
   }

@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_stream.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -27,6 +24,8 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -41,6 +40,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
@@ -228,6 +228,30 @@ TEST_F(CudaStreamTest, LaunchKernel) {
   std::array<int32_t, kLength> host_buffer;
   EXPECT_THAT(stream->MemcpyD2H(c, absl::MakeSpan(host_buffer)), IsOk());
   EXPECT_THAT(host_buffer, Each(3));
+}
+
+TEST_F(CudaStreamTest, LaunchKernelRecordsLaunchCompletionEvent) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CudaStream> stream,
+                       CudaStream::Create(executor_,
+                                          /*priority=*/std::nullopt));
+  ASSERT_OK_AND_ASSIGN(auto add, LoadAddI32TestKernel(executor_));
+  ASSERT_OK_AND_ASSIGN(CudaEvent event,
+                       CudaEvent::Create(executor_, /*allow_timing=*/false));
+  DeviceAddress<int32_t> buffer = executor_->AllocateArray<int32_t>(1, 0);
+
+  // Hold the stream so the launch is queued but its blocks are not dispatched.
+  absl::Notification release;
+  EXPECT_THAT(stream->DoHostCallback([&] { release.WaitForNotification(); }),
+              IsOk());
+  EXPECT_THAT(
+      add.LaunchWithCompletionEvent(ThreadDim(), BlockDim(), stream.get(),
+                                    &event, buffer, buffer, buffer),
+      IsOk());
+  EXPECT_EQ(event.PollForStatus(), Event::Status::kPending);
+
+  release.Notify();
+  EXPECT_THAT(stream->BlockHostUntilDone(), IsOk());
+  EXPECT_EQ(event.PollForStatus(), Event::Status::kComplete);
 }
 
 TEST_F(CudaStreamTest, SetName) {

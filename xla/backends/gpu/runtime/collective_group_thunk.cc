@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/collective_group_thunk.h"
 
+#include <cstdint>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -24,12 +25,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/annotation.h"
@@ -49,6 +50,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/trace_command_buffer_factory.h"
 #include "xla/util.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla::gpu {
 
@@ -83,12 +85,51 @@ Thunk::BufferUses CollectiveGroupThunk::buffer_uses() const {
 
 absl::Status CollectiveGroupThunk::ExecuteOnStream(
     const Thunk::ExecuteParams& params) {
+  // Without launch ordering all thunks launch as one group.
+  if (params.launch_ordering == nullptr) {
+    return ExecuteGroup(params, [](const Thunk&) { return true; });
+  }
+  // The largest collective launches alone with the launch event.
+  const Thunk* alone = nullptr;
+  int64_t alone_bytes = -1;
+  for (const std::unique_ptr<Thunk>& thunk : executor_.thunks()) {
+    auto* collective = dynamic_cast<const CollectiveThunk*>(thunk.get());
+    // Sends and receives stay in the group, copies and permutes have no event.
+    if (collective == nullptr || thunk->kind() == kSend ||
+        thunk->kind() == kRecv || thunk->kind() == kCollectivePermute) {
+      continue;
+    }
+    int64_t bytes = 0;
+    for (const CollectiveThunk::Buffer& buffer : collective->buffers()) {
+      bytes += buffer.source_buffer.slice.size();
+    }
+    if (bytes > alone_bytes) {
+      alone = thunk.get();
+      alone_bytes = bytes;
+    }
+  }
+  // The others launch first as one group and record no launch event.
+  auto others = [&](const Thunk& thunk) { return &thunk != alone; };
+  Thunk::ExecuteParams no_event = params;
+  no_event.launch_ordering = nullptr;
+  ABSL_RETURN_IF_ERROR(ExecuteGroup(no_event, others));
+  // The largest launches last, so its event fires after the others launch.
+  return ExecuteGroup(params,
+                      [&](const Thunk& thunk) { return &thunk == alone; });
+}
+
+absl::Status CollectiveGroupThunk::ExecuteGroup(
+    const Thunk::ExecuteParams& params,
+    absl::FunctionRef<bool(const Thunk&)> in_group) {
   GlobalDeviceId global_device_id = params.collective_params->global_device_id;
 
   // Collect all communicators used by non-degenerate collective thunks.
   // Degenerate collectives are emitted as device-to-device copies.
   std::vector<GpuCommunicator*> comms;
   for (const std::unique_ptr<Thunk>& thunk : executor_.thunks()) {
+    if (!in_group(*thunk)) {
+      continue;
+    }
     auto* collective_thunk = dynamic_cast<CollectiveThunk*>(thunk.get());
 
     if (collective_thunk == nullptr) {
@@ -114,19 +155,19 @@ absl::Status CollectiveGroupThunk::ExecuteOnStream(
 
   // No communicator means every nested thunk is a plain device-to-device copy.
   if (comms.empty()) {
-    return executor_.ExecuteOnStream(params);
+    return executor_.ExecuteOnStream(params, in_group);
   }
 
   // If nested thunks use a single comm, use it directly to execute the group.
   if (comms.size() == 1) {
     Future<> executed = comms.front()->GroupExecute(
-        [&] { return executor_.ExecuteOnStream(params); });
+        [&] { return executor_.ExecuteOnStream(params, in_group); });
     return executed.Await();
   }
 
   // Otherwise use a multi-comm group launch.
   return params.collective_params->collectives->GroupLaunch(
-      comms, [&] { return executor_.ExecuteOnStream(params); });
+      comms, [&] { return executor_.ExecuteOnStream(params, in_group); });
 }
 
 absl::StatusOr<const se::CommandBuffer::Command*> CollectiveGroupThunk::Record(

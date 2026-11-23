@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
+#include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/thunk_kind.pb.h"
@@ -434,6 +435,14 @@ Thunk::ThunkInfo Thunk::ThunkInfo::WithProfileAnnotation(
   thunk_info.thunk_id = thunk_id;
   auto gpu_backend_config = instr->backend_config<GpuBackendConfig>();
   return thunk_info;
+}
+
+absl::StatusOr<se::Event*> Thunk::ExecuteParams::TakeLaunchEvent(
+    const Thunk* thunk, se::Stream* stream) const {
+  if (launch_ordering == nullptr) {
+    return nullptr;
+  }
+  return launch_ordering->TakeLaunchEvent(stream, thunk->profile_annotation());
 }
 
 bool Thunk::IsCollective() const {

@@ -81,6 +81,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/kernel_args.h"
 #include "xla/stream_executor/kernel_metadata.h"
 #include "xla/stream_executor/launch_dim.h"
@@ -156,6 +157,14 @@ class Kernel {
                               const std::optional<ClusterDim>& cluster_dims,
                               Stream* stream, const KernelArgs& args) = 0;
 
+  // `launch_completion_event` fires at last-block dispatch, not completion.
+  virtual absl::Status LaunchWithCompletionEvent(
+      const ThreadDim& thread_dims, const BlockDim& block_dims,
+      const std::optional<ClusterDim>& cluster_dims, Stream* stream,
+      const KernelArgs& args, Event* launch_completion_event) {
+    return absl::UnimplementedError("Not implemented");
+  }
+
   struct PlatformSpecificHandle {
     void* kernel = nullptr;
   };
@@ -230,6 +239,22 @@ class TypedKernel {
                              Stream* stream, Args... args) {
     auto kernel_args = PackKernelArgs(*this, args...);
     return kernel_->Launch(thread_dims, block_dims, stream, *kernel_args);
+  }
+
+  // As above, with an event recorded at last-block dispatch.
+  template <typename... Args>
+  inline absl::Status LaunchWithCompletionEvent(ThreadDim thread_dims,
+                                                BlockDim block_dims,
+                                                Stream* stream,
+                                                Event* launch_completion_event,
+                                                Args... args) {
+    if (launch_completion_event == nullptr) {
+      return Launch(thread_dims, block_dims, stream, args...);
+    }
+    auto kernel_args = PackKernelArgs(*this, args...);
+    return kernel_->LaunchWithCompletionEvent(
+        thread_dims, block_dims, std::nullopt, stream, *kernel_args,
+        launch_completion_event);
   }
 
   template <typename... Args>
