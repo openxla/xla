@@ -22,6 +22,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -161,10 +162,80 @@ CreateSymmetricMemory(
   return symmetric_memory;
 }
 
-using RaggedAllToAllKernelTest = ::testing::TestWithParam<int64_t>;
+struct KernelTestCase {
+  std::string name;
+  int64_t num_outputs;
+  int64_t num_updates_per_output;
+  int64_t num_input_rows;
+  int64_t num_row_elements;
+  // Updates are laid out in row-major order: all updates to the first output,
+  // then all updates to the second output and so on.
+  std::vector<int64_t> input_offsets;
+  std::vector<int64_t> send_sizes;
+  std::vector<int64_t> output_offsets;
+};
 
-INSTANTIATE_TEST_SUITE_P(UpdatesPerPeer, RaggedAllToAllKernelTest,
-                         ::testing::Values(1, 2));
+using RaggedAllToAllKernelTest = ::testing::TestWithParam<KernelTestCase>;
+
+// The tests copy `float`, so an even number of row elements is copied as
+// 8-byte vectors and an odd number as 4-byte vectors. The block grids in the
+// comments are (outputs, block clusters, blocks per group).
+INSTANTIATE_TEST_SUITE_P(
+    LaunchShapes, RaggedAllToAllKernelTest,
+    ::testing::Values(
+        // Small input: one block per update, grid (2, 2, 1).
+        KernelTestCase{"TwoUpdatesSmallInput",
+                       /*num_outputs=*/2,
+                       /*num_updates_per_output=*/2,
+                       /*num_input_rows=*/8,
+                       /*num_row_elements=*/2,
+                       /*input_offsets=*/{1, 4, 0, 3},
+                       /*send_sizes=*/{2, 3, 1, 2},
+                       /*output_offsets=*/{0, 4, 1, 5}},
+        // One update striped over nine blocks of 4-byte vectors, with a
+        // zero-length send and a partial final stripe: grid (2, 1, 9).
+        KernelTestCase{"OneUpdatePartialStripe",
+                       /*num_outputs=*/2,
+                       /*num_updates_per_output=*/1,
+                       /*num_input_rows=*/8,
+                       /*num_row_elements=*/1025,
+                       /*input_offsets=*/{4, 1},
+                       /*send_sizes=*/{0, 5},
+                       /*output_offsets=*/{2, 3}},
+        // 8-byte vectors and an input large enough to hit the cap on the
+        // number of blocks: grid (2, 1, 64).
+        KernelTestCase{"OneUpdateMaxBlocks",
+                       /*num_outputs=*/2,
+                       /*num_updates_per_output=*/1,
+                       /*num_input_rows=*/8,
+                       /*num_row_elements=*/16514,
+                       /*input_offsets=*/{4, 1},
+                       /*send_sizes=*/{0, 5},
+                       /*output_offsets=*/{2, 3}},
+        // The cap is not a multiple of the number of outputs: grid (3, 1, 43).
+        KernelTestCase{"OneUpdateMaxBlocksThreeOutputs",
+                       /*num_outputs=*/3,
+                       /*num_updates_per_output=*/1,
+                       /*num_input_rows=*/8,
+                       /*num_row_elements=*/16514,
+                       /*input_offsets=*/{0, 2, 5},
+                       /*send_sizes=*/{2, 3, 3},
+                       /*output_offsets=*/{6, 0, 4}},
+        // Several updates per group, with more blocks than updates in a
+        // group: grid (2, 3, 3) with two updates per group.
+        KernelTestCase{"SixUpdatesMoreBlocksThanUpdates",
+                       /*num_outputs=*/2,
+                       /*num_updates_per_output=*/6,
+                       /*num_input_rows=*/64,
+                       /*num_row_elements=*/194,
+                       /*input_offsets=*/
+                       {0, 5, 10, 15, 20, 25, 7, 12, 17, 22, 27, 32},
+                       /*send_sizes=*/{3, 0, 10, 7, 1, 9, 10, 2, 0, 5, 8, 4},
+                       /*output_offsets=*/
+                       {0, 10, 20, 30, 40, 50, 0, 10, 20, 30, 40, 50}}),
+    [](const ::testing::TestParamInfo<KernelTestCase>& info) {
+      return info.param.name;
+    });
 
 TEST_P(RaggedAllToAllKernelTest, KernelWithArrayOfOutputPointers) {
   using T = float;
@@ -172,11 +243,11 @@ TEST_P(RaggedAllToAllKernelTest, KernelWithArrayOfOutputPointers) {
   auto* executor = GetGpuExecutor();
   ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
-  constexpr int64_t num_outputs = 2;
-  const int64_t num_update_per_output = GetParam();
-  constexpr int64_t num_input_rows = 8;
-  // Include a partial final stripe for the one-update, multi-CTA copy.
-  const int64_t num_row_elements = num_update_per_output == 1 ? 1025 : 2;
+  const KernelTestCase& test_case = GetParam();
+  const int64_t num_outputs = test_case.num_outputs;
+  const int64_t num_update_per_output = test_case.num_updates_per_output;
+  const int64_t num_input_rows = test_case.num_input_rows;
+  const int64_t num_row_elements = test_case.num_row_elements;
   const int64_t n = num_input_rows * num_row_elements;
 
   stream_executor::DeviceAddressHandle input_buffer(
@@ -194,14 +265,9 @@ TEST_P(RaggedAllToAllKernelTest, KernelWithArrayOfOutputPointers) {
   ASSERT_OK(stream->Memcpy(input_buffer.address_ptr(), input_data.data(),
                            n * sizeof(T)));
 
-  std::vector<int64_t> input_offsets = {1, 4, 0, 3};
-  std::vector<int64_t> send_sizes = {2, 3, 1, 2};
-  std::vector<int64_t> output_offsets = {0, 4, 1, 5};
-  if (num_update_per_output == 1) {
-    input_offsets = {4, 1};
-    send_sizes = {0, 5};
-    output_offsets = {2, 3};
-  }
+  const std::vector<int64_t>& input_offsets = test_case.input_offsets;
+  const std::vector<int64_t>& send_sizes = test_case.send_sizes;
+  const std::vector<int64_t>& output_offsets = test_case.output_offsets;
 
   stream_executor::DeviceAddressHandle input_offsets_buffer =
       CreateDeviceBuffer(executor, input_offsets);
@@ -237,11 +303,11 @@ TEST_P(RaggedAllToAllKernelTest, KernelWithArrayOfOutputPointers) {
 TEST_P(RaggedAllToAllKernelTest, KernelWithSymmetricMemory) {
   using T = float;
 
-  constexpr int64_t num_outputs = 2;
-  const int64_t num_update_per_output = GetParam();
-  constexpr int64_t num_input_rows = 8;
-  // Include a partial final stripe for the one-update, multi-CTA copy.
-  const int64_t num_row_elements = num_update_per_output == 1 ? 1025 : 2;
+  const KernelTestCase& test_case = GetParam();
+  const int64_t num_outputs = test_case.num_outputs;
+  const int64_t num_update_per_output = test_case.num_updates_per_output;
+  const int64_t num_input_rows = test_case.num_input_rows;
+  const int64_t num_row_elements = test_case.num_row_elements;
   constexpr size_t output_sym_offset = 1024;  // 1KB padding for output buffers
   const int64_t n = num_input_rows * num_row_elements;
 
@@ -249,7 +315,7 @@ TEST_P(RaggedAllToAllKernelTest, KernelWithSymmetricMemory) {
       se::Platform * platform,
       se::PlatformManager::PlatformWithId(se::cuda::kCudaPlatformId));
   int visible_device_count =
-      std::min<int>(platform->VisibleDeviceCount(), num_outputs);
+      std::min<int64_t>(platform->VisibleDeviceCount(), num_outputs);
 
   if (visible_device_count < num_outputs) {
     GTEST_SKIP() << "Skipping test because there are not enough visible "
@@ -304,14 +370,9 @@ TEST_P(RaggedAllToAllKernelTest, KernelWithSymmetricMemory) {
   ASSERT_OK(streams[0]->Memcpy(input_buffer.address_ptr(), input_data.data(),
                                n * sizeof(T)));
 
-  std::vector<int64_t> input_offsets = {1, 4, 0, 3};
-  std::vector<int64_t> send_sizes = {2, 3, 1, 2};
-  std::vector<int64_t> output_offsets = {0, 4, 1, 5};
-  if (num_update_per_output == 1) {
-    input_offsets = {4, 1};
-    send_sizes = {0, 5};
-    output_offsets = {2, 3};
-  }
+  const std::vector<int64_t>& input_offsets = test_case.input_offsets;
+  const std::vector<int64_t>& send_sizes = test_case.send_sizes;
+  const std::vector<int64_t>& output_offsets = test_case.output_offsets;
 
   stream_executor::DeviceAddressHandle input_offsets_buffer =
       CreateDeviceBuffer(executors[0], input_offsets);

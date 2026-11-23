@@ -77,10 +77,14 @@ absl::StatusOr<RaggedAllToAllLaunchParams> ComputeRaggedAllToAllLaunchParams(
   int64_t num_updates_per_block = 1;
   int64_t num_block_clusters = num_updates_per_output;
 
-  // Decide how many updates should each block process. In the kernel, N blocks
-  // process N updates. This is done to reduce imbalance in data transfer per
-  // block if updates happen to be unevenly distributed. The numbers were
-  // chosen empirically in Sep 2025 and can change in the future.
+  // Decide how many updates should each group of blocks process. In the
+  // kernel, a group of blocks shares N updates. This is done to reduce
+  // imbalance in data transfer per block if updates happen to be unevenly
+  // distributed. The numbers were chosen empirically in Sep 2025 and can change
+  // in the future.
+  //
+  // The kernel relies on `num_block_clusters * num_updates_per_block` being
+  // equal to `num_updates_per_output`.
   const int64_t max_num_updates_per_block =
       std::min<int64_t>(CeilOfRatio<int64_t>(num_input_rows, 16), 64);
 
@@ -90,16 +94,22 @@ absl::StatusOr<RaggedAllToAllLaunchParams> ComputeRaggedAllToAllLaunchParams(
     num_updates_per_block *= 2;
   }
 
+  // A few updates can contain the entire activation for a peer, so the number
+  // of updates alone gives too few blocks for a large copy. Size each group
+  // from the input instead: about one block per `kVectorsPerBlock` vectors,
+  // assuming the input is spread evenly over the groups, and roughly
+  // `kMaxBlocks` blocks in total. A group never has fewer blocks than updates,
+  // which the kernel requires.
   int64_t blocks_per_group = num_updates_per_block;
-  if (num_updates_per_output == 1 && num_outputs > 0) {
-    // A single update can contain the entire activation for a peer. Give its
-    // copy multiple CTAs, even though there is just one set of offsets.
+  const int64_t num_groups = num_outputs * num_block_clusters;
+  if (num_groups > 0) {
     constexpr int64_t kVectorsPerBlock = 4 * kThreads;
     constexpr int64_t kMaxBlocks = 128;
     const int64_t vectors = num_input_rows * num_vectorized_row_elements;
-    blocks_per_group = std::clamp<int64_t>(
-        CeilOfRatio(vectors, num_outputs * kVectorsPerBlock), 1,
-        CeilOfRatio(kMaxBlocks, num_outputs));
+    blocks_per_group =
+        std::max(blocks_per_group,
+                 std::min(CeilOfRatio(vectors, num_groups * kVectorsPerBlock),
+                          CeilOfRatio(kMaxBlocks, num_groups)));
   }
 
   return RaggedAllToAllLaunchParams{
