@@ -242,7 +242,6 @@ cc_library(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
-        "//xla:side_effect_util",
         "//xla:status_macros",
         "//xla:types",
         "//xla:util",

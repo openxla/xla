@@ -48,8 +48,8 @@ func.func private @add(%arg0: tensor<f32>, %arg1: tensor<f32>) -> tensor<f32> {
 // -----
 
 // Tests that the get-tuple-elements unpacking a multi-result call do not
-// inherit the call-boundary stream annotation,
-// while other frontend attributes are still propagated to them.
+// inherit any of the call's frontend_attributes: neither the call-boundary
+// stream annotation nor the other attributes.
 
 func.func @main(%arg0: tensor<4xf32>) -> (tensor<4xf32>, tensor<4xf32>) {
   %0:2 = call @two_results(%arg0) {mhlo.frontend_attributes = {_xla_stream_annotation = "locality_domain:0", inlineable = "false", _xla_compute_type = "dense"}} : (tensor<4xf32>) -> (tensor<4xf32>, tensor<4xf32>)
@@ -64,12 +64,16 @@ func.func private @two_results(%arg0: tensor<4xf32>) -> (tensor<4xf32>, tensor<4
 // CHECK:      ENTRY
 // CHECK:      %[[CALL:.*]] = (f32[4], f32[4]) call
 // CHECK-SAME: frontend_attributes={_xla_compute_type="dense",_xla_stream_annotation="locality_domain:0",inlineable="false"}
-// CHECK-DAG:  get-tuple-element(%[[CALL]]), index=0, frontend_attributes={_xla_compute_type="dense",inlineable="false"}
-// CHECK-DAG:  get-tuple-element(%[[CALL]]), index=1, frontend_attributes={_xla_compute_type="dense",inlineable="false"}
+// CHECK:      get-tuple-element(%[[CALL]]), index=0
+// CHECK-NOT:  frontend_attributes={
+// CHECK:      get-tuple-element(%[[CALL]]), index=1
+// CHECK-NOT:  frontend_attributes={
+// CHECK:      ROOT
 
 // -----
 
-// Tests that a regular stream annotation is also kept only on the call.
+// Tests that a regular stream annotation is also kept only on the call, along
+// with the call's other frontend_attributes.
 
 func.func @main(%arg0: tensor<4xf32>) -> (tensor<4xf32>, tensor<4xf32>) {
   %0:2 = call @two_results(%arg0) {mhlo.frontend_attributes = {_xla_stream_annotation = "1", inlineable = "false"}} : (tensor<4xf32>) -> (tensor<4xf32>, tensor<4xf32>)
@@ -84,32 +88,11 @@ func.func private @two_results(%arg0: tensor<4xf32>) -> (tensor<4xf32>, tensor<4
 // CHECK:      ENTRY
 // CHECK:      %[[CALL:.*]] = (f32[4], f32[4]) call
 // CHECK-SAME: frontend_attributes={_xla_stream_annotation="1",inlineable="false"}
-// CHECK-DAG:  get-tuple-element(%[[CALL]]), index=0, frontend_attributes={inlineable="false"}
-// CHECK-DAG:  get-tuple-element(%[[CALL]]), index=1, frontend_attributes={inlineable="false"}
-
-// -----
-
-// Tests that the get-tuple-elements unpacking a multi-result call do not
-// inherit the call's frontend_attributes.
-
-func.func @main(%arg0: tensor<f32>) -> tensor<f32> {
-  %0:2 = call @two(%arg0) {mhlo.frontend_attributes = {_xla_stream_annotation = "collective"}} : (tensor<f32>) -> (tensor<f32>, tensor<f32>)
-  %1 = mhlo.add %0#0, %0#1 : tensor<f32>
-  func.return %1 : tensor<f32>
-}
-func.func private @two(%arg0: tensor<f32>) -> (tensor<f32>, tensor<f32>) {
-  %0 = mhlo.negate %arg0 : tensor<f32>
-  return %arg0, %0 : tensor<f32>, tensor<f32>
-}
-
-// CHECK:  ENTRY
-// CHECK:       %[[CALL:.*]] = (f32[], f32[]) call
-// CHECK-SAME:  frontend_attributes={_xla_stream_annotation="collective"}
-// CHECK:       get-tuple-element(%[[CALL]]), index=0
-// CHECK-NOT:   frontend_attributes={
-// CHECK:       get-tuple-element(%[[CALL]]), index=1
-// CHECK-NOT:   frontend_attributes={
-// CHECK:       ROOT
+// CHECK:      get-tuple-element(%[[CALL]]), index=0
+// CHECK-NOT:  frontend_attributes={
+// CHECK:      get-tuple-element(%[[CALL]]), index=1
+// CHECK-NOT:  frontend_attributes={
+// CHECK:      ROOT
 
 // -----
 
