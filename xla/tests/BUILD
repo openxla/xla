@@ -2748,6 +2748,10 @@ xla_test(
         "gpu",
         "cpu",
     ],
+    # AllReduce_ManyConcurrentAllReduces creates many concurrent PjRtClients,
+    # each with thread pools sized to the host core count. Cap them so the test
+    # doesn't exceed vm.max_map_count on many-core hosts.
+    env = {"PJRT_NPROC": "8"},
     deps = [
         ":aot_utils",
         ":hlo_pjrt_test_base",
