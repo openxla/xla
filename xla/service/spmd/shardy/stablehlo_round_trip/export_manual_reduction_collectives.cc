@@ -148,12 +148,20 @@ Value createFullyManualComputation(
 
   Value manualInput = input;
   if (paddedGlobalType != globalType) {
-    mlir::Attribute identityAttr = sdy::getReductionIdentityAttr(
-        globalType.getElementType(), reductionOp, builder);
-    CHECK(identityAttr) << "Unsupported element type for reduction padding";
     auto scalarType = RankedTensorType::get({}, globalType.getElementType());
-    Value paddingVal = stablehlo::ConstantOp::create(
-        builder, loc, mlir::DenseElementsAttr::get(scalarType, identityAttr));
+    Value paddingVal;
+    if (reductionOp == sdy::ReductionOp::SUM &&
+        mlir::isa<mlir::ComplexType>(globalType.getElementType())) {
+      // Avoids depending on sdy::getReductionIdentityAttr for complex SUM
+      // while keeping CHECK(identityAttr) for zeroless floats (e.g. f8E8M0FNU).
+      paddingVal = sdy::createZeroConstant(loc, scalarType, builder);
+    } else {
+      mlir::Attribute identityAttr = sdy::getReductionIdentityAttr(
+          globalType.getElementType(), reductionOp, builder);
+      CHECK(identityAttr) << "Unsupported element type for reduction padding";
+      paddingVal = stablehlo::ConstantOp::create(
+          builder, loc, mlir::DenseElementsAttr::get(scalarType, identityAttr));
+    }
     manualInput = sdy::padHighSideToType(loc, input, paddedGlobalType,
                                          inSharding, builder, paddingVal);
   }
@@ -330,9 +338,9 @@ void convertShardedToUnreduced(sdy::ShardedToUnreducedOp op,
         RankedTensorType outputType =
             outSharding.getLocalTensorType(paddedGlobalType, mesh);
 
-        Value zero = stablehlo::ConstantOp::create(
-            blockBuilder, loc,
-            blockBuilder.getZeroAttr(outputType.getElementType()));
+        Value zero = sdy::createZeroConstant(
+            loc, RankedTensorType::get({}, outputType.getElementType()),
+            blockBuilder);
         Value broadcast = stablehlo::BroadcastOp::create(
             blockBuilder, loc, outputType, zero, outputType.getShape());
 
@@ -418,8 +426,9 @@ void convertReplicatedToUnreduced(sdy::ReplicatedToUnreducedOp op,
         CHECK(pred != nullptr) << "No replicated-to-unreduced axes.";
 
         RankedTensorType type = mlir::cast<RankedTensorType>(arg.getType());
-        Value zeroVal = stablehlo::ConstantOp::create(
-            blockBuilder, loc, blockBuilder.getZeroAttr(type.getElementType()));
+        Value zeroVal = sdy::createZeroConstant(
+            loc, RankedTensorType::get({}, type.getElementType()),
+            blockBuilder);
         Value zeroBroadcast = stablehlo::BroadcastOp::create(
             blockBuilder, loc, type, zeroVal, type.getShape());
         return stablehlo::SelectOp::create(blockBuilder, loc, pred, arg,
