@@ -22,6 +22,9 @@ fusion{
 // CHECK-SAME:    attributes {has_rank, has_signal_buffer, num_scratch_buffers = 1 : i32} {
 // CHECK-DAG:    %[[C1:.*]] = arith.constant 1 : i32
 // CHECK-DAG:    %[[WORLD_SIZE:.*]] = arith.constant 2 : i32
+// CHECK-DAG:    %[[C1_I64:.*]] = arith.constant 1 : i64
+// CHECK-DAG:    %[[SLOT_STRIDE:.*]] = arith.constant 65536 : i64
+// CHECK-DAG:    %[[BUF_STRIDE:.*]] = arith.constant 131072 : i64
 
 // CHECK:        %[[EXTRACT_0:.*]] = xtile.extract
 // CHECK-SAME:     : memref<65536xf32> -> tensor<4096xf32>
@@ -40,20 +43,44 @@ fusion{
 // CHECK:        %[[COUNTER:.*]] = tt.load %[[COUNTER_PTR]] {isVolatile = true}
 // CHECK:        %[[SIGNAL_VALUE:.*]] = arith.addi %[[COUNTER]], %[[C1]]
 
-// CHECK:        %[[REMOTE_MEMREF:.*]] = xtile.select_buffer %[[REMOTE]][%[[RANK_IDX]]] offset %{{.*}} : memref<2xi64> -> memref<65536xf32>
-// CHECK:        xtile.insert %[[EXTRACT_0]] into %[[REMOTE_MEMREF]]
+// Double-buffer offset uses `world_size` aligned slots per half (2 * 65536).
+// CHECK:        %[[SIGNAL_I64:.*]] = arith.extsi %[[SIGNAL_VALUE]] : i32 to i64
+// CHECK:        %[[BUF_IDX:.*]] = arith.andi %[[SIGNAL_I64]], %[[C1_I64]] : i64
+// CHECK:        %[[BUF_OFFSET:.*]] = arith.muli %[[BUF_IDX]], %[[BUF_STRIDE]] : i64
+
+// Push local tile to peer's symmetric buffer (slot = rank), then local rank's
+// symmetric buffer (slot = rank).
+// CHECK:        %[[RANK_I64:.*]] = arith.extui %[[RANK]] : i32 to i64
+// CHECK:        %[[SLOT_OFFSET:.*]] = arith.muli %[[RANK_I64]], %[[SLOT_STRIDE]] : i64
+// CHECK:        %[[WRITE_OFFSET:.*]] = arith.addi %[[BUF_OFFSET]], %[[SLOT_OFFSET]] : i64
+// CHECK:        %[[PEER_SUM:.*]] = arith.addi %[[RANK]], %[[C1]] : i32
+// CHECK:        %[[PEER_RANK:.*]] = arith.remui %[[PEER_SUM]], %[[WORLD_SIZE]] : i32
+// CHECK-DAG:    %[[PEER_IDX:.*]] = arith.index_cast %[[PEER_RANK]] : i32 to index
+// CHECK-DAG:    %[[WRITE_OFFSET_IDX:.*]] = arith.index_cast %[[WRITE_OFFSET]] : i64 to index
+// CHECK:        %[[PEER_MEMREF:.*]] = xtile.select_buffer %[[REMOTE]][%[[PEER_IDX]]] offset %[[WRITE_OFFSET_IDX]] : memref<2xi64> -> memref<65536xf32>
+// CHECK:        xtile.insert %[[EXTRACT_0]] into %[[PEER_MEMREF]]
+// CHECK-SAME:     : tensor<4096xf32> -> memref<65536xf32>
+// CHECK:        %[[LOCAL_MEMREF:.*]] = xtile.select_buffer %[[REMOTE]][%[[RANK_IDX]]] offset %[[WRITE_OFFSET_IDX]] : memref<2xi64> -> memref<65536xf32>
+// CHECK:        xtile.insert %[[EXTRACT_0]] into %[[LOCAL_MEMREF]]
 // CHECK-SAME:     : tensor<4096xf32> -> memref<65536xf32>
 
 // CHECK:        ttg.barrier local
 // CHECK:        triton_xla.block_barrier %[[SIGNAL_PTR]], %[[RANK]], %[[SIGNAL_VALUE]]
 // CHECK-SAME:    <world_size = 2> : (!tt.ptr<i64>, i32, i32)
 
-// CHECK:        xtile.extract
+// Reduce locally by reading both slots from this rank's own symmetric buffer.
+// CHECK:        %[[SLOT0_OFFSET_IDX:.*]] = arith.index_cast %[[BUF_OFFSET]] : i64 to index
+// CHECK:        %[[SLOT0:.*]] = xtile.select_buffer %[[REMOTE]][%[[RANK_IDX]]] offset %[[SLOT0_OFFSET_IDX]] : memref<2xi64> -> memref<65536xf32>
+// CHECK:        %[[TILE0:.*]] = xtile.extract %[[SLOT0]]
 // CHECK-SAME:     : memref<65536xf32> -> tensor<4096xf32>
-// CHECK:        xtile.extract
+// CHECK:        %[[SLOT1_OFFSET:.*]] = arith.addi %[[BUF_OFFSET]], %[[SLOT_STRIDE]] : i64
+// CHECK:        %[[SLOT1_OFFSET_IDX:.*]] = arith.index_cast %[[SLOT1_OFFSET]] : i64 to index
+// CHECK:        %[[SLOT1:.*]] = xtile.select_buffer %[[REMOTE]][%[[RANK_IDX]]] offset %[[SLOT1_OFFSET_IDX]] : memref<2xi64> -> memref<65536xf32>
+// CHECK:        %[[TILE1:.*]] = xtile.extract %[[SLOT1]]
 // CHECK-SAME:     : memref<65536xf32> -> tensor<4096xf32>
+// CHECK:        %[[REDUCED:.*]] = arith.addf %[[TILE0]], %[[TILE1]] : tensor<4096xf32>
 
-// CHECK:        xtile.insert
+// CHECK:        xtile.insert %[[REDUCED]] into %[[ARG1]]
 // CHECK-SAME:     : tensor<4096xf32> -> memref<65536xf32>
 
 

@@ -4497,6 +4497,7 @@ cc_library(
         "//xla/service:collective_ops_utils",
         "//xla/service:device_assignment",
         "//xla/service:gpu_topology",
+        "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:launch_dimensions",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/gpu:all_reduce_kernel",
@@ -4560,6 +4561,7 @@ xla_cc_test(
     srcs = ["all_reduce_build_info_test.cc"],
     deps = [
         ":all_reduce",
+        ":collective_params",
         ":gpu_constants",
         "//xla:shape_util",
         "//xla:util",
@@ -4570,6 +4572,7 @@ xla_cc_test(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:gpu_topology",
         "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/service/gpu:launch_dimensions",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_description_proto_cc",
         "//xla/stream_executor/gpu:all_reduce_kernel",

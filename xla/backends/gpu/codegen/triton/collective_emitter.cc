@@ -85,7 +85,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/translate/mhlo_to_hlo/attribute_exporter.h"
-#include "xla/layout_util.h"
 #include "xla/mlir/utils/type_util.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/device_assignment.h"
@@ -462,6 +461,16 @@ mlir::Value EmitDoubleBufferIndex(mlir::ImplicitLocOpBuilder& b,
   return arith::AndIOp::create(b, signal_value_i64, one);
 }
 
+// Returns the number of elements in a buffer aligned up to
+// `kXlaAllocatedBufferAlignBytes`.
+int64_t AlignedElementsPerBuffer(int64_t num_elements,
+                                 PrimitiveType element_type) {
+  const int64_t element_size = ShapeUtil::ByteSizeOfPrimitiveType(element_type);
+  const int64_t buffer_size = xla::RoundUpTo<uint64_t>(
+      num_elements * element_size, kXlaAllocatedBufferAlignBytes);
+  return buffer_size / element_size;
+}
+
 // Returns the element offset of the active half (`buffer_index` in {0, 1}) of
 // a double buffer that holds `num_elements` elements of `element_type` per
 // half.
@@ -475,10 +484,8 @@ mlir::Value EmitDoubleBufferOffsetFromIndex(mlir::ImplicitLocOpBuilder& b,
   // divide the buffer size by 2 and then divide by the element size to get
   // the number of elements in the buffer. Its important to do this to make
   // sure that start of the buffers are always aligned to 16 bytes.
-  const int64_t element_size = ShapeUtil::ByteSizeOfPrimitiveType(element_type);
-  const int64_t buffer_size = xla::RoundUpTo<uint64_t>(
-      num_elements * element_size, kXlaAllocatedBufferAlignBytes);
-  const int64_t elements_per_buffer = buffer_size / element_size;
+  const int64_t elements_per_buffer =
+      AlignedElementsPerBuffer(num_elements, element_type);
   mlir::Value elements_per_buffer_op = arith::ConstantOp::create(
       b, i64_type, b.getI64IntegerAttr(elements_per_buffer));
   return arith::MulIOp::create(b, buffer_index, elements_per_buffer_op);
@@ -598,7 +605,10 @@ class ReductionEmitter {
 
   ~ReductionEmitter() = default;
 
-  absl::Status Initialize(bool is_two_shot = false) {
+  // Initializes common emitter state. `slots_per_buffer` sets the number of
+  // aligned operand copies stored in each half of the double buffer.
+  absl::Status Initialize(bool is_two_shot = false,
+                          int64_t slots_per_buffer = 1) {
     CHECK(!initialized_);
     // NB: This must be done before any other IR is emitted so that we can bail
     // out in case it fails.
@@ -635,7 +645,10 @@ class ReductionEmitter {
                             xtile::GetPermutationMinorToMajor(
                                 op_ctx.input_extract.getSource().getType()));
       state.buffer_offset = EmitDoubleBufferOffsetFromIndex(
-          builder_, buffer_index, op_ctx.num_elements, op_ctx.element_type);
+          builder_, buffer_index,
+          AlignedElementsPerBuffer(op_ctx.num_elements, op_ctx.element_type) *
+              slots_per_buffer,
+          op_ctx.element_type);
       operand_states_.push_back(std::move(state));
     }
     initialized_ = true;
@@ -645,13 +658,15 @@ class ReductionEmitter {
   // Returns the active remote buffer of `operand_idx` for the given rank as a
   // memref with the same type as the local input buffer.
   mlir::TypedValue<mlir::MemRefType> GetRemoteBufferMemref(
-      int64_t operand_idx, mlir::Value rank_idx) {
+      int64_t operand_idx, mlir::Value rank_idx,
+      mlir::Value buffer_offset = nullptr) {
     CHECK(initialized_);
     ReductionOperandContext& op_ctx = base_ctx_.operands[operand_idx];
-    const OperandState& state = operand_states_[operand_idx];
     return EmitRemoteBufferMemref(
         builder_, op_ctx.input_extract.getSource().getType(),
-        op_ctx.remote_input_buffers, rank_idx, state.buffer_offset);
+        op_ctx.remote_input_buffers, rank_idx,
+        buffer_offset ? buffer_offset
+                      : operand_states_[operand_idx].buffer_offset);
   }
 
   // Loads a tile of `operand_idx` from `remote_memref`.
@@ -768,7 +783,10 @@ class AllReduceEmitter : public ReductionEmitter {
 
   absl::Status Initialize() {
     ABSL_RETURN_IF_ERROR(ReductionEmitter::Initialize(
-        /*is_two_shot=*/ctx_.strategy == AllReduceStrategy::kTwoShot));
+        /*is_two_shot=*/ctx_.strategy == AllReduceStrategy::kTwoShot,
+        /*slots_per_buffer=*/ctx_.strategy == AllReduceStrategy::kOneShot
+            ? ctx_.world_size
+            : 1));
     subtile_shapes_.reserve(ctx_.operands.size());
     for (int64_t i = 0; i < ctx_.operands.size(); ++i) {
       const ReductionOperandContext& operand = ctx_.operands[i];
@@ -981,19 +999,49 @@ class AllReduceEmitter : public ReductionEmitter {
   mlir::LogicalResult EmitOneShot() {
     CHECK(initialized_);
     const int64_t num_operands = ctx_.operands.size();
+    mlir::Value local_rank = ctx_.xtile_entry_fn.getRank();
+    mlir::Value local_rank_i64 =
+        arith::ExtUIOp::create(builder_, builder_.getI64Type(), device_rank_);
+    mlir::Value world_size_i32 = arith::ConstantOp::create(
+        builder_,
+        builder_.getI32IntegerAttr(static_cast<int32_t>(ctx_.world_size)));
 
-    // 1. CopyPhase: Local tiles to the symmetric buffers for the current
-    // device.
+    // 1. Push phase: write local tiles to slot `local_rank` of every rank's
+    // symmetric buffer (remote peers in rotated order, then local rank).
     for (int64_t i = 0; i < num_operands; ++i) {
       ReductionOperandContext& operand = ctx_.operands[i];
-      EmitCopyToSymmetric(i, operand.input_tile,
-                          operand.input_extract.getOffsets(),
-                          operand.input_extract.getStrides(),
-                          operand.input_tile.getType().getShape());
+      mlir::ValueRange offsets = operand.input_extract.getOffsets();
+      llvm::ArrayRef<int64_t> strides = operand.input_extract.getStrides();
+      llvm::ArrayRef<int64_t> shape = operand.input_tile.getType().getShape();
+      const int64_t slot_stride =
+          AlignedElementsPerBuffer(operand.num_elements, operand.element_type);
+      mlir::Value write_offset = arith::AddIOp::create(
+          builder_, operand_states_[i].buffer_offset,
+          arith::MulIOp::create(
+              builder_, local_rank_i64,
+              arith::ConstantOp::create(
+                  builder_, builder_.getI64IntegerAttr(slot_stride))));
+      auto push_to = [&](mlir::Value dst_rank) {
+        xtile::InsertTileOp::create(
+            builder_, operand.input_tile,
+            GetRemoteBufferMemref(i, dst_rank, write_offset), offsets, shape,
+            strides);
+      };
+      for (int32_t step = 1; step < ctx_.world_size; ++step) {
+        mlir::Value sum = arith::AddIOp::create(
+            builder_, device_rank_,
+            arith::ConstantOp::create(builder_,
+                                      builder_.getI32IntegerAttr(step)));
+        push_to(arith::RemUIOp::create(builder_, sum, world_size_i32));
+      }
+      push_to(local_rank);
     }
-    // 2. Synchronization phase: Wait for all ranks to complete the copy.
+
+    // 2. Synchronization phase: wait for all ranks to complete their pushes.
     EmitSync(signal_value_);
-    // 3. Reduce phase: Load tiles from all ranks and reduce them.
+
+    // 3. Reduce phase: load tiles from all slots of this rank's local
+    // symmetric buffer and reduce them in rank order.
     llvm::SmallVector<mlir::Value, 2> results;
     results.reserve(num_operands);
     for (int64_t i = 0; i < num_operands; ++i) {
@@ -1001,13 +1049,25 @@ class AllReduceEmitter : public ReductionEmitter {
       mlir::ValueRange offsets = operand.input_extract.getOffsets();
       llvm::ArrayRef<int64_t> strides = operand.input_extract.getStrides();
       llvm::ArrayRef<int64_t> shape = operand.input_tile.getType().getShape();
-      xtile::TensorValue accumulator =
-          LoadTileForRank(i, 0, offsets, strides, shape);
+      const int64_t slot_stride =
+          AlignedElementsPerBuffer(operand.num_elements, operand.element_type);
+      auto load_slot = [&](int32_t src_rank) -> xtile::TensorValue {
+        mlir::Value offset = operand_states_[i].buffer_offset;
+        if (src_rank > 0) {
+          offset = arith::AddIOp::create(
+              builder_, offset,
+              arith::ConstantOp::create(
+                  builder_, builder_.getI64IntegerAttr(
+                                static_cast<int64_t>(src_rank) * slot_stride)));
+        }
+        return LoadTileFromBuffer(i,
+                                  GetRemoteBufferMemref(i, local_rank, offset),
+                                  offsets, strides, shape);
+      };
+      xtile::TensorValue accumulator = load_slot(0);
       for (int32_t rank = 1; rank < ctx_.world_size; ++rank) {
-        xtile::TensorValue next_tile =
-            LoadTileForRank(i, rank, offsets, strides, shape);
         accumulator =
-            reduce_computation_emitter_(builder_, accumulator, next_tile);
+            reduce_computation_emitter_(builder_, accumulator, load_slot(rank));
       }
       results.push_back(accumulator);
     }
