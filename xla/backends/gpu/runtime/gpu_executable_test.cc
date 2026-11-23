@@ -2217,14 +2217,16 @@ TEST_P(GpuExecutableCacheNcclWindowFlagTest, PropagatesToCollectiveParams) {
 INSTANTIATE_TEST_SUITE_P(CacheEnabled, GpuExecutableCacheNcclWindowFlagTest,
                          ::testing::Bool());
 
-class CollectivesWithNcclVersion : public LoopbackCollectives {
+class CollectivesWithVersions : public LoopbackCollectives {
  public:
-  explicit CollectivesWithNcclVersion(int nccl_version)
-      : nccl_version_(nccl_version) {}
-  int NcclVersion() const override { return nccl_version_; }
+  CollectivesWithVersions(int linked_version, int compiler_version)
+      : linked_version_(linked_version), compiler_version_(compiler_version) {}
+  int LinkedVersion() const override { return linked_version_; }
+  int CompilerVersion() const override { return compiler_version_; }
 
  private:
-  int nccl_version_;
+  int linked_version_;
+  int compiler_version_;
 };
 
 class WindowTypeThunk : public Thunk {
@@ -2259,27 +2261,35 @@ TEST_F(GpuExecutableTest,
   DeviceAssignment device_assn(/*replica_count=*/1, /*computation_count=*/1);
   device_assn(0, 0) = 0;
 
-  DebugOptions window_flag, global_flag, list;
+  DebugOptions window_flag, global_flag, deprecated_list, list;
   window_flag.set_xla_gpu_experimental_nccl_window_symmetric(true);
+  // NOLINTNEXTLINE(clang-diagnostic-deprecated-declarations)
   global_flag.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(true);
-  list.add_xla_enable_nccl_symmetric_buffers_for_collectives()->set_collective(
+  // NOLINTNEXTLINE(clang-diagnostic-deprecated-declarations)
+  deprecated_list.add_xla_enable_nccl_symmetric_buffers_for_collectives()
+      ->set_collective(DebugOptions::ALLGATHER);
+  list.add_xla_gpu_use_symmetric_memory_for_collectives()->set_collective(
       DebugOptions::ALLGATHER);
   struct Case {
     DebugOptions options;
-    int nccl_version;
+    int linked_version;
+    int compiler_version;
     bool symmetric_windows;
   };
-  const Case cases[] = {{DebugOptions(), 23200, false},
-                        {window_flag, 0, true},
-                        {global_flag, 23107, false},
-                        {global_flag, 23200, true},
-                        {list, 0, false},
-                        {list, 23107, false},
-                        {list, 23200, true},
-                        {list, 23203, true}};
+  const Case cases[] = {{DebugOptions(), 23200, 23200, false},
+                        {window_flag, 0, 0, true},
+                        {global_flag, 23107, 23107, false},
+                        {global_flag, 23200, 23200, true},
+                        {deprecated_list, 23200, 23200, true},
+                        {list, 0, 0, false},
+                        {list, 23107, 23107, false},
+                        {list, 23200, 23107, false},
+                        {list, 23107, 23200, false},
+                        {list, 23200, 23200, true},
+                        {list, 23203, 23203, true}};
   for (const Case& c : cases) {
-    SCOPED_TRACE(absl::StrCat(c.options.ShortDebugString(), " with version ",
-                              c.nccl_version));
+    SCOPED_TRACE(absl::StrCat(c.options.ShortDebugString(), " with versions ",
+                              c.linked_version, " and ", c.compiler_version));
     bool symmetric_windows = !c.symmetric_windows;
     ThunkSequence thunks;
     thunks.Emplace<WindowTypeThunk>(&symmetric_windows);
@@ -2293,7 +2303,7 @@ TEST_F(GpuExecutableTest,
     ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> exec,
                          GpuExecutable::Create(std::move(params)));
 
-    CollectivesWithNcclVersion collectives(c.nccl_version);
+    CollectivesWithVersions collectives(c.linked_version, c.compiler_version);
     GpuExecutableRunOptions gpu_opts;
     gpu_opts.set_collectives(&collectives);
     ExecutableRunOptions exec_run_options;

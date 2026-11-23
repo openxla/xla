@@ -1454,7 +1454,6 @@ xla_cc_test(
             "//xla/tsl/platform:env",
             "//xla/tsl/platform:test",
             "//xla/tsl/util:command_line_flags",
-            "//xla/tsl/util/proto:proto_matchers",
             "@com_google_absl//absl/container:flat_hash_map",
             "@com_google_absl//absl/status",
             "@com_google_absl//absl/status:status_matchers",

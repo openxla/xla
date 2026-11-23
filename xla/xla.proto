@@ -566,11 +566,14 @@ message DebugOptions {
   optional ThunkBufferDebugFilter
       xla_gpu_experimental_thunk_buffer_debug_filter = 424;
 
+  // Deprecated, use xla_gpu_use_symmetric_memory_for_collectives.
+  repeated CollectiveFilter xla_enable_nccl_symmetric_buffers_for_collectives =
+      503 [deprecated = true];
+
   // Enable NCCL symmetric buffers for specific collectives and sizes.
   // Example:
-  // --xla_enable_nccl_symmetric_buffers_for_collectives=allreduce:1024:0,alltoall:1024,allgather
-  repeated CollectiveFilter xla_enable_nccl_symmetric_buffers_for_collectives =
-      503;
+  // --xla_gpu_use_symmetric_memory_for_collectives=allreduce:1024:0,alltoall:1024,allgather
+  repeated CollectiveFilter xla_gpu_use_symmetric_memory_for_collectives = 592;
 
   // Preferred autotuner backend. If set and the preferred backend generates
   // valid configs for an instruction, the autotuner will pick a config from
@@ -1118,8 +1121,9 @@ message DebugOptions {
   optional bool xla_gpu_experimental_enable_heuristic_collective_combining =
       366;
 
-  // Enable NCCL symmetric buffers.
-  optional bool xla_gpu_experimental_enable_nccl_symmetric_buffers = 406;
+  // Deprecated, use xla_gpu_use_symmetric_memory_for_collectives with all.
+  optional bool xla_gpu_experimental_enable_nccl_symmetric_buffers = 406
+      [deprecated = true];
 
   // If true, XLA:GPU emits a CollectiveReduceThunk for kCollectiveReduce HLO
   // instructions. This is guarded behind a flag to preserve the 2-week
@@ -2115,7 +2119,7 @@ message DebugOptions {
   // Non-temporal cache hints for MLIR kernels on gfx942 (MI300). Default false.
   optional bool xla_gpu_enable_nontemporal_hints = 591;
 
-  // Next id: 592
+  // Next id: 593
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

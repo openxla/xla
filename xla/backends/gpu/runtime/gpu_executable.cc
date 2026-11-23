@@ -823,9 +823,9 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
   bool nccl_window_symmetric =
       debug_options.xla_gpu_experimental_nccl_window_symmetric();
   bool uses_symmetric_memory =
+      // NOLINTNEXTLINE(clang-diagnostic-deprecated-declarations)
       debug_options.xla_gpu_experimental_enable_nccl_symmetric_buffers() ||
-      !debug_options.xla_enable_nccl_symmetric_buffers_for_collectives()
-           .empty();
+      !SymmetricMemoryFilters(debug_options).empty();
 
   se::Stream* main_stream = run_options->stream();
   se::StreamExecutor* executor = main_stream->parent();

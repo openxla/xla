@@ -54,6 +54,10 @@ bool ParseFlagsFromDebugOptionsFile(absl::string_view filename);
 // Reset the flag values to default debug options ignoring flags.
 void ResetFlagValues();
 
+// Filters of the symmetric memory flag and of the deprecated list field.
+std::vector<DebugOptions::CollectiveFilter> SymmetricMemoryFilters(
+    const DebugOptions& opts);
+
 enum class FlagStatus {
   kStable,        // Can be changed/removed with 6 months deprecation notice.
   kDeprecated,    // Will stop working after 6 months of being deprecated.

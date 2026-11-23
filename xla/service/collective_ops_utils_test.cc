@@ -1558,7 +1558,7 @@ TEST_F(IsNcclSymmetricBuffersEnabledForCollectiveTest,
   const HloInstruction* host_send = entry->GetInstructionWithName("host_send");
 
   DebugOptions opts;
-  auto* filter = opts.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+  auto* filter = opts.add_xla_gpu_use_symmetric_memory_for_collectives();
   filter->set_collective(DebugOptions::COLLECTIVEPERMUTE);
   // The limit is the size of the data, without the context value.
   filter->set_max_size_bytes(4096);

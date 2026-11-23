@@ -2285,6 +2285,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
     std::unique_ptr<HloModule> module, se::StreamExecutor* stream_exec,
     const CompileOptions& options) {
+  ConsolidateSymmetricMemoryOptions(
+      module->mutable_config().mutable_debug_options());
   const DebugOptions debug_opts = module->config().debug_options();
   ABSL_RETURN_IF_ERROR(LoadAutotuneResultsFromFile(debug_opts));
 

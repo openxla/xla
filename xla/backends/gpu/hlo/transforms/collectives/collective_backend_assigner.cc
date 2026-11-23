@@ -94,4 +94,29 @@ absl::StatusOr<bool> CollectiveBackendAssigner::RunImpl(
   return changed;
 }
 
+void ConsolidateSymmetricMemoryOptions(DebugOptions& opts) {
+  auto consolidate_mode = [&](DebugOptions::CollectivesMode mode,
+                              void (DebugOptions::*set_mode)(
+                                  DebugOptions::CollectivesMode),
+                              DebugOptions::CollectiveOpType collective) {
+    // The symmetric mode runs one sided transfers, kept for backward
+    // compatibility of AOT executables. The private mode calls NCCL,
+    // and the added filter puts the collective on symmetric memory.
+    if (mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY) {
+      (opts.*set_mode)(DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
+      opts.add_xla_gpu_use_symmetric_memory_for_collectives()->set_collective(
+          collective);
+    }
+  };
+  consolidate_mode(opts.xla_gpu_all_gather_mode(),
+                   &DebugOptions::set_xla_gpu_all_gather_mode,
+                   DebugOptions::ALLGATHER);
+  consolidate_mode(opts.xla_gpu_collective_permute_mode(),
+                   &DebugOptions::set_xla_gpu_collective_permute_mode,
+                   DebugOptions::COLLECTIVEPERMUTE);
+  consolidate_mode(opts.xla_gpu_ragged_all_to_all_mode(),
+                   &DebugOptions::set_xla_gpu_ragged_all_to_all_mode,
+                   DebugOptions::RAGGEDALLTOALL);
+}
+
 }  // namespace xla::gpu

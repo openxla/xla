@@ -17,13 +17,14 @@ limitations under the License.
 
 #include "xla/debug_options_parsers.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -38,7 +39,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/command_line_flags.h"
-#include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla.pb.h"
 
 namespace xla {
@@ -51,7 +51,6 @@ using ::testing::ElementsAre;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::Not;
-using ::tsl::proto_testing::EqualsProto;
 using ::xla::details::ParseIntRangeInclusive;
 using ::xla::details::ParseRepeatedEnumModifiers;
 using ::xla::details::RepeatedFlagModifier;
@@ -760,40 +759,12 @@ TEST(CollectivesModeParsingTest, CaseInsensitive) {
   SetXlaFlagsEnvVar("--xla_gpu_collective_permute_mode=Symmetric");
   ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
   EXPECT_EQ(debug_options.xla_gpu_collective_permute_mode(),
-            DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
+            DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY);
 
   SetXlaFlagsEnvVar("--xla_gpu_collective_permute_mode=Peer");
   ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
   EXPECT_EQ(debug_options.xla_gpu_collective_permute_mode(),
             DebugOptions::COLLECTIVES_PEER_MEMORY);
-}
-
-TEST(CollectivesModeParsingTest, SymmetricGivesTheOptionsOfTheListEntry) {
-  auto parse = [](const std::string& flag) {
-    DebugOptions debug_options = DefaultDebugOptionsIgnoringFlags();
-    std::vector<tsl::Flag> flag_objects;
-    MakeDebugOptionsFlags(&flag_objects, &debug_options);
-    SetXlaFlagsEnvVar(flag);
-    ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
-    return debug_options;
-  };
-  const std::string mode_flags[] = {
-      "--xla_gpu_all_gather_mode=", "--xla_gpu_collective_permute_mode=",
-      "--xla_gpu_ragged_all_to_all_mode="};
-  const std::string entries[] = {"allgather", "collectivepermute",
-                                 "raggedalltoall"};
-  for (int i = 0; i < 3; ++i) {
-    SCOPED_TRACE(mode_flags[i]);
-    EXPECT_THAT(
-        parse(mode_flags[i] + "symmetric"),
-        EqualsProto(parse("--xla_gpu_use_symmetric_memory_for_collectives=" +
-                          entries[i])));
-    EXPECT_THAT(parse(mode_flags[i] + "private"),
-                EqualsProto(DefaultDebugOptionsIgnoringFlags()));
-    EXPECT_THAT(parse(mode_flags[i] + "peer")
-                    .xla_enable_nccl_symmetric_buffers_for_collectives(),
-                IsEmpty());
-  }
 }
 
 TEST(CollectivesModeParsingTest, DisplaysConfiguredValues) {

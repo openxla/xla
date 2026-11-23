@@ -78,8 +78,9 @@ absl::StatusOr<CollectiveParams> CollectiveParams::Create(
     collectives = GpuCollectives::Resolve(platform_name);
   }
   // NCCL has known issues related to symmetric memory below 2.32.
-  nccl_window_symmetric |=
-      uses_symmetric_memory && collectives->NcclVersion() >= 23200;
+  nccl_window_symmetric |= uses_symmetric_memory &&
+                           collectives->LinkedVersion() >= 23200 &&
+                           collectives->CompilerVersion() >= 23200;
 
   auto* device_id_map = gpu_options && gpu_options->gpu_global_device_ids()
                             ? &*gpu_options->gpu_global_device_ids()

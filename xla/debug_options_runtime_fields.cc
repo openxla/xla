@@ -95,6 +95,7 @@ constexpr int kRuntimeFields[] = {
     DebugOptions::kXlaGpuDeviceExecutionWarnStuckTimeoutFieldNumber,      // 586
     DebugOptions::                                                        //
     kXlaGpuExperimentalCacheNcclWindowInCommunicatorFieldNumber,          // 590
+    DebugOptions::kXlaGpuUseSymmetricMemoryForCollectivesFieldNumber,     // 592
 };
 
 // Hand-written because std::is_sorted and std::adjacent_find are not

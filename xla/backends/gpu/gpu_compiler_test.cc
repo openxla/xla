@@ -4322,7 +4322,7 @@ TEST_F(GpuCompilerTest, SymmetricBuffersDecomposedCollectivePermute) {
       DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE);
   debug_options.set_xla_gpu_collective_permute_decomposer_threshold(0);
   debug_options.set_xla_gpu_enable_latency_hiding_scheduler(true);
-  debug_options.add_xla_enable_nccl_symmetric_buffers_for_collectives()
+  debug_options.add_xla_gpu_use_symmetric_memory_for_collectives()
       ->set_collective(DebugOptions::COLLECTIVEPERMUTE);
 
   std::pair<const HloModule*, std::unique_ptr<OpaqueExecutable>>

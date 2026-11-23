@@ -38,6 +38,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "json/json.h"
 #include "xla/core/collectives/reduction_kind.h"
+#include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -1074,8 +1075,7 @@ std::optional<DebugOptions::CollectiveOpType> GetCollectiveOpType(
 
 NcclSymmetricBuffersSpec::NcclSymmetricBuffersSpec(
     const DebugOptions& debug_options) {
-  for (const auto& filter_proto :
-       debug_options.xla_enable_nccl_symmetric_buffers_for_collectives()) {
+  for (const auto& filter_proto : SymmetricMemoryFilters(debug_options)) {
     Filter filter;
     filter.collective = filter_proto.collective();
     if (filter_proto.has_max_size_bytes()) {
@@ -1154,9 +1154,6 @@ bool IsNcclSymmetricBuffersEnabledForCollective(
     const HloInstruction* instruction, const DebugOptions& opts) {
   if (opts.xla_gpu_experimental_enable_nccl_symmetric_buffers()) {
     return true;
-  }
-  if (opts.xla_enable_nccl_symmetric_buffers_for_collectives().empty()) {
-    return false;
   }
   if (instruction == nullptr) {
     return false;
