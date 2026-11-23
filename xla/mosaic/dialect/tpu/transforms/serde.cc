@@ -46,14 +46,104 @@ constexpr StringRef kVersionAttrName = "stable_mosaic.version";
 using UpgradeRuleType = jaxlib::mosaic::UpgradeRuleType;
 using DowngradeRuleType = jaxlib::mosaic::DowngradeRuleType;
 
+Value create_constant_sublane_mask(Operation* op, ArrayRef<bool> sublane_mask) {
+  OpBuilder builder(op);
+  VectorType mask_ty =
+      VectorType::get(sublane_mask.size(), builder.getI1Type());
+  return arith::ConstantOp::create(
+      builder, op->getLoc(), DenseElementsAttr::get(mask_ty, sublane_mask));
+}
+
+LogicalResult downgrade_sublane_mask(Operation* op, unsigned mask_idx) {
+  Operation* def_op = op->getOperand(mask_idx).getDefiningOp();
+  if (!def_op ||
+      def_op->getName().getStringRef() !=
+          (kMangledDialect + arith::ConstantOp::getOperationName()).str()) {
+    return op->emitError(
+        "Can only downgrade below version 21 when sublane_mask is a constant");
+  }
+  auto val_attr = def_op->getAttrOfType<DenseElementsAttr>("value");
+  if (!val_attr || !val_attr.getElementType().isInteger(1)) {
+    return op->emitError("Invalid constant sublane_mask attribute");
+  }
+  SmallVector<bool> bools(val_attr.getValues<bool>());
+  op->setAttr("sublane_mask", DenseBoolArrayAttr::get(op->getContext(), bools));
+  op->eraseOperand(mask_idx);
+  if (def_op->use_empty()) {
+    def_op->erase();
+  }
+  return success();
+}
+
+LogicalResult load_upgrade(Operation* op, int version, bool&) {
+  if (version < 21) {
+    DenseBoolArrayAttr sublane_mask_attr =
+        op->getAttrOfType<DenseBoolArrayAttr>("sublane_mask");
+    if (!sublane_mask_attr) {
+      return op->emitError("Missing or invalid sublane_mask attribute");
+    }
+    Value mask =
+        create_constant_sublane_mask(op, sublane_mask_attr.asArrayRef());
+    op->removeAttr("sublane_mask");
+    op->insertOperands(op->getNumOperands(), {mask});
+  }
+  return success();
+}
+
+LogicalResult load_downgrade(Operation* op, int version) {
+  if (version < 21) {
+    return downgrade_sublane_mask(op, op->getNumOperands() - 1);
+  }
+  return success();
+}
+
 LogicalResult store_upgrade(Operation* op, int version, bool&) {
   if (version < 11) {
     op->setAttr("add", mlir::BoolAttr::get(op->getContext(), false));
+  }
+  if (version < 21) {
+    DenseBoolArrayAttr sublane_mask_attr =
+        op->getAttrOfType<DenseBoolArrayAttr>("sublane_mask");
+    if (!sublane_mask_attr) {
+      return op->emitError("Missing or invalid sublane_mask attribute");
+    }
+    DenseI32ArrayAttr segment_attr =
+        op->getAttrOfType<DenseI32ArrayAttr>("operandSegmentSizes");
+    if (!segment_attr || segment_attr.size() != 4) {
+      return op->emitError("Missing or invalid operandSegmentSizes attribute");
+    }
+    ArrayRef<int32_t> sizes = segment_attr.asArrayRef();
+    Value mask =
+        create_constant_sublane_mask(op, sublane_mask_attr.asArrayRef());
+    op->removeAttr("sublane_mask");
+    unsigned mask_idx = sizes[0] + sizes[1] + sizes[2];
+    op->insertOperands(mask_idx, {mask});
+    op->setAttr(
+        "operandSegmentSizes",
+        DenseI32ArrayAttr::get(op->getContext(),
+                               {sizes[0], sizes[1], sizes[2], 1, sizes[3]}));
   }
   return success();
 }
 
 LogicalResult store_downgrade(Operation* op, int version) {
+  if (version < 21) {
+    DenseI32ArrayAttr segment_attr =
+        op->getAttrOfType<DenseI32ArrayAttr>("operandSegmentSizes");
+    if (!segment_attr || segment_attr.size() != 5) {
+      return op->emitError("Missing or invalid operandSegmentSizes attribute");
+    }
+    ArrayRef<int32_t> sizes = segment_attr.asArrayRef();
+    if (sizes[3] != 1) {
+      return op->emitError("Unexpected sublane_mask segment size in tpu.store");
+    }
+    if (failed(downgrade_sublane_mask(op, sizes[0] + sizes[1] + sizes[2]))) {
+      return failure();
+    }
+    op->setAttr("operandSegmentSizes",
+                DenseI32ArrayAttr::get(op->getContext(), {sizes[0], sizes[1],
+                                                          sizes[2], sizes[4]}));
+  }
   if (version < 11) {
     auto add_attr = op->getAttrOfType<BoolAttr>("add");
     if (!add_attr) {
@@ -929,6 +1019,7 @@ const llvm::StringMap<UpgradeRuleType>& upgrade_rules() {
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_upgrade},
       {vector::MultiDimReductionOp::getOperationName(),
        vector_multi_dim_reduce_upgrade},
+      {LoadOp::getOperationName(), load_upgrade},
       {StoreOp::getOperationName(), store_upgrade},
       {arith::ConstantOp::getOperationName(), arith_constant_upgrade},
       {ReinterpretCastOp::getOperationName(), reinterpret_cast_upgrade},
@@ -949,6 +1040,7 @@ const llvm::StringMap<DowngradeRuleType>& downgrade_rules() {
       {ReduceIndexOp::getOperationName(), reduce_index_downgrade},
       {IotaOp::getOperationName(), iota_downgrade},
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_downgrade},
+      {LoadOp::getOperationName(), load_downgrade},
       {StoreOp::getOperationName(), store_downgrade},
       {vector::MultiDimReductionOp::getOperationName(),
        vector_multi_dim_reduce_downgrade},
