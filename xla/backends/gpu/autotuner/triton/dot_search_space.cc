@@ -83,6 +83,59 @@ int64_t PreviousPowerOfTwo(int64_t x) {
   return tsl::NextPowerOfTwoS64(x + 1) / 2;
 }
 
+// Estimates the number of shared-memory bits staged per element of a dot
+// operand tile by tracing back to full-sized fusion parameter leaves. For
+// example, `s8` weights converted to `bf16` inside a W8A16 GEMM fusion are
+// loaded into shared memory as 8-bit integers, not as `compute_bitwidth_`.
+//
+// Triton pipelines every parameter load feeding the operand separately (the
+// elementwise prologue runs on registers after the shared-memory load), so
+// each distinct full-sized parameter leaf gets its own per-stage buffer of
+// `tile_elements * leaf_bitwidth` bits. The bitwidths of all leaves are
+// therefore summed rather than maxed, e.g. `multiply(convert(s8 w), bf16 s)`
+// with a full-sized `s` stages 8 + 16 = 24 bits per element.
+//
+// Only producers with the same element count as `operand` (elementwise ops,
+// converts, bitcasts, reshapes, transposes, fusions) are followed, plus the
+// data operand of `pad` and `slice`, whose tiles are taken from a differently
+// sized source. Smaller producers such as broadcasted per-channel scales or
+// pad values contribute at most a row or column per tile and are ignored. If
+// no parameter leaf is found (e.g. through `concatenate` or `dynamic-slice`),
+// this falls back to the operand's own element bitwidth.
+int GetOperandStorageBitwidth(const HloInstruction* operand) {
+  const int64_t target_elements = ShapeUtil::ElementsIn(operand->shape());
+  absl::flat_hash_set<const HloInstruction*> visited;
+  std::vector<const HloInstruction*> worklist = {operand};
+  int parameter_bitwidth_sum = 0;
+  while (!worklist.empty()) {
+    const HloInstruction* instr = worklist.back();
+    worklist.pop_back();
+    if (!visited.insert(instr).second) {
+      continue;
+    }
+    if (instr->opcode() == HloOpcode::kParameter) {
+      parameter_bitwidth_sum +=
+          primitive_util::BitWidth(instr->shape().element_type());
+      continue;
+    }
+    if (instr->opcode() == HloOpcode::kPad ||
+        instr->opcode() == HloOpcode::kSlice) {
+      worklist.push_back(instr->operand(0));
+      continue;
+    }
+    for (const HloInstruction* input : instr->operands()) {
+      if (input->shape().IsArray() &&
+          ShapeUtil::ElementsIn(input->shape()) == target_elements) {
+        worklist.push_back(input);
+      }
+    }
+  }
+  if (parameter_bitwidth_sum > 0) {
+    return parameter_bitwidth_sum;
+  }
+  return primitive_util::BitWidth(operand->shape().element_type());
+}
+
 }  // namespace
 
 TritonDotFusionSearchSpace::TritonDotFusionSearchSpace(
@@ -102,6 +155,8 @@ TritonDotFusionSearchSpace::TritonDotFusionSearchSpace(
                          (contracting_size_ * batch_size_)),
       operand_bitwidth_(  // The bitwitdth of both operands is the same.
           primitive_util::BitWidth(dot->operand(0)->shape().element_type())),
+      lhs_storage_bitwidth_(GetOperandStorageBitwidth(dot->operand(0))),
+      rhs_storage_bitwidth_(GetOperandStorageBitwidth(dot->operand(1))),
       compute_bitwidth_(primitive_util::BitWidth(dot->shape().element_type())),
       operand_type_(dot->operand(0)->shape().element_type()),
       compute_type_(dot->shape().element_type()),
@@ -176,12 +231,13 @@ TritonDotFusionSearchSpace::GenerateAndOptimizeConfigs(
   if (hints.empty()) {
     return gemm_configs;
   }
-  return OptimizeConfigSet(gemm_configs, hints);
+  return OptimizeConfigSet(gemm_configs, hints, autotune_warp_specialization);
 }
 
 std::vector<TritonGemmConfig> TritonDotFusionSearchSpace::OptimizeConfigSet(
     absl::Span<const TritonGemmConfig> configs,
-    absl::Span<const TritonGemmConfig> hints) const {
+    absl::Span<const TritonGemmConfig> hints,
+    bool autotune_warp_specialization) const {
   if (hints.empty() || configs.empty()) {
     return std::vector<TritonGemmConfig>(configs.begin(), configs.end());
   }
@@ -202,6 +258,14 @@ std::vector<TritonGemmConfig> TritonDotFusionSearchSpace::OptimizeConfigSet(
 
     VLOG(10) << "Adding config to hint filter: " << config.ToString();
     filter.insert(config);
+    // Mirror `AddWarpSpecializationParameter`, so hints also keep the
+    // warp-specialized variant of each config when it is being autotuned.
+    if (autotune_warp_specialization &&
+        IsWarpSpecializationCompatible(config)) {
+      TritonGemmConfig ws_config = config;
+      ws_config.is_warp_specialization_allowed = true;
+      filter.insert(ws_config);
+    }
   }
 
   std::vector<TritonGemmConfig> result_configs;
@@ -434,12 +498,24 @@ int TritonDotFusionSearchSpace::GetMinContractingTileSize() const {
 
 int TritonDotFusionSearchSpace::GetContractingSizeLimitToFitSharedMemory(
     OutputTile output_tile) const {
+  // 227 KiB (232448 B) on Hopper and datacenter Blackwell: the opt-in maximum
+  // dynamic shared memory per block, i.e. the 228 KiB per SM minus the 1 KiB
+  // the driver reserves per block.
   const int64_t shared_memory_budget =
       device_description_.shared_memory_per_block_optin();
+  // Operands are staged at their storage bitwidths (see
+  // `GetOperandStorageBitwidth`), not at the accumulator bitwidth, e.g. 8 bits
+  // for `s8` weights even if the dot computes in `bf16` and outputs `f32`.
+  const int64_t bits_per_contracting_elem =
+      static_cast<int64_t>(output_tile.lhs_dim) * lhs_storage_bitwidth_ +
+      static_cast<int64_t>(output_tile.rhs_dim) * rhs_storage_bitwidth_;
   // Need to satisfy:
-  //   (lhs_dim  + rhs_dim) * contracting_dim * bitwidth <= budget_in_bits
-  return 8 * shared_memory_budget / compute_bitwidth_ /
-         (output_tile.lhs_dim + output_tile.rhs_dim);
+  //   (lhs_dim * lhs_bits + rhs_dim * rhs_bits) * contracting_dim
+  //       <= budget_in_bits
+  // where `contracting_dim` is the total K extent buffered across all
+  // pipeline stages (see `GetMaxNumStages`).
+  return 8 * shared_memory_budget /
+         std::max<int64_t>(bits_per_contracting_elem, 1);
 }
 
 int TritonDotFusionSearchSpace::GetMaxContractingTileSize(
@@ -460,6 +536,11 @@ int TritonDotFusionSearchSpace::GetMaxNumStages(
     OutputTile output_tile, int contracting_tile_size) const {
   const int64_t available_stages =
       CeilOfRatio<int64_t>(contracting_size_, contracting_tile_size);
+  // Rounding up is deliberate: Triton's software pipeliner allocates
+  // `num_stages - 1` shared-memory buffers per pipelined load (the def-use
+  // stage distance in LowerLoops.cpp) when feeding tcgen05/mma, so `S` stages
+  // fit as long as `(S - 1) * contracting_tile_size` fits. (wgmma on Hopper
+  // keeps one extra buffer, so this bound can be one stage optimistic there.)
   const int64_t stage_limit = std::max(
       1, CeilOfRatio(GetContractingSizeLimitToFitSharedMemory(output_tile),
                      contracting_tile_size));
@@ -610,6 +691,16 @@ void TritonDotFusionSearchSpace::AddWarpSpecializationParameter(
   new_config.config.is_warp_specialization_allowed = false;
   updated_configs.push_back(new_config);
 
+  if (IsWarpSpecializationCompatible(config.config)) {
+    new_config.config.is_warp_specialization_allowed = true;
+    VLOG(10) << "Adding warp specialization parameter: config = "
+             << new_config.ToString();
+    updated_configs.push_back(new_config);
+  }
+}
+
+bool TritonDotFusionSearchSpace::IsWarpSpecializationCompatible(
+    const TritonGemmConfig& config) const {
   // Warp specialization probably only makes sense if TMA is enabled. Other
   // restrictions are required for compatibility with Triton, including:
   // - num_warps must be a multiple of 4.
@@ -627,14 +718,8 @@ void TritonDotFusionSearchSpace::AddWarpSpecializationParameter(
   // - No concatenate operation in the module due to b/483385760. A
   // CUDA_ERROR_ILLEGAL_ADDRESS error occurs due to a bug in Triton for this
   // category of GEMMs.
-  if (!has_concatenate_ && config.config.is_tma_allowed &&
-      config.config.num_warps <= 16 && config.config.num_warps % 4 == 0 &&
-      config.config.num_stages != 2) {
-    new_config.config.is_warp_specialization_allowed = true;
-    VLOG(10) << "Adding warp specialization parameter: config = "
-             << new_config.ToString();
-    updated_configs.push_back(new_config);
-  }
+  return !has_concatenate_ && config.is_tma_allowed && config.num_warps <= 16 &&
+         config.num_warps % 4 == 0 && config.num_stages != 2;
 }
 
 void TritonDotFusionSearchSpace::EliminateLowOccupancyConfigs(
