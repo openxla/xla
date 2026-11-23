@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -29,6 +30,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
@@ -248,6 +250,96 @@ XLA_FFI_Error* CommunicatorGet(const XLA_FFI_Collectives_Extension* self,
   return ffi::CreateError(CommunicatorGetImpl(self, args));
 }
 
+class FfiCommunicatorResource final : public GpuClique::Resource {
+ public:
+  FfiCommunicatorResource(void* data,
+                          XLA_FFI_Communicator_Resource_Create* create,
+                          XLA_FFI_Communicator_Resource_Retire* retire)
+      : data(data), create(create), retire(retire) {}
+
+  void Retire(bool healthy) override {
+    XLA_FFI_Communicator_Resource_Retire_Args args = {};
+    args.struct_size = XLA_FFI_Communicator_Resource_Retire_Args_STRUCT_SIZE;
+    args.resource = data;
+    args.state = healthy ? XLA_FFI_COMMUNICATOR_RESOURCE_HEALTHY
+                         : XLA_FFI_COMMUNICATOR_RESOURCE_UNHEALTHY;
+    retire(&args);
+  }
+
+  void* const data;
+  XLA_FFI_Communicator_Resource_Create* const create;
+  XLA_FFI_Communicator_Resource_Retire* const retire;
+};
+
+absl::Status CommunicatorResourceGetImpl(
+    const XLA_FFI_Collectives_Extension* self,
+    XLA_FFI_Communicator_Resource_Get_Args* args) {
+  if (self == nullptr || args == nullptr) {
+    return InvalidArgument(
+        "Collectives extension and resource args are required");
+  }
+  ABSL_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_Communicator_Resource_Get_Args",
+      XLA_FFI_Communicator_Resource_Get_Args_STRUCT_SIZE, args->struct_size));
+  args->resource = nullptr;
+  if (args->name == nullptr || args->name_size == 0 ||
+      args->create == nullptr || args->retire == nullptr) {
+    return InvalidArgument("Resource name, create, and retire are required");
+  }
+  GpuCollectivesState* state = AsState(self);
+  if (state == nullptr || state->collective_params == nullptr) {
+    return InvalidArgument("Collective params are not available");
+  }
+  if (state->collective_cliques == nullptr) {
+    return FailedPrecondition(
+        "Communicator resources are only available after cliques are acquired");
+  }
+  ABSL_ASSIGN_OR_RETURN(std::vector<ReplicaGroup> replica_groups,
+                        ToReplicaGroups(args->groups, args->num_groups));
+  ABSL_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetCliqueKey(*state->collective_params, args->group_mode, replica_groups,
+                   args->communication_id));
+  const GlobalDeviceId device_id = state->collective_params->global_device_id;
+  std::optional<RankId> rank = clique_key.rank(device_id);
+  if (!rank.has_value()) {
+    return InvalidArgument("Rank not found for device %v", device_id);
+  }
+  ABSL_ASSIGN_OR_RETURN(
+      GpuClique::Resource * resource,
+      state->collective_cliques->GetOrCreateResource(
+          clique_key, *rank, absl::string_view(args->name, args->name_size),
+          [&]() -> absl::StatusOr<std::unique_ptr<GpuClique::Resource>> {
+            XLA_FFI_Communicator_Resource_Create_Args create_args = {};
+            create_args.struct_size =
+                XLA_FFI_Communicator_Resource_Create_Args_STRUCT_SIZE;
+            create_args.api = XLA_FFI_GetApi();
+            create_args.user_data = args->user_data;
+            ABSL_RETURN_IF_ERROR(ffi::TakeError(args->create(&create_args)));
+            if (create_args.resource == nullptr) {
+              return InvalidArgument(
+                  "Communicator resource factory returned null");
+            }
+            return std::make_unique<FfiCommunicatorResource>(
+                create_args.resource, args->create, args->retire);
+          }));
+  // Both the adapter and this cast live inside XLA, never across the FFI ABI.
+  auto* ffi_resource = dynamic_cast<FfiCommunicatorResource*>(resource);
+  if (ffi_resource == nullptr || ffi_resource->create != args->create ||
+      ffi_resource->retire != args->retire) {
+    return InvalidArgument(
+        "Communicator resource name registered with different callbacks");
+  }
+  args->resource = ffi_resource->data;
+  return absl::OkStatus();
+}
+
+XLA_FFI_Error* CommunicatorResourceGet(
+    const XLA_FFI_Collectives_Extension* self,
+    XLA_FFI_Communicator_Resource_Get_Args* args) {
+  return ffi::CreateError(CommunicatorResourceGetImpl(self, args));
+}
+
 absl::Status WindowRequestImpl(const XLA_FFI_Collectives_Extension* self,
                                XLA_FFI_Window_Request_Args* args) {
   if (self == nullptr) {
@@ -377,6 +469,7 @@ XLA_FFI_Collectives_Extension MakeCollectivesExtension(
   ext.get_communicator = CommunicatorGet;
   ext.request_window = WindowRequest;
   ext.get_window = WindowGet;
+  ext.get_communicator_resource = CommunicatorResourceGet;
   return ext;
 }
 

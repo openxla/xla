@@ -49,7 +49,7 @@ extern "C" {
 // compatibility code may be removed on or after 2027-06-01.
 #define XLA_FFI_Extension_Collectives 129
 #define XLA_FFI_Extension_Collectives_MajorVersion 0
-#define XLA_FFI_Extension_Collectives_MinorVersion 3
+#define XLA_FFI_Extension_Collectives_MinorVersion 4
 
 // Mirrors `xla::CollectiveOpGroupMode`.
 typedef enum XLA_FFI_CollectiveGroupMode {
@@ -185,6 +185,91 @@ typedef XLA_FFI_Error* XLA_FFI_Window_Get(
     const XLA_FFI_Collectives_Extension* self, XLA_FFI_Window_Get_Args* args);
 
 //===----------------------------------------------------------------------===//
+// Communicator-owned resources (since 0.4)
+//===----------------------------------------------------------------------===//
+
+typedef enum XLA_FFI_Communicator_Resource_State {
+  XLA_FFI_COMMUNICATOR_RESOURCE_HEALTHY = 0,
+  XLA_FFI_COMMUNICATOR_RESOURCE_UNHEALTHY = 1,
+} XLA_FFI_Communicator_Resource_State;
+
+typedef struct XLA_FFI_Communicator_Resource_Create_Args {
+  size_t struct_size;
+  XLA_FFI_InternalExtension* extension_start;
+  const XLA_FFI_Api* api;  // Use this API to construct a returned error.
+  void* user_data;
+  void* resource;  // out; must be non-null on success
+} XLA_FFI_Communicator_Resource_Create_Args;
+
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Communicator_Resource_Create_Args,
+                             resource);
+
+// Creates host-side state, without collective operations, throwing exceptions,
+// or reentering this API. Called synchronously, once per successful
+// registration. On failure the callback retains responsibility for any
+// partially created state.
+typedef XLA_FFI_Error* XLA_FFI_Communicator_Resource_Create(
+    XLA_FFI_Communicator_Resource_Create_Args* args);
+
+typedef struct XLA_FFI_Communicator_Resource_Retire_Args {
+  size_t struct_size;
+  XLA_FFI_InternalExtension* extension_start;
+  void* resource;
+  XLA_FFI_Communicator_Resource_State state;
+} XLA_FFI_Communicator_Resource_Retire_Args;
+
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Communicator_Resource_Retire_Args, state);
+
+// Releases the resource before its communicator is destroyed. Called once when
+// the owning group is destroyed, not necessarily at process exit. UNHEALTHY
+// means cancellation or a detected communicator error: callbacks must release
+// host state without issuing further collective operations. HEALTHY is a local
+// health snapshot, not a guarantee that peers will remain available.
+//
+// Callbacks run without the resource-map lock, in resource-name order on each
+// rank; different local ranks may run concurrently. A callback using collective
+// destruction must have matching registrations on all participating ranks and
+// must establish any required ordering across different communicator groups.
+// The callback must finish using the communicator before returning, select its
+// own device context, and must not throw or reenter this API.
+typedef void XLA_FFI_Communicator_Resource_Retire(
+    XLA_FFI_Communicator_Resource_Retire_Args* args);
+
+typedef struct XLA_FFI_Communicator_Resource_Get_Args {
+  size_t struct_size;
+  XLA_FFI_InternalExtension* extension_start;
+
+  XLA_FFI_CollectiveGroupMode group_mode;
+  const XLA_FFI_ReplicaGroup* groups;
+  size_t num_groups;
+  int64_t communication_id;
+
+  // A library-qualified, versioned name, e.g. "example.solver.resources.v1".
+  // The runtime copies the name on insertion. It must identify the same type
+  // and callbacks on every lookup; user_data may differ and is not retained.
+  const char* name;
+  size_t name_size;
+  void* user_data;
+  XLA_FFI_Communicator_Resource_Create* create;
+  XLA_FFI_Communicator_Resource_Retire* retire;
+  void* resource;  // out; borrowed for the current acquired invocation only
+} XLA_FFI_Communicator_Resource_Get_Args;
+
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Communicator_Resource_Get_Args, resource);
+
+// Gets or creates state for this group instance, local rank, and name. Requires
+// an acquired communicator, requested in Prepare as for get_communicator.
+// Only lookup and creation are serialized; the library must synchronize use
+// of the returned state across concurrent handlers or streams.
+// The resource survives invocations but must be looked up again before reuse;
+// neither its pointer nor the extension's per-invocation state may be retained
+// as a substitute for lookup. Asynchronous device use must complete before
+// retirement returns. The callback library must remain loaded until retirement.
+typedef XLA_FFI_Error* XLA_FFI_Communicator_Resource_Get(
+    const XLA_FFI_Collectives_Extension* self,
+    XLA_FFI_Communicator_Resource_Get_Args* args);
+
+//===----------------------------------------------------------------------===//
 // Extension struct
 //===----------------------------------------------------------------------===//
 
@@ -198,9 +283,12 @@ struct XLA_FFI_Collectives_Extension {
 
   XLA_FFI_Window_Request* request_window;
   XLA_FFI_Window_Get* get_window;
+
+  XLA_FFI_Communicator_Resource_Get* get_communicator_resource;
 };
 
-XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Collectives_Extension, get_window);
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Collectives_Extension,
+                             get_communicator_resource);
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -21,6 +21,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -179,6 +180,7 @@ TEST(CollectivesFfiTest, ExtensionVersionCompatibility) {
     bool supported;
   } cases[] = {
       {Collectives::kMajorVersion, 2, true},
+      {Collectives::kMajorVersion, 3, true},
       {Collectives::kMajorVersion, Collectives::kMinorVersion, true},
       {Collectives::kMajorVersion, Collectives::kMinorVersion + 1, true},
       {Collectives::kMajorVersion, 1, false},
@@ -445,6 +447,103 @@ TEST(CollectivesFfiTest, RequestAndGetWindow) {
   EXPECT_EQ(backend.get_window_buffer, &fake_buffer0);
   EXPECT_EQ(got_lookup.window, kFakeWindow);
   EXPECT_EQ(got_lookup.offset, kFakeWindowOffset);
+}
+
+TEST(CollectivesFfiTest, ResourceWrapperForwardsCallbacksAndGroup) {
+  int state = 17;
+  auto create =
+      +[](XLA_FFI_Communicator_Resource_Create_Args* args) -> XLA_FFI_Error* {
+    EXPECT_EQ(args->struct_size,
+              XLA_FFI_Communicator_Resource_Create_Args_STRUCT_SIZE);
+    args->resource = args->user_data;
+    return nullptr;
+  };
+  auto retire = +[](XLA_FFI_Communicator_Resource_Retire_Args*) {};
+  XLA_FFI_Collectives_Extension ext =
+      MakeFakeCollectivesExtension(nullptr, nullptr, nullptr);
+  ext.get_communicator_resource =
+      +[](const XLA_FFI_Collectives_Extension*,
+          XLA_FFI_Communicator_Resource_Get_Args* args) -> XLA_FFI_Error* {
+    EXPECT_EQ(args->struct_size,
+              XLA_FFI_Communicator_Resource_Get_Args_STRUCT_SIZE);
+    EXPECT_EQ(args->extension_start, nullptr);
+    EXPECT_EQ(args->group_mode, XLA_FFI_GROUP_FLATTENED_ID);
+    EXPECT_EQ(args->communication_id, 7);
+    EXPECT_EQ(std::string_view(args->name, args->name_size),
+              "test.resource.v1");
+    EXPECT_EQ(args->num_groups, 1);
+    EXPECT_EQ(args->groups[0].size, 2);
+    EXPECT_EQ(args->groups[0].ids[0], 0);
+    EXPECT_EQ(args->groups[0].ids[1], 1);
+    EXPECT_NE(args->create, nullptr);
+    EXPECT_NE(args->retire, nullptr);
+    EXPECT_EQ(args->resource, nullptr);
+    args->resource = args->user_data;
+    return nullptr;
+  };
+  ErrorOr<void*> resource = Communicator(Api(), &ext)
+                                .GetOrCreateCommunicatorResource(
+                                    GroupMode::kFlattenedId, {{0, 1}}, 7,
+                                    "test.resource.v1", &state, create, retire);
+  ASSERT_FALSE(resource.has_error());
+  EXPECT_EQ(*resource, &state);
+}
+
+TEST(CollectivesFfiTest, ResourceWrapperChecksVersionSizeAndCallback) {
+  const struct {
+    int major;
+    int minor;
+    size_t size;
+  } cases[] = {
+      {0, 2, XLA_FFI_STRUCT_SIZE(XLA_FFI_Collectives_Extension, get_window)},
+      {0, 3, XLA_FFI_STRUCT_SIZE(XLA_FFI_Collectives_Extension, get_window)},
+      {0, 4, XLA_FFI_STRUCT_SIZE(XLA_FFI_Collectives_Extension, get_window)},
+      {1, 4, XLA_FFI_Collectives_Extension_STRUCT_SIZE},
+      {0, 4, XLA_FFI_Collectives_Extension_STRUCT_SIZE},
+  };
+  for (const auto& test_case : cases) {
+    XLA_FFI_Collectives_Extension ext =
+        MakeFakeCollectivesExtension(nullptr, nullptr, nullptr);
+    ext.extension_base.id.major_version = test_case.major;
+    ext.extension_base.id.minor_version = test_case.minor;
+    ext.extension_base.struct_size = test_case.size;
+    ext.get_communicator_resource =
+        +[](const XLA_FFI_Collectives_Extension*,
+            XLA_FFI_Communicator_Resource_Get_Args*) -> XLA_FFI_Error* {
+      ADD_FAILURE() << "Must not call an unsupported resource callback";
+      return nullptr;
+    };
+    // The full-size 0.4 case checks an absent optional callback.
+    if (test_case.major == 0 && test_case.minor == 4 &&
+        test_case.size == XLA_FFI_Collectives_Extension_STRUCT_SIZE) {
+      ext.get_communicator_resource = nullptr;
+    }
+    ErrorOr<void*> resource =
+        Communicator(Api(), &ext)
+            .GetOrCreateCommunicatorResource(GroupMode::kCrossReplica, {}, 0,
+                                             "test.resource.v1", nullptr,
+                                             nullptr, nullptr);
+    ASSERT_TRUE(resource.has_error());
+    EXPECT_EQ(resource.error().errc(), ErrorCode::kUnimplemented);
+  }
+}
+
+TEST(CollectivesFfiTest, ResourceWrapperPropagatesCallbackError) {
+  XLA_FFI_Collectives_Extension ext =
+      MakeFakeCollectivesExtension(nullptr, nullptr, nullptr);
+  ext.get_communicator_resource = +[](const XLA_FFI_Collectives_Extension*,
+                                      XLA_FFI_Communicator_Resource_Get_Args*) {
+    return internal::CreateError(
+        Api(), Error(ErrorCode::kInvalidArgument, "incompatible resource"));
+  };
+  ErrorOr<void*> resource =
+      Communicator(Api(), &ext)
+          .GetOrCreateCommunicatorResource(GroupMode::kCrossReplica, {}, 0,
+                                           "test.resource.v1", nullptr, nullptr,
+                                           nullptr);
+  ASSERT_TRUE(resource.has_error());
+  EXPECT_EQ(resource.error().errc(), ErrorCode::kInvalidArgument);
+  EXPECT_EQ(resource.error().message(), "incompatible resource");
 }
 
 }  // namespace
