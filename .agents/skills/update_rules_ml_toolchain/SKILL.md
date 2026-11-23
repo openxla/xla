@@ -103,7 +103,7 @@ derive both from it so they are guaranteed to describe the same bytes.
   openssl dgst -sha256 -r /tmp/rules_ml_toolchain-<SHA>.tar.gz
   ```
 
-  (`-r` prints the plain `<hex>  <filename>` form; use `sha256sum` only if
+  (`-r` prints the plain `<hex> *<filename>` form; use `sha256sum` only if
   `openssl` isn't available - both must agree on the same archive.)
 
 - **`MODULE.bazel` (`archive_override`, Bazel "integrity" attribute - base64,
