@@ -57,7 +57,7 @@ limitations under the License.
 #include "xla/tsl/util/env_var.h"
 #include "xla/util.h"
 
-using mori::collective::CollectivesFacade;
+using mori::ccl::CollectivesFacade;
 
 namespace xla::gpu {
 
