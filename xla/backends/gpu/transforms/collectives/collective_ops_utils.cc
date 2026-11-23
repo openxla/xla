@@ -33,7 +33,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -49,6 +48,7 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/side_effect_util.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_cumem.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/xla_data.pb.h"
 
@@ -373,7 +373,7 @@ bool IsLsaPossible(const GpuTopology& gpu_topology) {
   // On ROCm, RcclSymmetricMemory::Create also needs RCCL's cuMem allocator,
   // which is only on when NCCL_CUMEM_ENABLE >= 1 (it defaults to 0).
   return IsRocmSymmetricMemorySupported(device_description) &&
-         IsNcclCuMemEnabled();
+         se::IsNcclCuMemEnabled();
 }
 
 bool IsRocmSymmetricMemorySupported(

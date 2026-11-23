@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 
 #include <cstddef>
-#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -35,7 +34,6 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tsl/util/env_var.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -91,19 +89,6 @@ se::DeviceAddressBase GpuCollectives::Slice(se::DeviceAddressBase buff,
                                             size_t count) {
   size_t multiplier = ShapeUtil::ByteSizeOfPrimitiveType(dtype);
   return buff.GetByteSlice(offset * multiplier, count * multiplier);
-}
-
-bool IsNcclCuMemEnabled() {
-  static const int64_t value = [] {
-    int64_t value = 0;
-    // An unparsable value leaves the allocator disabled.
-    return tsl::ReadInt64FromEnvVar("NCCL_CUMEM_ENABLE", /*default_val=*/0,
-                                    &value)
-                   .ok()
-               ? value
-               : 0;
-  }();
-  return value >= 1;
 }
 
 }  // namespace xla::gpu
