@@ -18,7 +18,6 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -372,25 +371,19 @@ static XLA_FFI_Error* XLA_FFI_LogicalDeviceInfo_Get(
         InvalidArgument("XLA FFI invocation context is null")};
   }
 
-  const LogicalDeviceContext* logical = args->ctx->logical_device_context;
-  if (logical == nullptr || logical->device_assn == nullptr) {
+  const DeviceAssignment::Placement* placement = args->ctx->device_placement;
+  if (placement == nullptr) {
     return new XLA_FFI_Error{FailedPrecondition(
         "Logical device information requires an execution device assignment")};
   }
-  const DeviceAssignment& assignment = *logical->device_assn;
-  std::optional<DeviceAssignment::LogicalID> id = logical->logical_device_id;
-  if (!id) {
-    // Setup retains only successful lookups. Recover the diagnostic on demand.
-    auto resolved = assignment.LogicalIdForDevice(logical->global_device_id);
-    if (!resolved.ok()) {
-      return new XLA_FFI_Error{std::move(resolved).status()};
-    }
-    id = *resolved;
+  auto coordinates = placement->GetCoordinates();
+  if (!coordinates.ok()) {
+    return new XLA_FFI_Error{std::move(coordinates).status()};
   }
-  args->replica_id = id->replica_id;
-  args->partition_id = id->computation_id;
-  args->replica_count = assignment.replica_count();
-  args->partition_count = assignment.computation_count();
+  args->replica_id = coordinates->replica_id;
+  args->partition_id = coordinates->partition_id;
+  args->replica_count = coordinates->replica_count;
+  args->partition_count = coordinates->partition_count;
   return nullptr;
 }
 

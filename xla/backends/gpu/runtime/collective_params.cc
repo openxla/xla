@@ -112,12 +112,13 @@ CollectiveParams::CollectiveParams(
     int local_device_count, bool collective_use_minimal_resource,
     bool nccl_window_symmetric,
     std::optional<DeviceAssignment::LogicalID> logical_id)
-    : LogicalDeviceContext(device_assn, global_device_id, logical_id),
-      collectives(collectives),
+    : collectives(collectives),
       executor(executor),
       run_id(run_id),
       async_streams(async_streams.begin(), async_streams.end()),
       local_device_id(local_device_id),
+      global_device_id(global_device_id),
+      device_assn(device_assn),
       global_device_id_map(global_device_id_map),
       clique_id_callback(clique_id_callback),
       incarnations(incarnations),
@@ -125,6 +126,7 @@ CollectiveParams::CollectiveParams(
       p2p_max_nchannels(p2p_max_nchannels),
       local_device_count(local_device_count),
       collective_use_minimal_resource(collective_use_minimal_resource),
-      nccl_window_symmetric(nccl_window_symmetric) {}
+      nccl_window_symmetric(nccl_window_symmetric),
+      device_placement(device_assn, global_device_id, logical_id) {}
 
 }  // namespace xla::gpu

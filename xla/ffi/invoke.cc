@@ -88,7 +88,7 @@ static XLA_FFI_InvokeContext CreateExecutionContext(
       context.custom_options,
       /*encoded_custom_options=*/nullptr,
       context.extension_start,
-      context.logical_device_context};
+      context.device_placement};
 }
 
 template <typename Handler>

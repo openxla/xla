@@ -20,6 +20,7 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
@@ -35,19 +36,41 @@ using absl::StrAppend;
 
 namespace xla {
 
-LogicalDeviceContext::LogicalDeviceContext(
-    const DeviceAssignment* device_assignment, GlobalDeviceId global_device_id,
+static DeviceAssignment::Placement::Coordinates CoordinatesFor(
+    const DeviceAssignment& assignment, DeviceAssignment::LogicalID id) {
+  return {id.replica_id, id.computation_id, assignment.replica_count(),
+          assignment.computation_count()};
+}
+
+DeviceAssignment::Placement::Placement(
+    const DeviceAssignment* assignment, GlobalDeviceId device_id,
     std::optional<DeviceAssignment::LogicalID> logical_id)
-    : device_assn(device_assignment),
-      global_device_id(global_device_id),
-      logical_device_id(logical_id) {
-  if (logical_device_id || device_assignment == nullptr) {
+    : placement_(Unresolved{assignment, device_id}) {
+  if (assignment == nullptr) {
     return;
   }
-  auto id = device_assignment->LogicalIdForDevice(global_device_id);
-  if (id.ok()) {
-    logical_device_id = *id;
+  if (!logical_id) {
+    auto id = assignment->LogicalIdForDevice(device_id);
+    if (!id.ok()) {
+      return;
+    }
+    logical_id = *id;
   }
+  placement_ = CoordinatesFor(*assignment, *logical_id);
+}
+
+absl::StatusOr<DeviceAssignment::Placement::Coordinates>
+DeviceAssignment::Placement::GetCoordinates() const {
+  if (auto* coordinates = std::get_if<Coordinates>(&placement_)) {
+    return *coordinates;
+  }
+  const auto& [assignment, device_id] = std::get<Unresolved>(placement_);
+  if (assignment == nullptr) {
+    return FailedPrecondition(
+        "Logical device information requires an execution device assignment");
+  }
+  ABSL_ASSIGN_OR_RETURN(auto id, assignment->LogicalIdForDevice(device_id));
+  return CoordinatesFor(*assignment, id);
 }
 
 absl::StatusOr<DeviceAssignment::LogicalID>

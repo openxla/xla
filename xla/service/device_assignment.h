@@ -20,6 +20,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
@@ -51,6 +52,31 @@ class DeviceAssignment : public Array2D<int64_t> {
   struct LogicalID {
     int replica_id;
     int computation_id;
+  };
+
+  // The executing device's position within the executable's device assignment.
+  class Placement {
+   public:
+    struct Coordinates {
+      int replica_id;
+      int partition_id;
+      int replica_count;
+      int partition_count;
+    };
+
+    Placement(const DeviceAssignment* assignment, GlobalDeviceId device_id,
+              std::optional<LogicalID> logical_id = std::nullopt);
+
+    absl::StatusOr<Coordinates> GetCoordinates() const;
+
+   private:
+    // Invalid placement must not prevent handlers that do not request it from
+    // running. Retain the lookup inputs to report the diagnostic on demand.
+    struct Unresolved {
+      const DeviceAssignment* assignment;
+      GlobalDeviceId device_id;
+    };
+    std::variant<Coordinates, Unresolved> placement_;
   };
 
   int64_t DeviceId(int replica, int computation) const {
@@ -89,18 +115,6 @@ class DeviceAssignment : public Array2D<int64_t> {
   friend void AbslStringify(Sink& sink, const DeviceAssignment& assignment) {
     return sink.Append(assignment.ToString());
   }
-};
-
-// Placement of the executing device. The assignment is borrowed for the run.
-struct LogicalDeviceContext {
-  LogicalDeviceContext(
-      const DeviceAssignment* device_assignment,
-      GlobalDeviceId global_device_id,
-      std::optional<DeviceAssignment::LogicalID> logical_id = std::nullopt);
-
-  const DeviceAssignment* device_assn;
-  GlobalDeviceId global_device_id;
-  std::optional<DeviceAssignment::LogicalID> logical_device_id;
 };
 
 }  // namespace xla

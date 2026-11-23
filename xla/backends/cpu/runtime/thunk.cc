@@ -135,8 +135,10 @@ Thunk::CollectiveExecuteParams::CollectiveExecuteParams(
     std::optional<DeviceAssignment::LogicalID> logical_id)
     : run_id(run_id),
       local_device_ordinal(local_device_ordinal),
-      logical_device_context(device_assignment, global_device_id, logical_id),
-      collectives(collectives) {}
+      global_device_id(global_device_id),
+      device_assignment(device_assignment),
+      collectives(collectives),
+      device_placement(device_assignment, global_device_id, logical_id) {}
 
 absl::StatusOr<Thunk::CustomCallExecuteParams>
 Thunk::CustomCallExecuteParams::Create(

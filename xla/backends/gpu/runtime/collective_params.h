@@ -38,8 +38,7 @@ namespace xla::gpu {
 
 // Parameters capturing all the details required for collective execution of
 // XLA executables (multiple partitions and replicas).
-// FFI handlers access global_device_id and device_assn directly.
-struct CollectiveParams : LogicalDeviceContext {
+struct CollectiveParams {
   // A mapping from local device ordinals to global device IDs.
   using GlobalDeviceIdMap = GpuExecutableRunOptions::DeviceIdMap;
 
@@ -65,7 +64,9 @@ struct CollectiveParams : LogicalDeviceContext {
   absl::InlinedVector<se::Stream*, 4> async_streams;
 
   LocalDeviceId local_device_id;
+  GlobalDeviceId global_device_id;
 
+  const DeviceAssignment* device_assn;
   const GlobalDeviceIdMap* global_device_id_map;
   const CliqueIdCallback* clique_id_callback;
   const absl::flat_hash_map<GlobalDeviceId, IncarnationId>* incarnations;
@@ -80,6 +81,8 @@ struct CollectiveParams : LogicalDeviceContext {
   // Whether symmetric memory windows are cached on the GPU communicator (see
   // `xla_gpu_experimental_cache_nccl_window_in_communicator`).
   bool cache_nccl_window_in_communicator = false;
+
+  DeviceAssignment::Placement device_placement;
 
  private:
   CollectiveParams(

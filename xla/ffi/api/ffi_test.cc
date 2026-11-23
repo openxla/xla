@@ -575,10 +575,10 @@ TEST(FfiTest, LogicalDeviceInfo) {
   assignment(1, 0) = 3;
   assignment(1, 1) = 6;
   assignment(1, 2) = 7;
-  const LogicalDeviceContext placement{&assignment, GlobalDeviceId(7),
-                                       DeviceAssignment::LogicalID{1, 2}};
+  const DeviceAssignment::Placement placement{
+      &assignment, GlobalDeviceId(7), DeviceAssignment::LogicalID{1, 2}};
   InvokeContext context;
-  context.logical_device_context = &placement;
+  context.device_placement = &placement;
   ASSERT_OK(Invoke(Api(), *handler, call_frame, context));
 }
 
@@ -611,10 +611,10 @@ TEST(FfiTest, LogicalDeviceInfoReportsAssignmentErrors) {
   DeviceAssignment assignment(/*replica_count=*/2, /*computation_count=*/1);
   assignment.Fill(4);
   auto query = [&](int device_id) {
-    const LogicalDeviceContext placement(&assignment,
-                                         GlobalDeviceId(device_id));
+    const DeviceAssignment::Placement placement(&assignment,
+                                                GlobalDeviceId(device_id));
     InvokeContext context;
-    context.logical_device_context = &placement;
+    context.device_placement = &placement;
     return Invoke(Api(), *handler, call_frame, context);
   };
   EXPECT_THAT(query(7), StatusIs(absl::StatusCode::kInvalidArgument,

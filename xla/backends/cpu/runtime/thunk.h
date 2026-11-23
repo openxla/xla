@@ -226,8 +226,11 @@ class Thunk {
     RunId run_id;
 
     int64_t local_device_ordinal;
-    LogicalDeviceContext logical_device_context;
+    GlobalDeviceId global_device_id;
+
+    const DeviceAssignment* device_assignment = nullptr;
     CpuCollectives* collectives = nullptr;
+    DeviceAssignment::Placement device_placement;
 
     CollectiveExecuteParams(
         RunId run_id, int64_t local_device_ordinal,

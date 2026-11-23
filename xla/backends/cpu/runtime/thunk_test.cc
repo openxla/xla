@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/cpu/runtime/thunk.h"
 
-#include <optional>
 #include <utility>
 
 #include <gmock/gmock.h>
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/executable_run_options.h"
 #include "xla/service/cpu/cpu_executable_run_options.h"
@@ -29,8 +30,9 @@ limitations under the License.
 namespace xla::cpu {
 namespace {
 
+using ::absl_testing::IsOkAndHolds;
+using ::absl_testing::StatusIs;
 using ::testing::FieldsAre;
-using ::testing::Optional;
 
 TEST(ThunkTest, OkExecuteEvent) {
   auto event = Thunk::OkExecuteEvent();
@@ -119,22 +121,22 @@ TEST(ThunkTest, LogicalDeviceIdUsesCurrentPlacement) {
                                     DeviceAssignment::LogicalID{1, 1});
   ASSERT_OK_AND_ASSIGN(auto params,
                        Thunk::CollectiveExecuteParams::Create(&run_options));
-  EXPECT_THAT(params.logical_device_context.logical_device_id,
-              Optional(FieldsAre(1, 1)));
+  EXPECT_THAT(params.device_placement.GetCoordinates(),
+              IsOkAndHolds(FieldsAre(1, 1, 2, 2)));
 
   assignment(0, 0) = 7;
   assignment(1, 1) = 4;
   run_options.set_device_assignment(&assignment);
   ASSERT_OK_AND_ASSIGN(params,
                        Thunk::CollectiveExecuteParams::Create(&run_options));
-  EXPECT_THAT(params.logical_device_context.logical_device_id,
-              Optional(FieldsAre(0, 0)));
+  EXPECT_THAT(params.device_placement.GetCoordinates(),
+              IsOkAndHolds(FieldsAre(0, 0, 2, 2)));
 
   run_options.set_device_ordinal(4);
   ASSERT_OK_AND_ASSIGN(params,
                        Thunk::CollectiveExecuteParams::Create(&run_options));
-  EXPECT_THAT(params.logical_device_context.logical_device_id,
-              Optional(FieldsAre(1, 1)));
+  EXPECT_THAT(params.device_placement.GetCoordinates(),
+              IsOkAndHolds(FieldsAre(1, 1, 2, 2)));
 }
 
 TEST(ThunkTest, LogicalDeviceIdErrorsDoNotPreventExecutionSetup) {
@@ -142,14 +144,16 @@ TEST(ThunkTest, LogicalDeviceIdErrorsDoNotPreventExecutionSetup) {
   run_options.set_device_ordinal(7);
   ASSERT_OK_AND_ASSIGN(auto params,
                        Thunk::CollectiveExecuteParams::Create(&run_options));
-  EXPECT_EQ(params.logical_device_context.logical_device_id, std::nullopt);
+  EXPECT_THAT(params.device_placement.GetCoordinates(),
+              StatusIs(absl::StatusCode::kFailedPrecondition));
 
   DeviceAssignment assignment(/*replica_count=*/1, /*computation_count=*/1);
   assignment(0, 0) = 8;
   run_options.set_device_assignment(&assignment);
   ASSERT_OK_AND_ASSIGN(params,
                        Thunk::CollectiveExecuteParams::Create(&run_options));
-  EXPECT_EQ(params.logical_device_context.logical_device_id, std::nullopt);
+  EXPECT_THAT(params.device_placement.GetCoordinates(),
+              StatusIs(absl::StatusCode::kInternal));
 }
 
 }  // namespace

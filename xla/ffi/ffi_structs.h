@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/execution_state.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/service/device_assignment.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
@@ -39,10 +40,6 @@ limitations under the License.
 namespace Eigen {
 struct ThreadPoolDevice;
 }  // namespace Eigen
-
-namespace xla {
-struct LogicalDeviceContext;
-}  // namespace xla
 
 namespace xla::cpu {
 class TargetMachineOptions;
@@ -122,7 +119,7 @@ struct XLA_FFI_InvokeContext {
   std::unique_ptr<const xla::ffi::AttributesStorage> encoded_custom_options;
 
   const XLA_FFI_Extension* extension_start = nullptr;
-  const xla::LogicalDeviceContext* logical_device_context = nullptr;
+  const xla::DeviceAssignment::Placement* device_placement = nullptr;
 };
 
 #endif  // XLA_FFI_FFI_STRUCTS_H_

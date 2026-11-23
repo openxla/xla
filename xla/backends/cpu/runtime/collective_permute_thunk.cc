@@ -39,7 +39,7 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_rendezvous.h"
-#include "xla/service/device_assignment.h"
+#include "xla/service/computation_placer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -75,11 +75,10 @@ CollectivePermuteThunk::Execute(const ExecuteParams& params) {
   Thunk::CollectiveExecuteParams* collective_params = params.collective_params;
   TF_RET_CHECK(collective_params) << "Collectives parameters are not set";
 
-  const LogicalDeviceContext& placement =
-      collective_params->logical_device_context;
   ABSL_ASSIGN_OR_RETURN(
       DeviceAssignment::LogicalID logical_id,
-      placement.device_assn->LogicalIdForDevice(placement.global_device_id));
+      collective_params->device_assignment->LogicalIdForDevice(
+          collective_params->global_device_id));
 
   int32_t logical_device_id = op_params().has_channel_id
                                   ? logical_id.computation_id

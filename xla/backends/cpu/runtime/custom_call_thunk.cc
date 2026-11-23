@@ -360,9 +360,8 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallTypedFFI(
       custom_call_params->ffi_execution_context,
       params.custom_options,
       /*extension_start=*/nullptr,
-      params.collective_params
-          ? &params.collective_params->logical_device_context
-          : nullptr};
+      params.collective_params ? &params.collective_params->device_placement
+                               : nullptr};
 
   ffi::HandlerRegistration& handler = std::get<1>(target_);
   auto future = ffi::InvokeAsync(ffi::GetXlaFfiApi(), handler.bundle.execute,
