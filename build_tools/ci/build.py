@@ -619,10 +619,11 @@ Build(
     options={
         **_DEFAULT_BAZEL_OPTIONS,
         "//xla/tsl:ci_build": True,
-        # Compile ROCm with statically linked libc++, as JAX builds its ROCm
-        # plugin, while rocm_base keeps libstdc++ for builds that run tests.
-        "@rules_ml_toolchain//common:stdlib": "libc++",
-        "@rules_ml_toolchain//common:static_libcxx": "true",
+        # Compile ROCm against libstdc++, while rocm_base uses statically
+        # linked libc++ for builds that run tests, so CI covers both.
+        "@rules_ml_toolchain//common:stdlib": "libstdc++",
+        "@rules_ml_toolchain//common:static_libcxx": "false",
+        "@llvm-project//llvm:use_libunwind_for_eh_frame_registration": "false",
     },
     subcommand="build",
     # Do not enable bazel-diff here: this is a compile-only RBE build with high
