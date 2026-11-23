@@ -204,7 +204,8 @@ class TritonBackendTest : public HloHardwareIndependentTestBase {
   absl::StatusOr<absl::btree_set<int>> GetKpacks(
       absl::string_view hlo, const se::DeviceDescription& device) {
     return GetConfigValues(hlo, device, [](const TritonBackendConfig& c) {
-      return static_cast<int>(c.kpack());
+      // An unset kpack (0) means 1.
+      return std::max(1, static_cast<int>(c.kpack()));
     });
   }
 
@@ -655,7 +656,6 @@ TEST_F(TritonBackendTest, GetOverriddenConfigs) {
   gemm_config.set_is_tma_allowed(true);
   gemm_config.set_is_warp_specialization_allowed(true);
   gemm_config.set_group_size(1);
-  gemm_config.set_kpack(1);
   std::string gemm_config_str;
   ASSERT_TRUE(
       tsl::protobuf::TextFormat::PrintToString(gemm_config, &gemm_config_str));
@@ -690,7 +690,6 @@ TEST_F(TritonBackendTest, GetOverriddenConfigsFromFile) {
   gemm_config->set_is_tma_allowed(true);
   gemm_config->set_is_warp_specialization_allowed(true);
   gemm_config->set_group_size(1);
-  gemm_config->set_kpack(1);
   std::string gemm_configs_str;
   ASSERT_TRUE(tsl::protobuf::TextFormat::PrintToString(gemm_configs,
                                                        &gemm_configs_str));

@@ -1124,7 +1124,10 @@ AutotuneResult::TritonGemmKey TritonGemmConfig::ToProto() const {
   key.set_waves_per_eu(waves_per_eu);
   key.set_group_size(group_size);
   key.set_mfma_size(mfma_size);
-  key.set_kpack(kpack);
+  // Leave the default unset so non-ROCm and kpack-1 keys stay unchanged.
+  if (kpack != 1) {
+    key.set_kpack(kpack);
+  }
   return key;
 }
 

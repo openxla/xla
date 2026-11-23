@@ -541,11 +541,11 @@ TEST(TritonGemmConfigTest, ProtoRoundTripPreservesKpack) {
   EXPECT_EQ(restored, config);
 }
 
-TEST(TritonGemmConfigTest, FromProtoTreatsAbsentKpackAsOne) {
+TEST(TritonGemmConfigTest, DefaultKpackIsNotSetInProto) {
   TritonGemmConfig config(/*block_m=*/32, /*block_n=*/32, /*block_k=*/32,
                           /*num_stages=*/1, /*num_warps=*/4);
   AutotuneResult::TritonGemmKey key = config.ToProto();
-  key.clear_kpack();
+  EXPECT_EQ(key.kpack(), 0);
 
   ASSERT_OK_AND_ASSIGN(TritonGemmConfig restored,
                        TritonGemmConfig::FromProto(key));
