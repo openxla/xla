@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter_config.h"
 #include "xla/backends/cpu/runtime/collective_thunk.h"
 #include "xla/backends/cpu/runtime/kernel_thunk.h"
+#include "xla/backends/cpu/runtime/sort_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -65,10 +66,13 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace cpu {
 namespace {
+
+using ::testing::ElementsAre;
 
 class CpuCompilerInternalsTest : public HloHardwareIndependentTestBase {
  protected:
@@ -675,6 +679,57 @@ TEST_F(CpuCompilerInternalsTest,
   EXPECT_NE(root->opcode(), HloOpcode::kCompare);
   EXPECT_FALSE(ThunkEmitter::MatchSortDirection(Cast<HloSortInstruction>(sort))
                    .has_value());
+}
+
+TEST_F(CpuCompilerInternalsTest,
+       CanonicalizedTotalOrderSortComparatorRewrittenToWeakAndUsesSortThunk) {
+  static constexpr absl::string_view kHlo = R"hlo(
+    compare {
+      lhs = bf16[] parameter(0)
+      rhs = bf16[] parameter(1)
+      lhs_val = s32[] parameter(2)
+      rhs_val = s32[] parameter(3)
+      lhs_ne = pred[] compare(lhs, lhs), direction=NE
+      c_nan = bf16[] constant(nan)
+      c_zero = bf16[] constant(0)
+      lhs_eq_zero = pred[] compare(lhs, c_zero), direction=EQ
+      lhs_nz = bf16[] select(lhs_eq_zero, c_zero, lhs)
+      lhs_canon = bf16[] select(lhs_ne, c_nan, lhs_nz)
+      rhs_ne = pred[] compare(rhs, rhs), direction=NE
+      rhs_eq_zero = pred[] compare(rhs, c_zero), direction=EQ
+      rhs_nz = bf16[] select(rhs_eq_zero, c_zero, rhs)
+      rhs_canon = bf16[] select(rhs_ne, c_nan, rhs_nz)
+      ROOT cmp = pred[] compare(lhs_canon, rhs_canon), direction=LT, order=TOTAL
+    }
+
+    ENTRY main {
+      keys = bf16[16] parameter(0)
+      vals = s32[16] parameter(1)
+      ROOT sorted = (bf16[16], s32[16]) sort(keys, vals), dimensions={0}, is_stable=true, to_apply=compare
+    }
+  )hlo";
+  CpuCompiler compiler;
+  ASSERT_OK_AND_ASSIGN(std::vector<const Thunk*> thunks,
+                       CompileToThunks(compiler, kHlo));
+
+  const HloInstruction* sort =
+      FindInstruction(&executable_->module(), HloOpcode::kSort);
+  ASSERT_NE(sort, nullptr);
+  const HloInstruction* root = sort->to_apply()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kCompare);
+  EXPECT_EQ(root->comparison_order(), ComparisonOrder::kWeak);
+  EXPECT_EQ(root->operand(0)->opcode(), HloOpcode::kParameter);
+  EXPECT_EQ(root->operand(0)->shape().element_type(), BF16);
+
+  std::vector<std::optional<SortThunk::SortDirection>> sort_directions;
+  for (const Thunk* thunk : thunks) {
+    if (thunk->kind() == Thunk::Kind::kSort) {
+      sort_directions.push_back(
+          absl::down_cast<const SortThunk*>(thunk)->direction());
+    }
+  }
+  EXPECT_THAT(sort_directions,
+              ElementsAre(SortThunk::SortDirection::kAscending));
 }
 
 TEST_F(CpuCompilerInternalsTest, CollectiveThunksUseInstructionUniqueIdAsOpId) {
