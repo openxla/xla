@@ -611,6 +611,48 @@ to device (i.e. GPU) memory. Buffers passed to custom call handler have the
 shape of the underlying device buffers, so the custom call can compute kernel
 launch parameters from them.
 
+### Communicator-owned resources
+
+The Collectives FFI extension exposes XLA-owned communicators to external
+libraries. Request a communicator during Prepare, then retrieve its handle
+during an acquired invocation using `ffi::Communicator` from
+`xla/ffi/api/collectives_ffi.h`.
+
+Extension version 0.4 also supports state associated with a communicator's
+lifetime. `GetOrCreateCommunicatorResource` retrieves an opaque resource by
+communicator group, local rank, and library-qualified name:
+
+```c++
+auto resource = comm.GetOrCreateCommunicatorResource(
+    ffi::GroupMode::kFlattenedId, groups, communication_id,
+    "example.solver.resources.v1", &creation_context,
+    CreateResources, RetireResources);
+```
+
+The creation callback initializes host-side state on the first lookup; it must
+not perform collective operations or reenter the resource API. Initialize native
+library resources requiring communication after lookup, while the communicator
+is acquired. Lookup serializes creation, not subsequent use: the library must
+synchronize its state across concurrent handlers or streams. The pointer is
+borrowed for that invocation: look it up again on
+subsequent invocations rather than retaining it. Communicator replacement creates
+a fresh association, even if a native handle address is reused. Names must
+identify the same resource type and callbacks throughout the library's lifetime.
+
+The retirement callback runs before communicator destruction. It receives a
+health snapshot; after cancellation or a detected failure it must release host
+state without further collective calls. Healthy retirement is not a distributed
+barrier or a guarantee that peers remain available. Libraries using collective
+destructors must register matching resources on all ranks, order cleanup
+consistently across groups, select the correct device, and finish outstanding
+device work before returning. Callbacks on different local ranks can execute
+concurrently; each rank retires resources in name order.
+
+Resources may remain cached until process exit; retirement is not a guaranteed
+shutdown hook. The library containing the callbacks must remain loaded while
+resources exist. Older extensions retain their communicator API but report
+`UNIMPLEMENTED` for resource lookup through the C++ wrapper.
+
 ## Passing tuples to custom calls
 
 Consider the following custom call.
