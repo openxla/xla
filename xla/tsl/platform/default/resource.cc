@@ -27,6 +27,6 @@ class ResourceTagger::ResourceTaggerImpl {
 ResourceTagger::ResourceTagger(absl::string_view key, absl::string_view value) {
 }
 
-ResourceTagger::~ResourceTagger() {}
+ResourceTagger::~ResourceTagger() = default;
 
 }  // namespace tsl
