@@ -73,6 +73,10 @@ class OnecclCommunicator : public GpuCommunicator {
 
   Future<> Recv(se::DeviceAddressBase recv_buffer, PrimitiveType dtype,
                 size_t count, RankId peer, const Executor& executor) final;
+  
+  PlatformCommunicatorHandle platform_comm() const final {
+    return PlatformCommunicatorHandle{comm_};
+  }
 
   std::string ToString() const final;
 
