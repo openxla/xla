@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/ragged_all_to_all.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -26,6 +23,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/status_macros.h"
