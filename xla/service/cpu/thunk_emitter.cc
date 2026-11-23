@@ -98,6 +98,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/utils/sort_utils.h"
 #include "xla/layout_util.h"
@@ -150,8 +151,21 @@ absl::StatusOr<std::string> GetFusionFingerprint(
       auto args, emitters::KernelArguments::Create(buffer_assignment,
                                                    buffer_alignment, &fusion));
 
+  // Include caller fusion properties (fusion_kind, backend_config such as
+  // outer_dimension_partitions or block_level_fusion_config,
+  // frontend_attributes, aliasing) in the discriminator so distinct fusion
+  // configurations do not collide in `kernel_spec_cache_`.
+  HloPrintOptions fusion_print_options =
+      HloPrintOptions::ModuleFingerprint()
+          .set_print_subcomputation_mode(
+              HloPrintOptions::PrintSubcomputationMode::kOff)
+          .set_print_backend_config(true)
+          .set_sort_backend_config(true)
+          .set_print_original_value(false);
+
   return emitters::GetComputationFingerprint(
-      fusion.fused_instructions_computation(), args.args());
+      fusion.fused_instructions_computation(), args.args(),
+      absl::StrCat("fusion:", fusion.ToString(fusion_print_options)));
 }
 
 }  // namespace

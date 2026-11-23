@@ -480,6 +480,19 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "computation_fingerprint_test",
+    srcs = ["computation_fingerprint_test.cc"],
+    deps = [
+        ":computation_fingerprint",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "dynamic_update_slice_kernel_emitter",
     srcs = ["dynamic_update_slice_kernel_emitter.cc"],

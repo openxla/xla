@@ -68,14 +68,15 @@ std::string GetComputationFingerprint(
     const HloComputation* fused_computation,
     absl::Span<const emitters::KernelArgument> kernel_arguments,
     absl::string_view discriminator) {
-  // We have to print constants, because otherwise we would accidentally reuse
-  // kernels which have different builtin constants.
-  //
-  // It is not a problem to recursively print sub-computations, because we don't
-  // have them at this point.
-  auto print_options = HloPrintOptions::Fingerprint()
+  // Print all constants (including large arrays) and backend configs because
+  // both are baked into emitted kernels. Exclude original_value because it is
+  // debug only and differs between otherwise identical cloned computations.
+  auto print_options = HloPrintOptions::ModuleFingerprint()
                            .set_print_only_essential_constants(false)
-                           .set_print_operand_shape(false);
+                           .set_print_large_constants(true)
+                           .set_print_backend_config(true)
+                           .set_sort_backend_config(true)
+                           .set_print_original_value(false);
 
   return absl::StrCat(discriminator, "(",
                       GetArgumentFingerprint(kernel_arguments), ")",

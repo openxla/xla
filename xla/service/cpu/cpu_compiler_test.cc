@@ -18,6 +18,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/strings/string_view.h"
 #include "tsl/platform/platform.h"
@@ -25,8 +26,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/monitoring/collected_metrics.h"
 #include "xla/tsl/lib/monitoring/collection_registry.h"
 
@@ -180,6 +184,194 @@ TEST_F(CpuCompilerTest, CompilesElementalOpsWithFusionWrapperPassDisabled) {
       "fusion-wrapper");
 
   EXPECT_TRUE(Run(std::move(module), /*run_hlo_passes=*/true));
+}
+
+TEST_F(CpuCompilerTest,
+       FusionsWithDifferentOuterDimensionPartitionsExecuteCorrectly) {
+  static constexpr absl::string_view kHlo = R"(
+    HloModule m
+
+    fused_a {
+      p0 = f32[4,4] parameter(0)
+      ROOT r = f32[4,4] negate(p0)
+    }
+
+    fused_b {
+      p0 = f32[4,4] parameter(0)
+      ROOT r = f32[4,4] negate(p0)
+    }
+
+    ENTRY main {
+      a = f32[4,4] parameter(0)
+      b = f32[4,4] parameter(1)
+      f0 = f32[4,4] fusion(a), kind=kLoop, calls=fused_a,
+        backend_config={"outer_dimension_partitions":["4"]}
+      f1 = f32[4,4] fusion(b), kind=kLoop, calls=fused_b,
+        backend_config={"outer_dimension_partitions":["2"]}
+      ROOT out = (f32[4,4], f32[4,4]) tuple(f0, f1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  Literal a = LiteralUtil::CreateR2<float>(
+      {{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}, {13, 14, 15, 16}});
+  Literal b = LiteralUtil::CreateR2<float>({{-1, -2, -3, -4},
+                                            {-5, -6, -7, -8},
+                                            {-9, -10, -11, -12},
+                                            {-13, -14, -15, -16}});
+  ASSERT_OK_AND_ASSIGN(Literal result, Execute(std::move(module), {&a, &b},
+                                               /*run_hlo_passes=*/false));
+  std::vector<Literal> elements = result.DecomposeTuple();
+  ASSERT_EQ(elements.size(), 2);
+  EXPECT_TRUE(LiteralTestUtil::Equal(b, elements[0]));
+  EXPECT_TRUE(LiteralTestUtil::Equal(a, elements[1]));
+}
+
+TEST_F(CpuCompilerTest,
+       FusionsWithDifferentBlockLevelFusionConfigExecuteCorrectly) {
+  static constexpr absl::string_view kHlo = R"(
+    HloModule m
+
+    fused_a {
+      p0 = f32[16,16] parameter(0)
+      ROOT r = f32[16,16] negate(p0)
+    }
+
+    fused_b {
+      p0 = f32[16,16] parameter(0)
+      ROOT r = f32[16,16] negate(p0)
+    }
+
+    ENTRY main {
+      a = f32[16,16] parameter(0)
+      b = f32[16,16] parameter(1)
+      f0 = f32[16,16] fusion(a), kind=kLoop, calls=fused_a,
+        backend_config={
+          "fusion_backend_config":{
+            "block_level_fusion_config":{
+              "output_tiles":[{"sizes":["4","4"]}],
+              "num_ctas":"1"
+            }
+          }
+        }
+      f1 = f32[16,16] fusion(b), kind=kLoop, calls=fused_b,
+        backend_config={
+          "fusion_backend_config":{
+            "block_level_fusion_config":{
+              "output_tiles":[{"sizes":["8","8"]}],
+              "num_ctas":"1"
+            }
+          }
+        }
+      ROOT out = (f32[16,16], f32[16,16]) tuple(f0, f1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(
+      Literal a, LiteralUtil::CreateR1<float>(std::vector<float>(256, 2.0f))
+                     .Reshape({16, 16}));
+  ASSERT_OK_AND_ASSIGN(
+      Literal b, LiteralUtil::CreateR1<float>(std::vector<float>(256, -3.0f))
+                     .Reshape({16, 16}));
+  ASSERT_OK_AND_ASSIGN(Literal expected_a, LiteralUtil::CreateR1<float>(
+                                               std::vector<float>(256, -2.0f))
+                                               .Reshape({16, 16}));
+  ASSERT_OK_AND_ASSIGN(Literal expected_b, LiteralUtil::CreateR1<float>(
+                                               std::vector<float>(256, 3.0f))
+                                               .Reshape({16, 16}));
+  ASSERT_OK_AND_ASSIGN(Literal result, Execute(std::move(module), {&a, &b},
+                                               /*run_hlo_passes=*/false));
+  std::vector<Literal> elements = result.DecomposeTuple();
+  ASSERT_EQ(elements.size(), 2);
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected_a, elements[0]));
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected_b, elements[1]));
+}
+
+TEST_F(CpuCompilerTest, FusionsWithDistinctLargeConstantsExecuteCorrectly) {
+  static constexpr absl::string_view kHlo = R"(
+    HloModule m
+
+    fused_a {
+      p0 = f32[16] parameter(0)
+      c0 = f32[16] constant({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})
+      ROOT r = f32[16] add(p0, c0)
+    }
+
+    fused_b {
+      p0 = f32[16] parameter(0)
+      c0 = f32[16] constant({101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116})
+      ROOT r = f32[16] add(p0, c0)
+    }
+
+    ENTRY main {
+      a = f32[16] parameter(0)
+      b = f32[16] parameter(1)
+      f0 = f32[16] fusion(a), kind=kLoop, calls=fused_a
+      f1 = f32[16] fusion(b), kind=kLoop, calls=fused_b
+      ROOT out = (f32[16], f32[16]) tuple(f0, f1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  Literal zeros = LiteralUtil::CreateR1<float>(std::vector<float>(16, 0.0f));
+  ASSERT_OK_AND_ASSIGN(
+      Literal result,
+      Execute(std::move(module), {&zeros, &zeros}, /*run_hlo_passes=*/false));
+  std::vector<Literal> elements = result.DecomposeTuple();
+  ASSERT_EQ(elements.size(), 2);
+  LiteralTestUtil::ExpectR1Equal<float>(
+      {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}, elements[0]);
+  LiteralTestUtil::ExpectR1Equal<float>(
+      {101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114,
+       115, 116},
+      elements[1]);
+}
+
+TEST_F(CpuCompilerTest, FusionsWithMatchingConfigsExecuteCorrectly) {
+  static constexpr absl::string_view kHlo = R"(
+    HloModule m
+
+    fused_a {
+      p0 = f32[16,16] parameter(0)
+      ROOT r = f32[16,16] negate(p0)
+    }
+
+    fused_b {
+      p0 = f32[16,16] parameter(0)
+      ROOT r = f32[16,16] negate(p0)
+    }
+
+    ENTRY main {
+      a = f32[16,16] parameter(0)
+      b = f32[16,16] parameter(1)
+      f0 = f32[16,16] fusion(a), kind=kLoop, calls=fused_a,
+        backend_config={"outer_dimension_partitions":["4"]}
+      f1 = f32[16,16] fusion(b), kind=kLoop, calls=fused_b,
+        backend_config={"outer_dimension_partitions":["4"]}
+      ROOT out = (f32[16,16], f32[16,16]) tuple(f0, f1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(
+      Literal a, LiteralUtil::CreateR1<float>(std::vector<float>(256, 4.0f))
+                     .Reshape({16, 16}));
+  ASSERT_OK_AND_ASSIGN(
+      Literal b, LiteralUtil::CreateR1<float>(std::vector<float>(256, -5.0f))
+                     .Reshape({16, 16}));
+  ASSERT_OK_AND_ASSIGN(Literal expected_a, LiteralUtil::CreateR1<float>(
+                                               std::vector<float>(256, -4.0f))
+                                               .Reshape({16, 16}));
+  ASSERT_OK_AND_ASSIGN(Literal expected_b, LiteralUtil::CreateR1<float>(
+                                               std::vector<float>(256, 5.0f))
+                                               .Reshape({16, 16}));
+  ASSERT_OK_AND_ASSIGN(Literal result, Execute(std::move(module), {&a, &b},
+                                               /*run_hlo_passes=*/false));
+  std::vector<Literal> elements = result.DecomposeTuple();
+  ASSERT_EQ(elements.size(), 2);
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected_a, elements[0]));
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected_b, elements[1]));
 }
 
 }  // namespace
