@@ -180,7 +180,6 @@ cc_library(
     deps = [
         ":kernel_api_ir_builder",
         ":object_buffer_identifier",
-        ":polynomial_approximations",
         "//xla:util",
         "//xla:xla_proto_cc",
         "//xla/backends/cpu:target_machine_options",
@@ -431,25 +430,6 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@llvm-project//llvm:ExecutionEngine",
-    ],
-)
-
-cc_library(
-    name = "polynomial_approximations",
-    srcs = ["polynomial_approximations.cc"],
-    hdrs = ["polynomial_approximations.h"],
-    deps = [
-        ":vector_ir_builder",
-        "//xla:xla_data_proto_cc",
-        "//xla/codegen/intrinsic:string_interner",
-        "//xla/codegen/intrinsic:vec_name_mangler",
-        "//xla/service/llvm_ir:llvm_util",
-        "//xla/tsl/platform:logging",
-        "@com_google_absl//absl/strings:string_view",
-        "@llvm-project//llvm:Analysis",
-        "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//llvm:TransformUtils",
     ],
 )
 

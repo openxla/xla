@@ -123,8 +123,8 @@ ENTRY broadcast_subtract_exp {
 )";
 
 HloTestSpec HloTestCases[] = {
-    // TODO(b/495870398): The compiler should be generating <4 x float> (or <8 x
-    // float>) here instead of <1 x float>
+    // TODO(b/495870398): The loop should be vectorized here. Each element goes
+    // through the scalar exp kernel instead, in one lane of a <4 x float>.
     HloTestSpec{
         /*name=*/"BroadcastSubtractExp",
         /*hlo_text=*/kBroadcastSubtractExpHlo,
@@ -133,7 +133,8 @@ HloTestSpec HloTestCases[] = {
         /*features=*/"+neon,+sve2",
         // Check if it still vectorizes
         /*check_lines=*/R"(
-CHECK: fmul contract <1 x float>
+CHECK: insertelement <4 x float> <float poison, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00>
+CHECK: fmul contract <4 x float> {{.*}}splat (float f0x3FB8AA3B)
 )",
     },
     HloTestSpec{
@@ -147,8 +148,8 @@ CHECK: fmul contract <1 x float>
 CHECK: fmul contract <8 x float>
 )",
     },
-    // TODO(b/495870398): The compiler should be generating <4 x float> (or <8 x
-    // float>) here instead of <1 x float>
+    // TODO(b/495870398): The loop should be vectorized here. Each element goes
+    // through the scalar exp kernel instead, in one lane of a <4 x float>.
     HloTestSpec{
         /*name=*/"SoftmaxFusion",
         /*hlo_text=*/kSoftmaxFusionHlo,
@@ -156,7 +157,8 @@ CHECK: fmul contract <8 x float>
         /*triple=*/"aarch64-unknown-linux-gnu",
         /*features=*/"+neon,+sve2",
         /*check_lines=*/R"(
-CHECK: fmul contract <1 x float>
+CHECK: insertelement <4 x float> <float poison, float 0.000000e+00, float 0.000000e+00, float 0.000000e+00>
+CHECK: fmul contract <4 x float> {{.*}}splat (float f0x3FB8AA3B)
 )",
     },
 };

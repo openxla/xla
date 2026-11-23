@@ -228,54 +228,18 @@ xla_cc_test(
     ],
 )
 
-cc_library(
-    name = "expm1",
-    srcs = ["expm1.cc"],
-    hdrs = ["expm1.h"],
-    copts = [
-        "-Wno-psabi",
-    ],
-    deps = [
-        ":vector_ops",
-    ],
-)
-
-cc_ir_header(
-    name = "expm1_ll",
-    src = "expm1.cc",
-    deps = [
-        ":cpp_context_provider",
-        ":expm1",
-        ":vector_ops",
-    ],
-)
-
-xla_cc_test(
-    name = "expm1_test",
-    srcs = ["expm1_test.cc"],
-    copts = [
-        "-Wno-psabi",
-    ],
-    deps = [
-        ":_cpp_gen_intrinsics",
-        ":expm1",
-        ":expm1_ll",
-        ":vector_ops",
-        "//xla:types",
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/strings",
-        "@com_google_googletest//:gtest_main",
-        "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:Support",
-    ],
-)
-
 xla_cc_test(
     name = "ynnpack_unary_test",
     srcs = ["ynnpack_unary_test.cc"],
+    copts = ["-Wno-psabi"],
     deps = [
         ":_cpp_gen_intrinsics",
+        ":vector_ops",
+        ":ynnpack_unary_lib",
         ":ynnpack_unary_ll",
+        "//xla:types",
+        "//xla/codegen/intrinsic:test_matchers",
+        "@com_google_absl//absl/base",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
@@ -383,7 +347,6 @@ cc_library(
     deps = [
         ":atan_ll",
         ":custom_cpp_intrinsics_ll",
-        ":expm1_ll",
         ":trig_ll",
         ":ynnpack_unary_ll",
         "//xla/codegen/intrinsic",

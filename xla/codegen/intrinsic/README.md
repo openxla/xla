@@ -13,9 +13,6 @@ Comparison with existing math libraries in XLA:
 - libc, libm external function calls
   - Function call overhead
   - LLVM can't optimize across function boundaries
-- cpu/codegen/polynomial_approximations
-  - Rewrites inline
-  - No optimizations after
 - MLIR PolynomialApproximations.cpp
   - Uses MLIR RewritePatterns to implement the pass
   - Rewrites inline
