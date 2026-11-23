@@ -33,7 +33,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -49,7 +48,6 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/side_effect_util.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/semantic_version.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -229,15 +227,6 @@ bool IsLocalReplicaGroup(int64_t num_devices_per_host,
   });
 }
 
-// Minimum ROCm runtime required for LSA (load/store accessible) symmetric
-// memory: the symmetric-memory window APIs (ncclCommWindowRegister and friends)
-// first ship with the RCCL of ROCm 10.0.
-//
-// On ROCm, DeviceDescription::runtime_version() reports the HIP runtime version
-// (populated from hipRuntimeGetVersion()), not the ROCm release version. ROCm
-// 10.0 ships HIP runtime 7.15, so that is what we compare against.
-constexpr se::SemanticVersion kMinRocmSymmetricMemoryHipVersion{7, 15, 0};
-
 // Returns true if xla_gpu_unsupported_use_cross_host_one_shot_kernel is enabled
 // for the given collective op type.
 bool IsCrossHostOneShotKernelEnabled(
@@ -361,26 +350,9 @@ bool IsSpmdGenerated(const HloInstruction& instr) {
 }
 
 bool IsLsaPossible(const GpuTopology& gpu_topology) {
-  if (!gpu_topology.has_gpu_target_config()) {
-    return false;
-  }
-  const se::DeviceDescription& device_description =
-      gpu_topology.gpu_target_config().device_description;
-  // CUDA devices support load-store accessible (LSA) symmetric memory.
-  if (device_description.gpu_compute_capability().IsCuda()) {
-    return true;
-  }
-  // On ROCm, RcclSymmetricMemory::Create also needs RCCL's cuMem allocator,
-  // which is only on when NCCL_CUMEM_ENABLE >= 1 (it defaults to 0).
-  return IsRocmSymmetricMemorySupported(device_description) &&
-         IsNcclCuMemEnabled();
-}
-
-bool IsRocmSymmetricMemorySupported(
-    const se::DeviceDescription& device_description) {
-  return device_description.gpu_compute_capability().IsRocm() &&
-         device_description.runtime_version() >=
-             kMinRocmSymmetricMemoryHipVersion;
+  return gpu_topology.has_gpu_target_config() &&
+         gpu_topology.gpu_target_config()
+             .device_description.symmetric_memory_supported();
 }
 
 int64_t GetCollectiveKernelDomainSize(

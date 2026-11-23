@@ -16,6 +16,7 @@
 # proto-message: stream_executor.GpuTargetConfigProto
 
 gpu_device_info {
+  symmetric_memory_supported: true
   cuda_compute_capability {
     major: 9
     feature_extension: ACCELERATED_FEATURES

@@ -198,10 +198,6 @@ class GpuCollectives : public Collectives {
   CreateCommunicator() = 0;
 };
 
-// Returns true if NCCL_CUMEM_ENABLE enables NCCL/RCCL's cuMem allocator, and
-// with it symmetric memory support. Read once, on the first call.
-bool IsNcclCuMemEnabled();
-
 }  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_COLLECTIVES_GPU_COLLECTIVES_H_

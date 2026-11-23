@@ -1929,6 +1929,7 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
   }
   desc.set_runtime_version(
       ParseCudaVersion(runtime_version).value_or(SemanticVersion{0, 0, 0}));
+  desc.set_symmetric_memory_supported(true);
   desc.set_compile_time_toolkit_version(
       ParseCudaVersion(CUDA_VERSION).value_or(SemanticVersion{0, 0, 0}));
   desc.set_cub_version(SemanticVersion{CUB_MAJOR_VERSION, CUB_MINOR_VERSION,
