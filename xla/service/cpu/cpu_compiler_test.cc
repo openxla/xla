@@ -33,7 +33,6 @@ limitations under the License.
 #include "xla/tsl/lib/monitoring/collected_metrics.h"
 #include "xla/tsl/lib/monitoring/collection_registry.h"
 #include "tsl/platform/platform.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace cpu {

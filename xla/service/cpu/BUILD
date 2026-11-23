@@ -461,7 +461,6 @@ xla_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:test",
     ],
 )
 
