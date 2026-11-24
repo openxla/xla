@@ -3887,7 +3887,6 @@ xla_test(
         "//xla/hlo/testlib:test",
         "//xla/hlo/transforms/expanders:batchnorm_expander",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:status_matchers",
     ],
 )
