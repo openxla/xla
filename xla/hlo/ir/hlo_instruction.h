@@ -18,6 +18,8 @@ limitations under the License.
 // in a platform-aware way by traversing the HLO DAG and emitting a lowered
 // form; e.g. see DfsHloVisitor.
 
+// Presubmit checker marker: 20261124_060002.
+
 #ifndef XLA_HLO_IR_HLO_INSTRUCTION_H_
 #define XLA_HLO_IR_HLO_INSTRUCTION_H_
 
