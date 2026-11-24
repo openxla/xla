@@ -13,8 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <complex>
+#include <cstdint>
+#include <memory>
+#include <optional>
 #include <tuple>
 #include <vector>
 
@@ -24,6 +29,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "third_party/gloop/util/task/status_matchers.h"
 #include "xla/error_spec.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_address.h"
@@ -34,6 +40,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 

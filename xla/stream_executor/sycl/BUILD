@@ -791,7 +791,9 @@ xla_test(
         "oneapi-only",
     ],
     deps = [
+        "//third_party/gloop/util/task:status_matchers",
         "//xla:error_spec",
+        "//xla:xla_data_proto_cc",
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:platform",
@@ -808,6 +810,7 @@ xla_test(
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
