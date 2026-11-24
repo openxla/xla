@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/executable.h"
@@ -262,61 +263,83 @@ static absl::Status InitializeBuffersIfRequiredByOpcode(
   }
 
   // Handle kFusion with kRaggedDot (kRaggedContracting autotuning).
-  // The kernel reads GS via function argument 2 (= ENTRY parameter(2) =
-  // input buffer 2). RunHloPasses replaces the FUSION's operand(2) with a
-  // balanced constant in the ENTRY computation, but the KERNEL still reads
-  // from arg[2]. Initialize buffer 2 with balanced GS values so the kernel
+  // The kernel reads GS via the function argument that the fusion's
+  // group_sizes operand maps to (= that ENTRY parameter = that input buffer).
+  // RunHloPasses replaces the FUSION's group_sizes operand with a balanced
+  // constant in the ENTRY computation, but the KERNEL still reads from its
+  // argument. Initialize that buffer with balanced GS values so the kernel
   // computes correct start_m and m_loop_count instead of using random data.
   if (instr->opcode() == HloOpcode::kFusion && instr->operand_count() >= 3) {
     const HloComputation* fc = instr->fused_instructions_computation();
-    bool found_ragged_dot = false;
-    for (const HloInstruction* fi : fc->instructions()) {
-      if (fi->opcode() != HloOpcode::kRaggedDot) {
-        continue;
-      }
-      const auto* ragged_dot = Cast<HloRaggedDotInstruction>(fi);
-      // Verify that the ragged dot's group_sizes operand is parameter(2),
-      // so the mapping inner-operand(2) → outer-fusion-operand(2) holds.
+    const HloInstruction* ragged_dot_instr =
+        hlo_query::GetFirstInstructionWithOpcode(*fc, HloOpcode::kRaggedDot);
+    if (ragged_dot_instr != nullptr) {
+      const auto* ragged_dot = Cast<HloRaggedDotInstruction>(ragged_dot_instr);
+      // The buffer to fill is the fusion operand feeding group_sizes. If
+      // group_sizes is materialized inside the fusion instead, there is no
+      // input buffer to initialize and the kernel reads well-defined values
+      // anyway, so leave the buffers alone.
       const HloInstruction* gs_param = ragged_dot->operand(2);
-      CHECK(gs_param->opcode() == HloOpcode::kParameter &&
-            gs_param->parameter_number() == 2)
-          << "Expected group_sizes to be parameter(2), got "
-          << gs_param->ToString();
+      if (gs_param->opcode() != HloOpcode::kParameter) {
+        return absl::OkStatus();
+      }
+      const int64_t gs_index = gs_param->parameter_number();
       const auto& ragged_dims = ragged_dot->ragged_dot_dimension_numbers();
       const int64_t lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
-      const int64_t M_total =
+      const int64_t ragged_dim_size =
           ragged_dot->operand(0)->shape().dimensions(lhs_ragged_dim);
-      const Shape& gs_shape = instr->operand(2)->shape();
-      const int64_t G = gs_shape.dimensions(0);
-      if (G == 0) {
-        break;
+      // group_sizes is [G], or [batch..., G] for a batched
+      // kRaggedNonContracting dot, in which case the same balanced pattern
+      // repeats once per batch element.
+      const Shape& gs_shape = instr->operand(gs_index)->shape();
+      const int64_t groups_per_batch = gs_shape.dimensions().back();
+      if (groups_per_batch == 0) {
+        return absl::OkStatus();
       }
-      const int64_t q = M_total / G;
-      const int64_t r = M_total % G;
-      if (gs_shape.element_type() == S32) {
-        std::vector<int32_t> gs_vals(G);
-        for (int64_t i = 0; i < G; ++i) {
-          gs_vals[i] = static_cast<int32_t>(i < r ? q + 1 : q);
+      const int64_t num_elements = ShapeUtil::ElementsIn(gs_shape);
+      const int64_t base_group_size = ragged_dim_size / groups_per_batch;
+      const int64_t remainder_rows = ragged_dim_size % groups_per_batch;
+
+      // Hands the first remainder_rows groups of each batch element one extra
+      // row, so that the group sizes sum to exactly ragged_dim_size.
+      auto initialize_gs_buffer = [&](auto type_sample) -> absl::Status {
+        using T = decltype(type_sample);
+        std::vector<T> gs_vals(num_elements);
+        for (int64_t i = 0; i < num_elements; ++i) {
+          gs_vals[i] = static_cast<T>((i % groups_per_batch) < remainder_rows
+                                          ? base_group_size + 1
+                                          : base_group_size);
         }
-        ABSL_RETURN_IF_ERROR(InitializeInputBuffer(
-            gpu_buffers, stream,
-            /*buffer_index=*/2, gs_vals.data(), G * sizeof(int32_t)));
-      } else {
-        std::vector<int64_t> gs_vals(G);
-        for (int64_t i = 0; i < G; ++i) {
-          gs_vals[i] = i < r ? q + 1 : q;
-        }
-        ABSL_RETURN_IF_ERROR(InitializeInputBuffer(
-            gpu_buffers, stream,
-            /*buffer_index=*/2, gs_vals.data(), G * sizeof(int64_t)));
+        return InitializeInputBuffer(gpu_buffers, stream, gs_index,
+                                     gs_vals.data(), num_elements * sizeof(T));
+      };
+
+      // The emitter sign-extends group_sizes from any of these index types
+      // (see IsTritonSupportedRaggedDot), so the buffer must be filled with
+      // elements of exactly that width.
+      switch (gs_shape.element_type()) {
+        case S8:
+          ABSL_RETURN_IF_ERROR(initialize_gs_buffer(int8_t{}));
+          break;
+        case S16:
+          ABSL_RETURN_IF_ERROR(initialize_gs_buffer(int16_t{}));
+          break;
+        case S32:
+          ABSL_RETURN_IF_ERROR(initialize_gs_buffer(int32_t{}));
+          break;
+        case S64:
+          ABSL_RETURN_IF_ERROR(initialize_gs_buffer(int64_t{}));
+          break;
+        default:
+          return absl::InvalidArgumentError(absl::StrCat(
+              "Unexpected group_sizes type for ragged-dot autotuning: ",
+              gs_shape.ToString()));
       }
-      LOG(INFO) << "GpuProfiler: initialized GS input buffer (arg[2]) with"
-                << " balanced values [q=" << q << ",r=" << r << ",G=" << G
-                << ",M_total=" << M_total << "]";
-      found_ragged_dot = true;
-      break;
-    }
-    if (found_ragged_dot) {
+      VLOG(3) << "GpuProfiler: initialized GS input buffer (arg[" << gs_index
+              << "]) with balanced values [base_group_size=" << base_group_size
+              << ",remainder_rows=" << remainder_rows
+              << ",groups_per_batch=" << groups_per_batch
+              << ",ragged_dim_size=" << ragged_dim_size << "]";
       return absl::OkStatus();
     }
   }

@@ -203,8 +203,8 @@ const char kRaggedDotContractingHlo[] = R"hlo(
       backend_config={"fusion_backend_config": {kind: "__triton"}}
   })hlo";
 
-// kRaggedBatch: the ragged dim is the (leading) LHS batch dim, so the size
-// the search space prunes block_m against is the batch size 4.
+// kRaggedBatch: the ragged dim is the (leading) LHS batch dim, so M is a
+// separate dim: B=4, M=128, K=512, N=256.
 const char kRaggedDotBatchHlo[] = R"hlo(
   fusion1 {
     p0 = bf16[4,128,512] parameter(0)
@@ -450,11 +450,43 @@ TEST_F(TritonBackendTest, GetSupportedConfigsForRaggedDotContracting) {
   }
 }
 
-TEST_F(TritonBackendTest, GetSupportedConfigsForRaggedDotFallsBackWhenPruned) {
-  // The ragged dimension of a kRaggedBatch dot is the batch dimension, 4 here,
-  // which prunes every default config's block_m and leaves only the fallback.
+TEST_F(TritonBackendTest, GetSupportedConfigsForRaggedDotBatchIsPrunedByM) {
+  // The ragged dimension of a kRaggedBatch dot is the batch dimension, which
+  // ApplyConfig tiles with 1; block_m tiles M, so M=128 is what bounds it.
   ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
                        GetConfigsForRaggedDotFusion(kRaggedDotBatchHlo));
+  ASSERT_THAT(configs, Not(IsEmpty()));
+  bool has_block_m_above_batch_size = false;
+  for (const std::unique_ptr<BackendConfig>& config : configs) {
+    ASSERT_TRUE(config->has_triton());
+    EXPECT_LE(config->triton().block_m(), 128);
+    has_block_m_above_batch_size |= config->triton().block_m() > 4;
+  }
+  EXPECT_TRUE(has_block_m_above_batch_size);
+}
+
+TEST_F(TritonBackendTest, GetSupportedConfigsForRaggedDotFallsBackWhenPruned) {
+  // M=8 and N=8 are below the smallest tile in the default table, so every
+  // config is pruned and only the fallback is left.
+  constexpr absl::string_view kTinyRaggedDotHlo = R"hlo(
+    fusion1 {
+      p0 = bf16[8,32] parameter(0)
+      p1 = bf16[2,32,8] parameter(1)
+      p2 = s32[2] parameter(2)
+      ROOT rd = bf16[8,8] ragged-dot(p0, p1, p2),
+        lhs_contracting_dims={1}, rhs_contracting_dims={1},
+        lhs_ragged_dims={0}, rhs_group_dims={0}
+    }
+
+    ENTRY e {
+      p0 = bf16[8,32] parameter(0)
+      p1 = bf16[2,32,8] parameter(1)
+      p2 = s32[2] parameter(2)
+      ROOT fusion = bf16[8,8] fusion(p0, p1, p2), kind=kCustom, calls=fusion1,
+        backend_config={"fusion_backend_config": {kind: "__triton"}}
+    })hlo";
+  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                       GetConfigsForRaggedDotFusion(kTinyRaggedDotHlo));
   ASSERT_THAT(configs, SizeIs(1));
   ASSERT_TRUE(configs[0]->has_triton());
   EXPECT_THAT(configs[0]->triton(), EqualsProto(R"pb(
