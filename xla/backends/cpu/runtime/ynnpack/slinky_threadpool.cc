@@ -247,6 +247,14 @@ slinky::ref_count<Task> SlinkyThreadPool::Impl::Enqueue(
   Shard& shard = shards_[shard_rotor & kShardMask];
   absl::MutexLock lock(shard.mu);
   const bool advance_rotor = !shard.tasks.empty();
+  // Drop tasks with no work left. `Dequeue` does this too, but only idle
+  // workers call it, so tasks completed by their caller would pile up.
+  if (size_t dropped =
+          std::erase_if(shard.tasks, [](const slinky::ref_count<Task>& task) {
+            return task->IsEmptyWorkQueue();
+          })) {
+    total_tasks_.fetch_sub(dropped, std::memory_order_relaxed);
+  }
   auto& slot = shard.tasks.emplace_back(std::move(task));
   if (advance_rotor) {
     shard_rotor++;
