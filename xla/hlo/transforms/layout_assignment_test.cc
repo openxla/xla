@@ -4486,5 +4486,122 @@ ENTRY %main (x: u32[3,64,17]) -> (s16[3,64,17,2], u32[3,64,17]) {
   ExpectLayoutIs(bc->operand(0)->shape(), {1, 2, 0});
 }
 
+TEST_F(LayoutAssignmentTest, ResultLayoutCopiesBitPlanesWithoutRootCopy) {
+  constexpr absl::string_view kModuleStr = R"hlo(
+HloModule ResultLayoutCopiesBitPlanesWithoutRootCopy
+
+ENTRY %main (x: f6e3m2fn[16,128], y: s64[16,128]) -> (f6e3m2fn[16,128], s64[16,128]) {
+  %x = f6e3m2fn[16,128]{1,0} parameter(0)
+  %y = s64[16,128]{1,0} parameter(1)
+  %neg_x = f6e3m2fn[16,128] negate(%x)
+  %neg_y = s64[16,128] negate(%y)
+  ROOT %out = (f6e3m2fn[16,128], s64[16,128]) tuple(%neg_x, %neg_y)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+  ComputationLayout computation_layout(
+      m->entry_computation()->ComputeProgramShape(), /*ignore_layouts=*/false);
+  Shape expected_result = ShapeUtil::MakeTupleShape({
+      ShapeUtil::MakeShapeWithDenseLayout(
+          F6E3M2FN, {16, 128}, {1, 0}, {Tile({16, 128})},
+          /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+          /*memory_space=*/0, /*split_configs=*/{},
+          {BitPlane(0, 4, {Tile({8, 1})}), BitPlane(4, 2, {Tile({16, 1})})}),
+      ShapeUtil::MakeShapeWithDenseLayout(
+          S64, {16, 128}, {1, 0}, /*tiles=*/{},
+          /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+          /*memory_space=*/0, /*split_configs=*/{},
+          {BitPlane(0, 32, {Tile({8, 128})}),
+           BitPlane(32, 32, {Tile({8, 128})})}),
+  });
+  ASSERT_THAT(computation_layout.mutable_result_layout()->CopyLayoutFromShape(
+                  expected_result),
+              absl_testing::IsOk());
+
+  LayoutAssignment layout_assignment(&computation_layout);
+  EXPECT_THAT(
+      layout_assignment.Run(m.get(), {HloInstruction::kMainExecutionThread}),
+      absl_testing::IsOk());
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kTuple);
+  EXPECT_EQ(ShapeUtil::HumanStringWithLayout(root->shape()),
+            "(f6e3m2fn[16,128]{1,0:T(16,128)BP(4:(8,1))(2:(16,1))}, "
+            "s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))})");
+}
+
+TEST_F(LayoutAssignmentTest, WholeTensorBitPlanesResultClearsStaleTiles) {
+  constexpr absl::string_view kModuleStr = R"hlo(
+HloModule WholeTensorBitPlanesResultClearsStaleTiles
+
+ENTRY %main (x: s64[16,128]{1,0:T(4,128)}, y: s64[16,128]{1,0:T(8,128)}) -> (s64[16,128], s64[16,128]) {
+  %x = s64[16,128]{1,0:T(4,128)} parameter(0)
+  %y = s64[16,128]{1,0:T(8,128)} parameter(1)
+  %neg_y = s64[16,128] negate(%y)
+  ROOT %out = (s64[16,128], s64[16,128]) tuple(%x, %neg_y)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+  ComputationLayout computation_layout(
+      m->entry_computation()->ComputeProgramShape(), /*ignore_layouts=*/false);
+  const Shape whole_tensor_s64 = ShapeUtil::MakeShapeWithDenseLayout(
+      S64, {16, 128}, {1, 0}, /*tiles=*/{},
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/0, /*split_configs=*/{},
+      {BitPlane(0, 32, {Tile({8, 128})}), BitPlane(32, 32, {Tile({8, 128})})});
+  Shape expected_result =
+      ShapeUtil::MakeTupleShape({whole_tensor_s64, whole_tensor_s64});
+  ASSERT_THAT(computation_layout.mutable_result_layout()->CopyLayoutFromShape(
+                  expected_result),
+              absl_testing::IsOk());
+
+  LayoutAssignment layout_assignment(&computation_layout);
+  ASSERT_THAT(
+      layout_assignment.Run(m.get(), {HloInstruction::kMainExecutionThread}),
+      absl_testing::IsOk());
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_EQ(ShapeUtil::HumanStringWithLayout(root->shape()),
+            "(s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))}, "
+            "s64[16,128]{1,0:BP(32:(8,128))(32:(8,128))})");
+  EXPECT_THAT(LayoutUtil::ValidateLayoutInShape(root->shape()),
+              absl_testing::IsOk());
+}
+
+TEST(ShapeLayoutBitPlaneTest,
+     MatchesLayoutInShapeDoesNotTreatWholeTensorBitPlanesAsEmptyTiling) {
+  const Shape whole_tensor_bp_8 = ShapeUtil::MakeShapeWithDenseLayout(
+      S64, {16, 128}, {1, 0}, /*tiles=*/{},
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/0, /*split_configs=*/{},
+      {BitPlane(0, 32, {Tile({8, 128})}), BitPlane(32, 32, {Tile({8, 128})})});
+  const Shape whole_tensor_bp_16 = ShapeUtil::MakeShapeWithDenseLayout(
+      S64, {16, 128}, {1, 0}, /*tiles=*/{},
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/0, /*split_configs=*/{},
+      {BitPlane(0, 32, {Tile({16, 128})}),
+       BitPlane(32, 32, {Tile({16, 128})})});
+  const Shape outer_tiled = ShapeUtil::MakeShapeWithDenseLayout(
+      S64, {16, 128}, {1, 0}, {Tile({8, 128})});
+  const Shape untiled =
+      ShapeUtil::MakeShapeWithDenseLayout(S64, {16, 128}, {1, 0});
+
+  ShapeLayout bp_layout(whole_tensor_bp_8);
+  EXPECT_TRUE(bp_layout.MatchesLayoutInShape(
+      whole_tensor_bp_8, /*minor_to_major_only=*/false,
+      /*ignore_fully_empty_tiling=*/true));
+  EXPECT_FALSE(bp_layout.MatchesLayoutInShape(
+      whole_tensor_bp_16, /*minor_to_major_only=*/false,
+      /*ignore_fully_empty_tiling=*/true));
+  EXPECT_FALSE(
+      bp_layout.MatchesLayoutInShape(outer_tiled, /*minor_to_major_only=*/false,
+                                     /*ignore_fully_empty_tiling=*/true));
+  EXPECT_TRUE(
+      bp_layout.MatchesLayoutInShape(untiled, /*minor_to_major_only=*/false,
+                                     /*ignore_fully_empty_tiling=*/true));
+}
+
 }  // namespace
 }  // namespace xla

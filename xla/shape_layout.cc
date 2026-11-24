@@ -61,7 +61,8 @@ bool ShapeLayout::MatchesLayoutInShape(const Shape& shape,
       if (!fully_empty_tiling) {
         return;
       }
-      if (subshape.IsArray() && !subshape.layout().tiles().empty()) {
+      if (subshape.IsArray() && (!subshape.layout().tiles().empty() ||
+                                 !subshape.layout().bit_planes().empty())) {
         fully_empty_tiling = false;
       }
     };

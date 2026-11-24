@@ -1887,7 +1887,8 @@ absl::Span<const NativeT> LiteralBase::Piece::data() const {
   DCHECK(subshape().IsArray())
       << __func__ << " is only supported for dense arrays: " << subshape();
   DCHECK(!subshape().has_layout() ||
-         subshape().layout().element_size_in_bits() == 0)
+         (subshape().layout().element_size_in_bits() == 0 &&
+          subshape().layout().bit_planes().empty()))
       << __func__
       << " is not supported for layouts with custom bit size: " << subshape();
   DCHECK_EQ(subshape().element_type(),
@@ -1905,7 +1906,8 @@ absl::Span<NativeT> LiteralBase::Piece::data() {
   DCHECK(subshape().IsArray())
       << __func__ << " is only supported for dense arrays: " << subshape();
   DCHECK(!subshape().has_layout() ||
-         subshape().layout().element_size_in_bits() == 0)
+         (subshape().layout().element_size_in_bits() == 0 &&
+          subshape().layout().bit_planes().empty()))
       << __func__
       << " is not supported for layouts with custom bit size: " << subshape();
   DCHECK_EQ(subshape().element_type(),

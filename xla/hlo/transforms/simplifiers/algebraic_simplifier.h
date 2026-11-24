@@ -254,6 +254,11 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   // `to_shape` is a bitcast.
   virtual bool TargetReshapeIsBitcast(const Shape& from_shape,
                                       const Shape& to_shape) const {
+    if ((from_shape.has_layout() &&
+         !from_shape.layout().bit_planes().empty()) ||
+        (to_shape.has_layout() && !to_shape.layout().bit_planes().empty())) {
+      return false;
+    }
     return ShapeUtil::ReshapeIsBitcast(from_shape, to_shape);
   }
 

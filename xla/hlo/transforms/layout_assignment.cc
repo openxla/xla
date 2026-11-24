@@ -2887,8 +2887,8 @@ absl::Status LayoutAssignment::AssignLayouts(LayoutConstraints& constraints) {
         computation->set_root_instruction(new_root);
       }
     } else {
-      // Copy the tiling info/tail_padding_alignment_in_elements specified in
-      // result layout.
+      // Copy the tiling, bit_planes, element_size_in_bits, and
+      // tail_padding_alignment_in_elements specified in result layout.
       auto copy_tiling = [&result_layout](xla::Shape* subshape,
                                           const xla::ShapeIndex& index) {
         if (subshape->IsArray()) {
@@ -2898,6 +2898,15 @@ absl::Status LayoutAssignment::AssignLayouts(LayoutConstraints& constraints) {
             subshape->mutable_layout()->mutable_tiles()->assign(
                 result_shape.layout().tiles().begin(),
                 result_shape.layout().tiles().end());
+          } else if (!result_shape.layout().bit_planes().empty()) {
+            subshape->mutable_layout()->clear_tiles();
+          }
+          if (!result_shape.layout().bit_planes().empty()) {
+            subshape->mutable_layout()->mutable_bit_planes()->assign(
+                result_shape.layout().bit_planes().begin(),
+                result_shape.layout().bit_planes().end());
+          } else {
+            subshape->mutable_layout()->clear_bit_planes();
           }
           subshape->mutable_layout()->set_element_size_in_bits(
               result_shape.layout().element_size_in_bits());

@@ -19,6 +19,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <functional>
+#include <memory>
 #include <optional>
 
 #include "absl/log/check.h"
@@ -28,6 +29,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/transforms/expanders/scatter_simplifier.h"
+#include "xla/layout.h"
+#include "xla/shape_util.h"
 
 namespace xla {
 namespace {
@@ -603,6 +606,33 @@ ENTRY main {
 // CHECK-NEXT: [[add_3:%[^ ]+]] = f32[4,5]{1,0} add([[bitcast_1]], [[constant_2]])
 // CHECK-NEXT: ROOT [[bitcast_3_4:%[^ ]+]] = f32[5,4]{0,1} bitcast([[add_3]])
   )");
+}
+
+TEST_F(LayoutNormalizationTest, ConstantWithBitPlanesClearsLiteralBitPlanes) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule module
+
+ENTRY main {
+  p = s64[3,2]{0,1:BP(32:(8,128))(32:(8,128))} parameter(0)
+  c = s64[3,2]{0,1} constant({{1, 2}, {3, 4}, {5, 6}})
+  ROOT o = s64[3,2]{0,1:BP(32:(8,128))(32:(8,128))} add(p, c)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  HloInstruction* c = FindInstruction(module.get(), "c");
+  ASSERT_NE(c, nullptr);
+  c->mutable_shape()->mutable_layout()->add_bit_planes(
+      BitPlane(0, 32, {Tile({8, 128})}));
+  c->mutable_shape()->mutable_layout()->add_bit_planes(
+      BitPlane(32, 32, {Tile({8, 128})}));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, LayoutNormalization().Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(ShapeUtil::HumanStringWithLayout(c->shape()),
+            "s64[2,3]{1,0:BP(32:(8,128))(32:(8,128))}");
+  EXPECT_TRUE(c->literal().shape().layout().bit_planes().empty());
+  EXPECT_EQ(c->literal().shape().layout().element_size_in_bits(), 0);
 }
 
 TEST_F(LayoutNormalizationTest, ZeroSizedConstant) {

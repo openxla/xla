@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/layout_util.h"
 #include "xla/overflow_util.h"
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
@@ -643,6 +644,9 @@ absl::StatusOr<DimAndBound> InferMostSpecificDimAndBound(int64_t dim,
               std::min(output_bitwidth, input_bitwidth);
 
   Shape new_shape = operand_shape;
+  if (new_shape.has_layout() && !new_shape.layout().bit_planes().empty()) {
+    LayoutUtil::ClearTiles(&new_shape);
+  }
   new_shape.set_element_type(new_element_type);
   if (input_bitwidth > output_bitwidth) {
     ShapeUtil::AppendMinorDimension(ratio, &new_shape);

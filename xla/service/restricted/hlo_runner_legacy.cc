@@ -139,7 +139,8 @@ absl::StatusOr<ScopedShapedBuffer> HloRunnerLegacy::TransferLiteralToDevice(
           Shape entry_computation_subshape =
               ShapeUtil::GetSubshape(entry_computation_shape, index);
           if (entry_computation_subshape.is_static() &&
-              !entry_computation_subshape.layout().tiles().empty() &&
+              (!entry_computation_subshape.layout().tiles().empty() ||
+               !entry_computation_subshape.layout().bit_planes().empty()) &&
               *subshape != entry_computation_subshape) {
             *subshape = entry_computation_subshape;
           }

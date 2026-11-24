@@ -112,7 +112,8 @@ absl::StatusOr<AffineMap> GetPermutationIfAvailable(const Shape& shape,
   // some XLA code relies on it treating tiled layouts as equivalent to untiled
   // layouts, so the check to rule out tiling has to come /before/ the
   // early-return branch, or we'd miss tiled monotonic layouts.
-  if (!shape.layout().tiles().empty()) {
+  if (shape.has_layout() && (!shape.layout().tiles().empty() ||
+                             !shape.layout().bit_planes().empty())) {
     return Internal("Tiled layouts are not yet supported");
   }
   if (!shape.has_layout() ||

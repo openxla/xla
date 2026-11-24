@@ -67,6 +67,9 @@ bool CanOmitPaddingForTransfer(const xla::Shape& shape) {
   if (!shape.is_static() || !shape.IsArray()) {
     return false;
   }
+  if (shape.has_layout() && !shape.layout().bit_planes().empty()) {
+    return false;
+  }
   if (xla::ShapeUtil::ElementHasBitWidth(shape, 32) &&
       shape.dimensions().size() == 1) {
     return true;

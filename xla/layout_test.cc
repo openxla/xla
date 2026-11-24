@@ -19,14 +19,17 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <vector>
 
+#include "absl/hash/hash_testing.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/layout_util.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -260,6 +263,110 @@ TEST(Layout, DeleteDimensionUpdatesSplitConfigs) {
 
   EXPECT_EQ(layout.split_configs(1).dimension(), 1);
   EXPECT_THAT(layout.split_configs(1).split_indices(), ElementsAre(30));
+}
+
+TEST(Layout, BitPlanesZeroInlineSizeOverhead) {
+  struct BaselineLayoutSize {
+    PrimitiveType index_primitive_type : 8;
+    PrimitiveType pointer_primitive_type : 8;
+    int8_t memory_space;
+    int64_t element_size_in_bits;
+    DimensionVector minor_to_major;
+    TileVector tiles;
+    std::vector<SplitConfig> split_configs;
+    int64_t tail_padding_alignment_in_elements;
+    std::unique_ptr<Shape> physical_shape;
+    int64_t dynamic_shape_metadata_prefix_bytes;
+  };
+  static_assert(sizeof(Layout) == sizeof(BaselineLayoutSize),
+                "ColdData pointer must add zero bytes to sizeof(Layout).");
+}
+
+TEST(Layout, BitPlanesToStringEqualityHashAndProtoRoundTrip) {
+  Layout fp6_2d({1, 0}, {Tile({256, 128}), Tile({16, 128})});
+  fp6_2d.add_bit_planes(BitPlane(0, 4, {Tile({8, 1})}))
+      .add_bit_planes(BitPlane(4, 2, {Tile({16, 1})}))
+      .set_memory_space(1);
+  EXPECT_EQ(fp6_2d.ToString(),
+            "{1,0:T(256,128)(16,128)BP(4:(8,1))(2:(16,1))S(1)}");
+
+  Layout msb_first({1, 0}, {Tile({16, 128})});
+  msb_first.add_bit_planes(BitPlane(4, 2, {Tile({16, 1})}))
+      .add_bit_planes(BitPlane(0, 4, {Tile({8, 1})}));
+  EXPECT_EQ(msb_first.ToString(), "{1,0:T(16,128)BP(2@4:(16,1))(4@0:(8,1))}");
+
+  Layout s64_0d;
+  s64_0d.add_bit_planes(BitPlane(0, 32, {Tile({128})}))
+      .add_bit_planes(BitPlane(32, 32, {Tile({128})}));
+  EXPECT_EQ(s64_0d.ToString(), "{:BP(32:(128))(32:(128))}");
+
+  Layout s64_linear({0});
+  s64_linear.set_tail_padding_alignment_in_elements(128)
+      .add_bit_planes(BitPlane(0, 32, {Tile({1})}))
+      .add_bit_planes(BitPlane(32, 32, {Tile({1})}));
+  EXPECT_EQ(s64_linear.ToString(), "{0:L(128)BP(32:(1))(32:(1))}");
+
+  Layout untiled_bp({1, 0}, {Tile({16, 128})});
+  untiled_bp.add_bit_planes(BitPlane(0, 32)).add_bit_planes(BitPlane(32, 32));
+  EXPECT_EQ(untiled_bp.ToString(), "{1,0:T(16,128)BP(32)(32)}");
+
+  EXPECT_NE(fp6_2d, msb_first);
+  EXPECT_TRUE(Layout::Equal().IgnoreTiles().IgnoreMemorySpace()(
+      fp6_2d, Layout({1, 0})));
+  EXPECT_TRUE(Layout::Equal().IgnoreBitPlanes()(
+      untiled_bp, Layout({1, 0}, {Tile({16, 128})})));
+  EXPECT_TRUE(Layout::Equal().MinorToMajorOnly()(fp6_2d, Layout({1, 0})));
+  EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly({
+      Layout(),
+      Layout({1, 0}),
+      fp6_2d,
+      msb_first,
+      s64_0d,
+      s64_linear,
+      untiled_bp,
+  }));
+
+  for (const Layout& l : {fp6_2d, msb_first, s64_0d, s64_linear, untiled_bp}) {
+    LayoutProto proto;
+    proto.add_bit_planes()->set_bit_width(99);
+    l.ToProto(proto);
+    ASSERT_OK_AND_ASSIGN(Layout roundtrip, Layout::FromProto(proto));
+    EXPECT_EQ(roundtrip, l);
+  }
+
+  // Unvalidated INT64_MAX bit_width formats without signed overflow.
+  Layout huge_width({0});
+  huge_width.add_bit_planes(BitPlane(0, std::numeric_limits<int64_t>::max()))
+      .add_bit_planes(BitPlane(0, 1));
+  EXPECT_EQ(huge_width.ToString(), "{0:BP(9223372036854775807@0)(1@0)}");
+}
+
+TEST(Layout, DeleteDimensionHandlesBitPlanes) {
+  Layout batch_fp6({2, 1, 0}, {Tile({256, 128}), Tile({16, 128})});
+  batch_fp6.add_bit_planes(BitPlane(0, 4, {Tile({8, 1})}))
+      .add_bit_planes(BitPlane(4, 2, {Tile({16, 1})}));
+  // Deleting untiled major dim 0 keeps tiles and bit_planes intact.
+  batch_fp6.DeleteDimension(0);
+  EXPECT_EQ(batch_fp6.ToString(),
+            "{1,0:T(256,128)(16,128)BP(4:(8,1))(2:(16,1))}");
+  // Deleting tiled minor dim 1 clears tiles and bit_planes.
+  batch_fp6.DeleteDimension(1);
+  EXPECT_EQ(batch_fp6.ToString(), "{0}");
+
+  // Deleting a major dimension consumed by a higher-rank subtile step clears
+  // tiles and bit_planes rather than leaving an invalid subtile rank.
+  Layout higher_rank_subtile({1, 0}, {Tile({2048}), Tile({2, 2, 1024})});
+  higher_rank_subtile.add_bit_planes(BitPlane(0, 32))
+      .add_bit_planes(BitPlane(32, 32));
+  higher_rank_subtile.DeleteDimension(0);
+  EXPECT_EQ(higher_rank_subtile.ToString(), "{0}");
+
+  Layout whole_tensor_higher_rank_subtile({1, 0});
+  whole_tensor_higher_rank_subtile
+      .add_bit_planes(BitPlane(0, 32, {Tile({2048}), Tile({2, 2, 1024})}))
+      .add_bit_planes(BitPlane(32, 32, {Tile({2048}), Tile({2, 2, 1024})}));
+  whole_tensor_higher_rank_subtile.DeleteDimension(0);
+  EXPECT_EQ(whole_tensor_higher_rank_subtile.ToString(), "{0}");
 }
 
 }  // namespace

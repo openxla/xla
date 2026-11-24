@@ -467,7 +467,8 @@ absl::StatusOr<std::vector<std::unique_ptr<GlobalData>>> Service::ExecuteGraph(
     for (auto& arg : args) {
       auto update_shape_with_empty_tiles =
           [this](Shape* subshape, const xla::ShapeIndex& index) {
-            if (subshape->IsArray() && subshape->layout().tiles().empty()) {
+            if (subshape->IsArray() && subshape->layout().tiles().empty() &&
+                subshape->layout().bit_planes().empty()) {
               *subshape =
                   execute_backend_->transfer_manager()->HostShapeToDeviceShape(
                       *subshape);
@@ -775,17 +776,22 @@ absl::StatusOr<Literal> Service::TransferToClient(
       return InvalidArgument("shape_with_layout must have layout if present.");
     }
     if (return_shape.has_layout() &&
-        return_shape.layout().element_size_in_bits() != 0) {
+        (return_shape.layout().element_size_in_bits() != 0 ||
+         !return_shape.layout().bit_planes().empty())) {
       return InvalidArgument(
-          "shape_with_layout cannot have layout's element_size_in_bits field "
-          "set");
+          "shape_with_layout cannot have layout's element_size_in_bits or "
+          "bit_planes field set");
     }
   } else {
     return_shape = Shape(shaped_buffer->on_device_shape());
-    if (return_shape.has_layout() &&
-        return_shape.layout().element_size_in_bits() != 0) {
-      // Literals do not support element_size_in_bits
-      return_shape.mutable_layout()->set_element_size_in_bits(0);
+    if (return_shape.has_layout()) {
+      // Literals do not support element_size_in_bits or bit_planes.
+      if (return_shape.layout().element_size_in_bits() != 0) {
+        return_shape.mutable_layout()->set_element_size_in_bits(0);
+      }
+      if (!return_shape.layout().bit_planes().empty()) {
+        return_shape.mutable_layout()->clear_bit_planes();
+      }
     }
   }
 

@@ -263,6 +263,22 @@ message SplitConfigProto {
   repeated int64 split_indices = 2;
 }
 
+// Describes a bit-plane within a split-element layout. Refer to
+// g3doc/third_party/xla/docs/tiled_layout.md for details about bit-plane
+// layouts.
+message BitPlaneProto {
+  // LSB bit offset within each logical element (>= 0).
+  int64 bit_offset = 1;
+
+  // Number of bits per element stored in this plane (> 0).
+  int64 bit_width = 2;
+
+  // Subtiles applied within this plane on each instance of the innermost outer
+  // tile (`LayoutProto.tiles` last entry), or on the full physical shape when
+  // `LayoutProto.tiles` is empty.
+  repeated TileProto tiles = 3;
+}
+
 // A layout describes how the array is placed in (1D) memory space.  This
 // includes the minor-to-major ordering of dimensions within a shape.
 //
@@ -342,6 +358,10 @@ message LayoutProto {
   // The split configurations which describe if/how the data is split between
   // different memories.
   repeated SplitConfigProto split_configs = 17;
+
+  // Bit-plane decomposition for split-element layouts. Mutually exclusive with
+  // non-zero `element_size_in_bits`.
+  repeated BitPlaneProto bit_planes = 18;
 
   // Important: if any field is added, be sure to modify ShapeUtil::Equal() and
   // LayoutUtil::Hash appropriately to account for the new field.
