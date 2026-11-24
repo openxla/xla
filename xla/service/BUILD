@@ -987,47 +987,11 @@ cc_library(
 )
 
 cc_library(
-    name = "approximate_latency_estimator",
-    hdrs = ["approximate_latency_estimator.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms/hlo_scheduling:approximate_latency_estimator",
-    ],
-)
-
-cc_library(
-    name = "async_tracker",
-    hdrs = ["async_tracker.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms/hlo_scheduling:async_tracker",
-    ],
-)
-
-cc_library(
     name = "scheduler_config",
     hdrs = ["scheduler_config.h"],
     tags = if_google(["avoid_dep"]),
     deps = [
         "//xla/hlo/transforms/hlo_scheduling:scheduler_config",
-    ],
-)
-
-cc_library(
-    name = "scheduler_core",
-    hdrs = ["scheduler_core.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms/hlo_scheduling:scheduler_core",
-    ],
-)
-
-cc_library(
-    name = "hlo_schedule_graph",
-    hdrs = ["hlo_schedule_graph.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms/hlo_scheduling:hlo_schedule_graph",
     ],
 )
 
@@ -1046,15 +1010,6 @@ cc_library(
     tags = if_google(["avoid_dep"]),
     deps = [
         "//xla/hlo/transforms/hlo_scheduling:latency_hiding_scheduler",
-    ],
-)
-
-cc_library(
-    name = "p2p_schedule_preparation",
-    hdrs = ["p2p_schedule_preparation.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms/collectives:p2p_schedule_preparation",
     ],
 )
 
@@ -2057,15 +2012,6 @@ cc_library(
 )
 
 cc_library(
-    name = "async_custom_call_utils",
-    hdrs = ["async_custom_call_utils.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms:async_custom_call_utils",
-    ],
-)
-
-cc_library(
     name = "async_collective_custom_call_rewriter",
     hdrs = ["async_collective_custom_call_rewriter.h"],
     tags = if_google(["avoid_dep"]),
@@ -2505,17 +2451,6 @@ cc_library(
 )
 
 cc_library(
-    name = "buffer_value_containers",
-    hdrs = ["buffer_value_containers.h"],
-    deps = [
-        ":buffer_value",
-        ":logical_buffer",
-        "//xla/tsl/lib/gtl:compactptrset",
-        "@com_google_absl//absl/container:flat_hash_set",
-    ],
-)
-
-cc_library(
     name = "logical_buffer",
     srcs = ["logical_buffer.cc"],
     hdrs = ["logical_buffer.h"],
@@ -2642,15 +2577,6 @@ cc_library(
 )
 
 cc_library(
-    name = "compile_time_cap",
-    hdrs = ["compile_time_cap.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms:compile_time_cap",
-    ],
-)
-
-cc_library(
     name = "copy_insertion",
     hdrs = [
         "copy_insertion.h",
@@ -2659,15 +2585,6 @@ cc_library(
     tags = if_google(["avoid_dep"]),
     deps = [
         "//xla/hlo/transforms:copy_insertion",
-    ],
-)
-
-cc_library(
-    name = "loop_schedule_linearizer",
-    hdrs = ["loop_schedule_linearizer.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms:loop_schedule_linearizer",
     ],
 )
 
@@ -2807,15 +2724,6 @@ cc_library(
     tags = if_google(["avoid_dep"]),
     deps = [
         "//xla/hlo/transforms/simplifiers:hlo_cse",
-    ],
-)
-
-cc_library(
-    name = "hlo_cse_constant_key",
-    hdrs = ["hlo_cse_constant_key.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms/simplifiers:hlo_cse_constant_key",
     ],
 )
 
@@ -3948,29 +3856,6 @@ cc_library(
 )
 
 cc_library(
-    name = "scatter_simplifier",
-    hdrs = ["scatter_simplifier.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = ["//xla/hlo/transforms/expanders:scatter_simplifier"],
-)
-
-cc_library(
-    name = "select_and_scatter_expander",
-    hdrs = ["select_and_scatter_expander.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = ["//xla/hlo/transforms/expanders:select_and_scatter_expander"],
-)
-
-cc_library(
-    name = "change_op_data_type",
-    hdrs = ["change_op_data_type.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms:change_op_data_type",
-    ],
-)
-
-cc_library(
     name = "gather_scatter_utils",
     srcs = ["gather_scatter_utils.cc"],
     hdrs = ["gather_scatter_utils.h"],
@@ -4458,15 +4343,6 @@ cc_library(
     tags = if_google(["avoid_dep"]),
     deps = [
         "//xla/hlo/transforms:legalize_scheduling_annotations",
-    ],
-)
-
-cc_library(
-    name = "scheduler_memory_fencing",
-    hdrs = ["scheduler_memory_fencing.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms:scheduler_memory_fencing",
     ],
 )
 
