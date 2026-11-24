@@ -24,10 +24,10 @@ limitations under the License.
 #include <tuple>
 
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/runtime/buffer_allocations.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/gpu/buffer_allocations.h"
 #include "xla/stream_executor/device_address.h"
 
 namespace xla::gpu {
