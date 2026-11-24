@@ -111,6 +111,8 @@ absl::StatusOr<bool> SinkDynamicSliceThroughElementwise(
   }
 
   HloComputation* computation = ar->parent();
+  // The new shapes get the default layout. This pass runs before layout
+  // assignment, where every shape still has the default layout.
   auto sliced_shape = [&](const HloInstruction* instruction) {
     return ShapeUtil::MakeShape(instruction->shape().element_type(),
                                 ds->shape().dimensions());
@@ -128,9 +130,10 @@ absl::StatusOr<bool> SinkDynamicSliceThroughElementwise(
       if (operand == previous) {
         operands.push_back(result);
       } else {
+        // Clone the scalar broadcast to keep its metadata.
         operands.push_back(
-            computation->AddInstruction(HloInstruction::CreateBroadcast(
-                sliced_shape(operand), operand->mutable_operand(0), {})));
+            computation->AddInstruction(operand->CloneWithNewOperands(
+                sliced_shape(operand), {operand->mutable_operand(0)})));
       }
     }
     result = computation->AddInstruction(
@@ -159,6 +162,12 @@ absl::StatusOr<bool> ReduceScatterCreator::RunImpl(
         continue;
       }
       auto* ar = Cast<HloAllReduceInstruction>(instruction);
+      // The dynamic-slice is moved next to the all-reduce before matching, and
+      // deliberately stays there even if no reduce-scatter is created below
+      // (for example because the slice offset is not a per-device shard
+      // offset). The move is exact and never increases the amount of work: the
+      // elementwise operations run on the slice instead of the full all-reduce
+      // result.
       ABSL_ASSIGN_OR_RETURN(bool sunk, SinkDynamicSliceThroughElementwise(ar));
       changed |= sunk;
       auto ar_spec = MatchReduceScatter(ar, config.num_partitions(),
