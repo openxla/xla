@@ -23,7 +23,6 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
-#include "absl/functional/function_ref.h"
 #include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
@@ -78,12 +77,15 @@ absl::StatusOr<mori::ccl::DataType> ToMoriDataType(PrimitiveType dtype) {
     MORI_TYPE_DISPATCH(BF16)
     MORI_TYPE_DISPATCH(S8)
     MORI_TYPE_DISPATCH(U8)
-    MORI_TYPE_DISPATCH(S32)
-    MORI_TYPE_DISPATCH(U32)
-    MORI_TYPE_DISPATCH(S64)
-    MORI_TYPE_DISPATCH(U64)
-    MORI_TYPE_DISPATCH(F32)
-    MORI_TYPE_DISPATCH(F64)
+    // XLA PRED is a 1-byte boolean => U8 for reduce collectives
+    case PRED:
+      return mori::ccl::DataType::U8;
+      MORI_TYPE_DISPATCH(S32)
+      MORI_TYPE_DISPATCH(U32)
+      MORI_TYPE_DISPATCH(S64)
+      MORI_TYPE_DISPATCH(U64)
+      MORI_TYPE_DISPATCH(F32)
+      MORI_TYPE_DISPATCH(F64)
     default:
       return absl::UnimplementedError(absl::StrFormat(
           "MORI: unsupported dtype: %d", static_cast<int>(dtype)));
@@ -301,13 +303,9 @@ absl::Status MoriCommunicator::LaunchAllGather(
           << " recv_buffer=" << recv_buffer.opaque() << " count=" << count
           << " dtype=" << primitive_util::LowercasePrimitiveTypeName(dtype)
           << " stream=" << AsHipStream(stream);
-  return LaunchOrDefer([this, send = send_buffer.opaque(),
-                        recv = recv_buffer.opaque(),
-                        bytes = ToMoriByteCount(dtype, count),
-                        hip_stream = AsHipStream(stream)](bool is_async) {
-    return se::gpu::ToStatus(
-        facade_->RunAllGather(send, recv, bytes, hip_stream, is_async));
-  });
+  return se::gpu::ToStatus(facade_->RunAllGather(
+      send_buffer.opaque(), recv_buffer.opaque(), ToMoriByteCount(dtype, count),
+      AsHipStream(stream), is_async_));
 }
 
 absl::Status MoriCommunicator::LaunchAllReduce(
@@ -324,9 +322,9 @@ absl::Status MoriCommunicator::LaunchAllReduce(
           << " stream=" << AsHipStream(stream);
   ABSL_ASSIGN_OR_RETURN(auto dt, ToMoriDataType(dtype));
   ABSL_ASSIGN_OR_RETURN(auto op, ToMoriReduceOp(reduction_kind));
-  return se::gpu::ToStatus(facade_->RunAllReduce(send_buffer.opaque(),
-                                                 recv_buffer.opaque(), count,
-                                                 dt, op, AsHipStream(stream)));
+  return se::gpu::ToStatus(
+      facade_->RunAllReduce(send_buffer.opaque(), recv_buffer.opaque(), count,
+                            dt, op, AsHipStream(stream), is_async_));
 }
 
 absl::Status MoriCommunicator::LaunchReduceScatter(
@@ -343,12 +341,9 @@ absl::Status MoriCommunicator::LaunchReduceScatter(
 
   ABSL_ASSIGN_OR_RETURN(auto dt, ToMoriDataType(dtype));
   ABSL_ASSIGN_OR_RETURN(auto op, ToMoriReduceOp(kind));
-  return LaunchOrDefer([this, send = send_buffer.opaque(),
-                        recv = recv_buffer.opaque(), count, dt, op,
-                        hip_stream = AsHipStream(stream)](bool is_async) {
-    return se::gpu::ToStatus(facade_->RunReduceScatter(
-        send, recv, count, dt, op, hip_stream, is_async));
-  });
+  return se::gpu::ToStatus(
+      facade_->RunReduceScatter(send_buffer.opaque(), recv_buffer.opaque(),
+                                count, dt, op, AsHipStream(stream), is_async_));
 }
 
 absl::Status MoriCommunicator::LaunchAllToAll(
@@ -378,12 +373,8 @@ absl::Status MoriCommunicator::LaunchAllToAll(
   for (int p = 0; p < facade_->NumPes(); ++p) {
     addrs.emplace_back(send_buffers[p].opaque(), recv_buffers[p].opaque());
   }
-  return LaunchOrDefer([this, addrs = std::move(addrs),
-                        bytes = ToMoriByteCount(dtype, count),
-                        hip_stream = AsHipStream(stream)](bool is_async) {
-    return se::gpu::ToStatus(
-        facade_->RunAllToAll(addrs, bytes, hip_stream, is_async));
-  });
+  return se::gpu::ToStatus(facade_->RunAllToAll(
+      addrs, ToMoriByteCount(dtype, count), AsHipStream(stream), is_async_));
 }
 
 absl::Status MoriCommunicator::LaunchRaggedAllToAll(
@@ -411,18 +402,13 @@ absl::Status MoriCommunicator::LaunchRaggedAllToAll(
         mori::ccl::kRaggedMaxUpdates, num_total_updates, num_ranks);
   }
 
-  return LaunchOrDefer(
-      [this, in = input.opaque(), out = output.opaque(),
-       in_offs = static_cast<const int64_t*>(input_offsets.opaque()),
-       sizes = static_cast<const int64_t*>(send_sizes.opaque()),
-       out_offs = static_cast<const int64_t*>(output_offsets.opaque()),
-       num_updates = static_cast<int>(num_updates),
-       row_bytes = ToMoriByteCount(dtype, num_row_elements),
-       hip_stream = AsHipStream(stream)](bool is_async) {
-        return se::gpu::ToStatus(facade_->RunRaggedAllToAll(
-            in, out, in_offs, sizes, out_offs, num_updates, row_bytes,
-            hip_stream, is_async));
-      });
+  return se::gpu::ToStatus(facade_->RunRaggedAllToAll(
+      input.opaque(), output.opaque(),
+      static_cast<const int64_t*>(input_offsets.opaque()),
+      static_cast<const int64_t*>(send_sizes.opaque()),
+      static_cast<const int64_t*>(output_offsets.opaque()),
+      static_cast<int>(num_updates), ToMoriByteCount(dtype, num_row_elements),
+      AsHipStream(stream), is_async_));
 }
 
 absl::Status MoriCommunicator::LaunchSend(se::DeviceAddressBase send_buffer,
@@ -435,9 +421,9 @@ absl::Status MoriCommunicator::LaunchSend(se::DeviceAddressBase send_buffer,
           << " dtype=" << primitive_util::LowercasePrimitiveTypeName(dtype)
           << " count=" << count << " peer=" << peer.value()
           << " stream=" << AsHipStream(stream);
-  return se::gpu::ToStatus(
-      facade_->RunSend(send_buffer.opaque(), ToMoriByteCount(dtype, count),
-                       static_cast<int>(peer.value()), AsHipStream(stream)));
+  return se::gpu::ToStatus(facade_->RunSend(
+      send_buffer.opaque(), ToMoriByteCount(dtype, count),
+      static_cast<int>(peer.value()), AsHipStream(stream), is_async_));
 }
 
 absl::Status MoriCommunicator::LaunchRecv(se::DeviceAddressBase recv_buffer,
@@ -450,9 +436,9 @@ absl::Status MoriCommunicator::LaunchRecv(se::DeviceAddressBase recv_buffer,
           << " dtype=" << primitive_util::LowercasePrimitiveTypeName(dtype)
           << " count=" << count << " peer=" << peer.value()
           << " stream=" << AsHipStream(stream);
-  return se::gpu::ToStatus(
-      facade_->RunRecv(recv_buffer.opaque(), ToMoriByteCount(dtype, count),
-                       static_cast<int>(peer.value()), AsHipStream(stream)));
+  return se::gpu::ToStatus(facade_->RunRecv(
+      recv_buffer.opaque(), ToMoriByteCount(dtype, count),
+      static_cast<int>(peer.value()), AsHipStream(stream), is_async_));
 }
 
 absl::Status MoriCommunicator::LaunchCollectivePermute(
@@ -478,39 +464,18 @@ absl::Status MoriCommunicator::LaunchCollectivePermute(
   for (RankId rank : target_ranks) {
     dstPes.push_back(static_cast<int>(rank.value()));
   }
-  return LaunchOrDefer(
-      [this, send = send_buffer.opaque(), recv = recv_buffer.opaque(),
-       bytes = ToMoriByteCount(dtype, count), srcPe, dstPes = std::move(dstPes),
-       hip_stream = AsHipStream(stream)](bool is_async) {
-        return se::gpu::ToStatus(facade_->RunCollectivePermute(
-            send, recv, bytes, srcPe, dstPes, hip_stream, is_async));
-      });
-}
-
-absl::Status MoriCommunicator::LaunchOrDefer(
-    absl::AnyInvocable<absl::Status(bool) &&> launch) {
-  if (!is_async_ || group_depth_ == 0) return std::move(launch)(is_async_);
-  if (deferred_) {
-    ABSL_RETURN_IF_ERROR(std::exchange(deferred_, nullptr)(/*is_async=*/false));
-  }
-  deferred_ = std::move(launch);
-  return absl::OkStatus();
+  return se::gpu::ToStatus(facade_->RunCollectivePermute(
+      send_buffer.opaque(), recv_buffer.opaque(), ToMoriByteCount(dtype, count),
+      srcPe, dstPes, AsHipStream(stream), is_async_));
 }
 
 Future<> MoriCommunicator::GroupExecute(
     absl::AnyInvocable<absl::Status() &&> group) {
-  return GroupLaunch([&] { return std::move(group)(); });
-}
-
-absl::Status MoriCommunicator::GroupLaunch(
-    absl::FunctionRef<absl::Status()> group) {
-  ++group_depth_;
-  absl::Status status = group();
-  if (--group_depth_ == 0 && deferred_) {
-    auto last = std::exchange(deferred_, nullptr);
-    if (status.ok()) status = std::move(last)(/*is_async=*/true);
-  }
-  return status;
+  ABSL_RETURN_IF_ERROR(se::gpu::ToStatus(facade_->GroupStart()));
+  absl::Status status = std::move(group)();
+  hipError_t end = facade_->GroupEnd(/*discard=*/!status.ok());
+  ABSL_RETURN_IF_ERROR(status);
+  return se::gpu::ToStatus(end);
 }
 
 absl::Status MoriCommunicator::Quiet(const Executor& executor) {

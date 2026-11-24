@@ -22,7 +22,6 @@ limitations under the License.
 
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
-#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -154,8 +153,6 @@ class MoriCommunicator : public GpuCommunicator {
       int64_t num_row_elements, int64_t num_total_updates,
       const Executor& executor);
 
-  absl::Status GroupLaunch(absl::FunctionRef<absl::Status()> group);
-
   absl::Status LaunchAllReduce(se::DeviceAddressBase send_buffer,
                                se::DeviceAddressBase recv_buffer,
                                PrimitiveType dtype, size_t count,
@@ -208,13 +205,6 @@ class MoriCommunicator : public GpuCommunicator {
   std::string ToString() const final;
 
  private:
-  // Runs `launch` with is_async = is_async_, except inside a group: there an
-  // async launch is held until the next one (which flushes it sync) or the end
-  // of the outermost GroupLaunch (which runs it async), so at most one per
-  // group is left pending for AsyncDone.
-  absl::Status LaunchOrDefer(
-      absl::AnyInvocable<absl::Status(bool is_async) &&> launch);
-
   MoriCommunicator(std::shared_ptr<CancellationToken> cancel)
       : cancel_(std::move(cancel)) {}
 
@@ -228,9 +218,6 @@ class MoriCommunicator : public GpuCommunicator {
   // Do the following collective launches belong to an async start/done pair?
   // Read by the Launch* methods, so Execute must run them synchronously.
   bool is_async_ = false;
-  // GroupLaunch nesting depth and the async launch held back within it.
-  int group_depth_ = 0;
-  absl::AnyInvocable<absl::Status(bool) &&> deferred_;
 };
 
 }  // namespace xla::gpu
