@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address_handle.h"
 #include "xla/stream_executor/gpu/gpu_init.h"
 #include "xla/stream_executor/gpu/ragged_all_to_all_kernel.h"
+#include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_allocator.h"
 #include "xla/stream_executor/memory_space.h"
@@ -172,17 +173,37 @@ struct KernelTestCase {
   std::vector<int64_t> input_offsets;
   std::vector<int64_t> send_sizes;
   std::vector<int64_t> output_offsets;
+  // Block grid the kernel is expected to be launched with:
+  // (outputs, block clusters, blocks per group).
+  se::BlockDim block_dims;
 };
 
 using RaggedAllToAllKernelTest = ::testing::TestWithParam<KernelTestCase>;
 
+// Owns NCCL communicators created by `ncclCommInitAll`. Symmetric memory
+// windows registered on the communicators must be destroyed first.
+struct ScopedNcclComms {
+  explicit ScopedNcclComms(size_t size) : comms(size, nullptr) {}
+  ~ScopedNcclComms() {
+    for (ncclComm_t comm : comms) {
+      if (comm != nullptr) {
+        ncclCommDestroy(comm);
+      }
+    }
+  }
+
+  ScopedNcclComms(const ScopedNcclComms&) = delete;
+  ScopedNcclComms& operator=(const ScopedNcclComms&) = delete;
+
+  std::vector<ncclComm_t> comms;
+};
+
 // The tests copy `float`, so an even number of row elements is copied as
-// 8-byte vectors and an odd number as 4-byte vectors. The block grids in the
-// comments are (outputs, block clusters, blocks per group).
+// 8-byte vectors and an odd number as 4-byte vectors.
 INSTANTIATE_TEST_SUITE_P(
     LaunchShapes, RaggedAllToAllKernelTest,
     ::testing::Values(
-        // Small input: one block per update, grid (2, 2, 1).
+        // Small input: one block per update.
         KernelTestCase{"TwoUpdatesSmallInput",
                        /*num_outputs=*/2,
                        /*num_updates_per_output=*/2,
@@ -190,9 +211,10 @@ INSTANTIATE_TEST_SUITE_P(
                        /*num_row_elements=*/2,
                        /*input_offsets=*/{1, 4, 0, 3},
                        /*send_sizes=*/{2, 3, 1, 2},
-                       /*output_offsets=*/{0, 4, 1, 5}},
+                       /*output_offsets=*/{0, 4, 1, 5},
+                       /*block_dims=*/se::BlockDim(2, 2, 1)},
         // One update striped over nine blocks of 4-byte vectors, with a
-        // zero-length send and a partial final stripe: grid (2, 1, 9).
+        // zero-length send and a partial final stripe.
         KernelTestCase{"OneUpdatePartialStripe",
                        /*num_outputs=*/2,
                        /*num_updates_per_output=*/1,
@@ -200,9 +222,10 @@ INSTANTIATE_TEST_SUITE_P(
                        /*num_row_elements=*/1025,
                        /*input_offsets=*/{4, 1},
                        /*send_sizes=*/{0, 5},
-                       /*output_offsets=*/{2, 3}},
+                       /*output_offsets=*/{2, 3},
+                       /*block_dims=*/se::BlockDim(2, 1, 9)},
         // 8-byte vectors and an input large enough to hit the cap on the
-        // number of blocks: grid (2, 1, 64).
+        // number of blocks.
         KernelTestCase{"OneUpdateMaxBlocks",
                        /*num_outputs=*/2,
                        /*num_updates_per_output=*/1,
@@ -210,8 +233,9 @@ INSTANTIATE_TEST_SUITE_P(
                        /*num_row_elements=*/16514,
                        /*input_offsets=*/{4, 1},
                        /*send_sizes=*/{0, 5},
-                       /*output_offsets=*/{2, 3}},
-        // The cap is not a multiple of the number of outputs: grid (3, 1, 43).
+                       /*output_offsets=*/{2, 3},
+                       /*block_dims=*/se::BlockDim(2, 1, 64)},
+        // The cap is not a multiple of the number of outputs.
         KernelTestCase{"OneUpdateMaxBlocksThreeOutputs",
                        /*num_outputs=*/3,
                        /*num_updates_per_output=*/1,
@@ -219,9 +243,9 @@ INSTANTIATE_TEST_SUITE_P(
                        /*num_row_elements=*/16514,
                        /*input_offsets=*/{0, 2, 5},
                        /*send_sizes=*/{2, 3, 3},
-                       /*output_offsets=*/{6, 0, 4}},
-        // Several updates per group, with more blocks than updates in a
-        // group: grid (2, 3, 3) with two updates per group.
+                       /*output_offsets=*/{6, 0, 4},
+                       /*block_dims=*/se::BlockDim(3, 1, 43)},
+        // Two updates per group, with more blocks than updates in a group.
         KernelTestCase{"SixUpdatesMoreBlocksThanUpdates",
                        /*num_outputs=*/2,
                        /*num_updates_per_output=*/6,
@@ -231,10 +255,24 @@ INSTANTIATE_TEST_SUITE_P(
                        {0, 5, 10, 15, 20, 25, 7, 12, 17, 22, 27, 32},
                        /*send_sizes=*/{3, 0, 10, 7, 1, 9, 10, 2, 0, 5, 8, 4},
                        /*output_offsets=*/
-                       {0, 10, 20, 30, 40, 50, 0, 10, 20, 30, 40, 50}}),
+                       {0, 10, 20, 30, 40, 50, 0, 10, 20, 30, 40, 50},
+                       /*block_dims=*/se::BlockDim(2, 3, 3)}),
     [](const ::testing::TestParamInfo<KernelTestCase>& info) {
       return info.param.name;
     });
+
+TEST_P(RaggedAllToAllKernelTest, BlockDim) {
+  const KernelTestCase& test_case = GetParam();
+  ASSERT_OK_AND_ASSIGN(
+      se::BlockDim block_dims,
+      GetRaggedAllToAllBlockDim(
+          primitive_util::NativeToPrimitiveType<float>(), test_case.num_outputs,
+          test_case.num_updates_per_output, test_case.num_input_rows,
+          test_case.num_row_elements));
+  EXPECT_EQ(block_dims.x, test_case.block_dims.x);
+  EXPECT_EQ(block_dims.y, test_case.block_dims.y);
+  EXPECT_EQ(block_dims.z, test_case.block_dims.z);
+}
 
 TEST_P(RaggedAllToAllKernelTest, KernelWithArrayOfOutputPointers) {
   using T = float;
@@ -286,6 +324,8 @@ TEST_P(RaggedAllToAllKernelTest, KernelWithArrayOfOutputPointers) {
       input_offsets_buffer.address(), send_sizes_buffer.address(),
       output_offsets_buffer.address(), num_outputs, num_update_per_output,
       num_input_rows, num_row_elements));
+  // The readback below does not go through `stream`.
+  ASSERT_OK(stream->BlockHostUntilDone());
 
   std::vector<std::vector<T>> output_results =
       CopyDeviceToHost2D<T>(executor, output_buffers, n);
@@ -380,9 +420,12 @@ TEST_P(RaggedAllToAllKernelTest, KernelWithSymmetricMemory) {
   stream_executor::DeviceAddressHandle output_offsets_buffer =
       CreateDeviceBuffer(executors[0], output_offsets);
 
-  std::vector<ncclComm_t> comms(visible_device_count);
-  ncclResult_t result =
-      ncclCommInitAll(comms.data(), visible_device_count, /*devlist=*/nullptr);
+  // Declared before the symmetric memory, so that the windows are destroyed
+  // before their communicators.
+  ScopedNcclComms scoped_comms(visible_device_count);
+  const std::vector<ncclComm_t>& comms = scoped_comms.comms;
+  ncclResult_t result = ncclCommInitAll(
+      scoped_comms.comms.data(), visible_device_count, /*devlist=*/nullptr);
   ASSERT_EQ(result, ncclSuccess);
 
   tsl::thread::ThreadPool pool(tsl::Env::Default(), "nccl",
@@ -406,6 +449,9 @@ TEST_P(RaggedAllToAllKernelTest, KernelWithSymmetricMemory) {
       output_sym_offset, input_offsets_buffer.address(),
       send_sizes_buffer.address(), output_offsets_buffer.address(), num_outputs,
       num_update_per_output, num_input_rows, num_row_elements));
+  // The kernel writes to every device from the stream of the first one, and the
+  // readback of the other devices uses their own streams.
+  ASSERT_OK(streams[0]->BlockHostUntilDone());
 
   std::vector<std::vector<T>> output_results =
       CopyDeviceToHost2D<T>(streams, output_buffers, output_sym_offset, n);

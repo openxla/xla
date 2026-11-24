@@ -147,6 +147,17 @@ bool IsRaggedAllToAllKernelSupported(int64_t num_outputs,
          primitive_util::BitWidth(element_type) % 8 == 0;
 }
 
+absl::StatusOr<se::BlockDim> GetRaggedAllToAllBlockDim(
+    PrimitiveType element_type, int64_t num_outputs,
+    int64_t num_updates_per_output, int64_t num_input_rows,
+    int64_t num_row_elements) {
+  ABSL_ASSIGN_OR_RETURN(RaggedAllToAllLaunchParams params,
+                        ComputeRaggedAllToAllLaunchParams(
+                            element_type, num_outputs, num_updates_per_output,
+                            num_input_rows, num_row_elements));
+  return params.block_dims;
+}
+
 absl::Status RunRaggedAllToAllKernel(
     se::Stream* stream, PrimitiveType element_type,
     se::DeviceAddressBase input_buffer,
