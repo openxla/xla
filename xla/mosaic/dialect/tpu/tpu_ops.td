@@ -197,14 +197,14 @@ def TPU_StoreOp : TPU_Op<"store", [DefaultMemWrite, AttrSizedOperandSegments]> {
     TPU_Vreg:$valueToStore,
     AnyMemRef:$base,
     Variadic<Index>:$indices,
-    DenseBoolArrayAttr:$sublane_mask,
+    VectorOfRankAndType<[1], [I1]>:$sublane_mask,
     Optional<AnyType>:$mask,
     DefaultValuedAttr<I32Attr, "1">:$sublane_stride,  // In sublane-sized units
     DefaultValuedAttr<BoolAttr, "false">:$add
   );
   let results = (outs);
   let assemblyFormat = [{
-    $base `[` $indices `]` `,` $valueToStore (`masked` $mask^)? `sublanes` $sublane_mask  (`sublane_stride` $sublane_stride^)? prop-dict attr-dict `:` type($base) `,` type($valueToStore) `,` type($mask)
+    $base `[` $indices `]` `,` $valueToStore (`masked` $mask^)? `sublanes` $sublane_mask  (`sublane_stride` $sublane_stride^)? prop-dict attr-dict `:` type($base) `,` type($valueToStore) `,` type($sublane_mask) `,` type($mask)
   }];
 }
 
@@ -212,12 +212,12 @@ def TPU_LoadOp : TPU_Op<"load", [DefaultMemRead]> {
   let arguments = (ins
     AnyMemRef:$base,
     Variadic<Index>:$indices,
-    DenseBoolArrayAttr:$sublane_mask,
+    VectorOfRankAndType<[1], [I1]>:$sublane_mask,
     DefaultValuedAttr<I32Attr, "1">:$sublane_stride  // In sublane-sized units
   );
   let results = (outs TPU_Vreg:$result);
   let assemblyFormat = [{
-    $base `[` $indices `]` `sublanes` $sublane_mask (`sublane_stride` $sublane_stride^)? attr-dict `:` type($base) `,` type($result)
+    $base `[` $indices `]` `sublanes` $sublane_mask (`sublane_stride` $sublane_stride^)? attr-dict `:` type($base) `,` type($result) `,` type($sublane_mask)
   }];
   let description = [{
     Similar to `vector::LoadOp` but with `sublane_mask` and `sublane_stride`.
