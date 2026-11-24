@@ -433,6 +433,47 @@ ENTRY %AllReduce {
   EXPECT_EQ(ReduceScatterCount(module), 0);
 }
 
+TEST_F(GpuReduceScatterCreatorTest, AllReplicasScalarBroadcastWithControlDep) {
+  // The scalar broadcast has a control dependency. A broadcast re-created with
+  // the sliced shape would not be ordered by it, so the multiply stays.
+  absl::string_view hlo_string = R"(
+HloModule AllReduce
+
+%sum {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %AllReduce {
+  %param = f32[32,8,128]{2,1,0} parameter(0)
+  %scale = f32[] parameter(1)
+  %all-reduce = f32[32,8,128]{2,1,0} all-reduce(%param),
+    replica_groups={}, to_apply=%sum
+  %table = s32[8]{0} constant({0,1,2,3,4,5,6,7})
+  %rid = u32[] replica-id()
+  %id = s32[1] dynamic-slice(%table, %rid), dynamic_slice_sizes={1}
+  %reshape = s32[] reshape(%id)
+  %slice_size = s32[] constant(4)
+  %offset = s32[] multiply(%reshape, %slice_size)
+  %zero = s32[] constant(0)
+  %scale_bcast = f32[32,8,128]{2,1,0} broadcast(%scale), dimensions={},
+    control-predecessors={%offset}
+  %scaled = f32[32,8,128]{2,1,0} multiply(%all-reduce, %scale_bcast)
+  ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%scaled, %offset, %zero, %zero),
+    dynamic_slice_sizes={4,8,128}
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                            /*num_replicas=*/8,
+                                            /*num_partitions=*/1,
+                                            /*use_spmd_partitioning=*/false,
+                                            /*expect_change=*/false));
+  EXPECT_EQ(AllReduceCount(module), 1);
+  EXPECT_EQ(ReduceScatterCount(module), 0);
+}
+
 TEST_F(GpuReduceScatterCreatorTest, AllReplicasScaledWrongOffsets) {
   // The offsets do not select the shard of each replica, so no reduce-scatter
   // is created. The dynamic-slice is still moved next to the all-reduce, and

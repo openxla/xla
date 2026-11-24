@@ -42,9 +42,12 @@ namespace xla {
 namespace gpu {
 namespace {
 
-// Returns true if `instruction` is a broadcast of a scalar.
+// Returns true if `instruction` is a broadcast of a scalar that can be
+// re-created with a different shape. A broadcast with control dependencies
+// cannot, as the new broadcast would not be ordered by them.
 bool IsScalarBroadcast(const HloInstruction* instruction) {
   return instruction->opcode() == HloOpcode::kBroadcast &&
+         !instruction->HasControlDependencies() &&
          ShapeUtil::IsScalar(instruction->operand(0)->shape());
 }
 
