@@ -69,6 +69,7 @@ limitations under the License.
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
 #include "xla/backends/gpu/ffi.h"
+#include "xla/backends/gpu/runtime/gpu_executable_run_options.h"
 #include "xla/debug_options_flags.h"
 #include "xla/ffi/ffi.h"
 #include "xla/future.h"
@@ -103,7 +104,6 @@ limitations under the License.
 #include "xla/pjrt/se/stream_executor_executable.h"
 #include "xla/pjrt/strided_gather.h"
 #include "xla/runtime/device_id.h"
-#include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/gpu_topology.pb.h"
@@ -441,11 +441,16 @@ TEST(StreamExecutorGpuClientTest, DonateExternalMem) {
                           buffer_a->AcquireExternalReference());
 
   auto device_ptr = buffer_ref->OpaqueDeviceMemoryDataPointer();
+  auto done = std::make_shared<absl::Notification>();
   TF_ASSERT_OK_AND_ASSIGN(
       auto buffer, client->CreateViewOfDeviceBuffer(
                        device_ptr, shape, buffer_a->memory_space(),
                        [buf = std::shared_ptr<PjRtBuffer::ExternalReference>(
-                            std::move(buffer_ref))]() {}));
+                            std::move(buffer_ref)),
+                        done]() mutable {
+                         buf.reset();
+                         done->Notify();
+                       }));
 
   static constexpr char const* kAddProgram =
       R"(
@@ -466,6 +471,11 @@ ENTRY main.5 {
   ASSERT_EQ(result.size(), 1);
   ASSERT_EQ(result[0].size(), 1);
   TF_EXPECT_OK(result[0][0]->GetReadyFuture().Await());
+
+  result.clear();
+  buffer.reset();
+  // Wait for the executable to stop using the buffer.
+  ASSERT_TRUE(done->WaitForNotificationWithTimeout(absl::Seconds(60)));
 }
 #endif  // defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) ||
         // defined(TENSORFLOW_USE_SYCL)
@@ -4970,11 +4980,11 @@ TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessCachesBfcChunkFd) {
       PjRtMemorySpace * device_space,
       client->addressable_devices()[0]->default_memory_space());
 
-  Literal literal = LiteralUtil::CreateR1<int32_t>(std::vector<int32_t>(1024));
+  Shape shape = ShapeUtil::MakeShape(S32, {1024});
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> buf1,
-                       client->BufferFromHostLiteral(literal, device_space));
+                       client->CreateUninitializedBuffer(shape, device_space));
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> buf2,
-                       client->BufferFromHostLiteral(literal, device_space));
+                       client->CreateUninitializedBuffer(shape, device_space));
   ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef raw1,
                        PjRtRawBuffer::CreateRawAliasOfBuffer(buf1.get()));
   ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef raw2,
@@ -5014,9 +5024,9 @@ TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessSlicedBuffer) {
       PjRtMemorySpace * device_space,
       client->addressable_devices()[0]->default_memory_space());
 
-  Literal literal = LiteralUtil::CreateR1<int32_t>(std::vector<int32_t>(1024));
+  Shape shape = ShapeUtil::MakeShape(S32, {1024});
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> buf,
-                       client->BufferFromHostLiteral(literal, device_space));
+                       client->CreateUninitializedBuffer(shape, device_space));
   ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef raw,
                        PjRtRawBuffer::CreateRawAliasOfBuffer(buf.get()));
 
@@ -5051,10 +5061,9 @@ TEST(StreamExecutorGpuClientTest,
   // Pinned host memory is rejected with InvalidArgument.
   ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * pinned_host_space,
                        device->memory_space_by_kind("pinned_host"));
-  Literal literal = LiteralUtil::CreateR1<int32_t>({1, 2, 3, 4});
-  ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<PjRtBuffer> pinned_buf,
-      client->BufferFromHostLiteral(literal, pinned_host_space));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> pinned_buf,
+                       client->CreateUninitializedBuffer(
+                           ShapeUtil::MakeShape(S32, {4}), pinned_host_space));
   ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef pinned_raw,
                        PjRtRawBuffer::CreateRawAliasOfBuffer(pinned_buf.get()));
   tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess> pinned_access =
@@ -5067,10 +5076,9 @@ TEST(StreamExecutorGpuClientTest,
   // device does not support dma-buf).
   ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * device_space,
                        device->default_memory_space());
-  Literal empty_literal = LiteralUtil::CreateR1<int32_t>({});
-  ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<PjRtBuffer> empty_buf,
-      client->BufferFromHostLiteral(empty_literal, device_space));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> empty_buf,
+                       client->CreateUninitializedBuffer(
+                           ShapeUtil::MakeShape(S32, {0}), device_space));
   ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef empty_raw,
                        PjRtRawBuffer::CreateRawAliasOfBuffer(empty_buf.get()));
   tsl::AsyncValueRef<PjRtRawBufferInterface::ExternalDmaAccess> empty_access =
@@ -5088,9 +5096,9 @@ TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessDelayedBuffer) {
       PjRtMemorySpace * device_space,
       client->addressable_devices()[0]->default_memory_space());
 
-  Literal literal = LiteralUtil::CreateR1<int32_t>(std::vector<int32_t>(256));
+  Shape shape = ShapeUtil::MakeShape(S32, {256});
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> concrete_buf,
-                       client->BufferFromHostLiteral(literal, device_space));
+                       client->CreateUninitializedBuffer(shape, device_space));
   ASSERT_OK_AND_ASSIGN(
       PjRtRawBufferRef concrete_raw,
       PjRtRawBuffer::CreateRawAliasOfBuffer(concrete_buf.get()));
@@ -5103,8 +5111,8 @@ TEST(StreamExecutorGpuClientTest, AcquireExternalDmaAccessDelayedBuffer) {
   }
   ASSERT_TRUE(concrete_access.IsConcrete()) << concrete_access.GetError();
 
-  ASSERT_OK_AND_ASSIGN(auto alias_and_cb, client->CreateAliasBuffer(
-                                              literal.shape(), device_space));
+  ASSERT_OK_AND_ASSIGN(auto alias_and_cb,
+                       client->CreateAliasBuffer(shape, device_space));
   auto& [alias_buf, fulfill_cb] = alias_and_cb;
   ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef alias_raw,
                        PjRtRawBuffer::CreateRawAliasOfBuffer(alias_buf.get()));

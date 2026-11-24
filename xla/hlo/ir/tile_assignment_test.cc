@@ -19,9 +19,12 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -40,7 +43,9 @@ namespace {
 
 using ::absl_testing::IsOk;
 using ::absl_testing::StatusIs;
+using ::testing::ElementsAre;
 using ::testing::HasSubstr;
+using ::testing::IsEmpty;
 
 TEST(IotaTileAssignmentTest, Create) {
   // Test with dims only
@@ -155,6 +160,38 @@ TEST(IotaTileAssignmentTest, ValueAt) {
   EXPECT_EQ(iota2.value_at({2, 1}), 5);
 }
 
+TEST(IotaTileAssignmentTest, ValueAtLargeDims) {
+  constexpr int64_t k2Pow31 = int64_t{1} << 31;
+  constexpr int64_t k2Pow32 = int64_t{1} << 32;
+
+  // A reshape dimension of 2^32 must not be truncated to 0.
+  IotaTileAssignment iota1 = IotaTileAssignment::Create({k2Pow32});
+  EXPECT_EQ(iota1.value_at({5}), 5);
+  EXPECT_EQ(iota1.value_at({k2Pow32 - 1}), k2Pow32 - 1);
+
+  // A reshape dimension of 2^31 must not be truncated to INT_MIN.
+  IotaTileAssignment iota2 =
+      IotaTileAssignment::Create({k2Pow32}, {k2Pow31, 2}, {1, 0});
+  EXPECT_EQ(iota2.value_at({k2Pow31}), 1);
+  EXPECT_EQ(iota2.value_at({k2Pow31 + 7}), 15);
+  EXPECT_EQ(iota2.value_at({k2Pow32 - 1}), k2Pow32 - 1);
+  EXPECT_THAT(iota2.index_for(1), ::testing::ElementsAre(k2Pow31));
+  EXPECT_THAT(iota2.index_for(15), ::testing::ElementsAre(k2Pow31 + 7));
+
+  // A reshape dimension of 2^32 + 1 must not be truncated to 1.
+  IotaTileAssignment iota3 =
+      IotaTileAssignment::Create({2, k2Pow32 + 1}, {k2Pow32 + 1, 2}, {1, 0});
+  EXPECT_EQ(iota3.value_at({1, k2Pow32}), 2 * k2Pow32 + 1);
+  EXPECT_THAT(iota3.index_for(2 * k2Pow32 + 1),
+              ::testing::ElementsAre(1, k2Pow32));
+
+  // A multi-dimensional tile assignment with a reshape dimension of 2^32.
+  IotaTileAssignment iota4 =
+      IotaTileAssignment::Create({2, k2Pow32}, {k2Pow32, 2}, {1, 0});
+  EXPECT_EQ(iota4.value_at({1, 5}), 11);
+  EXPECT_THAT(iota4.index_for(11), ::testing::ElementsAre(1, 5));
+}
+
 TEST(IotaTileAssignmentTest, IndexFor) {
   IotaTileAssignment iota = IotaTileAssignment::Create({2, 3}, {6}, {0});
   EXPECT_THAT(iota.index_for(0), ::testing::ElementsAre(0, 0));
@@ -230,6 +267,66 @@ TEST(IotaTileAssignmentTest, ValueAtAndIndexForExhaustive) {
           });
     });
   });
+}
+
+TEST(IotaTileAssignmentTest, TransposeExhaustive) {
+  constexpr int64_t kTotalSize = 24;
+  ForEachShape(kTotalSize, [&](std::vector<int64_t>& dims) {
+    ForEachShape(kTotalSize, [&](std::vector<int64_t>& reshape_dims) {
+      ForEachPermutation(
+          reshape_dims.size(), [&](absl::Span<const int> transpose_perm) {
+            IotaTileAssignment iota =
+                IotaTileAssignment::Create(dims, reshape_dims, transpose_perm);
+            ForEachPermutation(dims.size(), [&](absl::Span<const int> perm) {
+              SCOPED_TRACE(absl::StrFormat("iota = %s, perm = [%s]",
+                                           iota.ToString(),
+                                           absl::StrJoin(perm, ", ")));
+              std::optional<IotaTileAssignment> transposed =
+                  iota.Transpose(perm);
+              if (!transposed.has_value()) {
+                return;
+              }
+              Array<int64_t> expected = iota.ToArray();
+              expected.TransposeDimensions(perm);
+              EXPECT_EQ(transposed->ToArray(), expected);
+            });
+          });
+    });
+  });
+}
+
+TEST(IotaTileAssignmentTest, TransposeLargePrimeDims) {
+  // 2^61 - 1 is prime, so trial division to factorize it would be very slow.
+  constexpr int64_t kPrime = (int64_t{1} << 61) - 1;
+
+  // The tile dims [kPrime, 2] are incompatible with the transposed reshape dims
+  // [2, kPrime], so the result cannot be represented as an iota.
+  absl::StatusOr<IotaTileAssignment> iota =
+      IotaTileAssignment::TryCreate({kPrime, 2}, {kPrime, 2}, {1, 0});
+  ASSERT_THAT(iota, IsOk());
+  EXPECT_FALSE(iota->Transpose({1, 0}).has_value());
+
+  // [kPrime, 2, 2] is a refinement of the transposed reshape dims [kPrime, 4].
+  iota = IotaTileAssignment::TryCreate({kPrime, 2, 2}, {4, kPrime}, {1, 0});
+  ASSERT_THAT(iota, IsOk());
+  std::optional<IotaTileAssignment> transposed = iota->Transpose({2, 1, 0});
+  ASSERT_TRUE(transposed.has_value());
+  EXPECT_THAT(transposed->dims(), ElementsAre(2, 2, kPrime));
+  EXPECT_THAT(transposed->reshape_dims(), ElementsAre(2, 2, kPrime));
+  EXPECT_THAT(transposed->transpose_perm(), ElementsAre(1, 0, 2));
+}
+
+TEST(IotaTileAssignmentTest, ZeroElements) {
+  absl::StatusOr<IotaTileAssignment> iota =
+      IotaTileAssignment::TryCreate({0, 2}, {0, 2}, {1, 0});
+  ASSERT_THAT(iota, IsOk());
+  EXPECT_EQ(*iota, IotaTileAssignment::Create({0, 2}));
+  EXPECT_THAT(iota->reshape_dims(), ElementsAre(0));
+  EXPECT_THAT(iota->transpose_perm(), ElementsAre(0));
+
+  std::optional<IotaTileAssignment> transposed = iota->Transpose({1, 0});
+  ASSERT_TRUE(transposed.has_value());
+  EXPECT_EQ(*transposed, IotaTileAssignment::Create({2, 0}));
 }
 
 TEST(IotaTileAssignmentTest, ToString) {
@@ -493,6 +590,84 @@ TEST(IotaTileAssignmentTest, TryCreateEnforcesInvariants) {
   EXPECT_THAT(
       IotaTileAssignment::TryCreate({16}, {4, 2, 2}, {0, 2, 2}),
       StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("not unique")));
+  EXPECT_THAT(
+      IotaTileAssignment::TryCreate(absl::Span<const int64_t>(
+          nullptr, static_cast<size_t>(std::numeric_limits<int>::max()) + 1)),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("exceeds maximum")));
+}
+
+TEST(IotaTileAssignmentTest, CopyAndMove) {
+  constexpr size_t kLargeRank = size_t{1} << 16;
+  std::vector<int64_t> large_dims(kLargeRank, 1);
+  IotaTileAssignment large = IotaTileAssignment::Create(large_dims);
+  IotaTileAssignment small =
+      IotaTileAssignment::Create({4, 4}, {2, 2, 4}, {1, 0, 2});
+
+  // Copy-construct and copy-assign across different ranks.
+  IotaTileAssignment large_copy(large);
+  EXPECT_EQ(large_copy.dims(), large.dims());
+  EXPECT_EQ(large_copy.reshape_dims(), large.reshape_dims());
+  EXPECT_EQ(large_copy.transpose_perm(), large.transpose_perm());
+
+  IotaTileAssignment assigned = small;
+  assigned = large;
+  EXPECT_EQ(assigned.dims(), large.dims());
+  EXPECT_EQ(assigned.reshape_dims(), large.reshape_dims());
+  EXPECT_EQ(assigned.transpose_perm(), large.transpose_perm());
+
+  assigned = small;
+  EXPECT_EQ(assigned.dims(), small.dims());
+  EXPECT_EQ(assigned.reshape_dims(), small.reshape_dims());
+  EXPECT_EQ(assigned.transpose_perm(), small.transpose_perm());
+
+  // Self copy-assignment.
+  IotaTileAssignment& self_ref = assigned;
+  assigned = self_ref;
+  EXPECT_EQ(assigned.dims(), small.dims());
+  EXPECT_EQ(assigned.reshape_dims(), small.reshape_dims());
+  EXPECT_EQ(assigned.transpose_perm(), small.transpose_perm());
+
+  // Move-construct leaves source empty and safe to copy from or assign to.
+  IotaTileAssignment moved_from =
+      IotaTileAssignment::Create({4, 4}, {2, 2, 4}, {1, 0, 2});
+  IotaTileAssignment moved_to(std::move(moved_from));
+  EXPECT_EQ(moved_to, small);
+  // Intentionally inspect moved-from state.
+  // NOLINTNEXTLINE(bugprone-use-after-move)
+  EXPECT_TRUE(moved_from.dims().empty());
+  EXPECT_TRUE(moved_from.reshape_dims().empty());
+  EXPECT_TRUE(moved_from.transpose_perm().empty());
+
+  IotaTileAssignment copy_of_moved_from(moved_from);
+  EXPECT_TRUE(copy_of_moved_from.dims().empty());
+  EXPECT_TRUE(copy_of_moved_from.reshape_dims().empty());
+  EXPECT_TRUE(copy_of_moved_from.transpose_perm().empty());
+
+  // Copy-assign valid object into moved-from (empty) target.
+  moved_from = small;
+  EXPECT_EQ(moved_from, small);
+
+  // Copy-assign moved-from (empty) object into valid target.
+  IotaTileAssignment moved_from_2 = IotaTileAssignment::Create({2, 3});
+  IotaTileAssignment moved_to_2 = IotaTileAssignment::Create({1});
+  moved_to_2 = std::move(moved_from_2);
+  EXPECT_THAT(moved_to_2.dims(), ::testing::ElementsAre(2, 3));
+  // Intentionally inspect moved-from state.
+  // NOLINTNEXTLINE(bugprone-use-after-move)
+  EXPECT_TRUE(moved_from_2.dims().empty());
+
+  moved_to_2 = moved_from_2;
+  EXPECT_TRUE(moved_to_2.dims().empty());
+  EXPECT_TRUE(moved_to_2.reshape_dims().empty());
+  EXPECT_TRUE(moved_to_2.transpose_perm().empty());
+}
+
+TEST(TileAssignmentTest, ExtractCommonFactorSequenceRejectsZero) {
+  EXPECT_THAT(ExtractCommonFactorSequence({0, 2}, {0}), IsEmpty());
+  EXPECT_THAT(ExtractCommonFactorSequence({2, 0}, {2, 0}), IsEmpty());
+  EXPECT_THAT(GetOrderedSubDims({0, 2}, {0}, {0}),
+              StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
 }  // namespace

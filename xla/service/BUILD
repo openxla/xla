@@ -14,7 +14,7 @@ load(
 )
 load("//xla/service:xla_compile.bzl", "xla_aot_compile_cpu", "xla_aot_compile_gpu", "xla_aot_compile_gpu_runtime_autotuning")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm_is_configured", "if_gpu_is_configured")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tests:build_defs.bzl", "GPU_DEFAULT_BACKENDS", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "if_libtpu", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
@@ -546,10 +546,7 @@ xla_cc_test(
 xla_test(
     name = "dynamic_update_slice_test",
     srcs = ["dynamic_update_slice_test.cc"],
-    backends = [
-        "cpu",
-        "gpu",
-    ],
+    backends = ["cpu"] + GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:error_spec",
         "//xla:literal",
@@ -834,9 +831,11 @@ cc_library(
         ":platform_util",
         ":stream_pool",
         ":transfer_manager",
+        "//xla:shape_util",
         "//xla:util",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor:memory_allocator",
         "//xla/stream_executor:memory_space",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream",
@@ -845,6 +844,7 @@ cc_library(
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/host:host_platform_id",
         "//xla/stream_executor/integrations:device_mem_allocator",
+        "//xla/stream_executor/integrations:stream_executor_allocator",
         "//xla/stream_executor/integrations:tf_allocator_adapter",
         "//xla/stream_executor/rocm:rocm_platform_id",
         "//xla/tsl/framework:allocator",
@@ -987,47 +987,11 @@ cc_library(
 )
 
 cc_library(
-    name = "approximate_latency_estimator",
-    hdrs = ["approximate_latency_estimator.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms/hlo_scheduling:approximate_latency_estimator",
-    ],
-)
-
-cc_library(
-    name = "async_tracker",
-    hdrs = ["async_tracker.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms/hlo_scheduling:async_tracker",
-    ],
-)
-
-cc_library(
     name = "scheduler_config",
     hdrs = ["scheduler_config.h"],
     tags = if_google(["avoid_dep"]),
     deps = [
         "//xla/hlo/transforms/hlo_scheduling:scheduler_config",
-    ],
-)
-
-cc_library(
-    name = "scheduler_core",
-    hdrs = ["scheduler_core.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms/hlo_scheduling:scheduler_core",
-    ],
-)
-
-cc_library(
-    name = "hlo_schedule_graph",
-    hdrs = ["hlo_schedule_graph.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms/hlo_scheduling:hlo_schedule_graph",
     ],
 )
 
@@ -1046,15 +1010,6 @@ cc_library(
     tags = if_google(["avoid_dep"]),
     deps = [
         "//xla/hlo/transforms/hlo_scheduling:latency_hiding_scheduler",
-    ],
-)
-
-cc_library(
-    name = "p2p_schedule_preparation",
-    hdrs = ["p2p_schedule_preparation.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms/collectives:p2p_schedule_preparation",
     ],
 )
 
@@ -1411,10 +1366,7 @@ cc_library(
 xla_test(
     name = "compiler_test",
     srcs = ["compiler_test.cc"],
-    backends = [
-        "gpu",
-        "cpu",
-    ],
+    backends = ["cpu"] + GPU_DEFAULT_BACKENDS,
     deps = [
         ":compiler",
         "//xla:autotune_results_proto_cc",
@@ -1601,7 +1553,6 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:sorted_range",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -2061,15 +2012,6 @@ cc_library(
 )
 
 cc_library(
-    name = "async_custom_call_utils",
-    hdrs = ["async_custom_call_utils.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms:async_custom_call_utils",
-    ],
-)
-
-cc_library(
     name = "async_collective_custom_call_rewriter",
     hdrs = ["async_collective_custom_call_rewriter.h"],
     tags = if_google(["avoid_dep"]),
@@ -2157,7 +2099,7 @@ cc_library(
 xla_test(
     name = "dynamic_padder_ir_test",
     srcs = ["dynamic_padder_ir_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":hlo_module_config",
         "//xla/backends/gpu/tests:gpu_pjrt_codegen_test",
@@ -2400,10 +2342,7 @@ cc_library(
 xla_test(
     name = "hlo_execution_profile_test",
     srcs = ["hlo_execution_profile_test.cc"],
-    backends = [
-        "cpu",
-        "gpu",
-    ],
+    backends = ["cpu"] + GPU_DEFAULT_BACKENDS,
     tags = [
         "no_mac_arm64",
         "nofixdeps",
@@ -2508,17 +2447,6 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log:check",
-    ],
-)
-
-cc_library(
-    name = "buffer_value_containers",
-    hdrs = ["buffer_value_containers.h"],
-    deps = [
-        ":buffer_value",
-        ":logical_buffer",
-        "//xla/tsl/lib/gtl:compactptrset",
-        "@com_google_absl//absl/container:flat_hash_set",
     ],
 )
 
@@ -2649,15 +2577,6 @@ cc_library(
 )
 
 cc_library(
-    name = "compile_time_cap",
-    hdrs = ["compile_time_cap.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms:compile_time_cap",
-    ],
-)
-
-cc_library(
     name = "copy_insertion",
     hdrs = [
         "copy_insertion.h",
@@ -2666,15 +2585,6 @@ cc_library(
     tags = if_google(["avoid_dep"]),
     deps = [
         "//xla/hlo/transforms:copy_insertion",
-    ],
-)
-
-cc_library(
-    name = "loop_schedule_linearizer",
-    hdrs = ["loop_schedule_linearizer.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms:loop_schedule_linearizer",
     ],
 )
 
@@ -2818,15 +2728,6 @@ cc_library(
 )
 
 cc_library(
-    name = "hlo_cse_constant_key",
-    hdrs = ["hlo_cse_constant_key.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms/simplifiers:hlo_cse_constant_key",
-    ],
-)
-
-cc_library(
     name = "maybe_owning_device_address",
     srcs = ["maybe_owning_device_address.cc"],
     hdrs = ["maybe_owning_device_address.h"],
@@ -2865,10 +2766,7 @@ cc_library(
 xla_test(
     name = "elemental_ir_emitter_test",
     srcs = ["elemental_ir_emitter_test.cc"],
-    backends = [
-        "cpu",
-        "gpu",
-    ],
+    backends = ["cpu"] + GPU_DEFAULT_BACKENDS,
     tags = [
         "no_windows",  # TODO(b/152037541)
     ],
@@ -3908,13 +3806,17 @@ cc_library(
     srcs = ["custom_call_sharding_helper.cc"],
     hdrs = ["custom_call_sharding_helper.h"],
     deps = [
+        "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:logging",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -3950,29 +3852,6 @@ cc_library(
     tags = if_google(["avoid_dep"]),
     deps = [
         "//xla/hlo/transforms/simplifiers:layout_normalization",
-    ],
-)
-
-cc_library(
-    name = "scatter_simplifier",
-    hdrs = ["scatter_simplifier.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = ["//xla/hlo/transforms/expanders:scatter_simplifier"],
-)
-
-cc_library(
-    name = "select_and_scatter_expander",
-    hdrs = ["select_and_scatter_expander.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = ["//xla/hlo/transforms/expanders:select_and_scatter_expander"],
-)
-
-cc_library(
-    name = "change_op_data_type",
-    hdrs = ["change_op_data_type.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms:change_op_data_type",
     ],
 )
 
@@ -4219,6 +4098,7 @@ xla_cc_test(
         "//xla/service/cpu:cpu_aot_loader",
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:executable_proto_cc",
+        "//xla/service/cpu:orc_function_library_loader",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/base:log_severity",
@@ -4463,15 +4343,6 @@ cc_library(
     tags = if_google(["avoid_dep"]),
     deps = [
         "//xla/hlo/transforms:legalize_scheduling_annotations",
-    ],
-)
-
-cc_library(
-    name = "scheduler_memory_fencing",
-    hdrs = ["scheduler_memory_fencing.h"],
-    tags = if_google(["avoid_dep"]),
-    deps = [
-        "//xla/hlo/transforms:scheduler_memory_fencing",
     ],
 )
 

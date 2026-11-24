@@ -228,7 +228,7 @@ gpu_device_info {
   runtime_version: "13.4.0"
   compile_time_toolkit_version: "13.4.0"
   dnn_version: "9.25.0"
-  cub_version: "3.2.0"
+  cub_version: "3.1.2"
   device_interconnect_info {
     active_links: 36
   }
@@ -249,6 +249,7 @@ gpu_device_info {
   max_blocks_per_multiprocessor: 16
   collective_memory_granularity: 2097152
   oversized_shared_memory_per_block: 334848
+  locality_domain_count: 2
 }
 platform_name: "CUDA"
 dnn_version_info {

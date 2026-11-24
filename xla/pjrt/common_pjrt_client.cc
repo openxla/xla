@@ -1907,7 +1907,7 @@ absl::StatusOr<
 CommonPjRtClient::CreateAliasBuffer(const Shape& shape,
                                     PjRtMemorySpace* memory_space) {
   PjRtRawBufferRef raw_buffer;
-  PjRtFulfillAliasRawBufferCallback buffer_promise;
+  PjRtFulfillAliasRawBufferCallbackRef buffer_promise;
 
   auto shared_shape = std::make_shared<const Shape>(shape);
   ABSL_ASSIGN_OR_RETURN(int64_t on_device_bytes_count,
@@ -1930,7 +1930,8 @@ CommonPjRtClient::CreateAliasBuffer(const Shape& shape,
        shared_shape](absl::StatusOr<xla::PjRtBuffer*> buffer_or) mutable {
         if (!buffer_or.ok()) {
           definition_event_promise.SetError(buffer_or.status());
-          std::move(buffer_promise)(buffer_or.status()).IgnoreError();
+          PjRtFulfillAliasRawBufferCallbackInterface::FulfillError(
+              std::move(buffer_promise), buffer_or.status());
           return buffer_or.status();
         }
         xla::PjRtBuffer* buffer = buffer_or.value();
@@ -1940,7 +1941,8 @@ CommonPjRtClient::CreateAliasBuffer(const Shape& shape,
               "got %s",
               shared_shape->ToString(), buffer->on_device_shape().ToString()));
           definition_event_promise.SetError(status);
-          std::move(buffer_promise)(status).IgnoreError();
+          PjRtFulfillAliasRawBufferCallbackInterface::FulfillError(
+              std::move(buffer_promise), status);
           return status;
         }
         xla::CommonPjRtBuffer* common_buffer =
@@ -1949,7 +1951,8 @@ CommonPjRtClient::CreateAliasBuffer(const Shape& shape,
           auto status =
               absl::InternalError("Failed to cast to CommonPjRtBuffer");
           definition_event_promise.SetError(status);
-          std::move(buffer_promise)(status).IgnoreError();
+          PjRtFulfillAliasRawBufferCallbackInterface::FulfillError(
+              std::move(buffer_promise), status);
           return status;
         }
         xla::CommonPjRtBuffer::ScopedHold hold =
@@ -1959,10 +1962,12 @@ CommonPjRtClient::CreateAliasBuffer(const Shape& shape,
         if (!device_event_or.ok()) {
           auto status = device_event_or.status();
           definition_event_promise.SetError(status);
-          std::move(buffer_promise)(status).IgnoreError();
+          PjRtFulfillAliasRawBufferCallbackInterface::FulfillError(
+              std::move(buffer_promise), status);
           return status;
         }
-        auto status = std::move(buffer_promise)(hold.buffer()->raw_buffer());
+        auto status = PjRtFulfillAliasRawBufferCallbackInterface::FulfillBuffer(
+            std::move(buffer_promise), hold.buffer()->raw_buffer());
         if (!status.ok()) {
           definition_event_promise.SetError(status);
           return status;
@@ -2153,18 +2158,21 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 CommonPjRtClient::CreateViewOfDeviceBuffer(
     void* device_ptr, const Shape& shape, PjRtMemorySpace* memory_space,
     std::function<void()> on_delete_callback,
-    std::optional<std::intptr_t> stream) {
+    std::optional<std::intptr_t> stream, bool is_mutable) {
   ABSL_ASSIGN_OR_RETURN(
       Shape device_shape,
       MakeDefaultShapeForMemorySpace(
           memory_space, shape, shape.has_layout() ? &shape.layout() : nullptr));
   ABSL_ASSIGN_OR_RETURN(int64_t on_device_bytes_count,
                         GetOnDeviceBytesCount(memory_space, device_shape));
+  absl::AnyInvocable<void() &&> delete_callback = nullptr;
+  if (on_delete_callback != nullptr) {
+    delete_callback = std::move(on_delete_callback);
+  }
   ABSL_ASSIGN_OR_RETURN(
       auto raw_buffer,
-      ImportForeignMemory(device_ptr, std::move(on_delete_callback),
-                          on_device_bytes_count, memory_space,
-                          /*is_mutable=*/false));
+      ImportForeignMemory(device_ptr, std::move(delete_callback),
+                          on_device_bytes_count, memory_space, is_mutable));
 
   absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events;
   if (stream.has_value()) {
@@ -4792,10 +4800,11 @@ static absl::Status CommonCopyToMemorySpace(
             dst_raw_buffer->GetOnDeviceSizeInBytes(), on_device_bytes_count);
       }
     } else {
-      ABSL_ASSIGN_OR_RETURN(dst_raw_buffer,
-                            dst_client->AllocateRawBuffer(
-                                dst_memory_space, on_device_bytes_count,
-                                /*retry_on_oom=*/true, allocation_event));
+      ABSL_ASSIGN_OR_RETURN(
+          dst_raw_buffer,
+          dst_client->AllocateRawBuffer(dst_memory_space, on_device_bytes_count,
+                                        /*retry_on_oom=*/true,
+                                        PjRtDeviceEventRef(allocation_event)));
     }
     ABSL_ASSIGN_OR_RETURN(
         dst_buffer,

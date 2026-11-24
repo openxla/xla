@@ -56,6 +56,7 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
+using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::Property;
 using ::testing::UnorderedElementsAre;
@@ -2632,10 +2633,77 @@ small_multi_body {
   ROOT tuple = (f32[256,256]{1,0}, f32[256,256]{1,0}) tuple(broadcast, copy)
 }
 
+scalar_param_fill_body {
+  s = f32[] parameter(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(s), dimensions={}
+}
+
+tuple_scalar_fill_body {
+  s = f32[] parameter(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(s), dimensions={}
+}
+
+computed_scalar_fill_body {
+  s = f32[] parameter(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(s), dimensions={}
+}
+
+broadcast_1d_param_body {
+  v = f32[512]{0} parameter(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(v), dimensions={1}
+}
+
+low_amplification_param_body {
+  m = f32[64,512]{1,0} parameter(0)
+  b = f32[8,64,512]{2,1,0} broadcast(m), dimensions={1,2}
+  ROOT bitcast = f32[512,512]{1,0} bitcast(b)
+}
+
+reduce_add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT sum = f32[] add(lhs, rhs)
+}
+
+reduced_scalar_fill_body {
+  s = f32[] parameter(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(s), dimensions={}
+}
+
+collective_scalar_fill_body {
+  s = f32[] parameter(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(s), dimensions={}
+}
+
+mixed_operands_body {
+  p = f32[512,512]{1,0} parameter(0)
+  s = f32[] parameter(1)
+  b = f32[512,512]{1,0} broadcast(s), dimensions={}
+  ROOT sum = f32[512,512]{1,0} add(p, b)
+}
+
 ENTRY main {
   p0 = f32[512,512]{1,0} parameter(0)
+  s0 = f32[] parameter(1)
+  p_tuple = (f32[], f32[512,512]{1,0}) parameter(2)
+  p_1d = f32[512]{0} parameter(3)
+  p_64x512 = f32[64,512]{1,0} parameter(4)
+  s_tuple = f32[] get-tuple-element(p_tuple), index=0
+  neg_s0 = f32[] negate(s0)
+  zero = f32[] constant(0)
+  reduced_p0 = f32[] reduce(p0, zero), dimensions={0,1}, to_apply=reduce_add
+  ar_s0_start = f32[] all-reduce-start(s0), to_apply=reduce_add
+  ar_s0_done = f32[] all-reduce-done(ar_s0_start)
   fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill_body
   iota_fill = s32[512,512]{1,0} fusion(), kind=kLoop, calls=iota_body
+  scalar_param_fill = f32[512,512]{1,0} fusion(s0), kind=kLoop, calls=scalar_param_fill_body
+  tuple_scalar_fill = f32[512,512]{1,0} fusion(s_tuple), kind=kLoop, calls=tuple_scalar_fill_body
+  computed_scalar_fill = f32[512,512]{1,0} fusion(neg_s0), kind=kLoop, calls=computed_scalar_fill_body
+  broadcast_1d_param_fill = f32[512,512]{1,0} fusion(p_1d), kind=kLoop, calls=broadcast_1d_param_body
+  low_amplification_param_fill = f32[512,512]{1,0} fusion(p_64x512), kind=kLoop, calls=low_amplification_param_body
+  reduced_scalar_fill = f32[512,512]{1,0} fusion(reduced_p0), kind=kLoop, calls=reduced_scalar_fill_body
+  collective_scalar_fill = f32[512,512]{1,0} fusion(ar_s0_done), kind=kLoop, calls=collective_scalar_fill_body
+  mixed_operands = f32[512,512]{1,0} fusion(p0, s0), kind=kLoop, calls=mixed_operands_body
   small_fill = f32[16,16]{1,0} fusion(), kind=kLoop, calls=small_body
   scaled = f32[512,512]{1,0} fusion(p0), kind=kLoop, calls=scale_body
   earliest_fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=earliest_body, backend_config={"force_earliest_schedule":true}
@@ -2643,7 +2711,7 @@ ENTRY main {
   streamed_fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=streamed_body, backend_config={"operation_queue_id":"1"}
   multi_fill = (f32[384,384]{1,0}, f32[384,384]{1,0}) fusion(), kind=kLoop, calls=multi_body
   small_multi_fill = (f32[256,256]{1,0}, f32[256,256]{1,0}) fusion(), kind=kLoop, calls=small_multi_body
-  ROOT result = (f32[512,512]{1,0}, s32[512,512]{1,0}, f32[16,16]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, (f32[384,384]{1,0}, f32[384,384]{1,0}), (f32[256,256]{1,0}, f32[256,256]{1,0})) tuple(fill, iota_fill, small_fill, scaled, earliest_fill, grouped_fill, streamed_fill, multi_fill, small_multi_fill)
+  ROOT result = (f32[512,512]{1,0}, s32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[16,16]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, (f32[384,384]{1,0}, f32[384,384]{1,0}), (f32[256,256]{1,0}, f32[256,256]{1,0})) tuple(fill, iota_fill, scalar_param_fill, tuple_scalar_fill, computed_scalar_fill, broadcast_1d_param_fill, low_amplification_param_fill, reduced_scalar_fill, collective_scalar_fill, mixed_operands, small_fill, scaled, earliest_fill, grouped_fill, streamed_fill, multi_fill, small_multi_fill)
 }
 )";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
@@ -2676,7 +2744,16 @@ ENTRY main {
   };
   EXPECT_TRUE(node("fill").GetForceEarly());
   EXPECT_TRUE(node("iota_fill").GetForceEarly());
-  // Small fills, fusions with operands, and parameters are left alone.
+  EXPECT_TRUE(node("scalar_param_fill").GetForceEarly());
+  EXPECT_TRUE(node("tuple_scalar_fill").GetForceEarly());
+  EXPECT_TRUE(node("computed_scalar_fill").GetForceEarly());
+  EXPECT_TRUE(node("broadcast_1d_param_fill").GetForceEarly());
+  // Fusions with <100x amplification, scalar operands derived from large-tensor
+  // reductions or collectives, small fills, and parameters are left alone.
+  EXPECT_FALSE(node("low_amplification_param_fill").GetForceEarly());
+  EXPECT_FALSE(node("reduced_scalar_fill").GetForceEarly());
+  EXPECT_FALSE(node("collective_scalar_fill").GetForceEarly());
+  EXPECT_FALSE(node("mixed_operands").GetForceEarly());
   EXPECT_FALSE(node("small_fill").GetForceEarly());
   EXPECT_FALSE(node("scaled").GetForceEarly());
   EXPECT_FALSE(node("p0").GetForceEarly());
@@ -2756,6 +2833,173 @@ ENTRY main {
             GetIndexByName(sequence, "looped"));
   EXPECT_LT(GetIndexByName(sequence, "looped"),
             GetIndexByName(sequence, "sum"));
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       LargeScalarParameterFillIsScheduledNextToItsUserAfterLoop) {
+  constexpr absl::string_view kHloModule = R"(
+HloModule test
+
+apply_op {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
+
+scalar_fill_body {
+  s = f32[] parameter(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(s), dimensions={}
+}
+
+condition {
+  p = (s32[], f32[512,512]{1,0}) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  limit = s32[] constant(4)
+  ROOT compare = pred[] compare(i, limit), direction=LT
+}
+
+body {
+  p = (s32[], f32[512,512]{1,0}) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  x = f32[512,512]{1,0} get-tuple-element(p), index=1
+  one = s32[] constant(1)
+  next = s32[] add(i, one)
+  negated = f32[512,512]{1,0} negate(x)
+  ROOT tuple = (s32[], f32[512,512]{1,0}) tuple(next, negated)
+}
+
+ENTRY main {
+  input = f32[512,512]{1,0} parameter(0)
+  other = f32[512,512]{1,0} parameter(1)
+  scalar_val = f32[] parameter(2)
+  zero = s32[] constant(0)
+  initial = (s32[], f32[512,512]{1,0}) tuple(zero, input)
+  scalar_fill = f32[512,512]{1,0} fusion(scalar_val), kind=kLoop, calls=scalar_fill_body
+  loop = (s32[], f32[512,512]{1,0}) while(initial), condition=condition, body=body
+  looped = f32[512,512]{1,0} get-tuple-element(loop), index=1
+  sum = f32[512,512]{1,0} add(looped, scalar_fill)
+  ar-start = f32[512,512]{1,0} all-reduce-start(other), to_apply=apply_op
+  ar-done = f32[512,512]{1,0} all-reduce-done(ar-start)
+  ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(sum, ar-done)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(
+                           kHloModule, GetModuleConfig(/*fdo_profile=*/"")));
+  ASSERT_OK(ScheduleModule(module.get()));
+  HloComputation* computation = module->entry_computation();
+  std::vector<HloInstruction*> sequence =
+      module->schedule().sequence(computation).instructions();
+
+  // Even though `scalar_fill` takes a scalar parameter operand, its 1 MiB
+  // output buffer should be sunk after `loop` right before its consumer rather
+  // than floating above `loop`.
+  EXPECT_LT(GetIndexByName(sequence, "loop"),
+            GetIndexByName(sequence, "scalar_fill"));
+  EXPECT_LT(GetIndexByName(sequence, "scalar_fill"),
+            GetIndexByName(sequence, "looped"));
+  EXPECT_LT(GetIndexByName(sequence, "looped"),
+            GetIndexByName(sequence, "sum"));
+
+  SchedulerConfig config;
+  auto tracker = std::make_shared<GpuAsyncTracker>(config);
+  auto latency_estimator =
+      std::make_shared<GpuLatencyEstimator>(/*pointer_size=*/8);
+  stream_executor::DeviceDescription gpu_device_info =
+      TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+  GpuAliasInfo alias_info(gpu_device_info);
+  auto scheduling_context = std::make_shared<const SchedulingContext>(
+      module.get(), latency_estimator, tracker, &alias_info);
+  LatencyHidingScheduler::SchedulerStatistics stats =
+      LatencyHidingScheduler::LatencyHidingStatistics(computation, sequence,
+                                                      scheduling_context);
+  // Sinking the 1 MiB `scalar_fill` below `loop` keeps peak memory pressure at
+  // 2 MiB instead of 3 MiB.
+  EXPECT_EQ(stats.memory_pressure_peak, 2 * 1024 * 1024);
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       LargeComputedScalarFillIsScheduledNextToItsUserAfterLoop) {
+  constexpr absl::string_view kHloModule = R"(
+HloModule test
+
+apply_op {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
+
+scalar_fill_body {
+  s = f32[] parameter(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(s), dimensions={}
+}
+
+condition {
+  p = (s32[], f32[512,512]{1,0}) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  limit = s32[] constant(4)
+  ROOT compare = pred[] compare(i, limit), direction=LT
+}
+
+body {
+  p = (s32[], f32[512,512]{1,0}) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  x = f32[512,512]{1,0} get-tuple-element(p), index=1
+  one = s32[] constant(1)
+  next = s32[] add(i, one)
+  negated = f32[512,512]{1,0} negate(x)
+  ROOT tuple = (s32[], f32[512,512]{1,0}) tuple(next, negated)
+}
+
+ENTRY main {
+  input = f32[512,512]{1,0} parameter(0)
+  other = f32[512,512]{1,0} parameter(1)
+  scalar_val = f32[] parameter(2)
+  neg_scalar = f32[] negate(scalar_val)
+  zero = s32[] constant(0)
+  initial = (s32[], f32[512,512]{1,0}) tuple(zero, input)
+  computed_fill = f32[512,512]{1,0} fusion(neg_scalar), kind=kLoop, calls=scalar_fill_body
+  loop = (s32[], f32[512,512]{1,0}) while(initial), condition=condition, body=body
+  looped = f32[512,512]{1,0} get-tuple-element(loop), index=1
+  sum = f32[512,512]{1,0} add(looped, computed_fill)
+  ar-start = f32[512,512]{1,0} all-reduce-start(other), to_apply=apply_op
+  ar-done = f32[512,512]{1,0} all-reduce-done(ar-start)
+  ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(sum, ar-done)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(
+                           kHloModule, GetModuleConfig(/*fdo_profile=*/"")));
+  ASSERT_OK(ScheduleModule(module.get()));
+  HloComputation* computation = module->entry_computation();
+  std::vector<HloInstruction*> sequence =
+      module->schedule().sequence(computation).instructions();
+
+  // Because `neg_scalar` is a pure scalar subgraph rooted at a parameter,
+  // `computed_fill` is forced early in bottom-up scheduling and placed after
+  // `loop` right before its consumer `sum`.
+  EXPECT_LT(GetIndexByName(sequence, "loop"),
+            GetIndexByName(sequence, "computed_fill"));
+  EXPECT_LT(GetIndexByName(sequence, "computed_fill"),
+            GetIndexByName(sequence, "looped"));
+  EXPECT_LT(GetIndexByName(sequence, "looped"),
+            GetIndexByName(sequence, "sum"));
+
+  SchedulerConfig config;
+  auto tracker = std::make_shared<GpuAsyncTracker>(config);
+  auto latency_estimator =
+      std::make_shared<GpuLatencyEstimator>(/*pointer_size=*/8);
+  stream_executor::DeviceDescription gpu_device_info =
+      TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+  GpuAliasInfo alias_info(gpu_device_info);
+  auto scheduling_context = std::make_shared<const SchedulingContext>(
+      module.get(), latency_estimator, tracker, &alias_info);
+  LatencyHidingScheduler::SchedulerStatistics stats =
+      LatencyHidingScheduler::LatencyHidingStatistics(computation, sequence,
+                                                      scheduling_context);
+  // Sinking the 1 MiB `computed_fill` below `loop` keeps peak memory pressure
+  // at 2 MiB instead of 3 MiB.
+  EXPECT_EQ(stats.memory_pressure_peak, 2 * 1024 * 1024);
 }
 
 TEST_F(GpuLatencyHidingSchedulerBaseTest,
@@ -2842,6 +3086,134 @@ ENTRY main {
             GetIndexByName(sequence, "ar-done"));
   EXPECT_EQ(GetIndexByName(sequence, "fill") + 1,
             GetIndexByName(sequence, "negated"));
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       OverlapLimitResolvesAsyncStartThroughIntermediaries) {
+  // The optimization barrier forces both all-gathers to be in flight at the
+  // same time. Each async-done reaches its async-start through a tuple, the
+  // barrier, and a gte rather than as a direct operand. Every group of `ag0`
+  // shares at most one device with every group of `ag1`, so the overlap is
+  // allowed.
+  constexpr absl::string_view kHloModule = R"hlo(
+HloModule test, replica_count=4
+
+ag0 {
+  p = f32[1] parameter(0)
+  ROOT ag = f32[2] all-gather(p), dimensions={0}, replica_groups={{0,1},{2,3}}
+}
+
+ag1 {
+  p = f32[1] parameter(0)
+  ROOT ag = f32[2] all-gather(p), dimensions={0}, replica_groups={{0,2},{1,3}}
+}
+
+ENTRY main {
+  p0 = f32[1] parameter(0)
+  p1 = f32[1] parameter(1)
+
+  ag0-start = ((f32[1]), f32[2]) async-start(p0), calls=ag0
+  ag1-start = ((f32[1]), f32[2]) async-start(p1), calls=ag1
+  starts = (((f32[1]), f32[2]), ((f32[1]), f32[2])) tuple(ag0-start, ag1-start)
+
+  barrier = (((f32[1]), f32[2]), ((f32[1]), f32[2])) opt-barrier(starts)
+
+  ag0-future = ((f32[1]), f32[2]) get-tuple-element(barrier), index=0
+  ag1-future = ((f32[1]), f32[2]) get-tuple-element(barrier), index=1
+
+  ag0-done = f32[2] async-done(ag0-future), calls=ag0
+  ag1-done = f32[2] async-done(ag1-future), calls=ag1
+
+  ROOT result = (f32[2], f32[2]) tuple(ag0-done, ag1-done)
+})hlo";
+
+  HloModuleConfig config = GetModuleConfig(/*fdo_profile=*/"");
+  config.set_replica_count(4);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule, config));
+
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_experimental_enable_collective_multi_streaming(true);
+
+  EXPECT_OK(ScheduleModule(module.get(), /*num_parallel_resources=*/2));
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       OverlapLimitRejectsLoopCarriedAsyncDoneWithUnknownStart) {
+  // A pipelined all-gather: `next-future` is started in one iteration and
+  // completed by `carried-done` in the next. `while_body` is scheduled on its
+  // own, so the start of `carried-done` is unknown there and its participating
+  // devices cannot be checked. The optimization barriers force
+  // `x-start` to be in flight when `carried-done` is scheduled, so the
+  // scheduler conservatively refuses to schedule `carried-done` and fails, even
+  // though the two all-gathers share at most one device.
+  constexpr absl::string_view kHloModule = R"hlo(
+HloModule test, replica_count=4
+
+ag0 {
+  p = f32[1] parameter(0)
+  ROOT ag = f32[2] all-gather(p), dimensions={0}, replica_groups={{0,1},{2,3}}
+}
+
+ag1 {
+  p = f32[1] parameter(0)
+  ROOT ag = f32[2] all-gather(p), dimensions={0}, replica_groups={{0,2},{1,3}}
+}
+
+while_cond {
+  state = ((f32[1]), f32[2]) parameter(0)
+  ROOT continue = pred[] constant(false)
+}
+
+while_body {
+  carried-future = ((f32[1]), f32[2]) parameter(0)
+  c = f32[1] constant({1})
+
+  x-start = ((f32[1]), f32[2]) async-start(c), calls=ag1
+
+  futures = (((f32[1]), f32[2]), ((f32[1]), f32[2]))
+    tuple(carried-future, x-start)
+  futures-barrier = (((f32[1]), f32[2]), ((f32[1]), f32[2]))
+    opt-barrier(futures)
+
+  carried-future-gte = ((f32[1]), f32[2]) get-tuple-element(futures-barrier),
+    index=0
+  carried-done = f32[2] async-done(carried-future-gte), calls=ag0
+
+  x-future = ((f32[1]), f32[2]) get-tuple-element(futures-barrier), index=1
+  pending = (f32[2], ((f32[1]), f32[2])) tuple(carried-done, x-future)
+  pending-barrier = (f32[2], ((f32[1]), f32[2])) opt-barrier(pending)
+
+  x-future-gte = ((f32[1]), f32[2]) get-tuple-element(pending-barrier),
+    index=1
+  x-done = f32[2] async-done(x-future-gte), calls=ag1
+
+  ROOT next-future = ((f32[1]), f32[2]) async-start(c), calls=ag0
+}
+
+ENTRY main {
+  p0 = f32[1] parameter(0)
+  prologue-future = ((f32[1]), f32[2]) async-start(p0), calls=ag0
+  loop = ((f32[1]), f32[2]) while(prologue-future), condition=while_cond,
+    body=while_body
+  ROOT epilogue-done = f32[2] async-done(loop), calls=ag0
+})hlo";
+
+  HloModuleConfig config = GetModuleConfig(/*fdo_profile=*/"");
+  config.set_replica_count(4);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule, config));
+
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_experimental_enable_collective_multi_streaming(true);
+
+  EXPECT_THAT(
+      ScheduleModule(module.get(), /*num_parallel_resources=*/2),
+      absl_testing::StatusIs(
+          absl::StatusCode::kInternal,
+          HasSubstr("carried-done: Skipped due to kExceedsOverlapLimit")));
 }
 
 }  // namespace

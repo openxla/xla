@@ -19,6 +19,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -35,6 +36,7 @@ using ::tsl::proto_testing::EqualsProto;
 
 namespace xla {
 
+using ::absl_testing::IsOk;
 using ::absl_testing::StatusIs;
 using ::testing::HasSubstr;
 
@@ -234,7 +236,7 @@ TEST(MeshAndAxisTest, FromProtoValidation) {
 
     EXPECT_DEATH(
         Mesh::FromProto(proto),
-        "Number of device ids must match the product of mesh axis sizes");
+        "Number of elements must match the product of array dimensions");
   }
 
   {
@@ -254,6 +256,39 @@ TEST(MeshAndAxisTest, FromProtoValidation) {
     proto.add_device_ids(1);
     EXPECT_DEATH(Mesh::FromProto(proto),
                  "Maximal mesh must have exactly 1 device id");
+  }
+
+  {
+    // 3 * 6148914691236517206 == 2^64 + 2, which wraps around to 2 in int64_t
+    // and would otherwise match the 2 device ids.
+    MeshProto proto;
+    auto* axis_a = proto.add_axes();
+    axis_a->set_name("a");
+    axis_a->set_size(3);
+    auto* axis_b = proto.add_axes();
+    axis_b->set_name("b");
+    axis_b->set_size(6148914691236517206);
+    proto.add_device_ids(1);
+    proto.add_device_ids(0);
+    EXPECT_DEATH(Mesh::FromProto(proto),
+                 "Product of array dimensions overflows");
+  }
+
+  {
+    // Huge (non-overflowing) mesh with too few device ids must be rejected
+    // before allocating the device id array.
+    MeshProto proto;
+    auto* axis_a = proto.add_axes();
+    axis_a->set_name("a");
+    axis_a->set_size(1000000000);
+    auto* axis_b = proto.add_axes();
+    axis_b->set_name("b");
+    axis_b->set_size(1000000000);
+    proto.add_device_ids(1);
+    proto.add_device_ids(0);
+    EXPECT_DEATH(
+        Mesh::FromProto(proto),
+        "Number of elements must match the product of array dimensions");
   }
 }
 
@@ -340,6 +375,48 @@ TEST(MeshAndAxisTest, ValidateAxisForMesh) {
   invalid_pre_size_proto.mutable_sub_axis_info()->set_size(2);
   EXPECT_DEATH(AxisRef::FromProto(invalid_pre_size_proto),
                "sub-axis pre-size must be >= 1");
+}
+
+TEST(MeshAndAxisTest, ValidateSubAxis) {
+  EXPECT_THAT(AxisRef::ValidateSubAxis(1, 2), IsOk());
+  EXPECT_THAT(AxisRef::ValidateSubAxis(2, 4), IsOk());
+  EXPECT_THAT(
+      AxisRef::ValidateSubAxis(std::numeric_limits<int64_t>::max() / 2, 2),
+      IsOk());
+
+  EXPECT_THAT(AxisRef::ValidateSubAxis(0, 2),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("sub-axis pre-size must be >= 1")));
+  EXPECT_THAT(AxisRef::ValidateSubAxis(-1, 2),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("sub-axis pre-size must be >= 1")));
+  EXPECT_THAT(AxisRef::ValidateSubAxis(1, 1),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("sub-axis size must be > 1")));
+  EXPECT_THAT(AxisRef::ValidateSubAxis(1, 0),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("sub-axis size must be > 1")));
+  EXPECT_THAT(
+      AxisRef::ValidateSubAxis(int64_t{1} << 62, 4),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("sub-axis pre_size * size overflows int64_t")));
+  EXPECT_THAT(
+      AxisRef::ValidateSubAxis(6148914691236517206, 3),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("sub-axis pre_size * size overflows int64_t")));
+  EXPECT_THAT(
+      AxisRef::ValidateSubAxis(std::numeric_limits<int64_t>::max(), 2),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("sub-axis pre_size * size overflows int64_t")));
+}
+
+TEST(MeshAndAxisTest, SubAxisOverflowDeath) {
+  // pre_size * size wraps to 0 mod 2^64.
+  EXPECT_DEATH(AxisRef(0, {int64_t{1} << 62, 4}),
+               "sub-axis pre_size \\* size overflows int64_t");
+  // pre_size * size wraps to 2 mod 2^64.
+  EXPECT_DEATH(AxisRef(0, {6148914691236517206, 3}),
+               "sub-axis pre_size \\* size overflows int64_t");
 }
 
 TEST(MeshAndAxisTest, AxisRefCanCoexistWithoutOverlap) {

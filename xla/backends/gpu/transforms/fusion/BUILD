@@ -15,7 +15,7 @@
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tests:build_defs.bzl", "GPU_DEFAULT_BACKENDS", "xla_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load(
     "//xla/tsl/platform:build_config.bzl",
@@ -70,9 +70,7 @@ cc_library(
 xla_test(
     name = "conv_fusion_rewriter_test",
     srcs = ["conv_fusion_rewriter_test.cc"],
-    backends = [
-        "gpu",
-    ],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":conv_fusion_rewriter",
         "//xla:error_spec",
@@ -281,8 +279,6 @@ cc_library(
         "//xla/service/gpu:gpu_fusible",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:matmul_utils",
-        "//xla/service/gpu:triton_fusion_analysis",
-        "//xla/service/gpu:triton_tiling_propagation",
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/algorithm:container",
@@ -319,7 +315,6 @@ xla_cc_test(
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/service:pattern_matcher",
         "//xla/service/gpu:gpu_device_info_for_tests",
-        "//xla/service/gpu:triton_fusion_analysis",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "@com_google_absl//absl/status",

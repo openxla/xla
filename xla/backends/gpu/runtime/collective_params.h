@@ -26,9 +26,9 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/runtime/gpu_executable_run_options.h"
 #include "xla/executable_run_options.h"
 #include "xla/runtime/device_id.h"
-#include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -77,6 +77,9 @@ struct CollectiveParams {
   bool need_barrier = false;
   bool collective_use_minimal_resource;
   bool nccl_window_symmetric = false;
+  // Whether symmetric memory windows are cached on the GPU communicator (see
+  // `xla_gpu_experimental_cache_nccl_window_in_communicator`).
+  bool cache_nccl_window_in_communicator = false;
 
  private:
   CollectiveParams(

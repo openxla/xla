@@ -82,6 +82,9 @@ limitations under the License.
 #include "xla/backends/gpu/cost_model/gpu_hlo_cost_analysis.h"
 #include "xla/backends/gpu/export_hlo.h"
 #include "xla/backends/gpu/hlo/analysis/alias_info.h"
+#include "xla/backends/gpu/runtime/early_exit_compilation_result.h"
+#include "xla/backends/gpu/runtime/gpu_aot_compilation_result.h"
+#include "xla/backends/gpu/runtime/gpu_executable.h"
 #include "xla/backends/gpu/runtime/host_execute_thunk.h"
 #include "xla/backends/gpu/runtime/runtime_intrinsics.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
@@ -304,17 +307,13 @@ limitations under the License.
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/cudnn_support_utils.h"
 #include "xla/service/gpu/dense_data_intermediate.h"
-#include "xla/service/gpu/early_exit_compilation_result.h"
 #include "xla/service/gpu/flag_utils.h"
-#include "xla/service/gpu/gpu_aot_compilation_result.h"
-#include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu/gpu_pipeline.h"
-#include "xla/service/gpu/hlo_fusion_stats.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/kernel_reuse_cache.pb.h"
@@ -1470,13 +1469,6 @@ absl::Status RunFusionPasses(HloModule* hlo_module,
                      mlir_context_pool)
           .Run(hlo_module, {HloInstruction::kMainExecutionThread})
           .status());
-
-  if (VLOG_IS_ON(2)) {
-    HloFusionStatsVisitor stats;
-    ABSL_RETURN_IF_ERROR(hlo_module->entry_computation()->Accept(&stats));
-    VLOG(2) << stats.ToString();
-  }
-
   return absl::OkStatus();
 }
 

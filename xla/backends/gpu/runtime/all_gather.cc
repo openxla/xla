@@ -28,13 +28,13 @@ limitations under the License.
 #include "llvm/ADT/bit.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/gpu_constants.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/primitive_util.h"
 #include "xla/service/device_assignment.h"
-#include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/shape_util.h"
@@ -196,6 +196,13 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllGatherKernelSpec(
   const int64_t num_operands = instr->operand_count();
   TF_RET_CHECK(num_operands >= 1) << "all-gather requires at least one operand";
 
+  const bool is_two_shot = IsTritonTwoShotAllGather(*instr);
+  if (is_two_shot &&
+      symmetric_memory_type != SymmetricMemoryType::kLoadStoreAccessible) {
+    return absl::UnimplementedError(
+        "Two-shot all-gather requires load/store accessible symmetric memory.");
+  }
+
   const int64_t num_signal_flags = group_size * launch_dimensions.num_blocks();
   const int64_t signal_size = xla::RoundUpTo<uint64_t>(
       num_signal_flags * sizeof(int32_t), kXlaAllocatedBufferAlignBytes);
@@ -203,9 +210,10 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllGatherKernelSpec(
   CollectiveKernelSpec kernel_spec;
   CollectiveCodegenConfig& codegen_config = kernel_spec.codegen_config;
   codegen_config.copy_input_to_scratch = false;
-  codegen_config.sync_count_increment = 1u;
+  // Two-shot uses entry and exit barriers (2 signal increments per launch).
+  codegen_config.sync_count_increment = is_two_shot ? 2u : 1u;
   // Argument layout (must match the Triton entry function): inputs, outputs,
-  // one remote scratch table per operand, signal flags, rank.
+  // (for one-shot) one remote scratch table per operand, signal flags, rank.
   for (int32_t i = 0; i < num_operands; ++i) {
     codegen_config.input_buffer_specs.push_back(
         {/*requires_multimem=*/false, SymmetricMemoryType::kNone});
@@ -214,7 +222,9 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllGatherKernelSpec(
   }
   for (int32_t i = 0; i < num_operands; ++i) {
     codegen_config.output_buffer_specs.push_back(
-        {/*requires_multimem=*/false, SymmetricMemoryType::kNone});
+        {/*requires_multimem=*/false,
+         is_two_shot ? SymmetricMemoryType::kLoadStoreAccessible
+                     : SymmetricMemoryType::kNone});
     codegen_config.argument_descriptors.push_back(
         {KernelArgType::kOutputBuffer, /*index=*/i});
   }
@@ -223,20 +233,22 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllGatherKernelSpec(
                                          symmetric_memory_type,
                                          /*should_memzero=*/true,
                                          /*should_double_buffer=*/true});
-  // One symmetric scratch buffer per operand that holds all ranks' slices
-  // (= output size). Double-buffering is handled by the should_double_buffer
-  // flag.
-  for (int32_t i = 0; i < num_operands; ++i) {
-    const int64_t output_size = xla::RoundUpTo<uint64_t>(
-        ShapeUtil::ByteSizeOf(instr->operand(i)->shape()) * group_size,
-        kXlaAllocatedBufferAlignBytes);
-    codegen_config.argument_descriptors.push_back(
-        {KernelArgType::kScratchBuffer, /*index=*/1 + i});
-    kernel_spec.scratch_buffers.push_back({output_size,
-                                           /*requires_multimem=*/false,
-                                           symmetric_memory_type,
-                                           /*should_memzero=*/false,
-                                           /*should_double_buffer=*/true});
+  if (!is_two_shot) {
+    // One symmetric scratch buffer per operand that holds all ranks' slices
+    // (= output size). Double-buffering is handled by the should_double_buffer
+    // flag.
+    for (int32_t i = 0; i < num_operands; ++i) {
+      const int64_t output_size = xla::RoundUpTo<uint64_t>(
+          ShapeUtil::ByteSizeOf(instr->operand(i)->shape()) * group_size,
+          kXlaAllocatedBufferAlignBytes);
+      codegen_config.argument_descriptors.push_back(
+          {KernelArgType::kScratchBuffer, /*index=*/1 + i});
+      kernel_spec.scratch_buffers.push_back({output_size,
+                                             /*requires_multimem=*/false,
+                                             symmetric_memory_type,
+                                             /*should_memzero=*/false,
+                                             /*should_double_buffer=*/true});
+    }
   }
   codegen_config.argument_descriptors.push_back(
       {KernelArgType::kScratchBuffer, /*index=*/0});

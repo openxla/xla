@@ -312,6 +312,7 @@ xla_cc_test(
         ":common_pjrt_client",
         ":pjrt_client",
         ":pjrt_executable",
+        ":raw_buffer",
         ":raw_pjrt_client",
         "//xla:literal",
         "//xla:literal_util",
@@ -322,6 +323,9 @@ xla_cc_test(
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/pjrt/c:pjrt_c_api_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_raw_client_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_status_utils",
         "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
         "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
         "//xla/runtime:device_id",
@@ -423,6 +427,7 @@ xla_cc_test(
     deps = [
         ":dynamic_pad_to_static",
         ":infer_dispatch_info",
+        ":maybe_owning_mlir_module",
         ":mlir_to_hlo",
         ":pjrt_client",
         ":pjrt_common",
@@ -1240,9 +1245,11 @@ cc_library(
     srcs = [
         "transpose_kernels.cc",
         "transpose_kernels_interleave.cc",
+    ],
+    hdrs = [
+        "transpose_kernels.h",
         "transpose_kernels_internal.h",
     ],
-    hdrs = ["transpose_kernels.h"],
     deps = [
         "//xla:compiler_macros",
         "@com_google_absl//absl/base:core_headers",
@@ -1265,6 +1272,43 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "transpose_ops",
+    srcs = ["transpose_ops.cc"],
+    hdrs = ["transpose_ops.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":transpose_kernels",
+        "//xla:ef57",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "transpose_plan",
+    srcs = ["transpose_plan.cc"],
+    hdrs = ["transpose_plan.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":transpose_kernels",
+        ":transpose_ops",
+        "//xla:permutation_util",
+        "//xla:util",
+        "//xla/tsl/platform:logging",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
     name = "transpose",
     srcs = [
         "transpose.cc",
@@ -1276,19 +1320,17 @@ cc_library(
     deps = [
         ":lru_cache",
         ":transpose_kernels",
-        "//xla:ef57",
+        ":transpose_plan",
         "//xla:permutation_util",
         "//xla:util",
-        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:platform_port",
@@ -1354,6 +1396,7 @@ xla_cc_test(
     deps = [
         ":transpose",
         ":transpose_kernels",
+        ":transpose_plan",
         "//xla:array",
         "//xla:ef57",
         "//xla:permutation_util",

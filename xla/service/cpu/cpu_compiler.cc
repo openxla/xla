@@ -71,6 +71,7 @@ limitations under the License.
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tsl/profiler/lib/traceme.h"
 #include "tsl/profiler/lib/traceme_encode.h"
+#include "xla/backends/cpu/alias_info.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/codegen/builtin_definition_generator.h"
 #include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter_config.h"
@@ -91,7 +92,6 @@ limitations under the License.
 #include "xla/backends/cpu/transforms/small_while_loop_hoisting_pass.h"
 #include "xla/backends/cpu/ynn_support.h"
 #include "xla/comparison_util.h"
-#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -138,7 +138,6 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/select_and_scatter_expander.h"
 #include "xla/hlo/transforms/expanders/stochastic_convert_decomposer.h"
 #include "xla/hlo/transforms/expanders/triangular_solve_expander.h"
-#include "xla/hlo/transforms/instruction_fusion.h"
 #include "xla/hlo/transforms/layout_assignment.h"
 #include "xla/hlo/transforms/literal_canonicalizer.h"
 #include "xla/hlo/transforms/nullary_function_wrap_inliner.h"
@@ -200,7 +199,9 @@ limitations under the License.
 #include "xla/service/cpu/cpu_options.h"
 #include "xla/service/cpu/dot_op_emitter.h"
 #include "xla/service/cpu/executable.pb.h"
+#include "xla/service/cpu/function_library_loader.h"
 #include "xla/service/cpu/metrics.h"
+#include "xla/service/cpu/orc_function_library_loader.h"
 #include "xla/service/cpu/parallel_task_assignment.h"
 #include "xla/service/cpu/thunk_emitter.h"
 #include "xla/service/cpu_gpu_shape_verifier.h"
@@ -838,10 +839,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     auto& embedded_pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>(
         "embedded_scatter_expansion");
     embedded_pipeline.AddPass<ScatterExpander>(
-        ScatterExpander::kEliminateAllScatters,
-        [](const HloInstruction* instr) {
-          return InstructionFusion::IsEmbeddedComputation(instr->parent());
-        });
+        ScatterExpander::kEliminateEmbeddedScatters);
     embedded_pipeline.AddPass<EmbeddedWhileLoopUnroller>();
   } else {
     pipeline.AddPass<ScatterExpander>(ScatterExpander::kEliminateAllScatters);
@@ -979,7 +977,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     ABSL_RETURN_IF_ERROR(lib_pipeline.Run(module).status());
   }
 
-  AliasInfo alias_info;
+  CpuAliasInfo alias_info;
   bool use_multi_output_fusion =
       options::UseMultiOutputFusion(module->config());
   pipeline.AddPass<CpuInstructionFusion>(
@@ -1914,12 +1912,9 @@ absl::StatusOr<std::unique_ptr<CompiledModule>> CpuCompiler::Export(
   ABSL_ASSIGN_OR_RETURN(auto compiled_symbols,
                         GetCompiledSymbolsFromProto(compiled_symbols_proto));
 
-  ABSL_ASSIGN_OR_RETURN(
-      auto function_library,
-      LoadFunctionLibrary(compiled_symbols, obj_files,
-                          &cpu_executable->module(),
-                          cpu_executable->target_machine_options(),
-                          cpu_executable->data_layout()));
+  ABSL_ASSIGN_OR_RETURN(auto function_library,
+                        LoadObjectFilesWithOrc(compiled_symbols, obj_files,
+                                               cpu_executable->data_layout()));
 
   return CpuAotCompilationResult::Create(
       &cpu_executable->module(), &cpu_executable->buffer_assignment(),
@@ -1933,12 +1928,13 @@ absl::StatusOr<std::unique_ptr<CompiledModule>> CpuCompiler::Export(
 absl::StatusOr<std::unique_ptr<CompiledModule>>
 CpuCompiler::LoadAotCompilationResult(
     const std::string& serialized_aot_result) {
-  return CpuAotLoader::LoadAotCompilationResult(serialized_aot_result);
+  return CpuAotLoader::LoadAotCompilationResult(serialized_aot_result,
+                                                LoadFunctionLibraryWithOrc);
 }
 
 absl::StatusOr<HloSchedule> CpuCompiler::CreateHloSchedule(
     HloModule& hlo_module) const {
-  AliasInfo alias_info;
+  CpuAliasInfo alias_info;
   auto scheduler =
       hlo_module.config().debug_options().xla_cpu_scheduler_type() ==
               DebugOptions::CPU_SCHEDULER_TYPE_MEMORY_OPTIMIZED
@@ -1956,7 +1952,7 @@ absl::StatusOr<HloSchedule> CpuCompiler::CreateHloSchedule(
 absl::StatusOr<std::unique_ptr<BufferAssignment>>
 CpuCompiler::CreateBufferAssignment(const HloModule& module) const {
   // Run buffer allocation on the HLO graph.
-  AliasInfo alias_info;
+  CpuAliasInfo alias_info;
   BufferAssigner::Options opts;
   opts.allocate_buffers_for_constants = true;
   return BufferAssigner::Run(

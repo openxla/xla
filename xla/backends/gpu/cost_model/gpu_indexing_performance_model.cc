@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
+#include "absl/numeric/bits.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -238,6 +239,15 @@ llvm::SmallVector<int64_t> GetTilingSpaceVariableValues(
 // the future.
 constexpr double kFractionOfRegistersEstimatedForBoundaryAndIotaTiles = 0.4;
 
+// Number of 32-bit registers needed to store 1 element of the tile. 64-bit
+// types use two registers per element. Sub-32-bit types are unpacked to one
+// value per register.
+int64_t NumRegistersPerElement(const TiledHloInstruction& tiled_hlo) {
+  return CeilOfRatio(
+      primitive_util::BitWidth(GetFirstShape(tiled_hlo.hlo()).element_type()),
+      32);
+}
+
 // Checks if the tile is too large to fit in registers and would result in
 // spilling.
 //
@@ -261,13 +271,6 @@ bool DoesTileFitInRegisters(int64_t tile_size,
           ? kFractionOfRegistersEstimatedForBoundaryAndIotaTiles
           : 1.0;
 
-  // Number of 32-bit registers needed to store 1 element of the tile. 64-bit
-  // types use two registers per element. Sub-32-bit types are unpacked to one
-  // value per register.
-  int64_t num_registers_per_element = CeilOfRatio(
-      primitive_util::BitWidth(GetFirstShape(tiled_hlo.hlo()).element_type()),
-      32);
-
   // Register allocation happens at PTX->SASS level, so we can't know the exact
   // number of registers used by a kernel. We make a few assumptions about the
   // kernel we will generate (this may not hold in the future):
@@ -281,7 +284,7 @@ bool DoesTileFitInRegisters(int64_t tile_size,
   // TODO(b/363194951): Check how many registers we need for scratch memory
   // for indexing computation and expensive instructions like exponential or
   // cosine.
-  return num_registers_per_element * tile_size <=
+  return NumRegistersPerElement(tiled_hlo) * tile_size <=
          fraction_of_registers_available *
              device_info.registers_per_block_limit();
 }
@@ -581,6 +584,15 @@ int64_t EstimateSharedMemoryUsagePerBlockImpl(
       reduce_shmem_bytes_per_warp * GetNumWarps(largest_live_tile_size);
 
   return std::max(transpose_shmem_per_block, reduce_shmem_per_block);
+}
+
+// Returns the number of dimensions that the reductions of the fusion reduce.
+int64_t NumReductionDimensions(const TilingSpace& tiling_space) {
+  return absl::c_count_if(
+      tiling_space.dimensions(), [](const TilingSpace::DimensionInfo& dim) {
+        return dim.type == TilingSpace::DimensionSemantics::kSequential &&
+               dim.hlo->opcode() == HloOpcode::kReduce;
+      });
 }
 
 }  // namespace
@@ -890,6 +902,44 @@ int64_t EstimateL2BytesRead(int64_t logical_bytes_read, double dram_utilization,
              : logical_bytes_read;
 }
 
+// Returns the number of blocks that are resident on a core at the same time,
+// limited by the threads, registers and shared memory of the core. A block is
+// assumed to need the registers that hold its largest tile.
+double ResidentBlocksPerCore(const TiledHloComputation& tiled_hlo_computation,
+                             const BlockLevelParameters& block_level_parameters,
+                             int64_t shared_memory_per_block,
+                             int64_t num_blocks,
+                             const se::DeviceDescription& device_info) {
+  int64_t largest_tile_registers = 1;
+  ForEachInstructionInTiledHloComputation(
+      tiled_hlo_computation, /*num_blocks_at_root=*/0,
+      [&](const TiledHloInstruction* tiled_hlo,
+          const RegionExecutionInfo& /*info_cur_hlo*/, bool /*in_dot_region*/) {
+        largest_tile_registers = std::max(
+            largest_tile_registers, NumRegistersPerElement(*tiled_hlo) *
+                                        GetStaticPaddedTileSize(*tiled_hlo));
+      });
+
+  // Reuse the occupancy calculation of the dot cost model. It only depends on
+  // the threads, registers and shared memory of a block and on the limits of
+  // the core, not on what the block computes.
+  dot_model::LaunchConfig launch_config;
+  launch_config.num_warps = block_level_parameters.num_warps;
+  launch_config.shared_memory_per_block_bytes = shared_memory_per_block;
+  launch_config.registers_per_thread =
+      CeilOfRatio(largest_tile_registers,
+                  block_level_parameters.num_warps * WarpSize(device_info));
+  const int64_t max_resident_blocks =
+      dot_model::CalculateSmOccupancy(launch_config, device_info)
+          .active_blocks_per_sm;
+  // The blocks are spread over all the cores, so a kernel with few blocks
+  // leaves a core with fewer blocks than it can hold. A busy core has at least
+  // one.
+  return std::clamp<double>(
+      static_cast<double>(num_blocks) / device_info.core_count(), 1.0,
+      max_resident_blocks);
+}
+
 absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
     const HloFusionAdaptor& fusion_adaptor,
     const TiledHloComputation& tiled_hlo_computation,
@@ -1039,6 +1089,10 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
   double compute_utilization = 0.0;
   double memory_utilization = 0.0;
   const bool has_dot = dot_estimates.k_loop_iterations > 0;
+  const int64_t estimated_shared_memory_per_block =
+      has_dot ? dot_estimates.shared_memory_per_block_bytes
+              : internal::EstimateSharedMemoryUsagePerBlock(
+                    tiled_hlo_computation, device_info);
   if (has_dot) {
     // Triton fails to compile kernels whose shared memory exceeds the per-block
     // opt-in limit.
@@ -1141,12 +1195,19 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
     write_time = ComputeOutputWriteTime(roots, device_info, shape_size);
     exec_time = GpuPerformanceModelBase::CombineComputeAndMemoryAccessTime(
         compute_time, read_time + write_time);
+    // Occupancy is only estimated for fusions with reductions. We should
+    // consider expanding this to other fusions.
+    if (NumReductionDimensions(tiled_hlo_computation.tiling_space()) > 0) {
+      // Blocks are not pipelined, so the compute of a block only overlaps with
+      // the memory accesses of the other blocks resident on the same core.
+      const absl::Duration overlap =
+          compute_time + read_time + write_time - exec_time;
+      exec_time += overlap / ResidentBlocksPerCore(
+                                 tiled_hlo_computation, block_level_parameters,
+                                 estimated_shared_memory_per_block, num_blocks,
+                                 device_info);
+    }
   }
-
-  const int64_t estimated_shared_memory_per_block =
-      has_dot ? dot_estimates.shared_memory_per_block_bytes
-              : internal::EstimateSharedMemoryUsagePerBlock(
-                    tiled_hlo_computation, device_info);
 
   return EstimateRunTimeData{
       /*flops=*/flops + dot_flops,
@@ -1163,15 +1224,6 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
       /*memory_utilization=*/memory_utilization};
 }
 
-// TODO(b/534676634): Support multi-reduction and multi-dimension reduction
-// fusions. When supporting multi-reduction fusions, `sequential_tile_sizes`
-// must be ordered in the reverse post-order that the merged fusion computation
-// will have after `MergeFusionInstruction` (e.g., via a post-order DFS from
-// `fusion_adaptor.GetRoots()` following
-// `HloInstructionAdaptor::GetOperands()`), because
-// `HloFusionAdaptor::MakeInstructionPostOrder()` on a producer-consumer adaptor
-// concatenates the producer's post-order before the consumer's post-order,
-// which can differ from the post-order of the merged computation.
 std::vector<int64_t> GetSequentialTileSizes(
     const TiledHloComputation& tiled_hlo_computation) {
   const TilingSpace& tiling_space = tiled_hlo_computation.tiling_space();
@@ -1188,7 +1240,7 @@ std::vector<int64_t> GetSequentialTileSizes(
   // An empty result means that the sequential dimensions are not tiled. Keep it
   // empty when every sequential dimension is covered by a single tile, so that
   // the config of such tilings is the same as before reduction tiling.
-  if (all_dimensions_untiled || sequential_tile_sizes.size() != 1) {
+  if (all_dimensions_untiled) {
     return {};
   }
   return sequential_tile_sizes;
@@ -1264,10 +1316,9 @@ absl::StatusOr<std::optional<TiledRunTimeData>> EstimateTiledRunTimeDataImpl(
   return TiledRunTimeData{estimate_run_time_data, block_level_parameters};
 }
 
-// Returns the tile sizes to consider for the reduction dimension `dim`. This is
-// an opt-in strategy: the dimension stays untiled unless tiling it is expected
-// to pay off.
-absl::StatusOr<std::vector<int64_t>> SelectReductionTileSizes(
+// Returns the tile sizes to consider for the reduction dimension `dim`: its
+// full size (untiled), plus one smaller size if tiling is expected to pay off.
+std::vector<int64_t> SelectReductionTileSizes(
     const TilingSpace::DimensionInfo& dim) {
   const Shape& operand_shape = dim.hlo->operand(0)->shape();
   const int64_t reduction_size = dim.dimension_size;
@@ -1280,9 +1331,9 @@ absl::StatusOr<std::vector<int64_t>> SelectReductionTileSizes(
   }
   // Strided reductions can trade a smaller sequential reduction tile for a
   // wider coalesced parallel tile; contiguous reductions remain untiled. The
-  // `> 64`, `>= 32`, and `[2, 256]` cut-offs are empirical heuristics.
+  // `> 64` and `>= 32` cut-offs are empirical heuristics.
   if (reduction_size <= 64 || minor_parallel_elements < 32) {
-    return std::vector<int64_t>{reduction_size};
+    return {reduction_size};
   }
   // Tiled reduction loops accumulate across iterations in the output element
   // type, which below 32 bits is only exact for min/max. Other reducers produce
@@ -1294,11 +1345,15 @@ absl::StatusOr<std::vector<int64_t>> SelectReductionTileSizes(
     const std::optional<ReductionKind> kind =
         MatchReductionComputation(dim.hlo->to_apply());
     if (kind != ReductionKind::MIN && kind != ReductionKind::MAX) {
-      return std::vector<int64_t>{reduction_size};
+      return {reduction_size};
     }
   }
-  return GetPowerOf2TileSizesInRange(reduction_size, /*min_tile_size=*/2,
-                                     /*max_tile_size=*/256);
+  // A loop of 16 to 31 iterations for any dimension size: the tile that has to
+  // fit in registers is at least 16 times smaller than the untiled one, so the
+  // parallel tile can be that much wider. 16 is an empirical heuristic.
+  const int64_t tiled_size =
+      absl::bit_floor(static_cast<uint64_t>(reduction_size / 16));
+  return {reduction_size, tiled_size};
 }
 
 // Whether the tiling search for `fusion_adaptor` should enumerate tile sizes
@@ -1369,15 +1424,7 @@ FilterAndSortCandidates(
 
   absl::c_stable_sort(
       candidates, [](const TiledRunTimeData& a, const TiledRunTimeData& b) {
-        if (a.runtime_data.exec_time != b.runtime_data.exec_time) {
-          return a.runtime_data.exec_time < b.runtime_data.exec_time;
-        }
-        // Break exact ties towards larger contracting dimension tiles
-        // (currently reductions and scans), if they exist, i.e. fewer
-        // iterations of the sequential loop, whose per-iteration overhead the
-        // model does not charge.
-        return Product(a.block_level_parameters.sequential_tile_sizes) >
-               Product(b.block_level_parameters.sequential_tile_sizes);
+        return a.runtime_data.exec_time < b.runtime_data.exec_time;
       });
   if (VLOG_IS_ON(2)) {
     const std::string fusion_name = GetFusionRootName(fusion_adaptor);
@@ -1496,16 +1543,18 @@ tsl::Future<TopKTiledRunTimeDataOrError> TryFindTopKBestTilingsWithTilingSpace(
       base->tiling_space,
       TilingSpace::Create(fusion_adaptor, base->context.get()));
 
-  // TODO(b/534676634): Lift `num_reduction_dims == 1` once multi-reduction and
-  // multi-dimension reduction fusions are supported.
-  const int64_t num_reduction_dims = absl::c_count_if(
-      base->tiling_space->dimensions(),
-      [](const TilingSpace::DimensionInfo& dim) {
-        return dim.type == TilingSpace::DimensionSemantics::kSequential &&
-               dim.hlo->opcode() == HloOpcode::kReduce;
-      });
+  // `sequential_tile_sizes` has one entry per sequential dimension, and
+  // `SelectReductionTileSizes` only handles reductions over one dimension.
+  // TODO(b/534676634): Support multi-dimension reductions.
   const bool tile_reduction_dims =
-      ShouldTileReductionDimensions(fusion_adaptor) && num_reduction_dims == 1;
+      ShouldTileReductionDimensions(fusion_adaptor) &&
+      absl::c_all_of(
+          base->tiling_space->dimensions(),
+          [](const TilingSpace::DimensionInfo& dim) {
+            return dim.type != TilingSpace::DimensionSemantics::kSequential ||
+                   (dim.hlo->opcode() == HloOpcode::kReduce &&
+                    dim.hlo->dimensions().size() == 1);
+          });
   ABSL_ASSIGN_OR_RETURN(
       auto tilings,
       base->tiling_space->GetValidTilings(

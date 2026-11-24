@@ -247,9 +247,9 @@ class CommonPjRtClient : public PjRtClient {
   PjRtDynamicShapeKind GetDynamicShapeKind(int memory_space_kind_id) const;
 
   void LaunchOnDevice(PjRtDevice* device,
-                      absl::AnyInvocable<void()> execute_fn) const {
+                      absl::AnyInvocable<void() &&> execute_fn) const {
     raw_client()->LaunchOnDevice(device->local_device_id(),
-                                 std::move(execute_fn));
+                                 MakeOnceCallback(std::move(execute_fn)));
   }
 
   bool ShouldRetryOnOom(int attempts, PjRtDevice* device,
@@ -287,7 +287,7 @@ class CommonPjRtClient : public PjRtClient {
   // can be controlled via retry_on_oom.
   absl::StatusOr<PjRtRawBufferRef> AllocateRawBuffer(
       PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
-      bool retry_on_oom, tsl::AsyncValueRef<bool> allocate_after) {
+      bool retry_on_oom, PjRtDeviceEventRef allocate_after) {
     return raw_client()->AllocateRawBuffer(memory_space->ToCApiPtr(),
                                            on_device_bytes_count, retry_on_oom,
                                            std::move(allocate_after));
@@ -515,10 +515,9 @@ class CommonPjRtClient : public PjRtClient {
   // Creates a raw buffer channel. Returns a tuple containing:
   // 1.  A PjRtRawBufferRef which is an alias for a future
   //     raw buffer.
-  // 3.  A PjRtFulfillAliasRawBufferCallback to fulfill the alias.
-  using PjRtFulfillAliasRawBufferCallback =
-      absl::AnyInvocable<absl::Status(absl::StatusOr<PjRtRawBufferRef>) &&>;
-  absl::StatusOr<std::pair<PjRtRawBufferRef, PjRtFulfillAliasRawBufferCallback>>
+  // 2.  A PjRtFulfillAliasRawBufferCallbackRef to fulfill the alias.
+  absl::StatusOr<
+      std::pair<PjRtRawBufferRef, PjRtFulfillAliasRawBufferCallbackRef>>
   CreateRawBufferChannel(PjRtMemorySpace* memory_space,
                          size_t on_device_bytes_count) {
     return raw_client()->CreateRawBufferChannel(memory_space->ToCApiPtr(),
@@ -528,10 +527,11 @@ class CommonPjRtClient : public PjRtClient {
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateUninitializedBuffer(
       const Shape& shape, PjRtMemorySpace* memory_space) override;
 
+  using PjRtClient::CreateViewOfDeviceBuffer;
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateViewOfDeviceBuffer(
       void* device_ptr, const Shape& shape, PjRtMemorySpace* memory_space,
       std::function<void()> on_delete_callback,
-      std::optional<std::intptr_t> stream) override;
+      std::optional<std::intptr_t> stream, bool is_mutable) override;
 
   // Applies memory-space normalization logic on top of
   // GetTopologyDescription()->GetDefaultLayout() to select the default
@@ -1022,7 +1022,7 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
   }
 
   absl::StatusOr<std::unique_ptr<PjRtExecutableAbiVersion>> GetAbiVersion()
-      const {
+      const override {
     return GetExecutable()->GetAbiVersion();
   }
 
