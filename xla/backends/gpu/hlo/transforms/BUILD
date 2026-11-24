@@ -2298,6 +2298,39 @@ xla_test(
     ],
 )
 
+# Tests for the experimental Triton XTile backend for kRaggedDot.
+xla_test(
+    name = "gemm_rewriter_triton_ragged_dot_test",
+    srcs = ["gemm_rewriter_triton_ragged_dot_test.cc"],
+    backends = GPU_DEFAULT_BACKENDS,
+    deps = [
+        ":gemm_rewriter",
+        ":gemm_rewriter_test_lib",
+        "//xla:error_spec",
+        "//xla:status_macros",
+        "//xla:xla_proto_cc",
+        "//xla/backends/autotuner:backends_proto_cc",
+        "//xla/codegen/xtile:xtile_config_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/service:hlo_module_config",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:ir_emission_utils",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:semantic_version",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/stream_executor/rocm:rocm_compute_capability",
+        "//xla/tests:hlo_interpreter_reference_mixin",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 xla_test(
     name = "gemm_rewriter_fp8_test",
     srcs = ["gemm_rewriter_fp8_test.cc"],
