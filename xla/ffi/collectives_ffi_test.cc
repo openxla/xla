@@ -258,5 +258,23 @@ TEST(CollectivesFfiTest, RequestAndGetWindow) {
   EXPECT_EQ(got_lookup.offset, kFakeWindowOffset);
 }
 
+TEST(CollectivesFfiTest, ResourceWrapperUsesInternalStatusPolicy) {
+  XLA_FFI_Collectives_Extension ext =
+      MakeFakeCollectivesExtension(nullptr, nullptr, nullptr);
+  ext.get_communicator_resource =
+      +[](const XLA_FFI_Collectives_Extension*,
+          XLA_FFI_Communicator_Resource_Get_Args* args) -> XLA_FFI_Error* {
+    args->resource = args->user_data;
+    return nullptr;
+  };
+  int state = 17;
+  ASSERT_OK_AND_ASSIGN(void* resource,
+                       Communicator(Api(), &ext)
+                           .GetOrCreateCommunicatorResource(
+                               GroupMode::kCrossReplica, {}, 0,
+                               "test.resource.v1", &state, nullptr, nullptr));
+  EXPECT_EQ(resource, &state);
+}
+
 }  // namespace
 }  // namespace xla::ffi

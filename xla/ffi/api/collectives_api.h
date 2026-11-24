@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 #include "xla/ffi/api/c_api.h"
@@ -195,6 +196,42 @@ class CommunicatorContextBase {
       return StatusOr<WindowLookup>(ErrorPolicy::TakeError(api_, err));
     }
     return WindowLookup{args.window, args.window_offset};
+  }
+
+  // Returns communicator-owned state, borrowed for this acquired invocation.
+  // Creation and retirement follow the callback contract in
+  // collectives_c_api.h.
+  StatusOr<void*> GetOrCreateCommunicatorResource(
+      GroupMode group_mode, const std::vector<std::vector<int64_t>>& groups,
+      int64_t communication_id, std::string_view name, void* user_data,
+      XLA_FFI_Communicator_Resource_Create* create,
+      XLA_FFI_Communicator_Resource_Retire* retire) {
+    if (ext_->extension_base.id.major_version != 0 ||
+        ext_->extension_base.id.minor_version < 4 ||
+        ext_->extension_base.struct_size <
+            XLA_FFI_STRUCT_SIZE(XLA_FFI_Collectives_Extension,
+                                get_communicator_resource) ||
+        ext_->get_communicator_resource == nullptr) {
+      return StatusOr<void*>(ErrorPolicy::FromErrorCode(
+          XLA_FFI_Error_Code_UNIMPLEMENTED,
+          "Communicator resources require collectives extension 0.4 or newer"));
+    }
+    std::vector<XLA_FFI_ReplicaGroup> raw_groups = ToRawGroups(groups);
+    XLA_FFI_Communicator_Resource_Get_Args args = {};
+    args.struct_size = XLA_FFI_Communicator_Resource_Get_Args_STRUCT_SIZE;
+    args.group_mode = static_cast<XLA_FFI_CollectiveGroupMode>(group_mode);
+    args.groups = raw_groups.data();
+    args.num_groups = raw_groups.size();
+    args.communication_id = communication_id;
+    args.name = name.data();
+    args.name_size = name.size();
+    args.user_data = user_data;
+    args.create = create;
+    args.retire = retire;
+    if (XLA_FFI_Error* err = ext_->get_communicator_resource(ext_, &args)) {
+      return StatusOr<void*>(ErrorPolicy::TakeError(api_, err));
+    }
+    return args.resource;
   }
 
  private:

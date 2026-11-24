@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_COLLECTIVES_GPU_CLIQUE_H_
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -24,8 +25,10 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/btree_map.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -51,6 +54,27 @@ class GpuClique : public Clique {
       absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators,
       bool peer_access_enabled, std::shared_ptr<CancellationToken> cancel,
       std::optional<GpuCliqueKey> parent_key = std::nullopt);
+
+  ~GpuClique() override;
+
+  // Library-owned state whose retirement must precede communicator destruction.
+  // Retire runs once, without mu_ held. Healthy local ranks run concurrently;
+  // resources within a rank retire in name order. The library is responsible
+  // for matching collective cleanup across ranks and for device
+  // synchronization. All communicator-dependent cleanup belongs in Retire,
+  // not the destructor.
+  class Resource {
+   public:
+    virtual ~Resource() = default;
+    virtual void Retire(bool healthy) = 0;
+  };
+
+  // Requires the clique to be acquired. Serializes creation of host-side state;
+  // create must not communicate or reenter the clique. Returned pointers are
+  // borrowed and must not be used after releasing the acquired clique.
+  absl::StatusOr<Resource*> GetOrCreateResource(
+      RankId rank, absl::string_view name,
+      absl::FunctionRef<absl::StatusOr<std::unique_ptr<Resource>>()> create);
 
   const GpuCliqueKey& key() const { return key_; }
   const std::optional<CliqueIds>& ids() const { return ids_; }
@@ -136,6 +160,10 @@ class GpuClique : public Clique {
 
   // Storage for tied objects.
   tsl::TiedAny tied_any_ ABSL_GUARDED_BY(mu_);
+
+  using NamedResources =
+      absl::btree_map<std::string, std::unique_ptr<Resource>, std::less<>>;
+  absl::btree_map<RankId, NamedResources> resources_ ABSL_GUARDED_BY(mu_);
 };
 
 template <typename T>

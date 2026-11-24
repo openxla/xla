@@ -14,6 +14,7 @@
 # ==============================================================================
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 
 package(
@@ -75,6 +76,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu/collectives:gpu_clique",
         "//xla/backends/gpu/collectives:gpu_clique_key",
         "//xla/backends/gpu/collectives:gpu_communicator",
         "//xla/backends/gpu/runtime:collective_clique_requests",
@@ -85,6 +87,7 @@ cc_library(
         "//xla/backends/gpu/runtime:collective_params",
         "//xla/core/collectives:rank_id",
         "//xla/core/collectives:symmetric_memory",
+        "//xla/ffi:ffi_api",
         "//xla/ffi:ffi_interop",
         "//xla/ffi/api:c_api",
         "//xla/runtime:device_id",
@@ -97,5 +100,36 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "ffi_collectives_test",
+    srcs = ["ffi_collectives_test.cc"],
+    deps = [
+        ":ffi_collectives",
+        "//xla/backends/gpu/collectives:cancellation_token",
+        "//xla/backends/gpu/collectives:gpu_clique",
+        "//xla/backends/gpu/collectives:gpu_clique_key",
+        "//xla/backends/gpu/collectives:gpu_cliques",
+        "//xla/backends/gpu/collectives:mock_gpu_collectives",
+        "//xla/backends/gpu/collectives:mock_gpu_communicator",
+        "//xla/backends/gpu/runtime:collective_cliques",
+        "//xla/backends/gpu/runtime:collective_params",
+        "//xla/core/collectives:communicator",
+        "//xla/core/collectives:rank_id",
+        "//xla/ffi:ffi_interop",
+        "//xla/ffi/api:c_api",
+        "//xla/runtime:device_id",
+        "//xla/service:device_assignment",
+        "//xla/service:service_executable_run_options",
+        "//xla/service/gpu:gpu_executable_run_options",
+        "//xla/stream_executor:mock_platform",
+        "//xla/stream_executor:mock_stream",
+        "//xla/stream_executor:mock_stream_executor",
+        "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
     ],
 )
