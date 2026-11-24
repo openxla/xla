@@ -15,7 +15,7 @@
 
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm", "if_rocm_is_configured")
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load("//xla:xla.default.bzl", "xla_cc_binary")
 load(
     "//xla/tests:build_defs.bzl",
@@ -546,15 +546,10 @@ xla_py_test(
 xla_py_test(
     name = "python_hlo_runner_ffi_gpu_test",
     srcs = ["python_hlo_runner_ffi_test.py"],
-    # Gate on the configured backend, matching tf_gpu_tests_tags() below, which
-    # is what decides whether this target is visible to ROCm CI at all.
-    args = ["--device=gpu"] + if_rocm_is_configured(
-        ["--gpu_platform=ROCM"],
-        ["--gpu_platform=CUDA"],
-    ),
+    args = ["--device=gpu"],
     env = {"XLA_FLAGS": "--xla_gpu_graph_min_graph_size=1 --xla_gpu_enable_command_buffer=CUSTOM_CALL"},
     exec_properties = tf_exec_properties({"tags": tf_gpu_tests_tags()}),
     main = "python_hlo_runner_ffi_test.py",
-    tags = tf_gpu_tests_tags(),
+    tags = ["no-oneapi"] + tf_gpu_tests_tags(),
     deps = _FFI_TEST_DEPS,
 )

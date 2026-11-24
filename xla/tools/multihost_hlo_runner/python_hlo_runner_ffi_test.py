@@ -24,14 +24,6 @@ _DEVICE = flags.DEFINE_enum(
     "device", "host", ["host", "gpu"], "Device to test."
 )
 
-_GPU_PLATFORM = flags.DEFINE_enum(
-    "gpu_platform",
-    "CUDA",
-    ["CUDA", "ROCM"],
-    "Platform to register GPU custom call targets under. Only used when"
-    " --device=gpu.",
-)
-
 
 class PythonHloRunnerFfiTest(parameterized.TestCase):
 
@@ -40,7 +32,7 @@ class PythonHloRunnerFfiTest(parameterized.TestCase):
   )
   def test_handler_bundle(self, with_record):
     is_gpu = _DEVICE.value == "gpu"
-    platform = _GPU_PLATFORM.value if is_gpu else "Host"
+    platform = _DEVICE.value if is_gpu else "Host"
     name = self._testMethodName
     handlers = test_lib.handlers()
     if not with_record:
