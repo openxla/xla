@@ -28,6 +28,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/btree_set.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -172,10 +173,11 @@ class TritonBackendTest : public HloHardwareIndependentTestBase {
         backend_(&debug_options_, compiler_.get(), &target_config_,
                  &alias_info_, &mlir_context_pool_) {}
 
-  // Returns the mfma_size values of the Triton configs for `hlo` on `device`
+  // Returns the values of `field` in the Triton configs for `hlo` on `device`
   // instead of the local GPU, so the result is the same on every CI machine.
-  absl::StatusOr<absl::btree_set<int>> GetMfmaSizes(
-      absl::string_view hlo, const se::DeviceDescription& device) {
+  absl::StatusOr<absl::btree_set<int>> GetConfigValues(
+      absl::string_view hlo, const se::DeviceDescription& device,
+      absl::FunctionRef<int(const TritonBackendConfig&)> field) {
     target_config_.device_description = device;
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo));
@@ -186,10 +188,25 @@ class TritonBackendTest : public HloHardwareIndependentTestBase {
     absl::btree_set<int> values;
     for (const std::unique_ptr<BackendConfig>& config : configs) {
       if (config->has_triton()) {
-        values.insert(config->triton().mfma_size());
+        values.insert(field(config->triton()));
       }
     }
     return values;
+  }
+
+  absl::StatusOr<absl::btree_set<int>> GetMfmaSizes(
+      absl::string_view hlo, const se::DeviceDescription& device) {
+    return GetConfigValues(hlo, device, [](const TritonBackendConfig& c) {
+      return static_cast<int>(c.mfma_size());
+    });
+  }
+
+  absl::StatusOr<absl::btree_set<int>> GetKpacks(
+      absl::string_view hlo, const se::DeviceDescription& device) {
+    return GetConfigValues(hlo, device, [](const TritonBackendConfig& c) {
+      // An unset kpack (0) means 1.
+      return std::max(1, static_cast<int>(c.kpack()));
+    });
   }
 
   DebugOptions debug_options_;
@@ -276,6 +293,29 @@ TEST_F(TritonBackendTest, MfmaSizeDependsOnArchAndSearchMode) {
     EXPECT_THAT(GetMfmaSizes(hlo, mi210), IsOkAndHolds(ElementsAre(0, 16)));
     EXPECT_THAT(GetMfmaSizes(hlo, rx7900), IsOkAndHolds(ElementsAre(0)));
   }
+}
+
+TEST_F(TritonBackendTest, KpackDependsOnArchAndSearchMode) {
+  const se::DeviceDescription mi300 = TestGpuDeviceInfo::AMDMI300DeviceInfo();
+  const se::DeviceDescription mi350 = TestGpuDeviceInfo::AMDMI350DeviceInfo();
+  const se::DeviceDescription mi210 = TestGpuDeviceInfo::AMDMI210DeviceInfo();
+  const se::DeviceDescription rx7900 = TestGpuDeviceInfo::AMDRX7900DeviceInfo();
+
+  // Only mi300.txtpb lists kpack variants, and gfx950 never gets them.
+  debug_options_.set_xla_gpu_exhaustive_tiling_search(false);
+  EXPECT_THAT(GetKpacks(kHlo, mi300), IsOkAndHolds(ElementsAre(1, 2)));
+  EXPECT_THAT(GetKpacks(kHlo, mi350), IsOkAndHolds(ElementsAre(1)));
+  EXPECT_THAT(GetKpacks(kHlo, mi210), IsOkAndHolds(ElementsAre(1)));
+  EXPECT_THAT(GetKpacks(kHlo, rx7900), IsOkAndHolds(ElementsAre(1)));
+
+  debug_options_.set_xla_gpu_exhaustive_tiling_search(true);
+  EXPECT_THAT(GetKpacks(kHlo, mi300), IsOkAndHolds(ElementsAre(1, 2)));
+  EXPECT_THAT(GetKpacks(kHlo, mi350), IsOkAndHolds(ElementsAre(1)));
+  EXPECT_THAT(GetKpacks(kHlo, mi210), IsOkAndHolds(ElementsAre(1, 2)));
+  EXPECT_THAT(GetKpacks(kHlo, rx7900), IsOkAndHolds(ElementsAre(1)));
+
+  // Scaled dots never try kpack.
+  EXPECT_THAT(GetKpacks(kScaledDotHlo, mi300), IsOkAndHolds(ElementsAre(1)));
 }
 
 TEST_F(TritonBackendTest, GetSupportedConfigsWithEstimatesForScaledDot) {
