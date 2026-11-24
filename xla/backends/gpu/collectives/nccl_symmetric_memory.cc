@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/nccl_symmetric_memory.h"
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
@@ -29,6 +30,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/nccl_errors.h"
 #include "xla/backends/gpu/collectives/nccl_types.h"
 #include "xla/core/collectives/rank_id.h"
+#include "xla/core/collectives/symmetric_memory.h"
 #include "xla/future.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -204,6 +206,48 @@ NcclSymmetricMemory::peer_addr(RankId peer) const {
 #else
   return absl::UnimplementedError(
       "Peer address requires ncclGetPeerDevicePointer (NCCL >= 2.29.2)");
+#endif
+}
+
+absl::StatusOr<SymmetricMemory::CftHandle>
+NcclSymmetricMemory::multimem_cft_handle() const {
+#if (NCCL_VERSION_CODE >= 23100) || defined(USE_NCCL_HOST_API)
+  if (win_ == nullptr) {
+    return absl::FailedPreconditionError(
+        "Cannot get multimem CFT handle from null NCCL window.");
+  }
+  ncclCftLeId le_id = 0;
+  size_t le_offset = 0;
+  absl::MutexLock lock(comm_state_->mutex);
+  if (comm_state_->comm == nullptr) {
+    return absl::FailedPreconditionError(
+        "Cannot get multimem CFT handle from a destroyed NCCL communicator.");
+  }
+  XLA_NCCL_RETURN_IF_ERROR(
+      ncclGetMultimemDeviceLeInfo(win_, 0, &le_id, &le_offset));
+  return SymmetricMemory::CftHandle{le_id, le_offset};
+#else
+  return absl::UnimplementedError(
+      "Multimem CFT handle requires ncclGetMultimemDeviceLeInfo "
+      "(NCCL >= 2.31.0)");
+#endif
+}
+
+absl::StatusOr<SymmetricMemory::CftHandle> NcclSymmetricMemory::peer_cft_handle(
+    RankId peer) const {
+#if (NCCL_VERSION_CODE >= 23100) || defined(USE_NCCL_HOST_API)
+  if (win_ == nullptr) {
+    return absl::FailedPreconditionError(
+        "Cannot get peer CFT handle from null NCCL window.");
+  }
+  ncclCftLeId le_id = 0;
+  size_t le_offset = 0;
+  XLA_NCCL_RETURN_IF_ERROR(
+      ncclGetPeerDeviceLeInfo(win_, 0, peer.value(), &le_id, &le_offset));
+  return SymmetricMemory::CftHandle{le_id, le_offset};
+#else
+  return absl::UnimplementedError(
+      "Peer CFT handle requires ncclGetPeerDeviceLeInfo (NCCL >= 2.31.0)");
 #endif
 }
 

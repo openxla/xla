@@ -50,6 +50,10 @@ class NcclSymmetricMemory final : public SymmetricMemory {
   absl::StatusOr<stream_executor::DeviceAddressBase> peer_addr(
       RankId peer) const final;
 
+  absl::StatusOr<CftHandle> multimem_cft_handle() const final;
+
+  absl::StatusOr<CftHandle> peer_cft_handle(RankId peer) const final;
+
   ncclWindow_t win() const { return win_; }
 
   std::string ToString() const final;
