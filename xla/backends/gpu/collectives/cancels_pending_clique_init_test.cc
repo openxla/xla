@@ -18,8 +18,6 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -27,8 +25,8 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/base/thread_annotations.h"
 #include "absl/cleanup/cleanup.h"
-#include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -41,199 +39,88 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/collectives/mock_gpu_collectives.h"
+#include "xla/backends/gpu/collectives/mock_gpu_communicator.h"
 #include "xla/core/collectives/clique_id.h"
 #include "xla/core/collectives/clique_key.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
-#include "xla/core/collectives/reduction_kind.h"
 #include "xla/executable_run_options.h"
 #include "xla/future.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/runtime/device_id.h"
-#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/mock_stream_executor.h"
-#include "xla/xla_data.pb.h"
+#include "xla/tsl/concurrency/executor.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/threadpool.h"
 
 namespace xla::gpu {
 namespace {
 
+using ::absl_testing::StatusIs;
 using ::testing::NiceMock;
 using ::testing::Return;
 
 namespace se = ::stream_executor;
 
-// Communicator returned for a parent clique so a later acquire can split it.
-// Collective ops are unused. Abort succeeds and is counted so a test can see
-// whether the parent was aborted while its lock was still held. The counter
-// outlives the clique: a later abort destroys the communicator after Abort().
-class StubCommunicator : public Communicator {
- public:
-  static void ResetAbortCount() { abort_count_.store(0); }
-  static int AbortCount() { return abort_count_.load(); }
-
-  absl::Status Abort() override {
-    abort_count_.fetch_add(1);
-    return absl::OkStatus();
-  }
-
-  Future<> AllReduce(se::DeviceAddressBase, se::DeviceAddressBase,
-                     PrimitiveType, size_t, ReductionKind,
-                     const Executor&) override {
-    return absl::UnimplementedError("unused");
-  }
-
-  Future<> Broadcast(se::DeviceAddressBase, se::DeviceAddressBase,
-                     PrimitiveType, size_t, RankId, const Executor&) override {
-    return absl::UnimplementedError("unused");
-  }
-
-  Future<> ReduceScatter(se::DeviceAddressBase, se::DeviceAddressBase,
-                         PrimitiveType, size_t, ReductionKind,
-                         const Executor&) override {
-    return absl::UnimplementedError("unused");
-  }
-
-  Future<> AllGather(se::DeviceAddressBase, se::DeviceAddressBase,
-                     PrimitiveType, size_t, const Executor&) override {
-    return absl::UnimplementedError("unused");
-  }
-
-  Future<> CollectivePermute(se::DeviceAddressBase, se::DeviceAddressBase,
-                             PrimitiveType, size_t, std::optional<RankId>,
-                             absl::Span<const RankId>,
-                             const Executor&) override {
-    return absl::UnimplementedError("unused");
-  }
-
-  Future<> AllToAll(absl::InlinedVector<se::DeviceAddressBase, 4>,
-                    absl::InlinedVector<se::DeviceAddressBase, 4>,
-                    PrimitiveType, size_t, const Executor&) override {
-    return absl::UnimplementedError("unused");
-  }
-
-  Future<> Send(se::DeviceAddressBase, PrimitiveType, size_t, RankId,
-                const Executor&) override {
-    return absl::UnimplementedError("unused");
-  }
-
-  Future<> Recv(se::DeviceAddressBase, PrimitiveType, size_t, RankId,
-                const Executor&) override {
-    return absl::UnimplementedError("unused");
-  }
-
-  absl::StatusOr<size_t> NumRanks() const override { return 1; }
-
-  std::string ToString() const override { return "stub"; }
-
- private:
-  static std::atomic<int> abort_count_;
-};
-
-std::atomic<int> StubCommunicator::abort_count_{0};
-
 // Blocks inside CreateCommunicatorsWithCancel or SplitCommunicatorsWithCancel
-// the way PollUntilDone blocks: returns only after the test releases it, and
-// reports whether the shared token was cancelled while it was blocked.
-class BlockingInitCollectives : public GpuCollectives {
- public:
-  enum class PendingKind { kInit, kSplit };
-
-  explicit BlockingInitCollectives(PendingKind pending = PendingKind::kInit)
-      : pending_(pending) {}
-
-  bool IsImplemented() const override { return true; }
-
-  absl::StatusOr<CliqueIdCallback> InitializeTopology(
-      const Topology&) override {
-    return absl::UnimplementedError("unused");
-  }
-
-  absl::StatusOr<CliqueId> CreateUniqueCliqueId() const override {
-    return CliqueId("pending-init");
-  }
-
-  absl::StatusOr<std::unique_ptr<Communicator>> CreateCommunicator() override {
-    return absl::UnimplementedError("unused");
-  }
-
-  absl::StatusOr<std::vector<std::unique_ptr<Communicator>>>
-  CreateCommunicators(const CliqueKey&, const std::optional<CliqueIds>&,
-                      absl::Span<const DeviceRank>,
-                      const Collectives::Config&) override {
-    return absl::UnimplementedError("unused");
-  }
-
-  absl::StatusOr<std::vector<std::unique_ptr<Communicator>>> SplitCommunicators(
-      absl::Span<const Communicator* const>, int32_t, absl::Span<const RankId>,
-      const Collectives::Config&, absl::Span<const DeviceRank>) override {
-    return absl::UnimplementedError("unused");
-  }
-
-  absl::StatusOr<std::vector<std::unique_ptr<Communicator>>>
-  CreateCommunicatorsWithCancel(
-      const CliqueKey&, const std::optional<CliqueIds>&,
-      absl::Span<const DeviceRank> ranks, const Collectives::Config&,
-      std::shared_ptr<CancellationToken> cancel) override {
-    if (pending_ == PendingKind::kSplit) {
-      std::vector<std::unique_ptr<Communicator>> comms;
-      comms.reserve(ranks.size());
-      for (size_t i = 0; i < ranks.size(); ++i) {
-        comms.push_back(std::make_unique<StubCommunicator>());
-      }
-      return comms;
-    }
-    return BlockUntilReleased(std::move(cancel), "pending clique init");
-  }
-
-  absl::StatusOr<std::vector<std::unique_ptr<Communicator>>>
-  SplitCommunicatorsWithCancel(
-      absl::Span<const Communicator* const>, int32_t, absl::Span<const RankId>,
-      const Collectives::Config&, absl::Span<const DeviceRank>,
-      std::shared_ptr<CancellationToken> cancel) override {
-    if (pending_ != PendingKind::kSplit) {
-      return absl::UnimplementedError("unused");
-    }
-    return BlockUntilReleased(std::move(cancel), "pending clique split");
-  }
+// until the test calls Release, then reports whether that call's token was
+// cancelled. MockGpuCollectives has no place to keep this wait state.
+struct PendingClique {
+  absl::Notification entered;
+  absl::Notification release;
+  mutable absl::Mutex mu;
+  std::shared_ptr<CancellationToken> cancel ABSL_GUARDED_BY(mu);
 
   bool WaitUntilEntered(absl::Duration timeout) {
-    return entered_.WaitForNotificationWithTimeout(timeout);
+    return entered.WaitForNotificationWithTimeout(timeout);
   }
 
   std::shared_ptr<CancellationToken> token() const {
-    absl::MutexLock lock(mu_);
-    return cancel_;
+    absl::MutexLock lock(mu);
+    return cancel;
   }
 
   void Release() {
-    if (!release_.HasBeenNotified()) {
-      release_.Notify();
+    if (!release.HasBeenNotified()) {
+      release.Notify();
     }
   }
 
- private:
-  absl::StatusOr<std::vector<std::unique_ptr<Communicator>>> BlockUntilReleased(
-      std::shared_ptr<CancellationToken> cancel, absl::string_view what) {
+  absl::StatusOr<std::vector<std::unique_ptr<Communicator>>> Block(
+      std::shared_ptr<CancellationToken> cancel_token, absl::string_view what) {
     {
-      absl::MutexLock lock(mu_);
-      cancel_ = cancel;
+      absl::MutexLock lock(mu);
+      cancel = cancel_token;
     }
-    entered_.Notify();
-    release_.WaitForNotification();
-    if (cancel->IsCancelled()) {
+    entered.Notify();
+    release.WaitForNotification();
+    if (cancel_token->IsCancelled()) {
       return absl::CancelledError(absl::StrCat(what, " cancelled"));
     }
     return absl::InternalError(
         absl::StrCat(what, " was not cancelled by task failure"));
   }
-
-  PendingKind pending_;
-  mutable absl::Mutex mu_;
-  std::shared_ptr<CancellationToken> cancel_ ABSL_GUARDED_BY(mu_);
-  absl::Notification entered_;
-  absl::Notification release_;
 };
+
+// Parent communicators a later split can abort. The counter outlives the
+// clique: a later abort destroys the communicator after Abort().
+std::vector<std::unique_ptr<Communicator>> MakeParentComms(
+    size_t n, std::atomic<int>* abort_count, se::StreamExecutor* executor) {
+  std::vector<std::unique_ptr<Communicator>> comms;
+  comms.reserve(n);
+  for (size_t i = 0; i < n; ++i) {
+    auto comm = std::make_unique<NiceMock<MockGpuCommunicator>>();
+    ON_CALL(*comm, Abort).WillByDefault([abort_count] {
+      abort_count->fetch_add(1);
+      return absl::OkStatus();
+    });
+    ON_CALL(*comm, stream_executor).WillByDefault(Return(executor));
+    comms.push_back(std::move(comm));
+  }
+  return comms;
+}
 
 coordination::TaskInfo MakeConnectedTask(int task_id, uint64_t incarnation) {
   coordination::TaskInfo info;
@@ -252,9 +139,17 @@ void ResetProcessTaskState() {
 // stored in pending_cliques. LockableGpuClique does not exist yet. No GPU and
 // no NCCL are involved.
 TEST(PendingCliqueInitTest, TaskFailureCancelsInProgressInit) {
-  BlockingInitCollectives collectives;
+  PendingClique pending;
+  NiceMock<MockGpuCollectives> collectives;
+  ON_CALL(collectives, CreateCommunicatorsWithCancel)
+      .WillByDefault([&](const CliqueKey&, const std::optional<CliqueIds>&,
+                         absl::Span<const Collectives::DeviceRank>,
+                         const Collectives::Config&,
+                         std::shared_ptr<CancellationToken> cancel) {
+        return pending.Block(std::move(cancel), "pending clique init");
+      });
   auto cleanup = absl::MakeCleanup([&] {
-    collectives.Release();
+    pending.Release();
     internal::DestroyAcquiredCliques();
     ResetProcessTaskState();
   });
@@ -276,9 +171,11 @@ TEST(PendingCliqueInitTest, TaskFailureCancelsInProgressInit) {
   std::vector<std::vector<GlobalDeviceId>> groups = {{GlobalDeviceId(0)}};
   AcquiredCliquesMap acquired;
 
-  absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> acquire_result;
-  std::thread worker([&] {
-    acquire_result = AcquireClique(
+  tsl::thread::ThreadPool pool(tsl::Env::Default(), "pending-clique-init",
+                               /*num_threads=*/1);
+  tsl::Executor& exec = *pool.AsExecutor();
+  auto acquire_future = MakeFutureOn(exec, [&] {
+    return AcquireClique(
         &collectives, &executor, RunId(0), key, groups,
         [](const CliqueKey&) -> absl::StatusOr<CliqueIds> {
           return CliqueIds(CliqueId("pending-init"));
@@ -286,26 +183,25 @@ TEST(PendingCliqueInitTest, TaskFailureCancelsInProgressInit) {
         RankId(0), acquired);
   });
   auto join_worker = absl::MakeCleanup([&] {
-    collectives.Release();
-    if (worker.joinable()) {
-      worker.join();
-    }
+    pending.Release();
+    (void)acquire_future.Await();
   });
 
-  ASSERT_TRUE(collectives.WaitUntilEntered(absl::Seconds(30)))
+  ASSERT_TRUE(pending.WaitUntilEntered(absl::Seconds(30)))
       << "Init never reached CreateCommunicatorsWithCancel.";
 
   ASSERT_OK(AbortTaskCliques(
       /*failed_task_id=*/0,
       absl::DeadlineExceededError("simulated task death")));
 
-  std::shared_ptr<CancellationToken> token = collectives.token();
+  std::shared_ptr<CancellationToken> token = pending.token();
   ASSERT_NE(token, nullptr);
   const bool cancelled = token->IsCancelled();
 
   // Unblock init before asserting so a red result still exits.
-  collectives.Release();
-  worker.join();
+  pending.Release();
+  absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> acquire_result =
+      acquire_future.Await();
 
   EXPECT_TRUE(cancelled)
       << "Task failure did not cancel the pending clique init token. "
@@ -318,30 +214,10 @@ TEST(PendingCliqueInitTest, TaskFailureCancelsInProgressInit) {
 // later abort of the same task must not abort that parent again. No GPU and
 // no NCCL are involved.
 TEST(PendingCliqueInitTest, TaskFailureCancelsInProgressSplit) {
-  StubCommunicator::ResetAbortCount();
-  BlockingInitCollectives collectives(
-      BlockingInitCollectives::PendingKind::kSplit);
-  AcquiredCliquesMap acquired;
-  absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> acquire_result;
-  std::thread worker;
-  auto cleanup = absl::MakeCleanup([&] {
-    collectives.Release();
-    if (worker.joinable()) {
-      worker.join();
-    }
-    acquire_result = absl::CancelledError("cleanup");
-    acquired.clear();
-    internal::DestroyAcquiredCliques();
-    ResetProcessTaskState();
-  });
-  ResetProcessTaskState();
+  std::atomic<int> abort_count{0};
+  PendingClique pending;
 
   constexpr uint64_t kIncarnation = 10;
-  std::vector<coordination::TaskInfo> infos = {
-      MakeConnectedTask(/*task_id=*/0, kIncarnation),
-  };
-  ASSERT_OK(UpdateGlobalProcessInfo(absl::MakeSpan(infos)));
-
   NiceMock<se::MockStreamExecutor> executor;
   ON_CALL(executor, SynchronizeAllActivity).WillByDefault(Return(true));
   ON_CALL(executor, device_ordinal).WillByDefault(Return(0));
@@ -356,9 +232,52 @@ TEST(PendingCliqueInitTest, TaskFailureCancelsInProgressSplit) {
   // created instead of split.
   std::vector<std::vector<GlobalDeviceId>> parent_devices = {
       {GlobalDeviceId(0), GlobalDeviceId(1)}};
+  // Declared before the cleanups that wait on the background acquire. An
+  // ASSERT_ return destroys locals in reverse order, so these must still be
+  // alive while AcquireClique is running.
+  AcquiredCliquesMap acquired;
+  std::shared_ptr<LockableGpuClique::Lock> parent_lock;
+  tsl::thread::ThreadPool pool(tsl::Env::Default(), "pending-clique-split",
+                               /*num_threads=*/1);
+  tsl::Executor& exec = *pool.AsExecutor();
+  Future<std::shared_ptr<LockableGpuClique::Lock>> acquire_future;
+  absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> acquire_result;
+  NiceMock<MockGpuCollectives> collectives;
+  ON_CALL(collectives, CreateCommunicatorsWithCancel)
+      .WillByDefault([&](const CliqueKey&, const std::optional<CliqueIds>&,
+                         absl::Span<const Collectives::DeviceRank> ranks,
+                         const Collectives::Config&,
+                         std::shared_ptr<CancellationToken>) {
+        return MakeParentComms(ranks.size(), &abort_count, &executor);
+      });
+  ON_CALL(collectives, SplitCommunicatorsWithCancel)
+      .WillByDefault([&](absl::Span<const Communicator* const>, int32_t,
+                         absl::Span<const RankId>, const Collectives::Config&,
+                         absl::Span<const Collectives::DeviceRank>,
+                         std::shared_ptr<CancellationToken> cancel) {
+        return pending.Block(std::move(cancel), "pending clique split");
+      });
+  auto cleanup = absl::MakeCleanup([&] {
+    pending.Release();
+    if (acquire_future) {
+      (void)acquire_future.Await();
+      acquire_future = Future<std::shared_ptr<LockableGpuClique::Lock>>();
+    }
+    acquire_result = absl::CancelledError("cleanup");
+    parent_lock.reset();
+    acquired.clear();
+    internal::DestroyAcquiredCliques();
+    ResetProcessTaskState();
+  });
+  ResetProcessTaskState();
+
+  std::vector<coordination::TaskInfo> infos = {
+      MakeConnectedTask(/*task_id=*/0, kIncarnation),
+  };
+  ASSERT_OK(UpdateGlobalProcessInfo(absl::MakeSpan(infos)));
 
   ASSERT_OK_AND_ASSIGN(
-      std::shared_ptr<LockableGpuClique::Lock> parent_lock,
+      parent_lock,
       AcquireClique(
           &collectives, &executor, RunId(0), parent_key, parent_devices,
           [](const CliqueKey&) -> absl::StatusOr<CliqueIds> {
@@ -367,45 +286,50 @@ TEST(PendingCliqueInitTest, TaskFailureCancelsInProgressSplit) {
           RankId(0), acquired));
   acquired.emplace(parent_key, parent_lock);
 
-  worker = std::thread([&] {
-    acquire_result = AcquireClique(
+  acquire_future = MakeFutureOn(exec, [&] {
+    return AcquireClique(
         &collectives, &executor, RunId(1), child_key, parent_devices,
         [](const CliqueKey&) -> absl::StatusOr<CliqueIds> {
           return CliqueIds(CliqueId("pending-split-child"));
         },
         RankId(0), acquired);
   });
+  // Same role as join_worker in TaskFailureCancelsInProgressInit: unblock and
+  // wait before any later local is destroyed.
+  auto join_worker = absl::MakeCleanup([&] {
+    pending.Release();
+    (void)acquire_future.Await();
+  });
 
-  ASSERT_TRUE(collectives.WaitUntilEntered(absl::Seconds(30)))
+  ASSERT_TRUE(pending.WaitUntilEntered(absl::Seconds(30)))
       << "Split never reached SplitCommunicatorsWithCancel.";
 
   ASSERT_OK(AbortTaskCliques(
       /*failed_task_id=*/0,
       absl::DeadlineExceededError("simulated task death")));
 
-  std::shared_ptr<CancellationToken> token = collectives.token();
+  std::shared_ptr<CancellationToken> token = pending.token();
   ASSERT_NE(token, nullptr);
   EXPECT_TRUE(token->IsCancelled())
       << "Task failure did not cancel the pending clique split token.";
   // The split has not returned, so the parent lock is still held. Abort must
   // still run once.
-  EXPECT_EQ(StubCommunicator::AbortCount(), 1)
+  EXPECT_EQ(abort_count.load(), 1)
       << "Parent communicator was not aborted once while its lock was held.";
 
-  collectives.Release();
-  worker.join();
+  pending.Release();
+  acquire_result = acquire_future.Await();
   parent_lock.reset();
   acquired.clear();
 
-  EXPECT_EQ(acquire_result.status().code(), absl::StatusCode::kCancelled)
-      << acquire_result.status();
+  EXPECT_THAT(acquire_result, StatusIs(absl::StatusCode::kCancelled));
 
   // The parent was already aborted and erased. A later abort of the same task
   // must not abort it again.
   ASSERT_OK(AbortTaskCliques(
       /*failed_task_id=*/0,
       absl::DeadlineExceededError("simulated task death")));
-  EXPECT_EQ(StubCommunicator::AbortCount(), 1)
+  EXPECT_EQ(abort_count.load(), 1)
       << "Parent communicator was aborted more than once.";
 }
 
