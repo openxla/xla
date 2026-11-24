@@ -18,8 +18,15 @@ limitations under the License.
 
 #include <cstdint>
 
+#include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
+#include "xla/codegen/device_spec.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/service/hlo_module_config.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace cpu {
@@ -40,6 +47,44 @@ int64_t GetMinimumAlignmentForArray(
 // Returns true if no thunks are emitted for `hlo`: its semantics are encoded by
 // buffer assignment, by the schedule, or by constants owned by the executable.
 bool EmitsNoThunks(const HloInstruction& hlo);
+
+// Returns true if `type` packs multiple elements into a single storage byte in
+// CPU scatter lowering (S2, U2, S4, U4, and F4E2M1FN).
+bool IsCpuScatterPackedSubByteType(PrimitiveType type);
+
+// Returns true if a scatter reducer discards the existing destination value
+// (parameter 0 is dead and not the root) and lowers to an atomic store under
+// concurrency.
+bool IsCpuScatterOverwriteReducer(const HloComputation& to_apply);
+
+// Returns true if a scatter reducer lowers to a single direct integer
+// `llvm.atomicrmw` instruction on CPU rather than a compare and swap loop.
+bool IsCpuScatterDirectAtomicRmwReducer(const HloComputation& to_apply,
+                                        PrimitiveType element_type);
+
+// Returns true if multi workgroup execution of `scatter` must lower updates
+// through atomic memory operations rather than plain loads and stores.
+bool CpuScatterRequiresAtomicUpdate(const HloScatterInstruction& scatter);
+
+// Returns true if deterministic op execution was requested on `config`.
+bool CpuDeterministicOpsRequested(const HloModuleConfig& config);
+
+// Returns the requested workgroup count from `fusion`'s
+// `outer_dimension_partitions` backend config (at least 1).
+int64_t GetCpuScatterRequestedWorkGroups(const HloFusionInstruction& fusion);
+
+// Returns the safe, clamped workgroup count in `[1, max(1, num_updates)]` for
+// a CPU scatter fusion, enforcing identical eligibility rules in
+// `ParallelTaskAssigner`, kernel cache fingerprinting, and `CpuScatterFusion`
+// (variadic uniqueness, packed sub byte safety, native 64 bit and 128 bit
+// atomic lowering capabilities, buffer slice alignment, producer/output buffer
+// aliasing, determinism, and degenerate shapes). Returns 1 whenever parallel
+// emission is unsupported or unsafe.
+int64_t GetCpuScatterEffectiveWorkGroups(
+    const HloFusionInstruction& fusion, int64_t requested_workgroups,
+    const CpuDeviceSpec& cpu_device_spec,
+    const BufferAssignment* buffer_assignment = nullptr,
+    int64_t default_buffer_align_bytes = MinAlign());
 
 }  // namespace cpu
 }  // namespace xla

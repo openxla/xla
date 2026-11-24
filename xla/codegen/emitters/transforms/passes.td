@@ -123,6 +123,14 @@ def LowerTensorsPass : Pass<"xla-lower-tensors", "mlir::ModuleOp"> {
            "Serialized stream_executor::GPUDeviceInfo proto.">,
     Option<"target_type_", "target_type", "std::string", /*default=*/"\"gpu\"",
            "Whether the pass targets a 'cpu' or 'gpu'. If 'cpu', gpu_device_info_ must be empty.">,
+    Option<"cpu_has_atomic_cmpxchg_128_", "cpu_has_atomic_cmpxchg_128", "bool",
+           /*default=*/"false",
+           "Whether the CPU target lowers 16 byte aligned 128 bit cmpxchg and "
+           "monotonic atomic load natively without runtime helper calls.">,
+    Option<"cpu_has_atomic_load_store_128_", "cpu_has_atomic_load_store_128",
+           "bool", /*default=*/"false",
+           "Whether the CPU target lowers 16 byte aligned 128 bit monotonic "
+           "atomic load and store directly without runtime helper calls.">,
   ];
 }
 

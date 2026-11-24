@@ -21,6 +21,14 @@
 // RUN: | FileCheck %s --check-prefixes=CHECK,CHECK-CPU
 
 // RUN: emitters_opt %s --allow-unregistered-dialect -split-input-file \
+// RUN: -xla-lower-tensors="target_type=cpu cpu_has_atomic_cmpxchg_128=true" \
+// RUN: | FileCheck %s --check-prefixes=CHECK,CHECK-CPU
+
+// RUN: emitters_opt %s --allow-unregistered-dialect -split-input-file \
+// RUN: -xla-lower-tensors="target_type=cpu cpu_has_atomic_cmpxchg_128=true cpu_has_atomic_load_store_128=true" \
+// RUN: | FileCheck %s --check-prefixes=CHECK,CHECK-CPU
+
+// RUN: emitters_opt %s --allow-unregistered-dialect -split-input-file \
 // RUN: -xla-lower-tensors="gpu_device_info='cuda_compute_capability {major: 6}'" \
 // RUN: | FileCheck %s --check-prefix=CHECK-PASCAL
 

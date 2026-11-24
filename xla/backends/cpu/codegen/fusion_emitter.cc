@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
 #include "xla/backends/cpu/codegen/symbol_name_util.h"
 #include "xla/backends/cpu/codegen/tiled/tiled_fusion_emitter.h"
+#include "xla/codegen/device_spec.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/codegen/emitters/concatenate_kernel_emitter.h"
 #include "xla/codegen/emitters/dynamic_update_slice_kernel_emitter.h"
@@ -401,7 +402,7 @@ static absl::Status CheckSupportedCpuFmaOps(const HloComputation& computation) {
 absl::StatusOr<KernelDefinition<MlirKernelSource>> EmitFusionKernel(
     MLIRContext& mlir_context, const HloFusionInstruction& fusion,
     const BufferAssignment* buffer_assignment, bool use_unique_c_name,
-    bool enable_tiled_emitter) {
+    bool enable_tiled_emitter, const CpuDeviceSpec& cpu_device_spec) {
   ABSL_RETURN_IF_ERROR(
       CheckSupportedCpuFmaOps(*fusion.fused_instructions_computation()));
   ABSL_ASSIGN_OR_RETURN(std::string name, GetName(fusion, use_unique_c_name));
@@ -432,7 +433,8 @@ absl::StatusOr<KernelDefinition<MlirKernelSource>> EmitFusionKernel(
 
   if (fusion.fused_expression_root()->opcode() == HloOpcode::kScatter) {
     TF_RET_CHECK(buffer_assignment != nullptr);
-    CpuScatterFusion kernel_emitter(*buffer_assignment, &fusion, &mlir_context);
+    CpuScatterFusion kernel_emitter(*buffer_assignment, &fusion, &mlir_context,
+                                    cpu_device_spec);
     return kernel_emitter.EmitKernelDefinition();
   }
 

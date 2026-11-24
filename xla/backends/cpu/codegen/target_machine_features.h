@@ -22,9 +22,17 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Target/TargetMachine.h"
+#include "xla/codegen/device_spec.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
+
+// Derives CPU codegen capabilities (including native 16 byte aligned 128 bit
+// atomic instructions) from `target_machine`'s triple and subtarget info so
+// features implied by the target CPU model are visible. Returns a default
+// conservatively disabled spec when `target_machine` is null or lacks support.
+CpuDeviceSpec CpuDeviceSpecFromTargetMachine(
+    const llvm::TargetMachine* target_machine);
 
 // Resolve vectorization and alignment properties from the LLVM TargetMachine.
 class TargetMachineFeatures {
@@ -46,6 +54,10 @@ class TargetMachineFeatures {
   // Return the vectorization factor, which is the number of bytes of data
   // explicitly vectorized routines will try to process at once.
   virtual int32_t vectorization_factor_in_bytes() const;
+
+  // Return the size of the largest fixed width vector register in bytes for the
+  // target machine's default subtarget, or 0 if unavailable.
+  virtual int32_t vector_register_byte_size() const;
 
   // Return the size of the largest vector size in bytes.  We need to pass in
   // "function" since llvm functions can contain annotations for specializing
@@ -71,6 +83,12 @@ class TargetMachineFeatures {
 
   virtual std::string get_target_feature_string() const;
 
+  // Returns comma separated "+feature" entries for all enabled processor
+  // features, including those implied by the target CPU model.
+  virtual std::string get_enabled_target_features() const;
+
+  virtual CpuDeviceSpec cpu_device_spec() const { return cpu_device_spec_; }
+
   virtual bool has_avx512bf16() const { return has_avx512bf16_; }
   virtual bool has_avx512fp16() const { return has_avx512fp16_; }
   virtual bool has_amx_fp16() const { return has_amx_fp16_; }
@@ -85,6 +103,15 @@ class TargetMachineFeatures {
       target_transform_info_;
 
   llvm::TargetMachine* target_machine_;
+  std::string enabled_target_features_;
+  int32_t default_vector_register_byte_size_ = 0;
+
+  CpuDeviceSpec cpu_device_spec_ = {
+      /*has_atomic_cmpxchg_128=*/false,
+      /*has_atomic_load_store_128=*/false,
+      /*has_atomic_rmw_64=*/false,
+      /*has_atomic_load_store_64=*/false,
+  };
 
   // Store availability of popular features here for efficient checks.
   bool has_avx512bf16_ = false;

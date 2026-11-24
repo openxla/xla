@@ -128,6 +128,7 @@ ParallelFusionEmitter::ParallelFusionEmitter(
       fusion_compiler_pool_(
           std::make_unique<FusionCompilerPool>(options, hlo_module)),
       buffer_assignment_(buffer_assignment),
+      cpu_device_spec_(options.cpu_device_spec),
       use_unique_c_name_(use_unique_c_name),
       enable_tiled_emitter_(enable_tiled_emitter) {}
 
@@ -149,7 +150,7 @@ absl::StatusOr<KernelSpec> ParallelFusionEmitter::AddFusion(
       KernelDefinition mlir_kernel_definition,
       EmitFusionKernel(*compiler_instance->mlir_context, *fusion,
                        buffer_assignment_, use_unique_c_name_,
-                       enable_tiled_emitter_));
+                       enable_tiled_emitter_, cpu_device_spec_));
 
   {
     absl::MutexLock lock(kernels_mutex_);

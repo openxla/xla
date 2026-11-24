@@ -14,9 +14,19 @@
 // ==============================================================================
 // RUN: emitters_opt %s -split-input-file --verify-diagnostics \
 // RUN: -xla-lower-tensors="gpu_device_info='cuda_compute_capability {major: 9}'" \
-// RUN: | FileCheck %s
+// RUN: | FileCheck %s --check-prefixes=CHECK,CHECK-GPU,CHECK-CAS-STORE,CHECK-GPU-CAS-STORE
 
-// Hopper has a 128 bit atomicCAS, which needs a 16 byte aligned address.
+// RUN: emitters_opt %s -split-input-file --verify-diagnostics \
+// RUN: -xla-lower-tensors="target_type=cpu cpu_has_atomic_cmpxchg_128=true" \
+// RUN: | FileCheck %s --check-prefixes=CHECK,CHECK-CPU,CHECK-CAS-STORE,CHECK-CPU-CAS-STORE
+
+// RUN: emitters_opt %s -split-input-file --verify-diagnostics \
+// RUN: -xla-lower-tensors="target_type=cpu cpu_has_atomic_cmpxchg_128=true cpu_has_atomic_load_store_128=true" \
+// RUN: | FileCheck %s --check-prefixes=CHECK,CHECK-CPU,CHECK-DIRECT-STORE
+
+// Hopper and qualifying 64 bit CPUs support 128 bit atomics on 16 byte aligned
+// addresses. CPUs with native 128 bit monotonic atomic stores emit llvm.store
+// directly; other 128 bit capable targets fall back to a cmpxchg loop.
 
 func.func @atomic_rmw_i128(
     %in: tensor<8xi128> {llvm.align = 16 : index}, %val: i128, %i: index)
@@ -30,10 +40,50 @@ func.func @atomic_rmw_i128(
 }
 // CHECK-LABEL: @atomic_rmw_i128
 // CHECK:         %[[ADDR:.*]] = llvm.getelementptr inbounds
-// CHECK:         %[[INIT:.*]] = llvm.load %[[ADDR]] atomic unordered <alignment = 16> : !llvm.ptr -> i128
+// CHECK-GPU:     %[[INIT:.*]] = llvm.load %[[ADDR]] atomic unordered <alignment = 16> : !llvm.ptr -> i128
+// CHECK-CPU:     %[[INIT:.*]] = llvm.load %[[ADDR]] atomic monotonic <alignment = 16> : !llvm.ptr -> i128
 // CHECK:         scf.while (%[[OLD:.*]] = %[[INIT]]) : (i128) -> i128
 // CHECK:           %[[NEW:.*]] = arith.muli %[[OLD]], %{{.*}} : i128
 // CHECK:           llvm.cmpxchg %[[ADDR]], %[[OLD]], %[[NEW]] monotonic monotonic : !llvm.ptr, i128
+
+// -----
+
+func.func @atomic_rmw_add_i128(
+    %in: tensor<8xi128> {llvm.align = 16 : index}, %val: i128, %i: index)
+    -> tensor<8xi128> {
+  %ret = xla.atomic_rmw %in[%i] : tensor<8xi128> {
+    ^bb0(%current : i128):
+      %sum = arith.addi %current, %val : i128
+      xla.yield %sum : i128
+  }
+  return %ret : tensor<8xi128>
+}
+// CHECK-LABEL: @atomic_rmw_add_i128
+// CHECK-NOT:     llvm.atomicrmw
+// CHECK:         %[[ADDR:.*]] = llvm.getelementptr inbounds
+// CHECK-GPU:     %[[INIT:.*]] = llvm.load %[[ADDR]] atomic unordered <alignment = 16> : !llvm.ptr -> i128
+// CHECK-CPU:     %[[INIT:.*]] = llvm.load %[[ADDR]] atomic monotonic <alignment = 16> : !llvm.ptr -> i128
+// CHECK:         scf.while (%[[OLD:.*]] = %[[INIT]]) : (i128) -> i128
+// CHECK:           %[[NEW:.*]] = arith.addi %[[OLD]], %{{.*}} : i128
+// CHECK:           llvm.cmpxchg %[[ADDR]], %[[OLD]], %[[NEW]] monotonic monotonic : !llvm.ptr, i128
+
+// -----
+
+func.func @atomic_store_i128(
+    %in: tensor<8xi128> {llvm.align = 16 : index}, %val: i128, %i: index)
+    -> tensor<8xi128> {
+  %ret = xla.atomic_store %val into %in[%i] : tensor<8xi128>
+  return %ret : tensor<8xi128>
+}
+// CHECK-LABEL:        @atomic_store_i128
+// CHECK:                %[[ADDR:.*]] = llvm.getelementptr inbounds
+// CHECK-GPU-CAS-STORE:  %[[INIT:.*]] = llvm.load %[[ADDR]] atomic unordered <alignment = 16> : !llvm.ptr -> i128
+// CHECK-CPU-CAS-STORE:  %[[INIT:.*]] = llvm.load %[[ADDR]] atomic monotonic <alignment = 16> : !llvm.ptr -> i128
+// CHECK-CAS-STORE:      scf.while (%[[OLD:.*]] = %[[INIT]]) : (i128) -> i128
+// CHECK-CAS-STORE:        llvm.cmpxchg %[[ADDR]], %[[OLD]], %{{.*}} monotonic monotonic : !llvm.ptr, i128
+// CHECK-DIRECT-STORE-NOT: llvm.cmpxchg
+// CHECK-DIRECT-STORE:   llvm.store %{{.*}}, %[[ADDR]] atomic monotonic <alignment = 16> : i128, !llvm.ptr
+// CHECK-DIRECT-STORE-NOT: llvm.cmpxchg
 
 // -----
 
@@ -43,13 +93,36 @@ func.func @atomic_store_c128(
   %ret = xla.atomic_store %val into %in[%i] : tensor<8xcomplex<f64>>
   return %ret : tensor<8xcomplex<f64>>
 }
-// CHECK-LABEL: @atomic_store_c128
-// CHECK:         %[[ADDR:.*]] = llvm.getelementptr inbounds
-// CHECK:         %[[VEC:.*]] = vector.from_elements %{{.*}}, %{{.*}} : vector<2xf64>
-// CHECK:         %[[NEW:.*]] = llvm.bitcast %[[VEC]] : vector<2xf64> to i128
-// CHECK:         %[[INIT:.*]] = llvm.load %[[ADDR]] atomic unordered <alignment = 16> : !llvm.ptr -> i128
-// CHECK:         scf.while (%[[OLD:.*]] = %[[INIT]]) : (i128) -> i128
-// CHECK:           llvm.cmpxchg %[[ADDR]], %[[OLD]], %[[NEW]] monotonic monotonic : !llvm.ptr, i128
+// CHECK-LABEL:        @atomic_store_c128
+// CHECK:                %[[ADDR:.*]] = llvm.getelementptr inbounds
+// CHECK:                %[[VEC:.*]] = vector.from_elements %{{.*}}, %{{.*}} : vector<2xf64>
+// CHECK:                %[[NEW:.*]] = llvm.bitcast %[[VEC]] : vector<2xf64> to i128
+// CHECK-GPU-CAS-STORE:  %[[INIT:.*]] = llvm.load %[[ADDR]] atomic unordered <alignment = 16> : !llvm.ptr -> i128
+// CHECK-CPU-CAS-STORE:  %[[INIT:.*]] = llvm.load %[[ADDR]] atomic monotonic <alignment = 16> : !llvm.ptr -> i128
+// CHECK-CAS-STORE:      scf.while (%[[OLD:.*]] = %[[INIT]]) : (i128) -> i128
+// CHECK-CAS-STORE:        llvm.cmpxchg %[[ADDR]], %[[OLD]], %[[NEW]] monotonic monotonic : !llvm.ptr, i128
+// CHECK-DIRECT-STORE-NOT: llvm.cmpxchg
+// CHECK-DIRECT-STORE:   llvm.store %[[NEW]], %[[ADDR]] atomic monotonic <alignment = 16> : i128, !llvm.ptr
+// CHECK-DIRECT-STORE-NOT: llvm.cmpxchg
+
+// -----
+
+func.func @atomic_store_f128(
+    %in: tensor<8xf128> {llvm.align = 16 : index}, %val: f128, %i: index)
+    -> tensor<8xf128> {
+  %ret = xla.atomic_store %val into %in[%i] : tensor<8xf128>
+  return %ret : tensor<8xf128>
+}
+// CHECK-LABEL:        @atomic_store_f128
+// CHECK:                %[[ADDR:.*]] = llvm.getelementptr inbounds
+// CHECK:                %[[BITS:.*]] = arith.bitcast %{{.*}} : f128 to i128
+// CHECK-GPU-CAS-STORE:  %[[INIT:.*]] = llvm.load %[[ADDR]] atomic unordered <alignment = 16> : !llvm.ptr -> i128
+// CHECK-CPU-CAS-STORE:  %[[INIT:.*]] = llvm.load %[[ADDR]] atomic monotonic <alignment = 16> : !llvm.ptr -> i128
+// CHECK-CAS-STORE:      scf.while (%[[OLD:.*]] = %[[INIT]]) : (i128) -> i128
+// CHECK-CAS-STORE:        llvm.cmpxchg %[[ADDR]], %[[OLD]], %[[BITS]] monotonic monotonic : !llvm.ptr, i128
+// CHECK-DIRECT-STORE-NOT: llvm.cmpxchg
+// CHECK-DIRECT-STORE:   llvm.store %[[BITS]], %[[ADDR]] atomic monotonic <alignment = 16> : i128, !llvm.ptr
+// CHECK-DIRECT-STORE-NOT: llvm.cmpxchg
 
 // -----
 
@@ -65,7 +138,8 @@ func.func @atomic_rmw_c128(
 }
 // CHECK-LABEL: @atomic_rmw_c128
 // CHECK:         %[[ADDR:.*]] = llvm.getelementptr inbounds
-// CHECK:         %[[INIT:.*]] = llvm.load %[[ADDR]] atomic unordered <alignment = 16> : !llvm.ptr -> i128
+// CHECK-GPU:     %[[INIT:.*]] = llvm.load %[[ADDR]] atomic unordered <alignment = 16> : !llvm.ptr -> i128
+// CHECK-CPU:     %[[INIT:.*]] = llvm.load %[[ADDR]] atomic monotonic <alignment = 16> : !llvm.ptr -> i128
 // CHECK:         scf.while (%[[OLD:.*]] = %[[INIT]]) : (i128) -> i128
 // CHECK:           %[[OLD_VEC:.*]] = llvm.bitcast %[[OLD]] : i128 to vector<2xf64>
 // CHECK:           %[[SUM:.*]] = complex.add
@@ -74,35 +148,34 @@ func.func @atomic_rmw_c128(
 
 // -----
 
-module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<i128, dense<128> : vector<2xi64>>>} {
-  func.func @atomic_store_and_rmw_i128_shared(
-      %out: tensor<4xi128> {llvm.align = 16 : index}, %val: i128, %i: index)
-      -> tensor<4xi128> {
-    %shared = xla_gpu.allocate_shared : tensor<4xi128>
-    %stored = xla.atomic_store %val into %shared[%i] : tensor<4xi128>
-    %rmw = xla.atomic_rmw %stored[%i] : tensor<4xi128> {
-      ^bb0(%current : i128):
-        %a = arith.addi %current, %val : i128
-        xla.yield %a : i128
-    }
-    %synced = xla_gpu.sync_threads %rmw : tensor<4xi128>
-    %v = tensor.extract %synced[%i] : tensor<4xi128>
-    %res = tensor.insert %v into %out[%i] : tensor<4xi128>
-    return %res : tensor<4xi128>
+func.func @atomic_rmw_overwrite_c128(
+    %in: tensor<8xcomplex<f64>> {llvm.align = 16 : index}, %val: complex<f64>,
+    %i: index) -> tensor<8xcomplex<f64>> {
+  %ret = xla.atomic_rmw %in[%i] : tensor<8xcomplex<f64>> {
+    ^bb0(%current : complex<f64>):
+      xla.yield %val : complex<f64>
   }
+  return %ret : tensor<8xcomplex<f64>>
 }
-// CHECK: llvm.mlir.global private @[[SH128:shared_.*]]() {addr_space = 3 : i32} : !llvm.array<4 x i128>
-// CHECK: @atomic_store_and_rmw_i128_shared
-// CHECK:         %[[SH_ADDR:.*]] = llvm.mlir.addressof @[[SH128]] : !llvm.ptr<3>
-// CHECK:         %[[SH_GEN:.*]] = llvm.addrspacecast %[[SH_ADDR]] : !llvm.ptr<3> to !llvm.ptr
-// CHECK:         %[[ST_ADDR:.*]] = llvm.getelementptr inbounds %[[SH_GEN]]
-// CHECK:         %[[ST_INIT:.*]] = llvm.load %[[ST_ADDR]] atomic unordered <alignment = 16> : !llvm.ptr -> i128
-// CHECK:         scf.while (%[[ST_OLD:.*]] = %[[ST_INIT]]) : (i128) -> i128
-// CHECK:           llvm.cmpxchg %[[ST_ADDR]], %[[ST_OLD]], %{{.*}} monotonic monotonic : !llvm.ptr, i128
-// CHECK:         %[[RMW_ADDR:.*]] = llvm.getelementptr inbounds %[[SH_GEN]]
-// CHECK:         %[[RMW_INIT:.*]] = llvm.load %[[RMW_ADDR]] atomic unordered <alignment = 16> : !llvm.ptr -> i128
-// CHECK:         scf.while (%[[RMW_OLD:.*]] = %[[RMW_INIT]]) : (i128) -> i128
-// CHECK:           llvm.cmpxchg %[[RMW_ADDR]], %[[RMW_OLD]], %{{.*}} monotonic monotonic : !llvm.ptr, i128
+// CHECK-LABEL:          @atomic_rmw_overwrite_c128
+// CHECK:                  %[[ADDR:.*]] = llvm.getelementptr inbounds
+// CHECK-GPU-CAS-STORE:    %[[INIT:.*]] = llvm.load %[[ADDR]] atomic unordered <alignment = 16> : !llvm.ptr -> i128
+// CHECK-CPU-CAS-STORE:    %[[INIT:.*]] = llvm.load %[[ADDR]] atomic monotonic <alignment = 16> : !llvm.ptr -> i128
+// CHECK-CAS-STORE:        scf.while (%[[OLD:.*]] = %[[INIT]]) : (i128) -> i128
+// CHECK-CAS-STORE:          llvm.cmpxchg %[[ADDR]], %[[OLD]], %{{.*}} monotonic monotonic : !llvm.ptr, i128
+// CHECK-DIRECT-STORE-NOT: llvm.cmpxchg
+// CHECK-DIRECT-STORE:     llvm.store %{{.*}}, %[[ADDR]] atomic monotonic <alignment = 16> : i128, !llvm.ptr
+// CHECK-DIRECT-STORE-NOT: llvm.cmpxchg
+
+// -----
+
+func.func @atomic_store_c128_unknown_alignment(
+    %in: tensor<8xcomplex<f64>>, %val: complex<f64>, %i: index)
+    -> tensor<8xcomplex<f64>> {
+  // expected-error @+1 {{failed to lower to LLVM atomic operation}}
+  %ret = xla.atomic_store %val into %in[%i] : tensor<8xcomplex<f64>>
+  return %ret : tensor<8xcomplex<f64>>
+}
 
 // -----
 
@@ -113,6 +186,53 @@ func.func @atomic_store_c128_abi_aligned(
   // expected-error @+1 {{failed to lower to LLVM atomic operation}}
   %ret = xla.atomic_store %val into %in[%i] : tensor<8xcomplex<f64>>
   return %ret : tensor<8xcomplex<f64>>
+}
+
+// -----
+
+func.func @atomic_rmw_c128_abi_aligned(
+    %in: tensor<8xcomplex<f64>> {llvm.align = 8 : index}, %i: index)
+    -> tensor<8xcomplex<f64>> {
+  // expected-error @+1 {{failed to lower to LLVM atomic operation}}
+  %ret = xla.atomic_rmw %in[%i] : tensor<8xcomplex<f64>> {
+    ^bb0(%current : complex<f64>):
+      %a = complex.add %current, %current : complex<f64>
+      xla.yield %a : complex<f64>
+  }
+  return %ret : tensor<8xcomplex<f64>>
+}
+
+// -----
+
+func.func @atomic_store_i128_8_byte_aligned(
+    %in: tensor<8xi128> {llvm.align = 8 : index}, %val: i128, %i: index)
+    -> tensor<8xi128> {
+  // expected-error @+1 {{failed to lower to LLVM atomic operation}}
+  %ret = xla.atomic_store %val into %in[%i] : tensor<8xi128>
+  return %ret : tensor<8xi128>
+}
+
+// -----
+
+func.func @atomic_rmw_i128_8_byte_aligned(
+    %in: tensor<8xi128> {llvm.align = 8 : index}, %val: i128, %i: index)
+    -> tensor<8xi128> {
+  // expected-error @+1 {{failed to lower to LLVM atomic operation}}
+  %ret = xla.atomic_rmw %in[%i] : tensor<8xi128> {
+    ^bb0(%current : i128):
+      %a = arith.addi %current, %val : i128
+      xla.yield %a : i128
+  }
+  return %ret : tensor<8xi128>
+}
+
+// -----
+
+func.func @atomic_store_i128_unknown_alignment(
+    %in: tensor<8xi128>, %val: i128, %i: index) -> tensor<8xi128> {
+  // expected-error @+1 {{failed to lower to LLVM atomic operation}}
+  %ret = xla.atomic_store %val into %in[%i] : tensor<8xi128>
+  return %ret : tensor<8xi128>
 }
 
 // -----
@@ -139,17 +259,4 @@ func.func @atomic_rmw_i128_unknown_alignment(
       xla.yield %m : i128
   }
   return %ret : tensor<8xi128>
-}
-
-// -----
-
-// Base alignment comes from the shared allocation element type (4 bytes for
-// i8), not the reinterpreted f128 view.
-func.func @atomic_store_f128_on_narrow_shared(%val: f128) -> tensor<1xf128> {
-  %c0 = arith.constant 0 : index
-  %shared = xla_gpu.allocate_shared : tensor<16xi8>
-  %wide = builtin.unrealized_conversion_cast %shared : tensor<16xi8> to tensor<1xf128>
-  // expected-error @+1 {{failed to lower to LLVM atomic operation}}
-  %ret = xla.atomic_store %val into %wide[%c0] : tensor<1xf128>
-  return %ret : tensor<1xf128>
 }

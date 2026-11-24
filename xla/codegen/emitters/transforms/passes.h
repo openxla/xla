@@ -27,6 +27,7 @@ class DeviceDescription;
 }  // namespace stream_executor
 
 namespace xla {
+struct CpuDeviceSpec;
 namespace emitters {
 
 #define GEN_PASS_DECL
@@ -34,6 +35,8 @@ namespace emitters {
 
 std::unique_ptr<mlir::Pass> createLowerTensorsPass(
     const stream_executor::DeviceDescription& device_description);
+std::unique_ptr<mlir::Pass> createLowerTensorsPass(
+    const CpuDeviceSpec& cpu_device_spec);
 std::unique_ptr<mlir::Pass> createVectorizeLoadsAndStoresPass(
     const stream_executor::DeviceDescription& device_description);
 

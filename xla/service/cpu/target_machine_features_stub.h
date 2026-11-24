@@ -24,6 +24,7 @@ limitations under the License.
 #include "llvm/IR/Function.h"
 #include "tsl/platform/logging.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
+#include "xla/codegen/device_spec.h"
 
 namespace xla::cpu {
 
@@ -32,12 +33,22 @@ namespace xla::cpu {
 class TargetMachineFeaturesStub : public TargetMachineFeatures {
  public:
   explicit TargetMachineFeaturesStub(
-      std::function<int64_t(int64_t)> min_alignment)
+      std::function<int64_t(int64_t)> min_alignment,
+      int32_t vector_register_byte_size = kX86AvxVectorByteSize,
+      std::string enabled_target_features = "",
+      CpuDeviceSpec cpu_device_spec = {})
       : TargetMachineFeatures(/*target_machine=*/nullptr),
-        min_alignment_(std::move(min_alignment)) {}
+        min_alignment_(std::move(min_alignment)),
+        vector_register_byte_size_(vector_register_byte_size),
+        enabled_target_features_(std::move(enabled_target_features)),
+        cpu_device_spec_(cpu_device_spec) {}
 
   int vectorization_factor_in_bytes() const final {
     LOG(FATAL) << "Unexpected call to " << __func__;
+  }
+
+  int32_t vector_register_byte_size() const final {
+    return vector_register_byte_size_;
   }
 
   int vector_register_byte_size(const llvm::Function& function) const final {
@@ -61,12 +72,25 @@ class TargetMachineFeaturesStub : public TargetMachineFeatures {
     LOG(FATAL) << "Unexpected call to " << __func__;
   }
 
+  std::string get_enabled_target_features() const final {
+    return enabled_target_features_;
+  }
+
+  CpuDeviceSpec cpu_device_spec() const final { return cpu_device_spec_; }
+
+  void set_cpu_device_spec(CpuDeviceSpec cpu_device_spec) {
+    cpu_device_spec_ = cpu_device_spec;
+  }
+
   const llvm::TargetMachine* target_machine() const final {
     LOG(FATAL) << "Unexpected call to " << __func__;
   }
 
  private:
   std::function<int64_t(int64_t)> min_alignment_;
+  int32_t vector_register_byte_size_;
+  std::string enabled_target_features_;
+  CpuDeviceSpec cpu_device_spec_;
 };
 
 }  // namespace xla::cpu
