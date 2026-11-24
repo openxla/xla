@@ -82,6 +82,8 @@ build:ci_multi_gpu --experimental_guard_against_concurrent_changes
 build:ci_multi_gpu --test_env=HIP_VISIBLE_DEVICES=0,1,2,3
 
 build:ci_rocm_cpu --jobs=50
+# CPU-only tests run no GPU code, so stage no per-arch ROCm device files
+build:ci_rocm_cpu --@local_config_rocm//rocm:stage_device_files=false
 
 build:no_flaky --config=rocm_base
 

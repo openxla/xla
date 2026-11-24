@@ -14,8 +14,8 @@
 # ==============================================================================
 
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
-load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
-load("@local_config_rocm//rocm:build_defs.bzl", "rocm_gpu_architectures", "rocm_info", "rocm_lib_import", "rocm_path")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load("@local_config_rocm//rocm:build_defs.bzl", "rocm_device_glob", "rocm_gpu_architectures", "rocm_info", "rocm_lib_import", "rocm_path")
 load("@rules_cc//cc:cc_import.bzl", "cc_import")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
@@ -24,6 +24,19 @@ licenses(["restricted"])  # MPL2, portions GPL v3, LGPL v3, BSD-like
 package(default_visibility = ["//visibility:private"])
 
 _ROCM = rocm_info()
+
+# Whether tests stage per-arch device files (kernel libraries, MIOpen
+# databases and CK libraries, kpacks).
+bool_flag(
+    name = "stage_device_files",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "no_device_files",
+    flag_values = {":stage_device_files": "false"},
+)
 
 string_flag(
     name = "rocm_path_type",
@@ -300,7 +313,7 @@ rocm_lib_import(
     data = glob([
         rocm_path("lib/librocblas.so*"),
         rocm_path("lib/rocblas/library/*fallback.dat"),
-    ]) + glob([
+    ]) + rocm_device_glob([
         pattern
         for arch in rocm_gpu_architectures()
         for pattern in [
@@ -329,7 +342,7 @@ rocm_lib_import(
 
 cc_library(
     name = "rocfft_libs",
-    data = glob([rocm_path("lib/librocfft.so*")]) + glob([
+    data = glob([rocm_path("lib/librocfft.so*")]) + rocm_device_glob([
         rocm_path(".kpack/fft_lib_{}.kpack".format(arch))
         for arch in rocm_gpu_architectures()
     ]),
@@ -355,7 +368,7 @@ rocm_lib_import(
 
 cc_library(
     name = "rocrand_libs",
-    data = glob([rocm_path("lib/librocrand.so*")]) + glob([
+    data = glob([rocm_path("lib/librocrand.so*")]) + rocm_device_glob([
         rocm_path(".kpack/rand_lib_{}.kpack".format(arch))
         for arch in rocm_gpu_architectures()
     ]),
@@ -381,13 +394,13 @@ rocm_lib_import(
     name = "miopen",
     data = glob([
         rocm_path("lib/libMIOpen.so*"),
-    ]) + glob([
+    ]) + rocm_device_glob([
         rocm_path("share/miopen/db/{}*".format(arch))
         for arch in rocm_gpu_architectures()
-    ]) + glob([
+    ]) + rocm_device_glob([
         rocm_path("lib/libMIOpenCKGroupedConv_{}.so".format(arch))
         for arch in rocm_gpu_architectures()
-    ]) + glob([
+    ]) + rocm_device_glob([
         rocm_path(".kpack/miopen_lib_{}.kpack".format(arch))
         for arch in rocm_gpu_architectures()
     ]),
@@ -406,7 +419,7 @@ rocm_lib_import(
 
 rocm_lib_import(
     name = "rccl",
-    data = glob([rocm_path("lib/librccl.so*")]) + glob([
+    data = glob([rocm_path("lib/librccl.so*")]) + rocm_device_glob([
         rocm_path(".kpack/rccl_lib_{}.kpack".format(arch))
         for arch in rocm_gpu_architectures()
     ]),
@@ -487,7 +500,7 @@ rocm_lib_import(
 
 cc_library(
     name = "rocsparse_libs",
-    data = glob([rocm_path("lib/librocsparse.so*")]) + glob([
+    data = glob([rocm_path("lib/librocsparse.so*")]) + rocm_device_glob([
         pattern
         for arch in rocm_gpu_architectures()
         for pattern in (
@@ -555,7 +568,7 @@ rocm_lib_import(
     data = glob([
         rocm_path("lib/librocsolver.so*"),
         rocm_path("lib/host-math/lib/*.so*"),
-    ]) + glob([
+    ]) + rocm_device_glob([
         pattern
         for arch in rocm_gpu_architectures()
         for pattern in (
@@ -604,7 +617,7 @@ rocm_lib_import(
             # via $ORIGIN/llvm/lib.
             rocm_path("lib/llvm/lib/libomp.so*"),
         ],
-    ) + glob([
+    ) + rocm_device_glob([
         pattern
         for arch in rocm_gpu_architectures()
         for pattern in [

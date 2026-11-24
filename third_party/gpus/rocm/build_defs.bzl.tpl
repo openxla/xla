@@ -65,6 +65,17 @@ def rocm_gpu_architectures():
     """Returns a list of supported GPU architectures."""
     return %{rocm_gpu_architectures}
 
+def rocm_device_glob(include, **kwargs):
+    """glob() for per-arch device files (kernels, MIOpen databases, kpacks).
+
+    Returns no files when --@local_config_rocm//rocm:stage_device_files=false,
+    for test jobs that run no GPU code.
+    """
+    return select({
+        Label(":no_device_files"): [],
+        "//conditions:default": native.glob(include, **kwargs),
+    })
+
 def rocm_version_number():
     """Returns a list of supported GPU architectures."""
     return %{rocm_version_number}
