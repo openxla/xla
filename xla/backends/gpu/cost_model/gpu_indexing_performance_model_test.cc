@@ -767,6 +767,7 @@ ENTRY main {
   EXPECT_THAT(tiled_runtime_data.block_level_parameters.output_tile_sizes[0],
               ElementsAre(2, 1024));
   EXPECT_EQ(tiled_runtime_data.block_level_parameters.num_warps, 4);
+  EXPECT_EQ(tiled_runtime_data.num_blocks, 128);
 
   EXPECT_EQ(tiled_runtime_data.runtime_data.bytes_read, kExpectedBytesRead);
   EXPECT_EQ(tiled_runtime_data.runtime_data.bytes_written, kOutputSizeBytes);

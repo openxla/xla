@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/types/span.h"
 #include "triton/Version.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
@@ -80,20 +81,14 @@ std::unique_ptr<BackendConfig> Pack(
   return config;
 }
 
-void ExtendConfigsWithTma(
-    std::vector<std::unique_ptr<BackendConfig>>& configs) {
-  int64_t original_size = configs.size();
-  for (int64_t i = 0; i < original_size; ++i) {
-    if (!configs[i]->has_block_level()) {
-      // This should not happen based on how configs are created.
-      LOG(ERROR) << "Expected BlockLevelFusionConfig";
-      continue;
-    }
-    BlockLevelFusionConfig original_config = configs[i]->block_level();
-    if (IsTmaRecommended(original_config)) {
-      BlockLevelFusionConfig new_config = original_config;
-      new_config.set_is_tma_allowed(true);
-      configs.push_back(Pack(new_config));
+void ExtendConfigsWithTma(std::vector<std::unique_ptr<BackendConfig>>& configs,
+                          absl::Span<const TiledRunTimeData> tilings) {
+  for (const TiledRunTimeData& tiling : tilings) {
+    BlockLevelFusionConfig config =
+        tiling.block_level_parameters.ToBlockLevelFusionConfig();
+    if (IsTmaRecommended(config, tiling.num_blocks)) {
+      config.set_is_tma_allowed(true);
+      configs.push_back(Pack(config));
     }
   }
 }
@@ -172,15 +167,15 @@ BlockLevelEmitterBackend::GetSupportedConfigs(const HloInstruction& instr) {
       configs.push_back(
           Pack(tiling.block_level_parameters.ToBlockLevelFusionConfig()));
     }
+    if (stream_executor::gpu::IsTmaAvailableForDevice(
+            target_config().device_description)) {
+      ExtendConfigsWithTma(configs, *tiled_runtime_data_list);
+    }
   }
   // If not empty, `configs` usually includes the pre-existing config, unless it
   // didn't come from the cost model (e.g. hand-written).
   if (configs.empty() && pre_existing_config.has_value()) {
     configs.push_back(Pack(*pre_existing_config));
-  }
-  if (stream_executor::gpu::IsTmaAvailableForDevice(
-          target_config().device_description)) {
-    ExtendConfigsWithTma(configs);
   }
   return configs;
 }
