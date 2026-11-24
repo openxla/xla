@@ -44,14 +44,14 @@ static DeviceAssignment::Placement::Coordinates CoordinatesFor(
 
 DeviceAssignment::Placement::Placement(
     const DeviceAssignment* assignment, GlobalDeviceId device_id,
-    std::optional<DeviceAssignment::LogicalID> logical_id)
-    : placement_(Unresolved{assignment, device_id}) {
+    std::optional<DeviceAssignment::LogicalID> logical_id) {
   if (assignment == nullptr) {
     return;
   }
   if (!logical_id) {
     auto id = assignment->LogicalIdForDevice(device_id);
     if (!id.ok()) {
+      placement_ = std::move(id).status();
       return;
     }
     logical_id = *id;
@@ -64,13 +64,11 @@ DeviceAssignment::Placement::GetCoordinates() const {
   if (auto* coordinates = std::get_if<Coordinates>(&placement_)) {
     return *coordinates;
   }
-  const auto& [assignment, device_id] = std::get<Unresolved>(placement_);
-  if (assignment == nullptr) {
-    return FailedPrecondition(
-        "Logical device information requires an execution device assignment");
+  if (auto* error = std::get_if<absl::Status>(&placement_)) {
+    return *error;
   }
-  ABSL_ASSIGN_OR_RETURN(auto id, assignment->LogicalIdForDevice(device_id));
-  return CoordinatesFor(*assignment, id);
+  return FailedPrecondition(
+      "Logical device information requires an execution device assignment");
 }
 
 absl::StatusOr<DeviceAssignment::LogicalID>

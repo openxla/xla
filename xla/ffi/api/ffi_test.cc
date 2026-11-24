@@ -610,17 +610,19 @@ TEST(FfiTest, LogicalDeviceInfoReportsAssignmentErrors) {
       [](LogicalDeviceInfo) { return Error::Success(); });
   DeviceAssignment assignment(/*replica_count=*/2, /*computation_count=*/1);
   assignment.Fill(4);
-  auto query = [&](int device_id) {
-    const DeviceAssignment::Placement placement(&assignment,
-                                                GlobalDeviceId(device_id));
+  const DeviceAssignment::Placement missing(&assignment, GlobalDeviceId(7));
+  const DeviceAssignment::Placement duplicate(&assignment, GlobalDeviceId(4));
+  // A fresh lookup would now succeed for both devices.
+  assignment(0, 0) = 7;
+  auto query = [&](const DeviceAssignment::Placement& placement) {
     InvokeContext context;
     context.device_placement = &placement;
     return Invoke(Api(), *handler, call_frame, context);
   };
-  EXPECT_THAT(query(7), StatusIs(absl::StatusCode::kInvalidArgument,
-                                 HasSubstr("Device 7 doesn't appear")));
-  EXPECT_THAT(query(4), StatusIs(absl::StatusCode::kInvalidArgument,
-                                 HasSubstr("Device 4 not unique")));
+  EXPECT_THAT(query(missing), StatusIs(absl::StatusCode::kInvalidArgument,
+                                       HasSubstr("Device 7 doesn't appear")));
+  EXPECT_THAT(query(duplicate), StatusIs(absl::StatusCode::kInvalidArgument,
+                                         HasSubstr("Device 4 not unique")));
 }
 
 TEST(FfiTest, LogicalDeviceInfoUnsupportedApi) {

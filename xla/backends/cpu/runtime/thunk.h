@@ -221,7 +221,8 @@ class Thunk {
   // of XLA executables (multiple partitions and replicas).
   struct CollectiveExecuteParams {
     static absl::StatusOr<CollectiveExecuteParams> Create(
-        const ExecutableRunOptions* run_options);
+        const ExecutableRunOptions* run_options,
+        std::optional<DeviceAssignment::Placement> placement = std::nullopt);
 
     RunId run_id;
 
@@ -236,7 +237,7 @@ class Thunk {
         RunId run_id, int64_t local_device_ordinal,
         GlobalDeviceId global_device_id,
         const DeviceAssignment* device_assignment, CpuCollectives* collectives,
-        std::optional<DeviceAssignment::LogicalID> logical_id = std::nullopt);
+        std::optional<DeviceAssignment::Placement> placement = std::nullopt);
   };
 
   //===--------------------------------------------------------------------===//

@@ -1439,12 +1439,25 @@ CpuExecutableLoadState::GetDeviceAssignment(PjRtExecutable* pjrt_executable,
   return *device_assignment_;
 }
 
+DeviceAssignment::Placement CpuExecutableLoadState::GetOverridePlacement(
+    const DeviceAssignment& assignment, GlobalDeviceId loaded_device_id,
+    GlobalDeviceId effective_device_id) {
+  absl::MutexLock lock(mu_);
+  OverrideKey key{effective_device_id, std::nullopt};
+  if (*device_assignment_ == nullptr) {
+    key.second = loaded_device_id;
+  }
+  return override_placements_.try_emplace(key, &assignment, effective_device_id)
+      .first->second;
+}
+
 absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>>
 CpuExecutableLoadState::LoadRawExecutable(
     tsl::AsyncValueRef<PjRtExecutable> executable,
     const ExecuteOptions& options, size_t host_callback_idx, xla::RunId run_id,
     DeviceAndAssignment device_and_assign, int attempt) {
   auto result = std::make_unique<CpuPjRtRawLoadedExecutable>(run_id);
+  result->load_state_ = tsl::FormRef(this);
   result->executable_ = absl::down_cast<PjRtCpuExecutable*>(&executable.get());
   result->raw_client_ = raw_client_;
   result->logical_device_id_ = {device_and_assign.replica,
@@ -1623,22 +1636,23 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     run_options.set_intra_op_thread_pool(intra_op_device);
   }
 
+  GlobalDeviceId effective_device_id = global_device_id_;
   if (cpu_execute_context != nullptr &&
       cpu_execute_context->process_index().has_value()) {
-    run_options.set_device_ordinal(
+    effective_device_id =
         PackCpuDeviceId(*cpu_execute_context->process_index(),
-                        UnpackCpuLocalDeviceId(global_device_id_))
-            .value());
-  } else {
-    run_options.set_device_ordinal(global_device_id_.value());
+                        UnpackCpuLocalDeviceId(global_device_id_));
   }
-  // A process-index override can select a different logical device. Keep the
-  // assignment alive until execution completes, and resolve that device anew.
-  run_options.set_device_assignment(
-      device_assignment_.get(),
-      run_options.device_ordinal() == global_device_id_.value()
-          ? std::make_optional(logical_device_id_)
-          : std::nullopt);
+  run_options.set_device_ordinal(effective_device_id.value());
+  std::optional<DeviceAssignment::Placement> override_placement;
+  if (effective_device_id == global_device_id_) {
+    run_options.set_device_assignment(device_assignment_.get(),
+                                      logical_device_id_);
+  } else {
+    run_options.set_device_assignment(device_assignment_.get());
+    override_placement = load_state_->GetOverridePlacement(
+        *device_assignment_, global_device_id_, effective_device_id);
+  }
   if (cpu_execute_context != nullptr &&
       cpu_execute_context->collectives() != nullptr) {
     cpu_run_options->set_collectives(cpu_execute_context->collectives());
@@ -1712,6 +1726,7 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
 
   auto execute_thunks =
       [cpu_executable, buffer_table = std::move(buffer_table),
+       override_placement = std::move(override_placement),
        wrapped_override_pool = std::move(wrapped_override_pool),
        wrapped_override_device = std::move(wrapped_override_device),
        run_options = std::move(run_options), ftz]() mutable
@@ -1753,9 +1768,9 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     const Eigen::ThreadPoolDevice* intra_op_thread_pool =
         run_options.intra_op_thread_pool();
 
-    ABSL_ASSIGN_OR_RETURN(
-        cpu::Thunk::CollectiveExecuteParams collective_params,
-        cpu::Thunk::CollectiveExecuteParams::Create(&run_options));
+    ABSL_ASSIGN_OR_RETURN(cpu::Thunk::CollectiveExecuteParams collective_params,
+                          cpu::Thunk::CollectiveExecuteParams::Create(
+                              &run_options, override_placement));
 
     ABSL_ASSIGN_OR_RETURN(
         cpu::Thunk::CustomCallExecuteParams custom_call_execute_params,

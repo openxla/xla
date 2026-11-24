@@ -98,7 +98,8 @@ Thunk::Thunk(Kind kind, Info info) : kind_(kind), info_(std::move(info)) {}
 
 absl::StatusOr<Thunk::CollectiveExecuteParams>
 Thunk::CollectiveExecuteParams::Create(
-    const ExecutableRunOptions* run_options) {
+    const ExecutableRunOptions* run_options,
+    std::optional<DeviceAssignment::Placement> placement) {
   // Device ordinal must be set by caller and passed in run options, if not,
   // we use the device ordinal from the parent StreamExecutor.
   int32_t device_ordinal =
@@ -121,24 +122,31 @@ Thunk::CollectiveExecuteParams::Create(
           ? cpu_run_options->collectives()
           : in_process_collectives;
 
+  GlobalDeviceId device_id(run_options->device_ordinal());
+  if (!placement && run_options->logical_device_id()) {
+    placement.emplace(run_options->device_assignment(), device_id,
+                      run_options->logical_device_id());
+  }
   return CollectiveExecuteParams{run_options->run_id(),
                                  device_ordinal,
-                                 GlobalDeviceId(run_options->device_ordinal()),
+                                 device_id,
                                  run_options->device_assignment(),
                                  collectives,
-                                 run_options->logical_device_id()};
+                                 std::move(placement)};
 }
 
 Thunk::CollectiveExecuteParams::CollectiveExecuteParams(
     RunId run_id, int64_t local_device_ordinal, GlobalDeviceId global_device_id,
     const DeviceAssignment* device_assignment, CpuCollectives* collectives,
-    std::optional<DeviceAssignment::LogicalID> logical_id)
+    std::optional<DeviceAssignment::Placement> placement)
     : run_id(run_id),
       local_device_ordinal(local_device_ordinal),
       global_device_id(global_device_id),
       device_assignment(device_assignment),
       collectives(collectives),
-      device_placement(device_assignment, global_device_id, logical_id) {}
+      device_placement(placement ? std::move(*placement)
+                                 : DeviceAssignment::Placement(
+                                       device_assignment, global_device_id)) {}
 
 absl::StatusOr<Thunk::CustomCallExecuteParams>
 Thunk::CustomCallExecuteParams::Create(

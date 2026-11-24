@@ -24,6 +24,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/array2d.h"
 #include "xla/runtime/device_id.h"
@@ -70,13 +71,9 @@ class DeviceAssignment : public Array2D<int64_t> {
     absl::StatusOr<Coordinates> GetCoordinates() const;
 
    private:
-    // Invalid placement must not prevent handlers that do not request it from
-    // running. Retain the lookup inputs to report the diagnostic on demand.
-    struct Unresolved {
-      const DeviceAssignment* assignment;
-      GlobalDeviceId device_id;
-    };
-    std::variant<Coordinates, Unresolved> placement_;
+    // Preserve lookup failures for handlers that request placement. An absent
+    // assignment is common and needs no allocated diagnostic during setup.
+    std::variant<std::monostate, Coordinates, absl::Status> placement_;
   };
 
   int64_t DeviceId(int replica, int computation) const {
