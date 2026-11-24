@@ -19,17 +19,19 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
-#include "tsl/profiler/lib/profiler_factory.h"
-#include "tsl/profiler/lib/profiler_interface.h"
-#include "tsl/profiler/protobuf/profiler_options.pb.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
+#include "absl/strings/str_join.h"
 #include "xla/backends/profiler/gpu/rocm_collector.h"
 #include "xla/backends/profiler/gpu/rocm_tracer.h"
+#include "xla/backends/profiler/gpu/rocm_tracer_options_utils.h"
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
 #include "xla/debug_options_flags.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/profiler/backends/cpu/annotation_stack.h"
+#include "tsl/profiler/lib/profiler_factory.h"
+#include "tsl/profiler/lib/profiler_interface.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
@@ -42,7 +44,8 @@ using tsl::profiler::XSpace;
 // GpuTracer for ROCm GPU.
 class GpuTracer : public profiler::ProfilerInterface {
  public:
-  explicit GpuTracer(RocmTracer* rocm_tracer) : rocm_tracer_(rocm_tracer) {
+  GpuTracer(RocmTracer* rocm_tracer, const ProfileOptions& profile_options)
+      : rocm_tracer_(rocm_tracer), profile_options_(profile_options) {
     LOG(INFO) << "GpuTracer created.";
   }
   ~GpuTracer() override = default;
@@ -68,6 +71,8 @@ class GpuTracer : public profiler::ProfilerInterface {
   State profiling_state_ = State::kNotStarted;
 
   RocmTracer* rocm_tracer_;
+  ProfileOptions profile_options_;
+  RocmTracerOptionDiagnostics option_diagnostics_;
   std::unique_ptr<RocmTraceCollector> rocm_trace_collector_;
 };
 
@@ -94,12 +99,22 @@ RocmTraceCollectorOptions GpuTracer::GetRocmTraceCollectorOptions(
 }
 
 absl::Status GpuTracer::DoStart() {
+  // The flag sets the defaults; a gpu_* key overrides its own limit.
+  RocmTraceCollectorOptions trace_collector_options =
+      GetRocmTraceCollectorOptions(rocm_tracer_->NumGpus());
+  option_diagnostics_ = UpdateRocmTracerOptionsFromProfilerOptions(
+      profile_options_, rocm_tracer_->NumGpus(), trace_collector_options);
+  if (!option_diagnostics_.errors.empty() &&
+      profile_options_.raise_error_on_start_failure()) {
+    AppendOptionDiagnostics(option_diagnostics_, /*space=*/nullptr);
+    return absl::InvalidArgumentError(
+        absl::StrJoin(option_diagnostics_.errors, " "));
+  }
+
   AnnotationStack::Enable(true);
   uint64_t start_gputime_ns = RocmTracer::GetTimestamp();
   uint64_t start_walltime_ns = tsl::EnvTime::NowNanos();
 
-  RocmTraceCollectorOptions trace_collector_options =
-      GetRocmTraceCollectorOptions(rocm_tracer_->NumGpus());
   rocm_trace_collector_ = CreateRocmCollector(
       trace_collector_options, start_walltime_ns, start_gputime_ns);
   rocm_trace_collector_->SetGpuAgents(rocm_tracer_->GpuAgents());
@@ -107,6 +122,8 @@ absl::Status GpuTracer::DoStart() {
   absl::Status status = rocm_tracer_->Enable(rocm_trace_collector_.get());
   if (!status.ok()) {
     AnnotationStack::Enable(false);
+    // No CollectData() follows a failed Start(), so only the log gets these.
+    AppendOptionDiagnostics(option_diagnostics_, /*space=*/nullptr);
     return status;
   }
   return absl::OkStatus();
@@ -152,6 +169,7 @@ absl::Status GpuTracer::CollectData(XSpace* space) {
       VLOG(3) << "No trace data collected";
       return absl::OkStatus();
     case State::kStoppedOk: {
+      AppendOptionDiagnostics(option_diagnostics_, space);
       if (rocm_trace_collector_) {
         rocm_trace_collector_->SetScopeRangeIdTree(
             rocm_tracer_->annotation_map()->TakeScopeRangeIdTree());
@@ -172,7 +190,7 @@ std::unique_ptr<profiler::ProfilerInterface> CreateGpuTracer(
     return nullptr;
   auto& rocm_tracer = profiler::RocmTracer::GetRocmTracerSingleton();
   if (!rocm_tracer.IsAvailable()) return nullptr;
-  return std::make_unique<profiler::GpuTracer>(&rocm_tracer);
+  return std::make_unique<profiler::GpuTracer>(&rocm_tracer, options);
 }
 
 auto register_rocm_gpu_tracer_factory = [] {

@@ -35,8 +35,6 @@ limitations under the License.
 #include "rocm/include/hip/hip_runtime.h"
 #include "rocm/include/rocprofiler-sdk/fwd.h"
 #include "rocm/include/rocprofiler-sdk/rocprofiler.h"
-#include "tsl/platform/abi.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/profiler/utils/parse_annotation.h"
@@ -44,6 +42,9 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
+#include "tsl/platform/abi.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
@@ -572,6 +573,7 @@ void RocmTraceCollectorImpl::AddEvent(RocmTracerEvent&& event,
   // both silently ignored this path before.
   if (event.type == RocmTracerEventType::Generic) {
     if (num_callback_events_ >= options_.max_callback_api_events) {
+      ++num_dropped_callback_events_;
       OnEventsDropped(
           "ROCTX marker event dropped: max_callback_api_events "
           "reached. To collect more, set "
@@ -587,12 +589,7 @@ void RocmTraceCollectorImpl::AddEvent(RocmTracerEvent&& event,
   if (event.source == RocmTracerEventSource::ApiCallback) {
     if (!is_auxiliary) {
       if (num_callback_events_ >= options_.max_callback_api_events) {
-        LOG(WARNING)
-            << "!!! Number of callback events = " << num_callback_events_
-            << " is greater than/equal to the max callback api events = "
-            << options_.max_callback_api_events
-            << ". To collect more GPU events, please set "
-               "XLA_FLAGS=--xla_gpu_rocm_max_trace_events=X ";
+        ++num_dropped_callback_events_;  // Reported once, in Export().
         return;
       }
       num_callback_events_++;
@@ -728,6 +725,24 @@ void RocmTraceCollectorImpl::Export(XSpace* space) {
   NormalizeTimeStamps(&host_plane, start_walltime_ns_);
   NormalizeTimeStamps(&marker_plane, start_walltime_ns_);
   ExportScopeRangeIdTree(space);
+
+  uint64_t num_dropped;
+  {
+    absl::MutexLock lock(event_maps_mutex_);
+    num_dropped = num_dropped_callback_events_;
+  }
+  if (num_dropped > 0) {
+    std::string message = absl::StrCat(
+        "Detected GPU events dropped on ", tsl::port::Hostname(), ": ",
+        num_dropped,
+        " HIP API calls and ROCTX markers went over this process's limit of ",
+        options_.max_callback_api_events,
+        ", which all its GPUs share. Raise it with the "
+        "gpu_max_callback_api_events key, or, for remote and xprof UI "
+        "captures, with --xla_gpu_rocm_max_trace_events in XLA_FLAGS.");
+    LOG(WARNING) << message;
+    space->add_warnings(message);
+  }
 }
 
 std::vector<RocmTracerEvent> RocmTraceCollectorImpl::ApiActivityInfoExchange() {
