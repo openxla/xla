@@ -36,8 +36,6 @@ namespace gpu {
 using CodegenDecision = Decision;
 
 // Checks that Triton officially supports the provided compute capability.
-//
-// Currently does not perform any check for non-CUDA compute capabilities.
 absl::Status EnsureTritonSupportsComputeCapability(
     const se::GpuComputeCapability& gpu_compute_capability);
 
