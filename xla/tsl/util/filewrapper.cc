@@ -359,7 +359,7 @@ std::vector<Initializer> EmbedFiles(const std::vector<std::string>& infiles,
   f_cc << "#elif defined(__GNUC__) || defined(COMPILER_ICC)\n";
   f_cc << "#define ALIGN_ATTRIBUTE(X) __attribute__((aligned(X)))\n";
   f_cc << "#else\n";
-  f_cc << "#define ALIGN_ATTRIBUTE(X)\n";
+  f_cc << "#error \"ALIGN_ATTRIBUTE is not defined for this compiler\"\n";
   f_cc << "#endif\n";
 
   f_cc << "namespace {\n";
