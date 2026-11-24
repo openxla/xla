@@ -1764,6 +1764,16 @@ AtomicWordAccess PrepareAtomicWordAccess(
                           addr,      shift,       mask};
 }
 
+bool HasNativeAtomicCmpXchg128(const DeviceSpec& device_spec) {
+  if (device_spec.IsNvidiaGpu()) {
+    return device_spec.gpu().cuda_compute_capability().IsAtLeastHopper();
+  }
+  if (device_spec.IsCpu()) {
+    return device_spec.cpu().has_atomic_cmpxchg_128;
+  }
+  return false;
+}
+
 bool CanLowerScalarOrComplexAsAtomicCAS(Operation* op,
                                         TypedValue<mlir::RankedTensorType> dest,
                                         ValueRange indices, Type result_ty,
@@ -1783,14 +1793,46 @@ bool CanLowerScalarOrComplexAsAtomicCAS(Operation* op,
            GetGuaranteedByteAlignment(dest, indices, op) >= result_size / 8;
   }
   if (result_size == 128) {
-    // CPU targets without a native 128 bit CAS call
-    // __atomic_compare_exchange_16, which the XLA:CPU JIT does not provide,
-    // and DeviceSpec carries no CPU features to tell such targets apart.
-    return device_spec.IsNvidiaGpu() &&
-           device_spec.gpu().cuda_compute_capability().IsAtLeastHopper() &&
+    return HasNativeAtomicCmpXchg128(device_spec) &&
            GetGuaranteedByteAlignment(dest, indices, op) >= 16;
   }
   return false;
+}
+
+bool CanLowerAsDirectAtomicStore(Operation* op,
+                                 TypedValue<mlir::RankedTensorType> dest,
+                                 ValueRange indices, Type element_type,
+                                 const DeviceSpec& device_spec) {
+  if (auto complex_ty = mlir::dyn_cast<mlir::ComplexType>(element_type)) {
+    // A complex element only has the ABI alignment of its component type, so a
+    // direct atomic store needs proven alignment for the full complex value.
+    if (complex_ty.getElementType().isF32()) {
+      return GetGuaranteedByteAlignment(dest, indices, op) >= 8;
+    }
+    if (complex_ty.getElementType().isF64()) {
+      return device_spec.IsCpu() &&
+             device_spec.cpu().has_atomic_load_store_128 &&
+             GetGuaranteedByteAlignment(dest, indices, op) >= 16;
+    }
+    return false;
+  }
+  if (device_spec.IsCpu()) {
+    if (!element_type.isIntOrFloat()) {
+      return false;
+    }
+    unsigned bit_width = element_type.getIntOrFloatBitWidth();
+    if (bit_width == 8 || bit_width == 16 || bit_width == 32 ||
+        bit_width == 64) {
+      return true;
+    }
+    if (bit_width == 128) {
+      return device_spec.cpu().has_atomic_load_store_128 &&
+             GetGuaranteedByteAlignment(dest, indices, op) >= 16;
+    }
+    return false;
+  }
+  return element_type.isF32() || element_type.isF64() ||
+         IsAtomicIntegral(element_type, device_spec);
 }
 
 class RewriteAtomicStore : public OpRewritePattern<AtomicStoreOp> {
@@ -1815,62 +1857,34 @@ class RewriteAtomicStore : public OpRewritePattern<AtomicStoreOp> {
     ml::AtomicOrdering direct_ordering =
         GetAtomicLoadStoreOrdering(device_spec_);
 
-    if (auto complex_ty = mlir::dyn_cast<mlir::ComplexType>(element_type)) {
-      // The 64 bit store needs 8 byte alignment, but complex<f32> only has the
-      // 4 byte ABI alignment of f32.
-      if (complex_ty.getElementType().isF32() &&
-          GetGuaranteedByteAlignment(op.getDest(), op.getIndices(), op) >= 8) {
-        mlir::ImplicitLocOpBuilder b(loc, rewriter);
-        Value addr = CreateAtomicGep(op.getDest(), op.getIndices(), b);
-        Value store_value = CreateBitcast(b, value, b.getI64Type());
-        ml::StoreOp::create(rewriter, loc, store_value, addr,
-                            /*alignment=*/8,
-                            /*isVolatile=*/false, /*isNonTemporal=*/false,
-                            /*isInvariantGroup=*/false, direct_ordering,
-                            sync_scope);
-        rewriter.replaceOp(op, op.getDest());
-        return success();
-      }
-    } else if (device_spec_.IsCpu()) {
-      if (element_type.isIntOrFloat()) {
-        unsigned bit_width = element_type.getIntOrFloatBitWidth();
-        if (bit_width == 8 || bit_width == 16 || bit_width == 32 ||
-            bit_width == 64) {
-          mlir::ImplicitLocOpBuilder b(loc, rewriter);
-          Value addr = CreateAtomicGep(op.getDest(), op.getIndices(), b);
-          Value store_value = value;
-          bool is_llvm_atomic_type =
-              element_type.isSignlessInteger(bit_width) ||
-              element_type.isF16() || element_type.isBF16() ||
-              element_type.isF32() || element_type.isF64();
-          if (!is_llvm_atomic_type) {
-            store_value = arith::BitcastOp::create(
-                b, b.getIntegerType(bit_width), store_value);
-          }
-          ml::StoreOp::create(rewriter, loc, store_value, addr,
-                              /*alignment=*/bit_width / 8,
-                              /*isVolatile=*/false, /*isNonTemporal=*/false,
-                              /*isInvariantGroup=*/false, direct_ordering,
-                              sync_scope);
-          rewriter.replaceOp(op, op.getDest());
-          return success();
-        }
-      }
-    } else if (element_type.isF32() || element_type.isF64() ||
-               IsAtomicIntegral(element_type, device_spec_)) {
+    if (CanLowerAsDirectAtomicStore(op, op.getDest(), op.getIndices(),
+                                    element_type, device_spec_)) {
       mlir::ImplicitLocOpBuilder b(loc, rewriter);
       Value addr = CreateAtomicGep(op.getDest(), op.getIndices(), b);
+      unsigned bit_width =
+          static_cast<unsigned>(GetAtomicTypeBitWidth(element_type));
       Value store_value = value;
-      // LLVM's SPIRV backend only declares Int64Atomics on OpAtomicStore for
-      // 64 bit integer operands, not 64 bit floats.
-      if (device_spec_.IsIntelGpu() && element_type.isF64()) {
+      if (mlir::isa<mlir::ComplexType>(element_type)) {
+        store_value = CreateBitcast(b, value, b.getIntegerType(bit_width));
+      } else if (device_spec_.IsCpu()) {
+        bool is_llvm_atomic_type = element_type.isSignlessInteger(bit_width) ||
+                                   element_type.isF16() ||
+                                   element_type.isBF16() ||
+                                   element_type.isF32() || element_type.isF64();
+        if (!is_llvm_atomic_type) {
+          store_value = arith::BitcastOp::create(b, b.getIntegerType(bit_width),
+                                                 store_value);
+        }
+      } else if (device_spec_.IsIntelGpu() && element_type.isF64()) {
+        // LLVM's SPIRV backend only declares Int64Atomics on OpAtomicStore for
+        // 64 bit integer operands, not 64 bit floats.
         store_value = arith::BitcastOp::create(b, b.getI64Type(), store_value);
       }
-      ml::StoreOp::create(
-          rewriter, loc, store_value, addr,
-          /*alignment=*/element_type.getIntOrFloatBitWidth() / 8,
-          /*isVolatile=*/false, /*isNonTemporal=*/false,
-          /*isInvariantGroup=*/false, direct_ordering, sync_scope);
+      ml::StoreOp::create(rewriter, loc, store_value, addr,
+                          /*alignment=*/bit_width / kBitsPerByte,
+                          /*isVolatile=*/false, /*isNonTemporal=*/false,
+                          /*isInvariantGroup=*/false, direct_ordering,
+                          sync_scope);
       rewriter.replaceOp(op, op.getDest());
       return success();
     }
@@ -2780,18 +2794,37 @@ class LowerTensorsPass : public impl::LowerTensorsPassBase<LowerTensorsPass> {
   explicit LowerTensorsPass(const se::DeviceDescription& device_description)
       : device_spec_(device_description) {}
 
+  explicit LowerTensorsPass(const CpuDeviceSpec& cpu_device_spec)
+      : device_spec_(cpu_device_spec) {
+    target_type_ = "cpu";
+    cpu_has_atomic_cmpxchg_128_ = cpu_device_spec.has_atomic_cmpxchg_128;
+    cpu_has_atomic_load_store_128_ = cpu_device_spec.has_atomic_load_store_128;
+  }
+
   void runOnOperation() override {
-    if (target_type_ == "gpu" && !gpu_device_info_.empty()) {
-      se::GpuDeviceInfoProto device_info;
-      CHECK(tsl::protobuf::TextFormat::ParseFromString(gpu_device_info_,
-                                                       &device_info));
-      absl::StatusOr<se::DeviceDescription> device_description =
-          se::DeviceDescription::FromProto(device_info);
-      CHECK_OK(device_description.status());
-      *device_spec_.mutable_type() = *device_description;
+    if (target_type_ == "gpu") {
+      CHECK(!cpu_has_atomic_cmpxchg_128_ && !cpu_has_atomic_load_store_128_);
+      if (!gpu_device_info_.empty()) {
+        se::GpuDeviceInfoProto device_info;
+        CHECK(tsl::protobuf::TextFormat::ParseFromString(gpu_device_info_,
+                                                         &device_info));
+        absl::StatusOr<se::DeviceDescription> device_description =
+            se::DeviceDescription::FromProto(device_info);
+        CHECK_OK(device_description.status());
+        *device_spec_.mutable_type() = *device_description;
+      }
     } else if (target_type_ == "cpu") {
       CHECK(gpu_device_info_.empty());
-      *device_spec_.mutable_type() = CpuDeviceSpec{};
+      *device_spec_.mutable_type() = CpuDeviceSpec{
+          /*has_atomic_cmpxchg_128=*/cpu_has_atomic_cmpxchg_128_,
+          /*has_atomic_load_store_128=*/cpu_has_atomic_load_store_128_,
+      };
+    } else {
+      getOperation()->emitError(
+          "Unsupported target_type for xla-lower-tensors: ")
+          << target_type_;
+      signalPassFailure();
+      return;
     }
 
     MLIRContext* mlir_context = &getContext();
@@ -2841,6 +2874,11 @@ class LowerTensorsPass : public impl::LowerTensorsPassBase<LowerTensorsPass> {
 std::unique_ptr<::mlir::Pass> createLowerTensorsPass(
     const se::DeviceDescription& device_description) {
   return std::make_unique<LowerTensorsPass>(device_description);
+}
+
+std::unique_ptr<::mlir::Pass> createLowerTensorsPass(
+    const CpuDeviceSpec& cpu_device_spec) {
+  return std::make_unique<LowerTensorsPass>(cpu_device_spec);
 }
 
 }  // namespace emitters

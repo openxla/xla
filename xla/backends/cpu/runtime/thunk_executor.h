@@ -89,6 +89,7 @@ class ThunkExecutor {
   tsl::AsyncValueRef<ExecuteEvent> Execute(const Thunk::ExecuteParams& params);
 
   const ThunkSequence& thunk_sequence() const { return thunk_sequence_; }
+  const ExecutionGraph& execution_graph() const { return execution_graph_; }
 
   BufferUses buffer_uses() const { return thunk_sequence_.buffer_uses(); }
   ResourceUses resource_uses() const { return thunk_sequence_.resource_uses(); }

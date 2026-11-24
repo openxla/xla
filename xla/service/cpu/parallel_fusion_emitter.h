@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/backends/cpu/codegen/fusion_compiler.h"
+#include "xla/codegen/device_spec.h"
 #include "xla/codegen/kernel_definition.h"
 #include "xla/codegen/kernel_spec.h"
 #include "xla/codegen/llvm_kernel_source.h"
@@ -69,6 +70,7 @@ class ParallelFusionEmitter {
   tsl::thread::ThreadPool& thread_pool_;
   std::unique_ptr<FusionCompilerPool> fusion_compiler_pool_;
   const BufferAssignment* buffer_assignment_;
+  CpuDeviceSpec cpu_device_spec_;
   bool use_unique_c_name_;
   bool enable_tiled_emitter_;
 

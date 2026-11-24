@@ -76,6 +76,16 @@ func.func @atomic_rmw_i128(
 
 // -----
 
+func.func @atomic_store_i128(
+    %in: tensor<8xi128> {llvm.align = 16 : index}, %val: i128, %i: index)
+    -> tensor<8xi128> {
+  // expected-error @+1 {{failed to lower to LLVM atomic operation}}
+  %ret = xla.atomic_store %val into %in[%i] : tensor<8xi128>
+  return %ret : tensor<8xi128>
+}
+
+// -----
+
 func.func @atomic_store_f128(
     %in: tensor<8xf128> {llvm.align = 16 : index}, %val: f128, %i: index)
     -> tensor<8xf128> {
@@ -91,6 +101,20 @@ func.func @atomic_store_c128(
     %i: index) -> tensor<8xcomplex<f64>> {
   // expected-error @+1 {{failed to lower to LLVM atomic operation}}
   %ret = xla.atomic_store %val into %in[%i] : tensor<8xcomplex<f64>>
+  return %ret : tensor<8xcomplex<f64>>
+}
+
+// -----
+
+func.func @atomic_rmw_c128(
+    %in: tensor<8xcomplex<f64>> {llvm.align = 16 : index}, %i: index)
+    -> tensor<8xcomplex<f64>> {
+  // expected-error @+1 {{failed to lower to LLVM atomic operation}}
+  %ret = xla.atomic_rmw %in[%i] : tensor<8xcomplex<f64>> {
+    ^bb0(%current : complex<f64>):
+      %a = complex.add %current, %current : complex<f64>
+      xla.yield %a : complex<f64>
+  }
   return %ret : tensor<8xcomplex<f64>>
 }
 

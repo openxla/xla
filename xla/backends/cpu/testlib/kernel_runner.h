@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "llvm/Target/TargetMachine.h"
 #include "xla/backends/cpu/codegen/jit_compiler.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/kernel.h"
@@ -58,7 +59,8 @@ class KernelRunner final : public xla::KernelRunner {
 };
 
 absl::StatusOr<LlvmKernelSource> LowerToLlvm(
-    MlirKernelSource& mlir_kernel_source);
+    MlirKernelSource& mlir_kernel_source,
+    const llvm::TargetMachine* target_machine = nullptr);
 
 }  // namespace xla::cpu
 

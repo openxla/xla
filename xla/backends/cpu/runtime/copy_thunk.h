@@ -56,6 +56,12 @@ class CopyThunk final : public Thunk {
   const BufferAllocation::Slice& src_buffer() const { return src_buffer_; }
   const BufferAllocation::Slice& dst_buffer() const { return dst_buffer_; }
 
+  // Returns true if this copy dispatches parallel tasks when an intra op thread
+  // pool is available.
+  bool is_parallel() const {
+    return transpose_plan_ == nullptr && parallel_block_params_.block_count > 1;
+  }
+
  private:
   CopyThunk(Info info, BufferAllocation::Slice src_buffer,
             const Shape& src_shape, BufferAllocation::Slice dst_buffer,
