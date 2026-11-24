@@ -31,18 +31,25 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "tsl/platform/path.h"
 #include "xla/hlo/builder/xla_builder.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -51,6 +58,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/tsl/platform/test_benchmark.h"
 #include "xla/tsl/testing/temporary_directory.h"
 #include "xla/types.h"
 #include "xla/xla.pb.h"
@@ -59,9 +67,11 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::absl_testing::StatusIs;
 using ::testing::AllOf;
 using ::testing::Each;
 using ::testing::Ge;
+using ::testing::HasSubstr;
 using ::testing::Le;
 
 // A test fixture is used because we need a client for our computation builder.
@@ -1423,6 +1433,501 @@ ENTRY entry {
   EXPECT_EQ(cached_args[3], cached_args[5]);
   EXPECT_EQ(cached_engine, uncached_engine);
 }
+
+TEST_F(TestUtilsTest,
+       MakeSharedArgumentsSharesDefaultSpaceAndClonesHostMemorySpace) {
+  ClearFakeArgumentCacheForTest();
+  absl::Cleanup cleanup = [&] { ClearFakeArgumentCacheForTest(); };
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> flat_module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule SharedFlatHostSpaceModule, entry_computation_layout={(f32[128,256]{1,0}, f32[128,256]{1,0}, f32[128,256]{1,0:S(5)}, f32[128,256]{1,0})->f32[128,256]{1,0}}
+
+ENTRY entry {
+  p0 = f32[128,256] parameter(0)
+  p1 = f32[128,256] parameter(1)
+  p2 = f32[128,256] parameter(2)
+  p3 = f32[128,256] parameter(3)
+  ROOT out = f32[128,256] add(p0, p1)
+}
+)"));
+
+  std::minstd_rand0 engine(123);
+  FakeArgumentsOptions options;
+  options.engine = &engine;
+  options.cache_arguments = true;
+  options.max_cached_variants_per_shape = 2;
+
+  ASSERT_OK_AND_ASSIGN(FakeArgumentsGenerator generator,
+                       FakeArgumentsGenerator::Create(flat_module.get()));
+  ASSERT_OK_AND_ASSIGN(std::vector<std::shared_ptr<const Literal>> flat_args,
+                       generator.MakeSharedArguments(options));
+  ASSERT_EQ(flat_args.size(), 4);
+  EXPECT_NE(flat_args[0].get(), flat_args[1].get());
+  EXPECT_EQ(flat_args[1].get(), flat_args[3].get());
+  // p2 has S(5): cloned with host memory space without mutating cached p0.
+  EXPECT_EQ(flat_args[0]->shape().layout().memory_space(),
+            Layout::kDefaultMemorySpace);
+  EXPECT_EQ(flat_args[2]->shape().layout().memory_space(),
+            Layout::kHostMemorySpace);
+  EXPECT_NE(flat_args[0].get(), flat_args[2].get());
+  EXPECT_EQ(flat_args[0]->data<float>(), flat_args[2]->data<float>());
+}
+
+TEST_F(TestUtilsTest,
+       MakeSharedArgumentsHostSpaceBeforeDefaultSpaceDoesNotLeak) {
+  ClearFakeArgumentCacheForTest();
+  absl::Cleanup cleanup = [&] { ClearFakeArgumentCacheForTest(); };
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule HostSpaceFirstModule, entry_computation_layout={(f32[128,256]{1,0:S(5)}, f32[128,256]{1,0}, f32[128,256]{1,0})->f32[128,256]{1,0}}
+
+ENTRY entry {
+  p0 = f32[128,256] parameter(0)
+  p1 = f32[128,256] parameter(1)
+  p2 = f32[128,256] parameter(2)
+  ROOT out = f32[128,256] add(p1, p2)
+}
+)"));
+
+  std::minstd_rand0 engine(123);
+  FakeArgumentsOptions options;
+  options.engine = &engine;
+  options.cache_arguments = true;
+  options.max_cached_variants_per_shape = 1;
+
+  ASSERT_OK_AND_ASSIGN(FakeArgumentsGenerator generator,
+                       FakeArgumentsGenerator::Create(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::vector<std::shared_ptr<const Literal>> args,
+                       generator.MakeSharedArguments(options));
+  ASSERT_EQ(args.size(), 3);
+  EXPECT_EQ(args[0]->shape().layout().memory_space(), Layout::kHostMemorySpace);
+  EXPECT_EQ(args[1]->shape().layout().memory_space(),
+            Layout::kDefaultMemorySpace);
+  EXPECT_EQ(args[2]->shape().layout().memory_space(),
+            Layout::kDefaultMemorySpace);
+  EXPECT_NE(args[0].get(), args[1].get());
+  EXPECT_EQ(args[1].get(), args[2].get());
+  EXPECT_EQ(args[0]->data<float>(), args[1]->data<float>());
+}
+
+TEST_F(TestUtilsTest,
+       MakeFlattenedSharedArgumentsSharesLeavesAndClonesHostSpace) {
+  ClearFakeArgumentCacheForTest();
+  absl::Cleanup cleanup = [&] { ClearFakeArgumentCacheForTest(); };
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> tuple_module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule FlattenedSharedTupleHostSpaceModule, entry_computation_layout={((f32[128,256]{1,0}, f32[128,256]{1,0}, f32[128,256]{1,0:S(5)}, f32[128,256]{1,0}))->(f32[128,256]{1,0}, f32[128,256]{1,0}, f32[128,256]{1,0:S(5)}, f32[128,256]{1,0})}
+
+ENTRY entry {
+  ROOT tup = (f32[128,256], f32[128,256], f32[128,256], f32[128,256]) parameter(0)
+}
+)"));
+
+  std::minstd_rand0 engine(123);
+  FakeArgumentsOptions options;
+  options.engine = &engine;
+  options.cache_arguments = true;
+  options.max_cached_variants_per_shape = 2;
+
+  ASSERT_OK_AND_ASSIGN(FakeArgumentsGenerator generator,
+                       FakeArgumentsGenerator::Create(tuple_module.get()));
+  ASSERT_OK_AND_ASSIGN(std::vector<std::shared_ptr<const Literal>> tuple_leaves,
+                       generator.MakeFlattenedSharedArguments(options));
+  ASSERT_EQ(tuple_leaves.size(), 4);
+  EXPECT_NE(tuple_leaves[0].get(), tuple_leaves[1].get());
+  EXPECT_EQ(tuple_leaves[1].get(), tuple_leaves[3].get());
+  EXPECT_EQ(tuple_leaves[0]->shape().layout().memory_space(),
+            Layout::kDefaultMemorySpace);
+  EXPECT_EQ(tuple_leaves[2]->shape().layout().memory_space(),
+            Layout::kHostMemorySpace);
+  EXPECT_NE(tuple_leaves[0].get(), tuple_leaves[2].get());
+  EXPECT_EQ(tuple_leaves[0]->data<float>(), tuple_leaves[2]->data<float>());
+}
+
+TEST_F(TestUtilsTest, MakeFlattenedSharedArgumentsRejectsMultipleParameters) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule MultiParamModule
+
+ENTRY entry {
+  p0 = f32[4] parameter(0)
+  p1 = f32[4] parameter(1)
+  ROOT out = f32[4] add(p0, p1)
+}
+)"));
+
+  ASSERT_OK_AND_ASSIGN(FakeArgumentsGenerator generator,
+                       FakeArgumentsGenerator::Create(module.get()));
+  EXPECT_THAT(
+      generator.MakeFlattenedSharedArguments(),
+      StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("single tuple")));
+}
+
+TEST_F(TestUtilsTest,
+       MakeFlattenedSharedArgumentsRejectsSingleNonTupleParameter) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule SingleArrayParamModule
+
+ENTRY entry {
+  ROOT p0 = f32[4] parameter(0)
+}
+)"));
+
+  ASSERT_OK_AND_ASSIGN(FakeArgumentsGenerator generator,
+                       FakeArgumentsGenerator::Create(module.get()));
+  EXPECT_THAT(
+      generator.MakeFlattenedSharedArguments(),
+      StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("single tuple")));
+}
+
+TEST_F(TestUtilsTest, MakeSharedArgumentsCachesLeavesForNonFlattenedTuple) {
+  ClearFakeArgumentCacheForTest();
+  absl::Cleanup cleanup = [&] { ClearFakeArgumentCacheForTest(); };
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> tuple_module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule NonFlattenedTupleCacheModule
+
+ENTRY entry {
+  ROOT tup = (f32[128,256], f32[128,256], f32[128,256]) parameter(0)
+}
+)"));
+
+  std::minstd_rand0 engine(321);
+  FakeArgumentsOptions options;
+  options.engine = &engine;
+  options.cache_arguments = true;
+  options.max_cached_variants_per_shape = 2;
+
+  ASSERT_OK_AND_ASSIGN(FakeArgumentsGenerator generator,
+                       FakeArgumentsGenerator::Create(tuple_module.get()));
+  ASSERT_OK_AND_ASSIGN(std::vector<std::shared_ptr<const Literal>> args,
+                       generator.MakeSharedArguments(options));
+  ASSERT_EQ(args.size(), 1);
+  ASSERT_TRUE(args[0]->shape().IsTuple());
+  EXPECT_NE(LiteralSlice(*args[0], {0}), LiteralSlice(*args[0], {1}));
+  EXPECT_EQ(LiteralSlice(*args[0], {0}), LiteralSlice(*args[0], {2}));
+}
+
+TEST_F(TestUtilsTest,
+       MakeFlattenedSharedArgumentsHandlesReductionInitAndNonScalarElements) {
+  ClearFakeArgumentCacheForTest();
+  absl::Cleanup cleanup = [&] { ClearFakeArgumentCacheForTest(); };
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule FlattenedTupleWithReduceInit
+
+add_f32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT sum = f32[] add(lhs, rhs)
+}
+
+ENTRY entry {
+  tup = (f32[], f32[128,256], f32[128,256], (f32[4], f32[4])) parameter(0)
+  init = f32[] get-tuple-element(tup), index=0
+  a = f32[128,256] get-tuple-element(tup), index=1
+  b = f32[128,256] get-tuple-element(tup), index=2
+  nested = (f32[4], f32[4]) get-tuple-element(tup), index=3
+  red = f32[] reduce(a, init), dimensions={0,1}, to_apply=add_f32
+  ROOT out = (f32[], f32[128,256], (f32[4], f32[4])) tuple(red, b, nested)
+}
+)"));
+
+  std::minstd_rand0 engine(456);
+  FakeArgumentsOptions options;
+  options.engine = &engine;
+  options.cache_arguments = true;
+  options.max_cached_variants_per_shape = 1;
+
+  ASSERT_OK_AND_ASSIGN(FakeArgumentsGenerator generator,
+                       FakeArgumentsGenerator::Create(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::vector<std::shared_ptr<const Literal>> args,
+                       generator.MakeFlattenedSharedArguments(options));
+  ASSERT_EQ(args.size(), 4);
+  EXPECT_EQ(*args[0], LiteralUtil::CreateR0<float>(0.0f));
+  EXPECT_EQ(args[1]->shape(), ShapeUtil::MakeShape(F32, {128, 256}));
+  EXPECT_EQ(args[2]->shape(), ShapeUtil::MakeShape(F32, {128, 256}));
+  EXPECT_EQ(args[1].get(), args[2].get());
+  EXPECT_TRUE(args[3]->shape().IsTuple());
+  ASSERT_EQ(args[3]->shape().tuple_shapes().size(), 2);
+  EXPECT_EQ(args[3]->shape().tuple_shapes(0), ShapeUtil::MakeShape(F32, {4}));
+  EXPECT_EQ(args[3]->shape().tuple_shapes(1), ShapeUtil::MakeShape(F32, {4}));
+}
+
+TEST_F(TestUtilsTest,
+       FakeArgumentsGeneratorMatchesMakeFakeArgumentsAcrossCalls) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule DataflowModule
+
+ENTRY entry {
+  data = f32[200,100] parameter(0)
+  idx = s32[10] parameter(1)
+  ROOT gather = f32[10,100] gather(data, idx),
+      offset_dims={1}, collapsed_slice_dims={0}, start_index_map={0},
+      index_vector_dim=1, slice_sizes={1,100}
+}
+)"));
+
+  std::minstd_rand0 default_engine(55);
+  FakeArgumentsOptions default_options;
+  default_options.engine = &default_engine;
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> default_first,
+                       MakeFakeArguments(module.get(), default_options));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> default_second,
+                       MakeFakeArguments(module.get(), default_options));
+
+  ASSERT_OK_AND_ASSIGN(FakeArgumentsGenerator generator,
+                       FakeArgumentsGenerator::Create(module.get()));
+  FakeArgumentsGenerator moved_generator = std::move(generator);
+  std::minstd_rand0 generator_engine(55);
+  FakeArgumentsOptions generator_options;
+  generator_options.engine = &generator_engine;
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> reused_first,
+                       moved_generator.MakeArguments(generator_options));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> reused_second,
+                       moved_generator.MakeArguments(generator_options));
+
+  EXPECT_EQ(reused_first, default_first);
+  EXPECT_EQ(reused_second, default_second);
+  EXPECT_EQ(generator_engine, default_engine);
+}
+TEST_F(TestUtilsTest, FakeArgumentsGeneratorRejectsNullModule) {
+  EXPECT_THAT(FakeArgumentsGenerator::Create(nullptr),
+              StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("null")));
+}
+
+TEST_F(TestUtilsTest,
+       FakeArgumentsGeneratorMakeSharedArgumentsMatchesMakeFakeArguments) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule SharedDataflowModule
+
+ENTRY entry {
+  data = f32[200,100] parameter(0)
+  idx = s32[10] parameter(1)
+  ROOT gather = f32[10,100] gather(data, idx),
+      offset_dims={1}, collapsed_slice_dims={0}, start_index_map={0},
+      index_vector_dim=1, slice_sizes={1,100}
+}
+)"));
+
+  std::minstd_rand0 default_engine(55);
+  FakeArgumentsOptions default_options;
+  default_options.engine = &default_engine;
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> default_args,
+                       MakeFakeArguments(module.get(), default_options));
+
+  ASSERT_OK_AND_ASSIGN(FakeArgumentsGenerator generator,
+                       FakeArgumentsGenerator::Create(module.get()));
+  std::minstd_rand0 shared_engine(55);
+  FakeArgumentsOptions shared_options;
+  shared_options.engine = &shared_engine;
+  ASSERT_OK_AND_ASSIGN(std::vector<std::shared_ptr<const Literal>> shared_args,
+                       generator.MakeSharedArguments(shared_options));
+  ASSERT_EQ(shared_args.size(), default_args.size());
+  for (size_t i = 0; i < default_args.size(); ++i) {
+    EXPECT_EQ(*shared_args[i], default_args[i]);
+  }
+  EXPECT_EQ(shared_engine, default_engine);
+}
+
+TEST_F(TestUtilsTest,
+       FakeArgumentsGeneratorMakeFlattenedSharedMatchesMakeFakeArguments) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule FlattenedSharedDataflowModule
+
+ENTRY entry {
+  ROOT tup = (f32[128,256], s32[16]) parameter(0)
+}
+)"));
+
+  std::minstd_rand0 default_engine(55);
+  FakeArgumentsOptions default_options;
+  default_options.engine = &default_engine;
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> default_args,
+                       MakeFakeArguments(module.get(), default_options));
+  ASSERT_EQ(default_args.size(), 1);
+  std::vector<Literal> expected_leaves = default_args[0].DecomposeTuple();
+
+  ASSERT_OK_AND_ASSIGN(FakeArgumentsGenerator generator,
+                       FakeArgumentsGenerator::Create(module.get()));
+  std::minstd_rand0 shared_engine(55);
+  FakeArgumentsOptions shared_options;
+  shared_options.engine = &shared_engine;
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::shared_ptr<const Literal>> flattened_args,
+      generator.MakeFlattenedSharedArguments(shared_options));
+  ASSERT_EQ(flattened_args.size(), expected_leaves.size());
+  for (size_t i = 0; i < expected_leaves.size(); ++i) {
+    EXPECT_EQ(*flattened_args[i], expected_leaves[i]);
+  }
+  EXPECT_EQ(shared_engine, default_engine);
+}
+
+std::unique_ptr<HloModule> MakeFlatBulkBenchmarkModule(int num_params,
+                                                       int64_t rows,
+                                                       int64_t cols) {
+  auto module =
+      std::make_unique<HloModule>("FlatBulkBenchmark", HloModuleConfig());
+  HloComputation::Builder builder("entry");
+  const Shape shape = ShapeUtil::MakeShape(BF16, {rows, cols});
+  std::vector<HloInstruction*> params;
+  params.reserve(num_params);
+  for (int i = 0; i < num_params; ++i) {
+    params.push_back(builder.AddInstruction(
+        HloInstruction::CreateParameter(i, shape, absl::StrCat("p", i))));
+  }
+  builder.AddInstruction(HloInstruction::CreateTuple(params));
+  module->AddEntryComputation(builder.Build());
+  return module;
+}
+
+std::unique_ptr<HloModule> MakeSingleTupleBulkBenchmarkModule(int num_leaves,
+                                                              int64_t rows,
+                                                              int64_t cols) {
+  auto module = std::make_unique<HloModule>("SingleTupleBulkBenchmark",
+                                            HloModuleConfig());
+  HloComputation::Builder builder("entry");
+  const Shape leaf_shape = ShapeUtil::MakeShape(BF16, {rows, cols});
+  std::vector<Shape> leaf_shapes(num_leaves, leaf_shape);
+  builder.AddInstruction(HloInstruction::CreateParameter(
+      0, ShapeUtil::MakeTupleShape(leaf_shapes), "tup"));
+  module->AddEntryComputation(builder.Build());
+  return module;
+}
+
+void RunFlatBenchmark(::testing::benchmark::State& state, bool use_shared,
+                      bool warm_cache) {
+  ClearFakeArgumentCacheForTest();
+  absl::Cleanup cleanup = [&] { ClearFakeArgumentCacheForTest(); };
+  // 64 * bf16[2048,4096] = 1 GiB total per call (2 cached variants = 32 MiB).
+  auto module = MakeFlatBulkBenchmarkModule(/*num_params=*/64, /*rows=*/2048,
+                                            /*cols=*/4096);
+  auto generator_or = FakeArgumentsGenerator::Create(module.get());
+  CHECK(generator_or.ok()) << generator_or.status();
+  FakeArgumentsGenerator generator = *std::move(generator_or);
+
+  auto run_once = [&]() {
+    std::minstd_rand0 engine(42);
+    FakeArgumentsOptions options;
+    options.engine = &engine;
+    options.cache_arguments = true;
+    if (use_shared) {
+      auto args = generator.MakeSharedArguments(options);
+      CHECK(args.ok()) << args.status();
+      benchmark::DoNotOptimize(args);
+    } else {
+      auto args = generator.MakeArguments(options);
+      CHECK(args.ok()) << args.status();
+      benchmark::DoNotOptimize(args);
+    }
+  };
+
+  if (warm_cache) {
+    run_once();
+  }
+  for (auto s : state) {
+    if (!warm_cache) {
+      state.PauseTiming();
+      ClearFakeArgumentCacheForTest();
+      state.ResumeTiming();
+    }
+    run_once();
+  }
+}
+
+void RunSingleTupleBenchmark(::testing::benchmark::State& state,
+                             bool use_shared, bool warm_cache) {
+  ClearFakeArgumentCacheForTest();
+  absl::Cleanup cleanup = [&] { ClearFakeArgumentCacheForTest(); };
+  // 64 leaves * bf16[1024,4096] = 512 MiB total per call (2 variants = 16 MiB).
+  auto module = MakeSingleTupleBulkBenchmarkModule(
+      /*num_leaves=*/64, /*rows=*/1024, /*cols=*/4096);
+  auto generator_or = FakeArgumentsGenerator::Create(module.get());
+  CHECK(generator_or.ok()) << generator_or.status();
+  FakeArgumentsGenerator generator = *std::move(generator_or);
+
+  auto run_once = [&]() {
+    std::minstd_rand0 engine(42);
+    FakeArgumentsOptions options;
+    options.engine = &engine;
+    options.cache_arguments = true;
+    if (use_shared) {
+      auto args = generator.MakeFlattenedSharedArguments(options);
+      CHECK(args.ok()) << args.status();
+      benchmark::DoNotOptimize(args);
+    } else {
+      auto args = generator.MakeArguments(options);
+      CHECK(args.ok()) << args.status();
+      std::vector<Literal> leaves = args->front().DecomposeTuple();
+      benchmark::DoNotOptimize(leaves);
+    }
+  };
+
+  if (warm_cache) {
+    run_once();
+  }
+  for (auto s : state) {
+    if (!warm_cache) {
+      state.PauseTiming();
+      ClearFakeArgumentCacheForTest();
+      state.ResumeTiming();
+    }
+    run_once();
+  }
+}
+
+void BM_MakeArgumentsFlatColdCache(::testing::benchmark::State& state) {
+  RunFlatBenchmark(state, /*use_shared=*/false, /*warm_cache=*/false);
+}
+BENCHMARK(BM_MakeArgumentsFlatColdCache)->UseRealTime();
+
+void BM_MakeSharedArgumentsFlatColdCache(::testing::benchmark::State& state) {
+  RunFlatBenchmark(state, /*use_shared=*/true, /*warm_cache=*/false);
+}
+BENCHMARK(BM_MakeSharedArgumentsFlatColdCache)->UseRealTime();
+
+void BM_MakeArgumentsFlatWarmCache(::testing::benchmark::State& state) {
+  RunFlatBenchmark(state, /*use_shared=*/false, /*warm_cache=*/true);
+}
+BENCHMARK(BM_MakeArgumentsFlatWarmCache)->UseRealTime();
+
+void BM_MakeSharedArgumentsFlatWarmCache(::testing::benchmark::State& state) {
+  RunFlatBenchmark(state, /*use_shared=*/true, /*warm_cache=*/true);
+}
+BENCHMARK(BM_MakeSharedArgumentsFlatWarmCache)->UseRealTime();
+
+void BM_MakeArgumentsTupleDecomposeColdCache(
+    ::testing::benchmark::State& state) {
+  RunSingleTupleBenchmark(state, /*use_shared=*/false, /*warm_cache=*/false);
+}
+BENCHMARK(BM_MakeArgumentsTupleDecomposeColdCache)->UseRealTime();
+
+void BM_MakeFlattenedSharedArgumentsColdCache(
+    ::testing::benchmark::State& state) {
+  RunSingleTupleBenchmark(state, /*use_shared=*/true, /*warm_cache=*/false);
+}
+BENCHMARK(BM_MakeFlattenedSharedArgumentsColdCache)->UseRealTime();
+
+void BM_MakeArgumentsTupleDecomposeWarmCache(
+    ::testing::benchmark::State& state) {
+  RunSingleTupleBenchmark(state, /*use_shared=*/false, /*warm_cache=*/true);
+}
+BENCHMARK(BM_MakeArgumentsTupleDecomposeWarmCache)->UseRealTime();
+
+void BM_MakeFlattenedSharedArgumentsWarmCache(
+    ::testing::benchmark::State& state) {
+  RunSingleTupleBenchmark(state, /*use_shared=*/true, /*warm_cache=*/true);
+}
+BENCHMARK(BM_MakeFlattenedSharedArgumentsWarmCache)->UseRealTime();
 
 }  // namespace
 }  // namespace xla

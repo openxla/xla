@@ -1270,6 +1270,11 @@ CreateArgumentsOnDevice(PjRtClient& client,
       (running_options.module_argument_mode ==
            ModuleArgumentMode::kUseRandomInputs &&
        engine == nullptr);
+  const bool uses_fake_arguments =
+      running_options.module_argument_mode !=
+          ModuleArgumentMode::kUseRandomNormalInputs &&
+      running_options.module_argument_mode !=
+          ModuleArgumentMode::kUseDeviceIdAsInput;
   absl::BitGen rd;
 
   std::optional<std::normal_distribution<double>> random_dist;
@@ -1282,17 +1287,21 @@ CreateArgumentsOnDevice(PjRtClient& client,
   std::function<double(std::minstd_rand0*)> float_generator =
       [&](std::minstd_rand0* engine) { return (*random_dist)(*engine); };
 
+  if (flatten_arguments && num_addressable_devices > 0) {
+    ABSL_RETURN_IF_ERROR(EnsureSingleTupleForFlattening(*my_hlo_module));
+  }
+
+  std::optional<FakeArgumentsGenerator> fake_args_generator;
+  if (uses_fake_arguments && num_addressable_devices > 0) {
+    ABSL_ASSIGN_OR_RETURN(fake_args_generator,
+                          FakeArgumentsGenerator::Create(my_hlo_module));
+  }
+
   for (int i = 0; i < num_addressable_devices; ++i) {
     VLOG(3) << "Creating fake arguments for device " << i;
     LiteralVec& argument_literals = per_device_argument_literals
         [addressable_devices[i]->global_device_id().value()];
-    if (flatten_arguments) {
-      ABSL_RETURN_IF_ERROR(EnsureSingleTupleForFlattening(*my_hlo_module));
-    }
-    if (running_options.module_argument_mode ==
-            ModuleArgumentMode::kUseRandomNormalInputs ||
-        running_options.module_argument_mode ==
-            ModuleArgumentMode::kUseDeviceIdAsInput) {
+    if (!uses_fake_arguments) {
       const auto params =
           my_hlo_module->entry_computation()->parameter_instructions();
       if (flatten_arguments) {
@@ -1357,13 +1366,13 @@ CreateArgumentsOnDevice(PjRtClient& client,
       options.min_cached_argument_bytes = min_cached_argument_bytes;
       if (flatten_arguments) {
         ABSL_ASSIGN_OR_RETURN(LiteralVec tupled_argument_literals,
-                              MakeFakeArguments(my_hlo_module, options));
+                              fake_args_generator->MakeArguments(options));
         CHECK_EQ(tupled_argument_literals.size(), 1);
         CHECK(tupled_argument_literals.front().shape().IsTuple());
         argument_literals = tupled_argument_literals.front().DecomposeTuple();
       } else {
         ABSL_ASSIGN_OR_RETURN(argument_literals,
-                              MakeFakeArguments(my_hlo_module, options));
+                              fake_args_generator->MakeArguments(options));
       }
       if (use_shared_inputs) {
         break;
