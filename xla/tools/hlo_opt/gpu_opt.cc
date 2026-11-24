@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/hlo/transforms/collectives/all_gather_optimizer.h"
 #include "xla/backends/gpu/hlo/transforms/cudnn_custom_call_converter.h"
 #include "xla/backends/gpu/hlo/transforms/dot_algorithm_rewriter.h"
+#include "xla/backends/gpu/hlo/transforms/dot_bf16_demotion.h"
 #include "xla/backends/gpu/hlo/transforms/dot_dimension_sorter.h"
 #include "xla/backends/gpu/hlo/transforms/dot_normalizer.h"
 #include "xla/backends/gpu/hlo/transforms/dot_operand_converter.h"
@@ -184,6 +185,7 @@ class GpuOptProvider : public CompiledOptProvider {
     RegisterPass<gpu::AllGatherOptimizer>();
     RegisterPass<gpu::CuDnnCustomCallConverter>();
     RegisterPass<gpu::DotAlgorithmRewriter>(gpu_compute_capability);
+    RegisterPass<gpu::DotBf16Demotion>(gpu_compute_capability);
     RegisterPass<gpu::DotDimensionSorter>();
     RegisterPass<gpu::DotNormalizer>();
     RegisterPass<gpu::DotOperandConverter>(gpu_compute_capability);

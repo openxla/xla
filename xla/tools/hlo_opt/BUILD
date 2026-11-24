@@ -102,6 +102,7 @@ cc_library(
         "//xla/backends/gpu/hlo/analysis:nvptx_alias_info",
         "//xla/backends/gpu/hlo/transforms:cudnn_custom_call_converter",
         "//xla/backends/gpu/hlo/transforms:dot_algorithm_rewriter",
+        "//xla/backends/gpu/hlo/transforms:dot_bf16_demotion",
         "//xla/backends/gpu/hlo/transforms:dot_dimension_sorter",
         "//xla/backends/gpu/hlo/transforms:dot_normalizer",
         "//xla/backends/gpu/hlo/transforms:dot_operand_converter",
