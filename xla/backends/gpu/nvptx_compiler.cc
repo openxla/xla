@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/nvptx_compiler.h"
+#include "xla/backends/gpu/nvptx_compiler.h"
 
 #include <array>
 #include <cstdint>
@@ -49,6 +49,7 @@ limitations under the License.
 #include "tsl/platform/path.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
+#include "xla/backends/gpu/gpu_compiler.h"
 #include "xla/backends/gpu/hlo/analysis/alias_info.h"
 #include "xla/backends/gpu/hlo/analysis/nvptx_alias_info.h"
 #include "xla/backends/gpu/hlo/transforms/algebraic_simplifier.h"
@@ -66,7 +67,6 @@ limitations under the License.
 #include "xla/backends/gpu/hlo/transforms/ragged_dot_cudnn_support.h"
 #include "xla/backends/gpu/hlo/transforms/triangular_solve_rewriter.h"
 #include "xla/backends/gpu/target_lowering/nvptx_backend.h"
-#include "xla/backends/gpu/target_lowering/nvptx_utils.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -86,7 +86,6 @@ limitations under the License.
 #include "xla/service/decision.h"
 #include "xla/service/dump.h"
 #include "xla/service/float_support.h"
-#include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/gpu_pipeline.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/metrics.h"
@@ -515,8 +514,9 @@ void WarnIfBadDriverJITVersion() {
 }
 
 absl::StatusOr<const se::cuda::CompilationProvider*>
-NVPTXCompiler::GetCompilationProvider(const DebugOptions& debug_options,
-                                      se::StreamExecutor* stream_exec) {
+NVPTXCompiler::GetCompilationProvider(
+    const DebugOptions& debug_options,
+    se::StreamExecutor* absl_nullable stream_exec) {
   absl::MutexLock lock(compilation_providers_mutex_);
   std::unique_ptr<se::cuda::CompilationProvider>& compilation_provider =
       compilation_providers_[se::cuda::CompilationProviderOptions::
@@ -653,7 +653,7 @@ NVPTXCompiler::CompileTargetBinary(
 absl::StatusOr<bool> NVPTXCompiler::CanUseLinkModules(
     const HloModuleConfig& hlo_module_config,
     const stream_executor::DeviceDescription& device_description,
-    se::StreamExecutor* stream_exec) {
+    se::StreamExecutor* absl_nullable stream_exec) {
   ABSL_ASSIGN_OR_RETURN(
       const se::cuda::CompilationProvider* compilation_provider,
       GetCompilationProvider(hlo_module_config.debug_options(), stream_exec));
@@ -664,7 +664,8 @@ absl::StatusOr<bool> NVPTXCompiler::CanUseLinkModules(
 absl::StatusOr<std::vector<uint8_t>> NVPTXCompiler::LinkModules(
     const stream_executor::DeviceDescription& device_description,
     std::vector<std::vector<uint8_t>> modules,
-    const DebugOptions& debug_options, se::StreamExecutor* stream_exec) {
+    const DebugOptions& debug_options,
+    se::StreamExecutor* absl_nullable stream_exec) {
   if (modules.empty()) {
     return std::vector<uint8_t>{};
   }

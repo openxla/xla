@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/nvptx_compiler.h"
+#include "xla/backends/gpu/nvptx_compiler.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -51,9 +51,6 @@ limitations under the License.
 #include "xla/service/logical_buffer.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 
@@ -472,7 +469,8 @@ ENTRY main {
   ROOT tuple.2 = (f32[1,128]{1,0}, f32[2,128]{1,0}, pred[]) tuple(f32[1,128]{1,0} get-tuple-element, f32[2,128]{1,0} get-tuple-element.1, pred[] copy.3)
 }
 )";
-  auto module = ParseAndReturnVerifiedModule(hlo_text).value();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   EXPECT_EQ(CountCopies(*module), 4);
 
   const HloInstruction* while_op = hlo_query::GetFirstInstructionWithOpcode(
