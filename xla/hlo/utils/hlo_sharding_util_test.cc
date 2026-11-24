@@ -27,6 +27,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/mesh_and_axis.h"
 #include "xla/hlo/ir/named_sharding.h"
@@ -2302,6 +2304,68 @@ TEST(HloShardingUtilTest, NonTiledLeafShardingSpecificityAndImprovement) {
                                          /*allow_aggressive_resharding=*/true),
               std::nullopt);
   }
+}
+
+TEST_F(HloShardingUtilTestWithHlo, FormatAndReverseFormatShapeOpMetadata) {
+  constexpr absl::string_view kHloString = R"hlo(
+    HloModule module
+
+    ENTRY %main {
+      ROOT %p = f32[2,4] parameter(0), metadata={op_type="test_op" op_name="test/name"}
+    }
+  )hlo";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kHloString));
+  HloComputation* entry = module->entry_computation();
+  HloInstruction* param = entry->parameter_instruction(0);
+
+  const Shape padded_shape = ShapeUtil::MakeShape(F32, {4, 4});
+  const Shape transposed_shape = ShapeUtil::MakeShape(F32, {4, 4});
+  const Shape reshaped_shape = ShapeUtil::MakeShape(F32, {16});
+  const std::vector<int64_t> perm = {1, 0};
+  const std::vector<FormattingStep> steps = {
+      {.input_shape = param->shape(),
+       .output_shape = padded_shape,
+       .formatting_opcode = HloOpcode::kPad},
+      {.input_shape = padded_shape,
+       .output_shape = transposed_shape,
+       .formatting_opcode = HloOpcode::kTranspose,
+       .xpose_permutation = perm},
+      {.input_shape = transposed_shape,
+       .output_shape = reshaped_shape,
+       .formatting_opcode = HloOpcode::kReshape},
+  };
+
+  HloInstruction* formatted =
+      FormatShape(param, steps, entry, &param->metadata());
+  ASSERT_EQ(formatted->opcode(), HloOpcode::kReshape);
+  EXPECT_EQ(formatted->metadata().op_name(), "test/name");
+  const HloInstruction* transpose = formatted->operand(0);
+  ASSERT_EQ(transpose->opcode(), HloOpcode::kTranspose);
+  EXPECT_EQ(transpose->metadata().op_name(), "test/name");
+  const HloInstruction* pad = transpose->operand(0);
+  ASSERT_EQ(pad->opcode(), HloOpcode::kPad);
+  EXPECT_EQ(pad->metadata().op_name(), "test/name");
+  EXPECT_FALSE(pad->operand(1)->has_metadata());
+
+  HloInstruction* reversed =
+      ReverseFormatShape(formatted, steps, entry, &param->metadata());
+  ASSERT_EQ(reversed->opcode(), HloOpcode::kSlice);
+  EXPECT_EQ(reversed->metadata().op_name(), "test/name");
+  EXPECT_EQ(reversed->operand(0)->metadata().op_name(), "test/name");
+  EXPECT_EQ(reversed->operand(0)->operand(0)->metadata().op_name(),
+            "test/name");
+
+  HloInstruction* unannotated_fmt =
+      FormatShape(param, steps, entry, /*metadata=*/nullptr);
+  EXPECT_FALSE(unannotated_fmt->has_metadata());
+  EXPECT_FALSE(unannotated_fmt->operand(0)->has_metadata());
+  EXPECT_FALSE(unannotated_fmt->operand(0)->operand(0)->has_metadata());
+  HloInstruction* unannotated_rev =
+      ReverseFormatShape(unannotated_fmt, steps, entry, /*metadata=*/nullptr);
+  EXPECT_FALSE(unannotated_rev->has_metadata());
+  EXPECT_FALSE(unannotated_rev->operand(0)->has_metadata());
+  EXPECT_FALSE(unannotated_rev->operand(0)->operand(0)->has_metadata());
 }
 
 }  // namespace
