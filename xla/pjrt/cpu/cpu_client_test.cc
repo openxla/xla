@@ -1389,7 +1389,8 @@ TEST(PjRtCpuClientTest, CachesPlacementAcrossProcessIndexOverrides) {
     })hlo";
   CpuClientOptions cpu_options;
   cpu_options.collectives = std::make_shared<cpu::InProcessCollectives>();
-  ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(std::move(cpu_options)));
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetXlaPjrtCpuClient(std::move(cpu_options)));
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHlo, {}));
   DeviceAssignment assignment(/*replica_count=*/3, /*computation_count=*/1);
   assignment(0, 0) = PackCpuDeviceId(2, 0).value();
