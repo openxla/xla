@@ -110,7 +110,6 @@ limitations under the License.
 #include "xla/backends/gpu/hlo/transforms/config_assigner_pass.h"
 #include "xla/backends/gpu/hlo/transforms/convert_triton_gemm_config.h"
 #include "xla/backends/gpu/hlo/transforms/cublas_pad_for_gemms.h"
-#include "xla/backends/gpu/hlo/transforms/deviceless_estimate_cub_sort_scratch_size.h"
 #include "xla/backends/gpu/hlo/transforms/dot_algorithm_rewriter.h"
 #include "xla/backends/gpu/hlo/transforms/dot_operand_converter.h"
 #include "xla/backends/gpu/hlo/transforms/dot_strength_reduction.h"
@@ -2179,16 +2178,12 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // annotations, this pass will add the annotations.
     pipeline.AddPass<SubByteNormalization>(
         SubByteNormalization::SET_ELEMENT_SIZE);
-    if (stream_exec == nullptr ||
-        debug_options.xla_gpu_deviceless_cub_mode() ==
-            DebugOptions::DEVICELESS_CUB_FORCE_ON_NO_FALLBACK) {
-      pipeline.AddPass<DevicelessEstimateCubSortScratchSize>(
-          gpu_target_config.platform_name,
-          gpu_target_config.device_description.name(),
-          gpu_target_config.device_description.cub_version());
-    } else {
+    if (gpu_target_config.device_description.gpu_compute_capability()
+            .IsCuda() ||
+        stream_exec != nullptr) {
       pipeline.AddPass<EstimateCubSortScratchSize>(
-          gpu_target_config.platform_name);
+          gpu_target_config.platform_name,
+          gpu_target_config.device_description.gpu_compute_capability());
     }
     pipeline.AddPass<EstimateCubScanScratchSize>(
         gpu_target_config.platform_name);

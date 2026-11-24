@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_BACKENDS_GPU_LIBRARIES_CUB_GENERATE_CUB_SCRATCH_SIZE_LIB_CU_H_
-#define XLA_BACKENDS_GPU_LIBRARIES_CUB_GENERATE_CUB_SCRATCH_SIZE_LIB_CU_H_
-
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "xla/backends/gpu/libraries/cub/cub_sort_thunk_emitter.h"
+#include "xla/backends/gpu/runtime/thunk.h"
 
 namespace xla::gpu {
 
-// Generates CUB scratch sizes and writes the results to a textproto file in
-// the test undeclared outputs dir.
-absl::Status GenerateCubScratchSizeData();
+absl::StatusOr<ThunkSequence> EmitCudaCubSortThunkSequence(
+    const CubSortThunkEmitParams& /*params*/) {
+  return absl::UnimplementedError(
+      "CUDA CUB sort thunk emission requires building with CUDA enabled.");
+}
 
 }  // namespace xla::gpu
-
-#endif  // XLA_BACKENDS_GPU_LIBRARIES_CUB_GENERATE_CUB_SCRATCH_SIZE_LIB_CU_H_

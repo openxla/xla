@@ -24,20 +24,6 @@ limitations under the License.
 
 namespace xla::gpu {
 
-// For CUB segmented sorts (batch_size > 1), XLA appends the segment offsets to
-// the end of the scratch buffer. This function updates the given `scratch_size`
-// to include the space needed for these offsets.
-inline int64_t AddSegmentedSortOffsetsToScratchSize(int64_t scratch_size,
-                                                    int64_t batch_size) {
-  if (batch_size > 1) {
-    // TODO(b/502873525): This adds 4 bytes even if already aligned.
-    // Fix to proper alignment in a follow-up.
-    scratch_size += sizeof(int32_t) - scratch_size % sizeof(int32_t);
-    scratch_size += (batch_size + 1) * sizeof(int32_t);
-  }
-  return scratch_size;
-}
-
 // Creates a new custom call instruction for CUB sort with the estimated
 // scratch size and MLIR dict backend config for the FFI handler attributes,
 // and replaces the original custom call with it.

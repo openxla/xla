@@ -30,19 +30,25 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "riegeli/bytes/string_reader.h"
 #include "xla/backends/cpu/target_machine_options.h"
+#include "xla/backends/gpu/codegen/gpu_kernel_spec.pb.h"
+#include "xla/backends/gpu/codegen/kernels/custom_kernel.pb.h"
 #include "xla/backends/gpu/ffi.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/ffi/ffi.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/compiled_module.h"
 #include "xla/service/compiler.h"
+#include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/platform_id.h"
+#include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -438,11 +444,46 @@ TEST(HostCrossCompilationTest, CubSortPairsCustomCallSupportsCrossCompilation) {
   EXPECT_OK(compiler->CompileAheadOfTime(std::move(hlo_module), aot_options));
 }
 
+struct CubSortThunkCounts {
+  int custom_kernels = 0;
+  int segmented_custom_kernels = 0;
+  int custom_calls = 0;
+};
+
+CubSortThunkCounts CountCubSortThunks(const GpuExecutableProto& exec_proto) {
+  CubSortThunkCounts counts;
+  auto inspect_thunk = [&](auto& self, const ThunkProto& thunk) -> void {
+    if (thunk.has_custom_kernel_thunk()) {
+      const CustomKernelProto& ck = thunk.custom_kernel_thunk().custom_kernel();
+      const std::string& name = ck.has_spec() ? ck.spec().name() : ck.name();
+      if (absl::StartsWith(name, "cub_sort_")) {
+        ++counts.custom_kernels;
+        if (absl::StartsWith(name, "cub_sort_segmented_")) {
+          ++counts.segmented_custom_kernels;
+        }
+      }
+    } else if (thunk.has_custom_call_thunk()) {
+      if (absl::StrContains(thunk.custom_call_thunk().target_name(),
+                            "cub_sort")) {
+        ++counts.custom_calls;
+      }
+    } else if (thunk.has_sequential_thunk()) {
+      for (const ThunkProto& sub : thunk.sequential_thunk().thunks()) {
+        self(self, sub);
+      }
+    }
+  };
+  for (const ThunkProto& thunk : exec_proto.thunks()) {
+    inspect_thunk(inspect_thunk, thunk);
+  }
+  return counts;
+}
+
 TEST(HostCrossCompilationTest, EndToEndDevicelessCubRadixSortCrossCompilation) {
   ASSERT_OK_AND_ASSIGN(std::string platform_name,
                        PlatformUtil::CanonicalPlatformName("gpu"));
   if (platform_name != "cuda") {
-    GTEST_SKIP() << "Deviceless CUB sort lookup table is CUDA-only.";
+    GTEST_SKIP() << "Embedded CUDA CUB sort thunks are CUDA-only.";
   }
 
   constexpr absl::string_view kSortPairsHlo = R"hlo(
@@ -486,6 +527,74 @@ TEST(HostCrossCompilationTest, EndToEndDevicelessCubRadixSortCrossCompilation) {
   EXPECT_TRUE(absl::StrContains(
       compiled_modules.front()->optimized_module()->ToString(),
       "xla.gpu.ext.cub_sort_pairs"));
+
+  // Verify the AOT-compiled GpuExecutableProto lowers CUDA CUB sort to
+  // embedded CustomKernelThunks rather than runtime CustomCallThunks.
+  ASSERT_OK_AND_ASSIGN(std::string serialized,
+                       compiled_modules.front()->SerializeAsString());
+  GpuExecutableProto exec_proto;
+  ASSERT_OK(ReadSplitProto(
+      std::make_unique<riegeli::StringReader<>>(serialized), exec_proto));
+  const CubSortThunkCounts counts = CountCubSortThunks(exec_proto);
+  EXPECT_GT(counts.custom_kernels, 0);
+  EXPECT_EQ(counts.custom_calls, 0);
+}
+
+TEST(HostCrossCompilationTest,
+     EndToEndDevicelessBatchedUntabulatedCubSortCrossCompilation) {
+  ASSERT_OK_AND_ASSIGN(std::string platform_name,
+                       PlatformUtil::CanonicalPlatformName("gpu"));
+  if (platform_name != "cuda") {
+    GTEST_SKIP() << "Embedded CUDA CUB sort thunks are CUDA-only.";
+  }
+
+  constexpr absl::string_view kBatchedSortHlo = R"hlo(
+      HloModule m
+
+      compare {
+        %lhs_key = f32[] parameter(0)
+        %rhs_key = f32[] parameter(1)
+        %lhs_val = s32[] parameter(2)
+        %rhs_val = s32[] parameter(3)
+        ROOT %gt = pred[] compare(%lhs_key, %rhs_key), direction=GT
+      }
+
+      ENTRY main {
+        %keys = f32[160,10000] parameter(0)
+        %values = s32[160,10000] parameter(1)
+        ROOT %sorted = (f32[160,10000], s32[160,10000]) sort(%keys, %values),
+            dimensions={1}, to_apply=compare
+      }
+    )hlo";
+
+  for (GpuModel gpu_model :
+       {GpuModel::A100_SXM_40, GpuModel::H100_SXM, GpuModel::B200}) {
+    ASSERT_OK_AND_ASSIGN(
+        stream_executor::GpuTargetConfigProto gpu_target_config_proto,
+        GetGpuTargetConfig(gpu_model));
+    ASSERT_OK_AND_ASSIGN(
+        gpu::GpuTargetConfig gpu_target_config,
+        gpu::GpuTargetConfig::FromProto(gpu_target_config_proto));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<Compiler> compiler, GetGpuCompiler());
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                         ParseTestModule(kBatchedSortHlo));
+
+    AotCompilationOptions aot_options(compiler->PlatformId());
+    aot_options.set_gpu_topology(
+        GetSingleDeviceGpuTopology("gpu", gpu_target_config));
+    ASSERT_OK_AND_ASSIGN(
+        std::vector<std::unique_ptr<CompiledModule>> compiled_modules,
+        compiler->CompileAheadOfTime(std::move(hlo_module), aot_options));
+    ASSERT_FALSE(compiled_modules.empty());
+    ASSERT_OK_AND_ASSIGN(std::string serialized,
+                         compiled_modules.front()->SerializeAsString());
+    GpuExecutableProto exec_proto;
+    ASSERT_OK(ReadSplitProto(
+        std::make_unique<riegeli::StringReader<>>(serialized), exec_proto));
+    const CubSortThunkCounts counts = CountCubSortThunks(exec_proto);
+    EXPECT_GT(counts.segmented_custom_kernels, 0);
+    EXPECT_EQ(counts.custom_calls, 0);
+  }
 }
 
 }  // namespace

@@ -83,6 +83,7 @@ limitations under the License.
 #include "xla/backends/gpu/ffi/ffi_attributes_from_backend_config.h"
 #include "xla/backends/gpu/hlo/transforms/dynamic_slice_copy.h"
 #include "xla/backends/gpu/hlo/transforms/dynamic_slice_fusion.h"
+#include "xla/backends/gpu/libraries/cub/cub_sort_thunk_emitter.h"
 #include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_emitter_context.h"
 #include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_handler_registry.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
@@ -306,6 +307,7 @@ bool HasCollectivesGroupAttribute(const HloInstruction* instr) {
 // (--xla_gpu_hlo_custom_call_allowlist).
 bool IsInternalAotAllowlistedCustomCall(absl::string_view target_name) {
   static constexpr absl::string_view kInternalAotAllowlist[] = {
+      // Used on ROCm/SYCL (CUDA compilations lower to CustomKernelThunks).
       kCubDeviceRadixSortPairsTarget,
       kCubDeviceRadixSortKeysTarget,
       kTopKCustomCallTarget,
@@ -495,8 +497,14 @@ Future<ThunkSequence> ThunkEmitter::DispatchCustomCall(
   if (IsTriangularSolve(*hlo)) {
     return EmitTriangularSolveCustomCall(hlo);
   }
-  // CUB sort is handled as a generic FFI custom call via CustomCallThunk.
-  // See xla.gpu.ext.cub_sort_keys and xla.gpu.ext.cub_sort_pairs handlers.
+  // On CUDA, lower CUB radix sorts directly into embedded CustomKernelThunks
+  // (avoiding a runtime CUB dependency). ROCm/SYCL continue using the generic
+  // FFI custom call path below.
+  if ((hlo->custom_call_target() == kCubDeviceRadixSortKeysTarget ||
+       hlo->custom_call_target() == kCubDeviceRadixSortPairsTarget) &&
+      ir_emitter_context_->gpu_compute_capability().IsCuda()) {
+    return EmitCudaCubSort(custom_call);
+  }
   if (hlo->custom_call_target() == "PadToStatic") {
     return EmitPadToStatic(custom_call);
   }
@@ -1350,6 +1358,87 @@ class NativeCustomCallEmitterContextImpl
   const ThunkEmitter& emitter_;
   const HloCustomCallInstruction& instr_;
 };
+
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCudaCubSort(
+    const HloCustomCallInstruction* instr) {
+  const bool is_pairs =
+      instr->custom_call_target() == kCubDeviceRadixSortPairsTarget;
+  TF_RET_CHECK(is_pairs ||
+               instr->custom_call_target() == kCubDeviceRadixSortKeysTarget);
+  TF_RET_CHECK(instr->operand_count() == (is_pairs ? 2 : 1))
+      << "Unexpected operand count for CUB sort custom call: "
+      << instr->ToString();
+  TF_RET_CHECK(instr->shape().IsTuple() &&
+               instr->shape().tuple_shapes().size() == (is_pairs ? 3 : 2))
+      << "Unexpected result shape for CUB sort custom call: "
+      << instr->ToString();
+
+  ABSL_ASSIGN_OR_RETURN(xla::ffi::Attributes attrs,
+                        FfiAttributesFromBackendConfig(
+                            *instr, *ir_emitter_context_->mlir_context()));
+  ABSL_ASSIGN_OR_RETURN(bool descending, attrs.Get<bool>("descending"));
+  ABSL_ASSIGN_OR_RETURN(int64_t batch_size, attrs.Get<int64_t>("batch_size"));
+
+  const HloInstruction* keys_operand = instr->operand(0);
+  ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice keys_in_slice,
+                        GetAllocationSlice(keys_operand, {}));
+  ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice keys_out_slice,
+                        GetAllocationSlice(instr, {0}));
+  ShapedSlice keys_in{keys_in_slice, keys_operand->shape()};
+  ShapedSlice keys_out{keys_out_slice, instr->shape().tuple_shapes(0)};
+  TF_RET_CHECK(keys_in.shape.element_type() == keys_out.shape.element_type())
+      << "Mismatched key element types for CUB sort custom call: "
+      << instr->ToString();
+
+  std::optional<PrimitiveType> value_type;
+  std::optional<ShapedSlice> values_in;
+  std::optional<ShapedSlice> values_out;
+  if (is_pairs) {
+    const HloInstruction* values_operand = instr->operand(1);
+    value_type = values_operand->shape().element_type();
+    ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice values_in_slice,
+                          GetAllocationSlice(values_operand, {}));
+    ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice values_out_slice,
+                          GetAllocationSlice(instr, {1}));
+    values_in = ShapedSlice{values_in_slice, values_operand->shape()};
+    values_out = ShapedSlice{values_out_slice, instr->shape().tuple_shapes(1)};
+    TF_RET_CHECK(values_in->shape.element_type() ==
+                 values_out->shape.element_type())
+        << "Mismatched value element types for CUB sort custom call: "
+        << instr->ToString();
+  }
+
+  const int64_t scratch_index = is_pairs ? 2 : 1;
+  ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice scratch_slice,
+                        GetAllocationSlice(instr, {scratch_index}));
+  ShapedSlice scratch{scratch_slice,
+                      instr->shape().tuple_shapes(scratch_index)};
+  TF_RET_CHECK(scratch.shape.element_type() == U8)
+      << "Expected U8 scratch buffer for CUB sort custom call: "
+      << instr->ToString();
+
+  auto make_thunk_info = [&]() {
+    return Thunk::ThunkInfo::WithProfileAnnotation(
+        instr, ir_emitter_context_->GetNextThunkId());
+  };
+
+  CubSortThunkEmitParams emit_params{
+      /*make_thunk_info=*/make_thunk_info,
+      /*device_description=*/ir_emitter_context_->gpu_device_info(),
+      /*devices_in_process=*/
+      ir_emitter_context_->gpu_topology().num_devices_per_process(),
+      /*key_type=*/keys_operand->shape().element_type(),
+      /*value_type=*/value_type,
+      /*descending=*/descending,
+      /*batch_size=*/batch_size,
+      /*keys_in=*/keys_in,
+      /*keys_out=*/keys_out,
+      /*values_in=*/values_in,
+      /*values_out=*/values_out,
+      /*scratch=*/scratch,
+  };
+  return EmitCudaCubSortThunkSequence(emit_params);
+}
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitNativeCustomCallThunks(
     const HloCustomCallInstruction* instr, NativeCustomCallHandlerRef handler) {
