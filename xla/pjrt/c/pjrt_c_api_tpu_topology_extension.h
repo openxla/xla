@@ -27,7 +27,7 @@ extern "C" {
 
 // This extension provides functionality related to TPU topology.
 
-#define PJRT_API_TPU_TOPOLOGY_EXTENSION_VERSION 1
+#define PJRT_API_TPU_TOPOLOGY_EXTENSION_VERSION 2
 
 struct PJRT_TpuTopology_Subslice_Args {
   size_t struct_size;
@@ -473,8 +473,8 @@ typedef PJRT_Error* PJRT_TpuTopology_GetRoutingStrategy(
 
 typedef struct PJRT_TpuTopology_SliceConfig {
   size_t dim_size;
-  int32_t dimensions[4];  // contains `dim_size` elements.
-  bool wrap[4];           // contains `dim_size` elements.
+  int32_t dimensions[8];  // contains `dim_size` elements.
+  bool wrap[8];           // contains `dim_size` elements.
   bool twist;
 } PJRT_TpuTopology_SliceConfig;
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_TpuTopology_SliceConfig, twist);
