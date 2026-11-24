@@ -441,6 +441,7 @@ cc_library(
     deps = [
         ":gpu_codegen_backend",
         "//xla:autotuning_proto_cc",
+        "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",

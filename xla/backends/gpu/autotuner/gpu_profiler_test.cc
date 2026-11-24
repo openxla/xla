@@ -359,7 +359,8 @@ class GpuProfilerTest : public HloHardwareIndependentTestBase {
                        rz_check.RedzoneFailureMsg()));
     }
 
-    Literal group_sizes(fusion->operand(2)->shape());
+    ABSL_ASSIGN_OR_RETURN(Literal group_sizes,
+                          Literal::Make(fusion->operand(2)->shape()));
     ABSL_ASSIGN_OR_RETURN(
         se::Stream * stream,
         allocator_->GetStream(stream_exec_->device_ordinal()));
