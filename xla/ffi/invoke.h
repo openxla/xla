@@ -27,7 +27,6 @@ limitations under the License.
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_state.h"
-#include "xla/service/device_assignment.h"
 #include "xla/tsl/concurrency/chain.h"
 
 // XLA FFI `Invoke` is an utility function that provides a way to call XLA FFI
@@ -41,6 +40,7 @@ limitations under the License.
 
 namespace xla {
 class CustomOptions;
+class DevicePlacement;
 class HloComputation;
 }  // namespace xla
 
@@ -122,7 +122,7 @@ struct InvokeContext {
 
   const XLA_FFI_Extension* extension_start = nullptr;
   // Borrowed until the host handler returns, including for asynchronous calls.
-  const DeviceAssignment::Placement* device_placement = nullptr;
+  const DevicePlacement* device_placement = nullptr;
 };
 
 // Invokes an XLA FFI handler with the given call frame and context. This is a

@@ -124,8 +124,9 @@ Thunk::CollectiveExecuteParams::Create(
 
   GlobalDeviceId device_id(run_options->device_ordinal());
   if (!placement && run_options->logical_device_id()) {
-    placement.emplace(run_options->device_assignment(), device_id,
-                      run_options->logical_device_id());
+    placement = DevicePlacement::ForExecution(run_options->device_assignment(),
+                                              device_id,
+                                              run_options->logical_device_id());
   }
   return CollectiveExecuteParams{run_options->run_id(),
                                  device_ordinal,
@@ -145,7 +146,7 @@ Thunk::CollectiveExecuteParams::CollectiveExecuteParams(
       device_assignment(device_assignment),
       collectives(collectives),
       device_placement(placement ? std::move(*placement)
-                                 : DeviceAssignment::Placement(
+                                 : DevicePlacement::ForExecution(
                                        device_assignment, global_device_id)) {}
 
 absl::StatusOr<Thunk::CustomCallExecuteParams>

@@ -1447,7 +1447,7 @@ DeviceAssignment::Placement CpuExecutableLoadState::GetOverridePlacement(
   if (*device_assignment_ == nullptr) {
     key.second = loaded_device_id;
   }
-  return override_placements_.try_emplace(key, &assignment, effective_device_id)
+  return override_placements_.try_emplace(key, assignment, effective_device_id)
       .first->second;
 }
 

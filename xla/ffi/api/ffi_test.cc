@@ -551,8 +551,10 @@ static_assert(internal::IsStageCompatibleCtx<LogicalDeviceInfo,
 
 TEST(FfiTest, LogicalDeviceInfo) {
   auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
+  int handler_calls = 0;
   auto handler = Ffi::Bind().Ctx<LogicalDeviceInfo>().Ctx().To(
-      [](LogicalDeviceInfo info, Context ctx) {
+      [&](LogicalDeviceInfo info, Context ctx) {
+        ++handler_calls;
         EXPECT_EQ(info.replica_id, 1);
         EXPECT_EQ(info.partition_id, 2);
         EXPECT_EQ(info.replica_count, 2);
@@ -568,18 +570,14 @@ TEST(FfiTest, LogicalDeviceInfo) {
         return Error::Success();
       });
 
+  // Leave the mapping empty to exercise the caller-supplied logical ID.
   DeviceAssignment assignment(/*replica_count=*/2, /*computation_count=*/3);
-  assignment(0, 0) = 9;
-  assignment(0, 1) = 4;
-  assignment(0, 2) = 8;
-  assignment(1, 0) = 3;
-  assignment(1, 1) = 6;
-  assignment(1, 2) = 7;
-  const DeviceAssignment::Placement placement{
-      &assignment, GlobalDeviceId(7), DeviceAssignment::LogicalID{1, 2}};
+  const auto placement = DevicePlacement::ForExecution(
+      &assignment, GlobalDeviceId(7), DeviceAssignment::LogicalID{1, 2});
   InvokeContext context;
   context.device_placement = &placement;
   ASSERT_OK(Invoke(Api(), *handler, call_frame, context));
+  EXPECT_EQ(handler_calls, 1);
 }
 
 TEST(FfiTest, LogicalDeviceInfoUnavailableAtInstantiate) {
@@ -604,25 +602,50 @@ TEST(FfiTest, LogicalDeviceInfoNullContext) {
   EXPECT_THAT(status.message(), HasSubstr("invocation context is null"));
 }
 
+TEST(FfiTest, LogicalDeviceInfoMissingAssignment) {
+  auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
+  auto handler = [](XLA_FFI_CallFrame* frame) {
+    XLA_FFI_LogicalDeviceInfo_Get_Args args = {};
+    args.struct_size = XLA_FFI_LogicalDeviceInfo_Get_Args_STRUCT_SIZE;
+    args.ctx = frame->ctx;
+    return frame->api->XLA_FFI_LogicalDeviceInfo_Get(&args);
+  };
+  const auto placement =
+      DevicePlacement::ForExecution(/*assignment=*/nullptr, GlobalDeviceId(0));
+  InvokeContext context;
+  context.device_placement = &placement;
+  EXPECT_THAT(Invoke(Api(), handler, call_frame, context),
+              StatusIs(absl::StatusCode::kFailedPrecondition,
+                       HasSubstr("requires an execution device assignment")));
+}
+
 TEST(FfiTest, LogicalDeviceInfoReportsAssignmentErrors) {
   auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
   auto handler = Ffi::Bind().Ctx<LogicalDeviceInfo>().To(
       [](LogicalDeviceInfo) { return Error::Success(); });
   DeviceAssignment assignment(/*replica_count=*/2, /*computation_count=*/1);
   assignment.Fill(4);
-  const DeviceAssignment::Placement missing(&assignment, GlobalDeviceId(7));
-  const DeviceAssignment::Placement duplicate(&assignment, GlobalDeviceId(4));
-  // A fresh lookup would now succeed for both devices.
-  assignment(0, 0) = 7;
-  auto query = [&](const DeviceAssignment::Placement& placement) {
+  const auto missing =
+      DevicePlacement::ForExecution(&assignment, GlobalDeviceId(7));
+  const auto duplicate =
+      DevicePlacement::ForExecution(&assignment, GlobalDeviceId(4));
+  const DevicePlacement missing_copy(missing);
+  auto query = [&](const DevicePlacement& placement) {
     InvokeContext context;
     context.device_placement = &placement;
     return Invoke(Api(), *handler, call_frame, context);
   };
-  EXPECT_THAT(query(missing), StatusIs(absl::StatusCode::kInvalidArgument,
+  absl::Status missing_status = query(missing);
+  absl::Status duplicate_status = query(duplicate);
+  EXPECT_THAT(missing_status, StatusIs(absl::StatusCode::kInvalidArgument,
                                        HasSubstr("Device 7 doesn't appear")));
-  EXPECT_THAT(query(duplicate), StatusIs(absl::StatusCode::kInvalidArgument,
+  EXPECT_THAT(duplicate_status, StatusIs(absl::StatusCode::kInvalidArgument,
                                          HasSubstr("Device 4 not unique")));
+
+  // A fresh lookup would now succeed for both devices.
+  assignment(0, 0) = 7;
+  EXPECT_EQ(query(missing_copy), missing_status);
+  EXPECT_EQ(query(duplicate), duplicate_status);
 }
 
 TEST(FfiTest, LogicalDeviceInfoUnsupportedApi) {

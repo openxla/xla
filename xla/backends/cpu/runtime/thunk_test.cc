@@ -124,19 +124,28 @@ TEST(ThunkTest, LogicalDeviceIdUsesCurrentPlacement) {
   EXPECT_THAT(params.device_placement.GetCoordinates(),
               IsOkAndHolds(FieldsAre(1, 1, 2, 2)));
 
-  assignment(0, 0) = 7;
-  assignment(1, 1) = 4;
   run_options.set_device_assignment(&assignment);
   ASSERT_OK_AND_ASSIGN(params,
                        Thunk::CollectiveExecuteParams::Create(&run_options));
+  // Moving the device makes a fresh lookup observable at each query.
+  std::swap(assignment(0, 0), assignment(1, 1));
   EXPECT_THAT(params.device_placement.GetCoordinates(),
               IsOkAndHolds(FieldsAre(0, 0, 2, 2)));
+
+  std::swap(assignment(0, 0), assignment(1, 1));
+  EXPECT_THAT(params.device_placement.GetCoordinates(),
+              IsOkAndHolds(FieldsAre(0, 0, 2, 2)));
+
+  ASSERT_OK_AND_ASSIGN(params,
+                       Thunk::CollectiveExecuteParams::Create(&run_options));
+  EXPECT_THAT(params.device_placement.GetCoordinates(),
+              IsOkAndHolds(FieldsAre(1, 1, 2, 2)));
 
   run_options.set_device_ordinal(4);
   ASSERT_OK_AND_ASSIGN(params,
                        Thunk::CollectiveExecuteParams::Create(&run_options));
   EXPECT_THAT(params.device_placement.GetCoordinates(),
-              IsOkAndHolds(FieldsAre(1, 1, 2, 2)));
+              IsOkAndHolds(FieldsAre(0, 0, 2, 2)));
 }
 
 TEST(ThunkTest, LogicalDeviceIdErrorsDoNotPreventExecutionSetup) {

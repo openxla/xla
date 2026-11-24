@@ -823,8 +823,11 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_LogicalDeviceInfo_Get_Args,
                              partition_count);
 
 // Returns this invocation's coordinates and dimensions in the executable's
-// device assignment. These are not physical device IDs or communicator ranks.
-// Returns an error when no device assignment is available (e.g. Instantiate).
+// device assignment, independent of physical device IDs and communicator ranks.
+// Returns INVALID_ARGUMENT if ctx is null or struct_size is too small, and
+// FAILED_PRECONDITION if the invocation has no device assignment (e.g. during
+// Instantiate). When a lookup is needed, a missing or duplicate device ID in
+// the assignment returns INTERNAL.
 typedef XLA_FFI_Error* XLA_FFI_LogicalDeviceInfo_Get(
     XLA_FFI_LogicalDeviceInfo_Get_Args* args);
 

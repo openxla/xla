@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/custom_options.h"
 #include "xla/executable_run_options.h"
+#include "xla/ffi/execution_context.h"
 #include "xla/ffi/ffi.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/device_assignment.h"
@@ -82,7 +83,8 @@ TEST(CustomCallThunkTest, ForwardsCustomOptionsOnEveryExecution) {
 
 namespace {
 
-absl::Status ReadLogicalDeviceInfo(ffi::LogicalDeviceInfo info) {
+absl::Status ReadLogicalDeviceInfo(ffi::LogicalDeviceInfo info, int* calls) {
+  ++*calls;
   EXPECT_EQ(info.replica_id, 1);
   EXPECT_EQ(info.partition_id, 2);
   EXPECT_EQ(info.replica_count, 2);
@@ -90,8 +92,9 @@ absl::Status ReadLogicalDeviceInfo(ffi::LogicalDeviceInfo info) {
   return absl::OkStatus();
 }
 
-XLA_FFI_DEFINE_HANDLER(kReadLogicalDeviceInfo, ReadLogicalDeviceInfo,
-                       ffi::Ffi::Bind().Ctx<ffi::LogicalDeviceInfo>());
+XLA_FFI_DEFINE_HANDLER(
+    kReadLogicalDeviceInfo, ReadLogicalDeviceInfo,
+    ffi::Ffi::Bind().Ctx<ffi::LogicalDeviceInfo>().Ctx<ffi::UserData<int>>());
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "cpu_test_logical_device_info",
                          "Host", kReadLogicalDeviceInfo);
 
@@ -110,8 +113,11 @@ TEST(CustomCallThunkTest, ForwardsLogicalDeviceInfo) {
   Thunk::CollectiveExecuteParams collective_params(
       RunId{0}, /*local_device_ordinal=*/0, GlobalDeviceId(7), &assignment,
       /*collectives=*/nullptr);
+  int handler_calls = 0;
+  ffi::ExecutionContext context;
+  ASSERT_OK(context.Insert(&handler_calls));
   Thunk::CustomCallExecuteParams custom_call_params(RunId{0}, 0, nullptr,
-                                                    nullptr);
+                                                    &context);
   Thunk::ExecuteParams params;
   params.collective_params = &collective_params;
   params.custom_call_params = &custom_call_params;
@@ -119,6 +125,7 @@ TEST(CustomCallThunkTest, ForwardsLogicalDeviceInfo) {
   auto done = thunk->Execute(params);
   ASSERT_TRUE(done.IsAvailable());
   ASSERT_FALSE(done.IsError()) << done.GetError();
+  EXPECT_EQ(handler_calls, 1);
 }
 
 }  // namespace

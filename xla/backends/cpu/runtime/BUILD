@@ -761,6 +761,7 @@ xla_cc_test(
         "//xla:custom_options",
         "//xla:executable_run_options",
         "//xla/ffi",
+        "//xla/ffi:execution_context",
         "//xla/runtime:device_id",
         "//xla/service:device_assignment",
         "//xla/service:hlo_proto_cc",

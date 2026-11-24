@@ -25,7 +25,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
-#include "xla/service/device_assignment.h"
+#include "xla/runtime/logical_device_id.h"
 
 // These classes are forward declared so that ExecutableRunOptions can be linked
 // into an XLA-compiled binary without having to link all of the pointed-to
@@ -53,6 +53,7 @@ namespace xla {
 class CustomOptions;
 
 class CliqueKey;
+class DeviceAssignment;
 class ExecutionProfile;
 class Shape;
 
@@ -200,10 +201,9 @@ class ExecutableRunOptions {
   // execution.
   ExecutableRunOptions& set_device_assignment(
       const DeviceAssignment* device_assignment,
-      std::optional<DeviceAssignment::LogicalID> logical_device_id =
-          std::nullopt);
+      std::optional<LogicalDeviceId> logical_device_id = std::nullopt);
   const DeviceAssignment* device_assignment() const;
-  std::optional<DeviceAssignment::LogicalID> logical_device_id() const;
+  std::optional<LogicalDeviceId> logical_device_id() const;
 
   ExecutableRunOptions& set_rng_seed(int rng_seed);
   int rng_seed() const;
@@ -287,7 +287,7 @@ class ExecutableRunOptions {
   int local_device_count_ = 0;
   int physical_device_ordinal_ = -1;
   const DeviceAssignment* device_assignment_ = nullptr;
-  std::optional<DeviceAssignment::LogicalID> logical_device_id_;
+  std::optional<LogicalDeviceId> logical_device_id_;
   stream_executor::Stream* stream_ = nullptr;
   const Eigen::ThreadPoolDevice* intra_op_thread_pool_ = nullptr;
   ExecutionProfile* execution_profile_ = nullptr;

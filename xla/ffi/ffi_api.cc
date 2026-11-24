@@ -371,7 +371,7 @@ static XLA_FFI_Error* XLA_FFI_LogicalDeviceInfo_Get(
         InvalidArgument("XLA FFI invocation context is null")};
   }
 
-  const DeviceAssignment::Placement* placement = args->ctx->device_placement;
+  const DevicePlacement* placement = args->ctx->device_placement;
   if (placement == nullptr) {
     return new XLA_FFI_Error{FailedPrecondition(
         "Logical device information requires an execution device assignment")};

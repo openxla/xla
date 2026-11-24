@@ -24,13 +24,15 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/array2d.h"
 #include "xla/runtime/device_id.h"
+#include "xla/runtime/logical_device_id.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
+
+class DevicePlacement;
 
 // Class that represents the device assignment for a set of XLA replicated
 // computations. Rows are replicas and columns are computations.
@@ -49,32 +51,8 @@ class DeviceAssignment : public Array2D<int64_t> {
   int replica_count() const { return height(); }
   int computation_count() const { return width(); }
 
-  // The logical ID of a device is its (replica ID, computation ID) pair.
-  struct LogicalID {
-    int replica_id;
-    int computation_id;
-  };
-
-  // The executing device's position within the executable's device assignment.
-  class Placement {
-   public:
-    struct Coordinates {
-      int replica_id;
-      int partition_id;
-      int replica_count;
-      int partition_count;
-    };
-
-    Placement(const DeviceAssignment* assignment, GlobalDeviceId device_id,
-              std::optional<LogicalID> logical_id = std::nullopt);
-
-    absl::StatusOr<Coordinates> GetCoordinates() const;
-
-   private:
-    // Preserve lookup failures for handlers that request placement. An absent
-    // assignment is common and needs no allocated diagnostic during setup.
-    std::variant<std::monostate, Coordinates, absl::Status> placement_;
-  };
+  using LogicalID = LogicalDeviceId;
+  using Placement = DevicePlacement;
 
   int64_t DeviceId(int replica, int computation) const {
     return (*this)(replica, computation);
@@ -112,6 +90,36 @@ class DeviceAssignment : public Array2D<int64_t> {
   friend void AbslStringify(Sink& sink, const DeviceAssignment& assignment) {
     return sink.Append(assignment.ToString());
   }
+};
+
+// The executing device's position within the executable's device assignment.
+class DevicePlacement {
+ public:
+  struct Coordinates {
+    int replica_id;
+    int partition_id;
+    int replica_count;
+    int partition_count;
+  };
+
+  // Resolves a snapshot immediately. It can outlive the assignment.
+  DevicePlacement(const DeviceAssignment& assignment, GlobalDeviceId device_id);
+
+  // Borrows the assignment for this execution. Without a supplied logical ID,
+  // the first query resolves the coordinates for all copies of this placement.
+  static DevicePlacement ForExecution(
+      const DeviceAssignment* assignment, GlobalDeviceId device_id,
+      std::optional<LogicalDeviceId> logical_id = std::nullopt);
+
+  absl::StatusOr<Coordinates> GetCoordinates() const;
+
+ private:
+  DevicePlacement() = default;
+  struct DeferredLookup;
+
+  // A null lookup represents an execution without a device assignment.
+  std::variant<std::shared_ptr<DeferredLookup>, absl::StatusOr<Coordinates>>
+      placement_;
 };
 
 }  // namespace xla

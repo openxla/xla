@@ -22,8 +22,8 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
+#include "absl/base/call_once.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -36,37 +36,61 @@ using absl::StrAppend;
 
 namespace xla {
 
-static DeviceAssignment::Placement::Coordinates CoordinatesFor(
+static DevicePlacement::Coordinates CoordinatesFor(
     const DeviceAssignment& assignment, DeviceAssignment::LogicalID id) {
   return {id.replica_id, id.computation_id, assignment.replica_count(),
           assignment.computation_count()};
 }
 
-DeviceAssignment::Placement::Placement(
-    const DeviceAssignment* assignment, GlobalDeviceId device_id,
-    std::optional<DeviceAssignment::LogicalID> logical_id) {
-  if (assignment == nullptr) {
-    return;
-  }
-  if (!logical_id) {
-    auto id = assignment->LogicalIdForDevice(device_id);
-    if (!id.ok()) {
-      placement_ = std::move(id).status();
-      return;
-    }
-    logical_id = *id;
-  }
-  placement_ = CoordinatesFor(*assignment, *logical_id);
+static absl::StatusOr<DevicePlacement::Coordinates> LookupCoordinates(
+    const DeviceAssignment& assignment, GlobalDeviceId device_id) {
+  ABSL_ASSIGN_OR_RETURN(auto id, assignment.LogicalIdForDevice(device_id));
+  return CoordinatesFor(assignment, id);
 }
 
-absl::StatusOr<DeviceAssignment::Placement::Coordinates>
-DeviceAssignment::Placement::GetCoordinates() const {
-  if (auto* coordinates = std::get_if<Coordinates>(&placement_)) {
-    return *coordinates;
+struct DevicePlacement::DeferredLookup {
+  DeferredLookup(const DeviceAssignment& assignment, GlobalDeviceId device_id)
+      : assignment(assignment), device_id(device_id) {}
+
+  absl::StatusOr<Coordinates> Get() {
+    absl::call_once(once, [this] {
+      coordinates = LookupCoordinates(assignment, device_id);
+    });
+    return coordinates;
   }
-  if (auto* error = std::get_if<absl::Status>(&placement_)) {
-    return *error;
+
+  const DeviceAssignment& assignment;
+  GlobalDeviceId device_id;
+  absl::once_flag once;
+  absl::StatusOr<Coordinates> coordinates;
+};
+
+DevicePlacement::DevicePlacement(const DeviceAssignment& assignment,
+                                 GlobalDeviceId device_id)
+    : placement_(LookupCoordinates(assignment, device_id)) {}
+
+DevicePlacement DevicePlacement::ForExecution(
+    const DeviceAssignment* assignment, GlobalDeviceId device_id,
+    std::optional<LogicalDeviceId> logical_id) {
+  DevicePlacement placement;
+  if (assignment == nullptr) return placement;
+  if (logical_id) {
+    placement.placement_ = CoordinatesFor(*assignment, *logical_id);
+  } else {
+    placement.placement_ =
+        std::make_shared<DeferredLookup>(*assignment, device_id);
   }
+  return placement;
+}
+
+absl::StatusOr<DevicePlacement::Coordinates> DevicePlacement::GetCoordinates()
+    const {
+  if (const auto* resolved =
+          std::get_if<absl::StatusOr<Coordinates>>(&placement_)) {
+    return *resolved;
+  }
+  const auto& lookup = std::get<std::shared_ptr<DeferredLookup>>(placement_);
+  if (lookup) return lookup->Get();
   return FailedPrecondition(
       "Logical device information requires an execution device assignment");
 }

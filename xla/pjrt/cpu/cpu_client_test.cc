@@ -1360,6 +1360,61 @@ TEST(PjRtCpuClientTest, ForwardUserDataToFfiHandler) {
       *result_literal));
 }
 
+absl::Status CheckLogicalDeviceIds(ffi::LogicalDeviceInfo info,
+                                   ffi::BufferR0<U32> replica,
+                                   ffi::BufferR0<U32> partition,
+                                   ffi::Result<ffi::BufferR0<S32>> ordinal) {
+  EXPECT_EQ(info.replica_id, *replica.typed_data());
+  EXPECT_EQ(info.partition_id, *partition.typed_data());
+  EXPECT_EQ(info.replica_count, 2);
+  EXPECT_EQ(info.partition_count, 2);
+  *ordinal->typed_data() =
+      info.replica_id * info.partition_count + info.partition_id;
+  return absl::OkStatus();
+}
+
+XLA_FFI_DEFINE_HANDLER(kCheckLogicalDeviceIds, CheckLogicalDeviceIds,
+                       ffi::Ffi::Bind()
+                           .Ctx<ffi::LogicalDeviceInfo>()
+                           .Arg<ffi::BufferR0<U32>>()
+                           .Arg<ffi::BufferR0<U32>>()
+                           .Ret<ffi::BufferR0<S32>>());
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(),
+                         "__xla_test$$CheckLogicalDeviceIds", "Host",
+                         kCheckLogicalDeviceIds);
+
+TEST(PjRtCpuClientTest, LogicalDeviceInfoMatchesReplicaAndPartitionIds) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule placement
+    ENTRY main {
+      replica = u32[] replica-id(), sharding={manual}
+      partition = u32[] partition-id(), sharding={manual}
+      ROOT ordinal = s32[] custom-call(replica, partition),
+        custom_call_target="__xla_test$$CheckLogicalDeviceIds",
+        api_version=API_VERSION_TYPED_FFI, sharding={manual}
+    })hlo";
+  CpuClientOptions cpu_options;
+  cpu_options.cpu_device_count = 4;
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetXlaPjrtCpuClient(std::move(cpu_options)));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHlo, {}));
+  CompileOptions options;
+  options.executable_build_options.set_num_replicas(2);
+  options.executable_build_options.set_num_partitions(2);
+  options.executable_build_options.set_use_spmd_partitioning(true);
+  ASSERT_OK_AND_ASSIGN(auto executable,
+                       client->CompileAndLoad(XlaComputation(module->ToProto()),
+                                              std::move(options)));
+  ASSERT_OK_AND_ASSIGN(auto outputs, executable->Execute({{}, {}, {}, {}}, {}));
+  std::vector<int32_t> ordinals;
+  for (const auto& output : outputs) {
+    ASSERT_EQ(output.size(), 1);
+    ASSERT_OK_AND_ASSIGN(auto literal, output[0]->ToLiteral().Await());
+    ordinals.push_back(literal->Get<int32_t>({}));
+  }
+  EXPECT_THAT(ordinals, ::testing::UnorderedElementsAre(0, 1, 2, 3));
+}
+
 absl::Status ReadOverrideReplica(ffi::Context ctx, bool* request_placement,
                                  ffi::Result<ffi::BufferR0<S32>> out) {
   if (!*request_placement) {

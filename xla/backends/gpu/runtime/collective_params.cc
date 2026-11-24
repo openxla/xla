@@ -127,6 +127,7 @@ CollectiveParams::CollectiveParams(
       local_device_count(local_device_count),
       collective_use_minimal_resource(collective_use_minimal_resource),
       nccl_window_symmetric(nccl_window_symmetric),
-      device_placement(device_assn, global_device_id, logical_id) {}
+      device_placement(DevicePlacement::ForExecution(
+          device_assn, global_device_id, logical_id)) {}
 
 }  // namespace xla::gpu
