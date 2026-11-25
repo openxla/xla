@@ -32,6 +32,7 @@ lit_test_suite(
     name = "mlir_lit_tests",
     srcs = glob(["*.mlir"]),
     cfg = "//xla:lit.cfg.py",
+    default_tags = ["gpu"],
     tags_override = {
         "triton_xla_math_to_libdevice_rocm.mlir": ["rocm-only"],
     },

@@ -82,6 +82,7 @@ lit_test_suite(
     name = "deviceless_tests",
     srcs = deviceless_tests,
     cfg = "//xla:lit.cfg.py",
+    default_tags = ["gpu"],
     tools = [
         "//xla/backends/gpu/codegen/triton/tools:fusion_to_triton",
         "@llvm-project//llvm:FileCheck",

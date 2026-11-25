@@ -32,6 +32,7 @@ lit_test_suite(
     name = "mlir_lit_tests",
     srcs = glob(["*.mlir"]),
     cfg = "//xla:lit.cfg.py",
+    default_tags = ["gpu"],
     tools = [
         "//xla/backends/gpu/tests:xla-opt",
         "@llvm-project//llvm:FileCheck",
