@@ -45,8 +45,18 @@ struct Tuple {
   SmallVector<std::shared_ptr<InterpreterValue>> values;
 };
 
-// Holds a scalar, a tensor/memref or a tuple. Tensors/memrefs can also
-// represent vectors.
+// An opaque handle for runtime-managed values (such as external memory
+// allocations) whose storage and semantics live outside `Buffer` and
+// `BufferView`.
+struct OpaqueHandle {
+  uint64_t id = 0;
+
+  bool operator==(const OpaqueHandle& other) const { return id == other.id; }
+  bool operator!=(const OpaqueHandle& other) const { return id != other.id; }
+};
+
+// Holds a scalar, a tensor/memref, a tuple, or an opaque handle.
+// Tensors/memrefs can also represent vectors.
 struct InterpreterValue {
   void Print(llvm::raw_ostream& os) const;
   std::string ToString() const;
@@ -102,12 +112,16 @@ struct InterpreterValue {
   std::shared_ptr<Buffer> GetBuffer() const;
 
   bool IsTensor() const;
+  bool IsOpaqueHandle() const {
+    return std::holds_alternative<OpaqueHandle>(storage);
+  }
 
   bool operator==(const InterpreterValue& other) const {
     if (storage.index() != other.storage.index()) {
       return false;
     }
-    if (IsTensor() || std::holds_alternative<Tuple>(storage)) {
+    if (IsTensor() || std::holds_alternative<Tuple>(storage) ||
+        IsOpaqueHandle()) {
       return storage == other.storage;
     }
     // Tensors treat NaNs as equal, so just wrap the values.
@@ -115,14 +129,14 @@ struct InterpreterValue {
   }
 
   std::variant<
-      Tuple, bool, float, double, uint8_t, int8_t, uint16_t, int16_t, uint32_t,
-      int32_t, uint64_t, int64_t, std::complex<float>, std::complex<double>,
-      TensorOrMemref<bool>, TensorOrMemref<float>, TensorOrMemref<double>,
-      TensorOrMemref<uint8_t>, TensorOrMemref<int8_t>, TensorOrMemref<uint16_t>,
-      TensorOrMemref<int16_t>, TensorOrMemref<uint32_t>,
-      TensorOrMemref<int32_t>, TensorOrMemref<uint64_t>,
-      TensorOrMemref<int64_t>, TensorOrMemref<std::complex<float>>,
-      TensorOrMemref<std::complex<double>>>
+      Tuple, OpaqueHandle, bool, float, double, uint8_t, int8_t, uint16_t,
+      int16_t, uint32_t, int32_t, uint64_t, int64_t, std::complex<float>,
+      std::complex<double>, TensorOrMemref<bool>, TensorOrMemref<float>,
+      TensorOrMemref<double>, TensorOrMemref<uint8_t>, TensorOrMemref<int8_t>,
+      TensorOrMemref<uint16_t>, TensorOrMemref<int16_t>,
+      TensorOrMemref<uint32_t>, TensorOrMemref<int32_t>,
+      TensorOrMemref<uint64_t>, TensorOrMemref<int64_t>,
+      TensorOrMemref<std::complex<float>>, TensorOrMemref<std::complex<double>>>
       storage;
 };
 

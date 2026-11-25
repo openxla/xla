@@ -136,6 +136,11 @@ MakeInputs() {
 INSTANTIATE_TEST_SUITE_P(Test, FromLiteralTest,
                          ::testing::ValuesIn(MakeInputs()));
 
+TEST(ExecutionTraceUtilsTest, OpaqueHandle) {
+  auto traced = ValueToTracedValue(InterpreterValue{OpaqueHandle{42}});
+  EXPECT_EQ(traced.element_type(), TracedValue::UNKNOWN);
+}
+
 }  // namespace
 }  // namespace interpreter
 }  // namespace mlir

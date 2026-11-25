@@ -235,6 +235,22 @@ TEST(CastTest, CastToUnsigned) {
   ASSERT_EQ(InterpreterValueCast<uint16_t>(value), 65535);
 }
 
+TEST(InterpreterValueTest, OpaqueHandle) {
+  InterpreterValue h1{OpaqueHandle{1}};
+  InterpreterValue h1_copy{OpaqueHandle{1}};
+  InterpreterValue h2{OpaqueHandle{2}};
+
+  EXPECT_FALSE(h1.IsTensor());
+  EXPECT_TRUE(h1.IsOpaqueHandle());
+  EXPECT_EQ(h1, h1_copy);
+  EXPECT_NE(h1, h2);
+  EXPECT_NE(h1, InterpreterValue{uint64_t{1}});
+  EXPECT_EQ(h1.ToString(), "OpaqueHandle<1>");
+  EXPECT_EQ(h1.Clone(), h1);
+  EXPECT_EQ(InterpreterValueDynCast<OpaqueHandle>(h1), OpaqueHandle{1});
+  EXPECT_EQ(InterpreterValueDynCast<int64_t>(h1), std::nullopt);
+}
+
 }  // namespace
 }  // namespace interpreter
 }  // namespace mlir

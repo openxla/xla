@@ -121,6 +121,10 @@ struct InterpreterValuePrinter {
     os << ")";
   }
 
+  void operator()(const OpaqueHandle& h) {
+    os << "OpaqueHandle<" << h.id << ">";
+  }
+
   template <typename T>
   void operator()(const T& t) {
     os << TypeStr::Get(t) << ": ";
@@ -166,8 +170,10 @@ InterpreterValue InterpreterValue::ExtractElement(
           }
           return {it.at(indices)};
 
-        } else if constexpr (std::is_same_v<T, Tuple>) {
-          llvm_unreachable("extracting from tuples is unsupported");
+        } else if constexpr (std::is_same_v<T, Tuple> ||
+                             std::is_same_v<T, OpaqueHandle>) {
+          llvm_unreachable(
+              "extracting from tuples or opaque handles is unsupported");
         } else {
           return {it};
         }
@@ -192,8 +198,10 @@ void InterpreterValue::InsertElement(llvm::ArrayRef<int64_t> indices,
           } else {
             it.at(indices) = std::get<typename T::element_type>(value.storage);
           }
-        } else if constexpr (std::is_same_v<T, Tuple>) {
-          llvm_unreachable("inserting into tuples is unsupported");
+        } else if constexpr (std::is_same_v<T, Tuple> ||
+                             std::is_same_v<T, OpaqueHandle>) {
+          llvm_unreachable(
+              "inserting into tuples or opaque handles is unsupported");
         } else {
           it = std::get<T>(value.storage);
         }
@@ -219,8 +227,9 @@ void InterpreterValue::Fill(
                   std::get<typename T::element_type>(f(indices).storage);
             }
           }
-        } else if constexpr (std::is_same_v<T, Tuple>) {
-          llvm_unreachable("Filling tuples is unsupported");
+        } else if constexpr (std::is_same_v<T, Tuple> ||
+                             std::is_same_v<T, OpaqueHandle>) {
+          llvm_unreachable("Filling tuples or opaque handles is unsupported");
         } else {
           it = std::get<T>(f({}).storage);
         }
@@ -259,8 +268,10 @@ InterpreterValue InterpreterValue::TypedAlike(
         using T = std::decay_t<decltype(it)>;
         if constexpr (is_tensor_or_memref_v<T>) {
           return {T::Empty(shape)};
-        } else if constexpr (std::is_same_v<T, Tuple>) {
-          llvm_unreachable("TypedAlike for tuples is unsupported");
+        } else if constexpr (std::is_same_v<T, Tuple> ||
+                             std::is_same_v<T, OpaqueHandle>) {
+          llvm_unreachable(
+              "TypedAlike for tuples or opaque handles is unsupported");
         } else {
           return {TensorOrMemref<T>::Empty(shape)};
         }
