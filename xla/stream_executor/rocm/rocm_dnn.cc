@@ -4148,7 +4148,8 @@ class RocmFusedConvRunner : public dnn::FusedConvRunner {
             stream_executor::gpu::ToString(status));
       }
 
-      constexpr bool miopenFusionPlanGetWorkSpaceSize_is_broken = true;
+      constexpr bool miopenFusionPlanGetWorkSpaceSize_is_broken =
+          TF_ROCM_VERSION < 71400;
 
       if (miopenFusionPlanGetWorkSpaceSize_is_broken) {
         return absl::InternalError("Cannot reliably query workspace size");

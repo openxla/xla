@@ -445,6 +445,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_topology_filename("");
   opts.set_xla_gpu_enable_cub_radix_sort(true);
   opts.set_xla_gpu_enable_cudnn_layer_norm(false);
+  opts.set_xla_gpu_enable_miopen_fused_convs(true);
   opts.set_xla_gpu_threshold_for_windowed_einsum_mib(100000);
   opts.set_xla_gpu_operand_bytes_threshold_for_windowed_einsum(-1);
 
@@ -2312,6 +2313,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         bool_setter_for(&DebugOptions::set_xla_gpu_enable_cudnn_layer_norm),
         debug_options->xla_gpu_enable_cudnn_layer_norm(),
         "Rewrite layer norm patterns into cuDNN library call."));
+    flag_list->push_back(tsl::Flag(
+        "xla_gpu_enable_miopen_fused_convs",
+        bool_setter_for(&DebugOptions::set_xla_gpu_enable_miopen_fused_convs),
+        debug_options->xla_gpu_enable_miopen_fused_convs(),
+        "If false, the MIOpen does not offer fused convolution algorithms "
+        "and only considers unfused convolution algorithms."));
     flag_list->push_back(
         tsl::Flag("xla_gpu_enable_cublaslt",
                   bool_setter_for(&DebugOptions::set_xla_gpu_enable_cublaslt),
