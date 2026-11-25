@@ -24,6 +24,7 @@ limitations under the License.
 #include "llvm/Support/Error.h"
 /// ^^^ must be above others, as llvm don't strictly follow IWYU
 
+#include "absl/base/call_once.h"
 #include "llvm/ADT/APFloat.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -121,7 +122,7 @@ class RecoverExp2Pattern : public mlir::OpRewritePattern<mlir::math::ExpOp> {
   template <typename Types>
   void initStaticsIfNeeded() {
     static_assert(std::tuple_size_v<Types> > 0);
-    if (logs2_[0] == 0.) {
+    absl::call_once(logs2_once_, [this] {
       auto log2 = llvm::APFloat(WidestNarrowType{}.getFloatSemantics());
       (void)log2.convertFromString("0.6931471805599453",
                                    llvm::APFloat::rmNearestTiesToEven);
@@ -129,7 +130,7 @@ class RecoverExp2Pattern : public mlir::OpRewritePattern<mlir::math::ExpOp> {
       prefillLogs2From<Types>(log2);
       assert(std::none_of(logs2_.begin(), logs2_.end(),
                           [](auto v) -> bool { return v == decltype(v){}; }));
-    }
+    });
   }
 
  public:
@@ -192,6 +193,7 @@ class RecoverExp2Pattern : public mlir::OpRewritePattern<mlir::math::ExpOp> {
   /// type promotions in the code.
   inline static std::array<float, 3 * std::tuple_size_v<SupportedNarrowTypes>>
       logs2_{};
+  inline static absl::once_flag logs2_once_;
 };
 
 class RecoverExp2Pass : public impl::RecoverExp2PassBase<RecoverExp2Pass> {
