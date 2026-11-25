@@ -38,9 +38,11 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -48,6 +50,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
+#include "xla/overflow_util.h"
 #include "xla/pjrt/tiled_linearizer_highway.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/primitive_util.h"
@@ -445,6 +448,107 @@ void RepackToHostLayout(absl::Span<const uint32_t> input,
   }
 }
 
+// Reorders 6-bit elements from 1-byte host strips of shape (16, kLaneCount)
+// (4 * kLaneCount uint32_t words) into 3-sublane interleaved 2b/4b hardware
+// strips (3 * kLaneCount uint32_t words):
+// [sublane 0: 4b rows 0..7, sublane 1: 4b rows 8..15, sublane 2: 2b rows 0..15]
+template <int64_t kLaneCount>
+void Repack6BitToHardwareLayout(absl::Span<const uint8_t> source_buffer,
+                                absl::Span<uint8_t> target_bytes,
+                                bool set_padding_to_nan) {
+  static_assert(kLaneCount % 16 == 0, "ChunkLanes not a multiple of 16");
+  constexpr size_t kHostU32sPerStrip = 4 * kLaneCount;
+  constexpr size_t kHardwareU32sPerStrip = 3 * kLaneCount;
+  constexpr size_t kHardwareBytesPerStrip =
+      kHardwareU32sPerStrip * sizeof(uint32_t);
+  uint32_t staging_buffer[kHostU32sPerStrip];
+  constexpr size_t kBytesReadPerStrip = sizeof(staging_buffer);
+  const size_t input_bytes = source_buffer.size();
+  const size_t full_strips = input_bytes / kBytesReadPerStrip;
+  const size_t partial_bytes_remaining = input_bytes % kBytesReadPerStrip;
+  const size_t required_strips =
+      full_strips + (partial_bytes_remaining > 0 ? 1 : 0);
+  CHECK_EQ(target_bytes.size() % kHardwareBytesPerStrip, 0);
+  CHECK_GE(target_bytes.size(), required_strips * kHardwareBytesPerStrip);
+  const bool use_staging =
+      source_buffer.data() == target_bytes.data() ||
+      reinterpret_cast<uintptr_t>(source_buffer.data()) % alignof(uint32_t) !=
+          0;
+
+#ifdef MEMORY_SANITIZER
+  set_padding_to_nan = true;
+#endif
+
+  for (size_t i = 0; i < full_strips; ++i) {
+    if (use_staging) {
+      std::memcpy(staging_buffer, &source_buffer[kBytesReadPerStrip * i],
+                  sizeof(staging_buffer));
+    }
+    const uint32_t* staging = use_staging
+                                  ? staging_buffer
+                                  : tsl::safe_reinterpret_cast<const uint32_t*>(
+                                        &source_buffer[kBytesReadPerStrip * i]);
+    Repack6BitStripToHardwareLayoutHighway<kLaneCount>(
+        staging, tsl::safe_reinterpret_cast<uint32_t*>(
+                     &target_bytes[kHardwareBytesPerStrip * i]));
+  }
+  if (partial_bytes_remaining > 0) {
+    uint8_t* first_uninitialized_byte =
+        std::copy_n(&source_buffer[kBytesReadPerStrip * full_strips],
+                    partial_bytes_remaining,
+                    tsl::safe_reinterpret_cast<uint8_t*>(staging_buffer));
+    std::fill_n(first_uninitialized_byte,
+                kBytesReadPerStrip - partial_bytes_remaining,
+                set_padding_to_nan ? uint8_t{0xff} : uint8_t{0});
+    Repack6BitStripToHardwareLayoutHighway<kLaneCount>(
+        staging_buffer,
+        tsl::safe_reinterpret_cast<uint32_t*>(
+            &target_bytes[kHardwareBytesPerStrip * full_strips]));
+  }
+}
+
+// Unpacks 3-sublane interleaved 2b/4b hardware strips (3 * kLaneCount
+// uint32_t words) into 1-byte host strips of shape (16, kLaneCount)
+// (4 * kLaneCount uint32_t words).
+template <int64_t kLaneCount>
+void Repack6BitToHostLayout(absl::Span<const uint32_t> input,
+                            absl::Span<uint8_t> output) {
+  static_assert(kLaneCount % 16 == 0, "ChunkLanes not a multiple of 16");
+  constexpr size_t kHardwareU32sPerStrip = 3 * kLaneCount;
+  constexpr size_t kHostU32sPerStrip = 4 * kLaneCount;
+  constexpr size_t kBytesWrittenPerStrip = kHostU32sPerStrip * sizeof(uint32_t);
+  uint32_t staging_buffer[kHostU32sPerStrip];
+  const size_t output_bytes = output.size();
+  const size_t full_writes = output_bytes / kBytesWrittenPerStrip;
+  const size_t partial_bytes_remaining = output_bytes % kBytesWrittenPerStrip;
+  const size_t required_strips =
+      full_writes + (partial_bytes_remaining > 0 ? 1 : 0);
+  CHECK_EQ(input.size() % kHardwareU32sPerStrip, 0);
+  CHECK_GE(input.size(), required_strips * kHardwareU32sPerStrip);
+  const bool is_output_aligned =
+      reinterpret_cast<uintptr_t>(output.data()) % alignof(uint32_t) == 0;
+
+  for (size_t i = 0; i < full_writes; ++i) {
+    if (is_output_aligned) {
+      Repack6BitStripToHostLayoutHighway<kLaneCount>(
+          &input[kHardwareU32sPerStrip * i],
+          tsl::safe_reinterpret_cast<uint32_t*>(
+              &output[kBytesWrittenPerStrip * i]));
+    } else {
+      Repack6BitStripToHostLayoutHighway<kLaneCount>(
+          &input[kHardwareU32sPerStrip * i], staging_buffer);
+      std::memcpy(&output[kBytesWrittenPerStrip * i], staging_buffer,
+                  kBytesWrittenPerStrip);
+    }
+  }
+  if (partial_bytes_remaining > 0) {
+    Repack6BitStripToHostLayoutHighway<kLaneCount>(
+        &input[kHardwareU32sPerStrip * full_writes], staging_buffer);
+    std::memcpy(&output[kBytesWrittenPerStrip * full_writes], staging_buffer,
+                partial_bytes_remaining);
+  }
+}
+
 struct LinearizerCache {
   LinearizerCache() : cache(1024) {}
   absl::Mutex mu;
@@ -453,7 +557,245 @@ struct LinearizerCache {
 
 LinearizerCache* linearizer_cache = new LinearizerCache;
 
-absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
+constexpr int64_t kSupportedFp6TcLaneCount = 128;
+
+absl::StatusOr<size_t> CheckedMulSizeT(size_t lhs, size_t rhs,
+                                       absl::string_view context) {
+  constexpr uint64_t kMaxSize = std::min<uint64_t>(
+      static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
+      static_cast<uint64_t>(std::numeric_limits<size_t>::max()));
+  if (lhs > kMaxSize || rhs > kMaxSize) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Integer overflow computing %s (%d * %d).", context, lhs, rhs));
+  }
+  const auto [product, overflow] = OverflowSafeMultiply(
+      static_cast<int64_t>(lhs), static_cast<int64_t>(rhs));
+  if (overflow || static_cast<uint64_t>(product) > kMaxSize) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Integer overflow computing %s (%d * %d).", context, lhs, rhs));
+  }
+  return static_cast<size_t>(product);
+}
+
+absl::StatusOr<int64_t> CheckedRoundUpToInt64(int64_t value,
+                                              int64_t alignment) {
+  if (value < 0 || alignment <= 0) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("Invalid rounding arguments: value=%d, alignment=%d.",
+                        value, alignment));
+  }
+  const int64_t quotient = CeilOfRatio<int64_t>(value, alignment);
+  const auto [rounded, overflow] = OverflowSafeMultiply(quotient, alignment);
+  if (overflow) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Rounded dimension overflows int64_t: value=%d, alignment=%d.", value,
+        alignment));
+  }
+  return rounded;
+}
+
+absl::StatusOr<size_t> ComputeTiledElements(
+    absl::Span<const int64_t> dims,
+    std::optional<absl::Span<const int64_t>> permutation,
+    absl::Span<const int64_t> tiling_vec) {
+  if (permutation.has_value() && permutation->size() != dims.size()) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("Permutation size (%d) must match array rank (%d).",
+                        permutation->size(), dims.size()));
+  }
+  if (tiling_vec.size() > dims.size()) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Tiling (%s) must have at most as many dimensions as the array (%d).",
+        absl::StrJoin(tiling_vec, ","), dims.size()));
+  }
+  constexpr uint64_t kMaxElements = std::min<uint64_t>(
+      static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
+      static_cast<uint64_t>(std::numeric_limits<size_t>::max()));
+  int64_t tiled_elems = 1;
+  const size_t untiled_dims = dims.size() - tiling_vec.size();
+  for (size_t i = 0; i < dims.size(); ++i) {
+    const int64_t dim_idx =
+        permutation.has_value() ? (*permutation)[i] : static_cast<int64_t>(i);
+    if (dim_idx < 0 || static_cast<size_t>(dim_idx) >= dims.size()) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Invalid permutation index %d for rank %d.", dim_idx, dims.size()));
+    }
+    const int64_t tile = i < untiled_dims ? 1 : tiling_vec[i - untiled_dims];
+    ABSL_ASSIGN_OR_RETURN(const int64_t rounded_dim,
+                          CheckedRoundUpToInt64(dims[dim_idx], tile));
+    const auto [next_elems, overflow] =
+        OverflowSafeMultiply(tiled_elems, rounded_dim);
+    if (overflow || static_cast<uint64_t>(next_elems) > kMaxElements) {
+      return absl::InvalidArgumentError(
+          "Tiled element count overflows supported bounds.");
+    }
+    tiled_elems = next_elems;
+  }
+  return static_cast<size_t>(tiled_elems);
+}
+
+// Returns the TensorCore lane count (`kSupportedFp6TcLaneCount`) if `layout`
+// matches a supported canonical TPU 6-bit 2b/4b split strip layout
+// (`BP(4:(8,1))(2:(16,1))` on `(16, 128)` strips in 2D+, or
+// `BP(4:(128)(8,1))(2:(128)(16,1))` on `(2048)` strips in 0D/1D), or
+// `std::nullopt` otherwise.
+std::optional<int64_t> GetSupportedFp6BitPlaneLaneCount(const Layout& layout,
+                                                        int64_t shape_rank) {
+  if (layout.bit_planes().size() != 2 || layout.tiles().empty() ||
+      !layout.split_configs().empty() || layout.has_physical_shape()) {
+    return std::nullopt;
+  }
+  const BitPlane& low_plane = layout.bit_planes(0);
+  const BitPlane& high_plane = layout.bit_planes(1);
+  if (low_plane.bit_offset() != 0 || low_plane.bit_width() != 4 ||
+      high_plane.bit_offset() != 4 || high_plane.bit_width() != 2) {
+    return std::nullopt;
+  }
+
+  const Tile& strip_tile = layout.tiles().back();
+  if (strip_tile.dimensions().size() == 2) {
+    if (shape_rank < 2) {
+      return std::nullopt;
+    }
+    const int64_t strip_rows = strip_tile.dimension(0);
+    const int64_t lane_count = strip_tile.dimension(1);
+    if (strip_rows != 16 || lane_count != kSupportedFp6TcLaneCount) {
+      return std::nullopt;
+    }
+    for (size_t i = 0; i + 1 < layout.tiles().size(); ++i) {
+      const Tile& outer = layout.tiles(i);
+      if (outer.dimensions().size() != 2 || outer.dimension(1) != lane_count) {
+        return std::nullopt;
+      }
+      const int64_t outer_rows = outer.dimension(0);
+      if (outer_rows != Tile::kMatchDimension || i != 0) {
+        if (outer_rows <= 0 || outer_rows % 16 != 0) {
+          return std::nullopt;
+        }
+      }
+    }
+    if (low_plane.tiles().size() != 1 || high_plane.tiles().size() != 1 ||
+        low_plane.tiles(0) != Tile({8, 1}) ||
+        high_plane.tiles(0) != Tile({16, 1})) {
+      return std::nullopt;
+    }
+    return lane_count;
+  }
+
+  if (strip_tile.dimensions().size() == 1) {
+    if (shape_rank < 0 || shape_rank > 1) {
+      return std::nullopt;
+    }
+    const int64_t strip_elems = strip_tile.dimension(0);
+    if (strip_elems != 16 * kSupportedFp6TcLaneCount) {
+      return std::nullopt;
+    }
+    const int64_t lane_count = kSupportedFp6TcLaneCount;
+    for (size_t i = 0; i + 1 < layout.tiles().size(); ++i) {
+      const Tile& outer = layout.tiles(i);
+      if (outer.dimensions().size() != 1 || outer.dimension(0) <= 0 ||
+          outer.dimension(0) % strip_elems != 0) {
+        return std::nullopt;
+      }
+    }
+    if (low_plane.tiles().size() != 2 || high_plane.tiles().size() != 2 ||
+        low_plane.tiles(0) != Tile({lane_count}) ||
+        low_plane.tiles(1) != Tile({8, 1}) ||
+        high_plane.tiles(0) != Tile({lane_count}) ||
+        high_plane.tiles(1) != Tile({16, 1})) {
+      return std::nullopt;
+    }
+    return lane_count;
+  }
+
+  return std::nullopt;
+}
+
+// Validates `device_layout.bit_planes()` for `shape`. Returns the validated
+// FP6 TensorCore lane count (> 0) when `device_layout.bit_planes()` is
+// non-empty, 0 when `device_layout.bit_planes()` is empty, an
+// `InvalidArgumentError` if `device_layout` is invalid for `shape`, or an
+// `UnimplementedError` for unsupported bit-plane layouts.
+absl::StatusOr<int64_t> ValidateAndGetFp6BitPlaneLaneCount(
+    const Shape& shape, const Layout& device_layout) {
+  if (device_layout.bit_planes().empty()) {
+    return 0;
+  }
+  ABSL_RETURN_IF_ERROR(
+      LayoutUtil::ValidateLayoutForShape(device_layout, shape));
+  if (primitive_util::IsF6Type(shape.element_type())) {
+    if (std::optional<int64_t> fp6_lane_count =
+            GetSupportedFp6BitPlaneLaneCount(device_layout,
+                                             shape.dimensions().size());
+        fp6_lane_count.has_value()) {
+      return *fp6_lane_count;
+    }
+  }
+  return absl::UnimplementedError(absl::StrFormat(
+      "TiledLinearizer does not support bit-plane layout %s for shape %s.",
+      device_layout.ToString(), shape.ToString()));
+}
+
+bool HasSubtilePacking(const Layout& layout, bool is_fp6_split,
+                       int packing_factor) {
+  if (is_fp6_split) {
+    return true;
+  }
+  const auto tiles = layout.tiles();
+  return packing_factor > 1 &&
+         (tiles.size() > 1 ||
+          (!tiles.empty() && tiles[0].dimensions().size() > 1));
+}
+
+// Returns the TensorCore lane count used for subtile bit-repacking.
+absl::StatusOr<int64_t> GetSubtileLaneCount(const Layout& layout) {
+  const auto tiles = layout.tiles();
+  TF_RET_CHECK(!tiles.empty());
+  const auto lane_tile_dims =
+      (tiles.size() > 1 ? tiles[tiles.size() - 2] : tiles[0]).dimensions();
+  TF_RET_CHECK(!lane_tile_dims.empty());
+  return lane_tile_dims.back();
+}
+
+absl::Status Validate6BitHardwareStripSize(size_t hardware_bytes,
+                                           size_t required_host_bytes,
+                                           int64_t lane_count) {
+  if (lane_count <= 0 ||
+      lane_count > std::numeric_limits<int64_t>::max() / 16) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("Invalid 6-bit strip lane count: %d.", lane_count));
+  }
+  const size_t lane_count_u = static_cast<size_t>(lane_count);
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t hardware_bytes_per_strip,
+      CheckedMulSizeT(lane_count_u, size_t{3} * sizeof(uint32_t),
+                      "6-bit hardware strip byte size"));
+  if (hardware_bytes % hardware_bytes_per_strip != 0) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "6-bit split hardware buffer size (%d bytes) must be a multiple of a "
+        "full 3-sublane (16, %d) strip (%d bytes).",
+        hardware_bytes, lane_count, hardware_bytes_per_strip));
+  }
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t host_bytes_per_strip,
+      CheckedMulSizeT(lane_count_u, size_t{16}, "6-bit host strip byte size"));
+  const size_t required_strips =
+      CeilOfRatio<size_t>(required_host_bytes, host_bytes_per_strip);
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t min_hardware_bytes,
+      CheckedMulSizeT(required_strips, hardware_bytes_per_strip,
+                      "required 6-bit hardware buffer size"));
+  if (hardware_bytes < min_hardware_bytes) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "6-bit split hardware buffer size (%d bytes) is smaller than the %d "
+        "bytes (%d strips) required for %d tiled elements.",
+        hardware_bytes, min_hardware_bytes, required_strips,
+        required_host_bytes));
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<absl::InlinedVector<int64_t, 2>> GetResolvedTopLevelTiling(
     const Shape& device_shape) {
   absl::InlinedVector<int64_t, 2> tiling_vec;
   if (device_shape.layout().tiles().empty()) {
@@ -468,7 +810,16 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
         continue;
       }
       int64_t logical_dim = device_shape.layout().minor_to_major(minor);
+      if (logical_dim < 0 || logical_dim >= device_shape.dimensions().size()) {
+        return absl::InvalidArgumentError(absl::StrFormat(
+            "Invalid minor_to_major index %d for shape rank %d.", logical_dim,
+            device_shape.dimensions().size()));
+      }
       int64_t dim_size = device_shape.dimensions(logical_dim);
+      if (dim_size < 0) {
+        return absl::InvalidArgumentError(
+            absl::StrFormat("Invalid negative dimension size %d.", dim_size));
+      }
       int64_t packing =
           (device_shape.layout().tiles().size() > 1 &&
            minor < device_shape.layout().tiles(1).dimensions().size())
@@ -476,8 +827,15 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
                     device_shape.layout().tiles(1).dimensions().size() - 1 -
                     minor)
               : 1;
-      dim = RoundUpTo(std::max<int64_t>(dim_size, 1),
-                      std::max<int64_t>(packing, 1));
+      if (packing <= 0) {
+        return absl::InvalidArgumentError(absl::StrFormat(
+            "Invalid non-positive subtile dimension %d.", packing));
+      }
+      ABSL_ASSIGN_OR_RETURN(
+          dim, CheckedRoundUpToInt64(std::max<int64_t>(dim_size, 1), packing));
+    } else if (dim <= 0) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Invalid non-positive tile dimension %d.", dim));
     }
     tiling_vec.push_back(dim);
   }
@@ -491,6 +849,10 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
     absl::Span<int64_t const> byte_strides, const Layout& device_layout,
     bool set_padding_to_nan, absl::Span<const uint32_t> dynamic_sizes,
     const TiledLinearizer::ParallelismOptions& parallelism_options) {
+  ABSL_ASSIGN_OR_RETURN(
+      const int64_t fp6_lane_count,
+      ValidateAndGetFp6BitPlaneLaneCount(host_shape, device_layout));
+  const bool is_fp6_split = fp6_lane_count > 0;
   if (host_shape.element_type() == C128) {
     TF_RET_CHECK(dest.size() % 2 == 0);
     Shape f64_shape = ShapeUtil::ChangeElementType(host_shape, F64);
@@ -513,9 +875,10 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
       dynamic_sizes.empty()
           ? 0
           : device_layout.dynamic_shape_metadata_prefix_bytes();
+  TF_RET_CHECK(prefix_size >= 0);
   TF_RET_CHECK(prefix_size % sizeof(uint32_t) == 0);
-  TF_RET_CHECK(dest.size() >= prefix_size);
-  int64_t size_in_bytes = dest.size() - prefix_size;
+  TF_RET_CHECK(dest.size() >= static_cast<size_t>(prefix_size));
+  size_t size_in_bytes = dest.size() - static_cast<size_t>(prefix_size);
   TF_RET_CHECK(size_in_bytes % sizeof(uint32_t) == 0);
   TF_RET_CHECK(reinterpret_cast<uintptr_t>(dest.data()) % alignof(uint32_t) ==
                0);
@@ -580,18 +943,26 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
   // `output_tiling_vec` empty and pad up to `dst.size()` below.
   absl::InlinedVector<int64_t, 2> output_tiling_vec;
   if (dims.size() > 1) {
-    output_tiling_vec = GetResolvedTopLevelTiling(device_shape);
+    ABSL_ASSIGN_OR_RETURN(output_tiling_vec,
+                          GetResolvedTopLevelTiling(device_shape));
   }
 
-  const auto tiles = device_shape.layout().tiles();
-  const int bits_per_pack = device_layout.element_size_in_bits() != 0
-                                ? device_layout.element_size_in_bits()
-                                : std::min<int64_t>(byte_width * 8, 32);
-  const int packing_factor = 32 / bits_per_pack;
+  const int bits_per_pack = is_fp6_split
+                                ? 6
+                                : (device_layout.element_size_in_bits() != 0
+                                       ? device_layout.element_size_in_bits()
+                                       : std::min<int64_t>(byte_width * 8, 32));
+  if (!is_fp6_split && (bits_per_pack <= 0 || 32 % bits_per_pack != 0)) {
+    return absl::UnimplementedError(absl::StrFormat(
+        "TiledLinearizer does not support contiguous "
+        "element_size_in_bits=%d%s.",
+        bits_per_pack,
+        bits_per_pack == 6 ? "; use bit_planes for split 6-bit TPU layouts"
+                           : ""));
+  }
+  const int packing_factor = is_fp6_split ? 16 : (32 / bits_per_pack);
   const bool has_subtile_packing =
-      packing_factor > 1 &&
-      (tiles.size() > 1 ||
-       (!tiles.empty() && tiles[0].dimensions().size() > 1));
+      HasSubtilePacking(device_layout, is_fp6_split, packing_factor);
   const uint8_t pad_byte = set_padding_to_nan ? kPadByte : uint8_t{0};
 
   TransposePlan::Options options;
@@ -606,6 +977,37 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
   }
   options.num_threads = parallelism_options.max_parallelism;
   options.tile_padding = pad_byte;
+
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t tiled_elems,
+      ComputeTiledElements(dims, permutation, output_tiling_vec));
+  size_t tiled_bytes = 0;
+  if (options.dest_bits_per_element.has_value()) {
+    ABSL_ASSIGN_OR_RETURN(
+        const size_t total_bits,
+        CheckedMulSizeT(tiled_elems,
+                        static_cast<size_t>(*options.dest_bits_per_element),
+                        "tiled packed bits"));
+    tiled_bytes = CeilOfRatio<size_t>(total_bits, CHAR_BIT);
+  } else {
+    ABSL_ASSIGN_OR_RETURN(
+        tiled_bytes,
+        CheckedMulSizeT(tiled_elems, static_cast<size_t>(transpose_byte_width),
+                        "tiled bytes"));
+  }
+
+  int64_t subtile_lane_count = 0;
+  if (has_subtile_packing) {
+    if (is_fp6_split) {
+      subtile_lane_count = fp6_lane_count;
+      ABSL_RETURN_IF_ERROR(Validate6BitHardwareStripSize(
+          size_in_bytes, tiled_bytes, subtile_lane_count));
+    } else {
+      ABSL_ASSIGN_OR_RETURN(subtile_lane_count,
+                            GetSubtileLaneCount(device_layout));
+    }
+  }
+
   std::shared_ptr<TransposePlan> plan;
   {
     absl::MutexLock lock(linearizer_cache->mu);
@@ -617,7 +1019,16 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
   // for `scratch` to support the transpose Execute below. It is then shrunk
   // when repacking into `dest`.
   if (has_subtile_packing && bits_per_pack < 8) {
-    elements_in_the_packed_data *= 8 / bits_per_pack;
+    ABSL_ASSIGN_OR_RETURN(
+        const size_t packed_bits,
+        CheckedMulSizeT(elements_in_the_packed_data,
+                        static_cast<size_t>(CHAR_BIT), "packed scratch bits"));
+    elements_in_the_packed_data =
+        CeilOfRatio<size_t>(packed_bits, static_cast<size_t>(bits_per_pack));
+    ABSL_RETURN_IF_ERROR(CheckedMulSizeT(elements_in_the_packed_data,
+                                         sizeof(uint32_t),
+                                         "scratch buffer bytes")
+                             .status());
   }
 
   if (prefix_size > 0) {
@@ -637,18 +1048,6 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
   // `TransposePlan` writes and pads the tiled output `[0, tiled_bytes)`. Fill
   // any trailing padding in `dst` beyond that, such as
   // `tail_padding_alignment_in_elements` or 1D padding.
-  size_t tiled_elems = 1;
-  const size_t untiled_dims = dims.size() - output_tiling_vec.size();
-  for (size_t i = 0; i < dims.size(); ++i) {
-    const int64_t tile =
-        i < untiled_dims ? 1 : output_tiling_vec[i - untiled_dims];
-    tiled_elems *= RoundUpTo<int64_t>(dims[permutation[i]], tile);
-  }
-  const size_t tiled_bytes =
-      options.dest_bits_per_element.has_value()
-          ? CeilOfRatio<size_t>(tiled_elems * *options.dest_bits_per_element,
-                                CHAR_BIT)
-          : tiled_elems * transpose_byte_width;
   TF_RET_CHECK(dst.size() >= tiled_bytes);
   if (dst.size() > tiled_bytes) {
     std::memset(dst.data() + tiled_bytes, pad_byte, dst.size() - tiled_bytes);
@@ -667,11 +1066,13 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
   // TODO (b/274171729): For SparseCore currently the data is being packed
   // linearly.
   if (has_subtile_packing) {
-    const auto lane_tile_dims =
-        (tiles.size() > 1 ? tiles[tiles.size() - 2] : tiles[0]).dimensions();
-    TF_RET_CHECK(!lane_tile_dims.empty());
     ABSL_RETURN_IF_ERROR(TcLaneCountSwitch(
         [&](auto kTcLaneCount) {
+          if (bits_per_pack == 6) {
+            Repack6BitToHardwareLayout<kTcLaneCount>(
+                dst, dest.subspan(prefix_size), set_padding_to_nan);
+            return;
+          }
           ElementPackingFactorSwitch<void>(
               [&](auto kPackingFactor) {
                 if constexpr (kPackingFactor > 1) {
@@ -684,7 +1085,7 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
               },
               packing_factor);
         },
-        lane_tile_dims.back()));
+        subtile_lane_count));
   }
 
   if (!dynamic_sizes.empty()) {
@@ -821,6 +1222,26 @@ absl::Status DelinearizeComponents(
   return TiledLinearizer::X128FromTuple(low_tmp, high_tmp, literal);
 }
 
+ABSL_ATTRIBUTE_FUNC_ALIGN(64)
+absl::Status DelinearizeFp6SplitR0OrR1(const Shape& literal_shape,
+                                       absl::Span<const uint32_t> values,
+                                       int64_t lane_count,
+                                       MutableLiteralBase* literal) {
+  DCHECK(literal_shape.IsArray());
+  DCHECK_LE(literal_shape.dimensions().size(), 1);
+#ifndef NDEBUG
+  CreateGarbageFilledLiteral(literal_shape, literal);
+#endif
+  auto output = GetLiteralAsMutableSpan(literal);
+  ABSL_RETURN_IF_ERROR(Validate6BitHardwareStripSize(
+      values.size() * sizeof(uint32_t), output.size(), lane_count));
+  return TcLaneCountSwitch(
+      [&](auto kLaneCount) {
+        Repack6BitToHostLayout<kLaneCount>(values, output);
+      },
+      lane_count);
+}
+
 template <int kPackingFactor>
 ABSL_ATTRIBUTE_FUNC_ALIGN(64)
 absl::Status
@@ -839,18 +1260,19 @@ absl::Status
     RepackFromSparseCoreLayout<kPackingFactor>(values, output);
     return absl::OkStatus();
   }
-  const auto lane_tile_dims = tiles[tiles.size() - 2].dimensions();
-  TF_RET_CHECK(!lane_tile_dims.empty());
+  ABSL_ASSIGN_OR_RETURN(const int64_t lane_count,
+                        GetSubtileLaneCount(device_layout));
   return TcLaneCountSwitch(
       [&](auto kLaneCount) {
         RepackToHostLayout<kPackingFactor, kLaneCount>(values, output);
       },
-      lane_tile_dims.back());
+      lane_count);
 }
 
 absl::Status DelinearizeUsingTranspose(
     const Shape& literal_shape, absl::Span<const uint8_t> data,
-    const Layout& device_layout, MutableLiteralBase* literal,
+    const Layout& device_layout, int64_t fp6_lane_count,
+    MutableLiteralBase* literal,
     const TiledLinearizer::ParallelismOptions& parallelism_options) {
   tsl::profiler::TraceMe traceme("DelinearizeUsingTranspose");
   DCHECK_OK(LayoutUtil::ValidateLayoutForShape(device_layout, literal_shape));
@@ -860,19 +1282,33 @@ absl::Status DelinearizeUsingTranspose(
   CreateGarbageFilledLiteral(literal_shape, literal);
 #endif
 
+  const bool is_fp6_split = fp6_lane_count > 0;
+
   // The fast path does not parallelize. Above a certain size it's worth using
   // the transpose plan to get parallelism.
   static const int64_t kFastPathMaxBytes = int64_t{1} << 26;
   int64_t size_bytes = literal->size_bytes();
 
   const int64_t element_size_in_bits =
-      device_layout.element_size_in_bits() != 0
-          ? device_layout.element_size_in_bits()
-          : ShapeUtil::ByteSizeOfPrimitiveType(literal_shape.element_type()) *
-                CHAR_BIT;
-  int packing_factor = 32 / element_size_in_bits;
+      is_fp6_split ? 6
+                   : (device_layout.element_size_in_bits() != 0
+                          ? device_layout.element_size_in_bits()
+                          : ShapeUtil::ByteSizeOfPrimitiveType(
+                                literal_shape.element_type()) *
+                                CHAR_BIT);
+  if (!is_fp6_split &&
+      (element_size_in_bits <= 0 || 32 % element_size_in_bits != 0)) {
+    return absl::UnimplementedError(
+        absl::StrFormat("TiledLinearizer does not support contiguous "
+                        "element_size_in_bits=%d%s.",
+                        element_size_in_bits,
+                        element_size_in_bits == 6
+                            ? "; use bit_planes for split 6-bit TPU layouts"
+                            : ""));
+  }
+  int packing_factor = is_fp6_split ? 16 : (32 / element_size_in_bits);
 
-  if (packing_factor <= 4 && HasLinearLayout(device_layout) &&
+  if (!is_fp6_split && packing_factor <= 4 && HasLinearLayout(device_layout) &&
       Layout::Equal().MinorToMajorOnly()(device_layout,
                                          literal_shape.layout()) &&
       size_bytes <= kFastPathMaxBytes) {
@@ -882,11 +1318,22 @@ absl::Status DelinearizeUsingTranspose(
     return absl::OkStatus();
   }
 
+  if (is_fp6_split && data.size() % sizeof(uint32_t) != 0) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "6-bit split hardware buffer size (%d bytes) must be 4-byte aligned.",
+        data.size()));
+  }
+
   auto values = absl::MakeConstSpan(
       tsl::safe_reinterpret_cast<const uint32_t*>(data.data()),
       data.size() / sizeof(uint32_t));
 
-  // Fast path for R1 tensors.
+  // Fast path for R0/R1 FP6 split tensors and R1 packed tensors.
+  if (is_fp6_split && literal_shape.dimensions().size() <= 1 &&
+      !HasLinearLayout(device_layout) && size_bytes <= kFastPathMaxBytes) {
+    return DelinearizeFp6SplitR0OrR1(literal_shape, values, fp6_lane_count,
+                                     literal);
+  }
   if (literal_shape.dimensions().size() == 1 &&
       !HasLinearLayout(device_layout) && size_bytes <= kFastPathMaxBytes) {
     return ElementPackingFactorSwitch<absl::Status>(
@@ -912,10 +1359,15 @@ absl::Status DelinearizeUsingTranspose(
     ++dim_it;
   }
 
-  absl::InlinedVector<int64_t, 2> input_tiling_vec =
-      literal_shape.dimensions().size() > 1
-          ? GetResolvedTopLevelTiling(device_shape)
-          : absl::InlinedVector<int64_t, 2>();
+  absl::InlinedVector<int64_t, 2> input_tiling_vec;
+  if (literal_shape.dimensions().size() > 1) {
+    ABSL_ASSIGN_OR_RETURN(input_tiling_vec,
+                          GetResolvedTopLevelTiling(device_shape));
+  }
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t input_tiled_elems,
+      ComputeTiledElements(input_dims, /*permutation=*/std::nullopt,
+                           input_tiling_vec));
 
   // minor_to_major maps from physical dim to logical dim.
   // permutation maps from output physical dims to input physical dims.
@@ -945,19 +1397,40 @@ absl::Status DelinearizeUsingTranspose(
 
   // TODO(phawkins): sink unpacking code into transpose plan.
   Buffer unpacked_values;
-  const auto tiles = device_shape.layout().tiles();
   const bool has_subtile_packing =
-      packing_factor > 1 &&
-      (tiles.size() > 1 ||
-       (!tiles.empty() && tiles[0].dimensions().size() > 1));
+      HasSubtilePacking(device_layout, is_fp6_split, packing_factor);
   // TODO (b/274171729): For SparseCore currently the data is being packed
   // linearly.
   if (has_subtile_packing) {
-    const auto lane_tile_dims =
-        (tiles.size() > 1 ? tiles[tiles.size() - 2] : tiles[0]).dimensions();
-    TF_RET_CHECK(!lane_tile_dims.empty());
+    int64_t lane_count = 0;
+    size_t fp6_unpacked_bytes = 0;
+    if (is_fp6_split) {
+      lane_count = fp6_lane_count;
+      ABSL_ASSIGN_OR_RETURN(
+          const size_t required_host_bytes,
+          CheckedMulSizeT(input_tiled_elems, static_cast<size_t>(byte_width),
+                          "delinearize host bytes"));
+      ABSL_RETURN_IF_ERROR(Validate6BitHardwareStripSize(
+          data.size(), required_host_bytes, lane_count));
+      const size_t num_strips =
+          values.size() / (size_t{3} * static_cast<size_t>(lane_count));
+      ABSL_ASSIGN_OR_RETURN(
+          fp6_unpacked_bytes,
+          CheckedMulSizeT(num_strips,
+                          size_t{16} * static_cast<size_t>(lane_count),
+                          "unpacked 6-bit host bytes"));
+    } else {
+      ABSL_ASSIGN_OR_RETURN(lane_count, GetSubtileLaneCount(device_layout));
+    }
     ABSL_RETURN_IF_ERROR(TcLaneCountSwitch(
         [&](auto kTcLaneCount) {
+          if (is_fp6_split) {
+            unpacked_values = Buffer(fp6_unpacked_bytes);
+            Repack6BitToHostLayout<kTcLaneCount>(
+                values, unpacked_values.mutable_data<uint8_t>());
+            values = unpacked_values.const_data<uint32_t>();
+            return;
+          }
           ElementPackingFactorSwitch<void>(
               [&](auto kPackingFactor) {
                 if constexpr (kPackingFactor > 1) {
@@ -973,7 +1446,7 @@ absl::Status DelinearizeUsingTranspose(
               },
               packing_factor);
         },
-        lane_tile_dims.back()));
+        lane_count));
   } else if (const int bits_per_pack = 32 / packing_factor; bits_per_pack < 8) {
     ElementPackingFactorSwitch<void>(
         [&](auto kPackingFactor) {
@@ -1018,6 +1491,9 @@ absl::Status DelinearizeUsingTranspose(
   if (!literal_shape.IsArray()) {
     return Unimplemented("Unsupported shape for Delinearize.");
   }
+  ABSL_ASSIGN_OR_RETURN(
+      const int64_t fp6_lane_count,
+      ValidateAndGetFp6BitPlaneLaneCount(literal_shape, device_layout));
   TF_RET_CHECK(reinterpret_cast<uintptr_t>(data.data()) % alignof(uint32_t) ==
                0);
   VLOG(2) << "delinearized: " << ShapeUtil::HumanString(literal_shape) << " @ "
@@ -1038,7 +1514,8 @@ absl::Status DelinearizeUsingTranspose(
     return DelinearizeComponents(bitwidth, literal_shape, data, device_layout,
                                  literal, parallelism_options);
   }
-  return DelinearizeUsingTranspose(literal_shape, data, device_layout, literal,
+  return DelinearizeUsingTranspose(literal_shape, data, device_layout,
+                                   fp6_lane_count, literal,
                                    parallelism_options);
 }
 

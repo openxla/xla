@@ -38,6 +38,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -200,7 +201,8 @@ absl::StatusOr<Shape> MakeValidatedShapeWithLayoutInternal(
     PrimitiveType index_primitive_type, PrimitiveType pointer_primitive_type,
     int64_t element_size_in_bits, int64_t memory_space,
     absl::Span<const SplitConfig> split_configs,
-    std::optional<Shape> physical_shape) {
+    std::optional<Shape> physical_shape,
+    absl::Span<const BitPlane> bit_planes = {}) {
   if (dimensions.size() != minor_to_major.size()) {
     return InvalidArgument("Dimensions size is %ld, but layout size is %ld.",
                            dimensions.size(), minor_to_major.size());
@@ -215,15 +217,17 @@ absl::StatusOr<Shape> MakeValidatedShapeWithLayoutInternal(
       Shape shape, MakeValidatedShapeImpl(element_type, dimensions,
                                           /*dynamic_dimensions=*/nullptr,
                                           /*populate_default_layout=*/false));
-  if (element_size_in_bits ==
-      ShapeUtil::ByteSizeOfPrimitiveType(element_type) * 8) {
+  if (bit_planes.empty() &&
+      element_size_in_bits ==
+          ShapeUtil::ByteSizeOfPrimitiveType(element_type) * 8) {
     // Only set element_size_in_bits if it's different from the default value.
     element_size_in_bits = 0;
   }
   *shape.mutable_layout() = LayoutUtil::MakeLayout(
       minor_to_major, tiles, tail_padding_alignment_in_elements,
       index_primitive_type, pointer_primitive_type, element_size_in_bits,
-      memory_space, split_configs, std::move(physical_shape));
+      memory_space, split_configs, std::move(physical_shape),
+      /*dynamic_shape_metadata_prefix_bytes=*/0, bit_planes);
   ABSL_RETURN_IF_ERROR(LayoutUtil::ValidateLayoutInShape(shape));
   return shape;
 }
@@ -404,14 +408,15 @@ std::ostream& operator<<(std::ostream& out, const ShapeIndex& shape_index) {
     PrimitiveType element_type, absl::Span<const int64_t> dimensions,
     absl::Span<const int64_t> minor_to_major, absl::Span<const Tile> tiles,
     int64_t tail_padding_alignment_in_elements, int64_t element_size_in_bits,
-    int64_t memory_space, absl::Span<const SplitConfig> split_configs) {
+    int64_t memory_space, absl::Span<const SplitConfig> split_configs,
+    absl::Span<const BitPlane> bit_planes) {
   return MakeValidatedShapeWithLayoutInternal(
       element_type, dimensions, minor_to_major, tiles,
       tail_padding_alignment_in_elements,
       /*index_primitive_type=*/PRIMITIVE_TYPE_INVALID,
       /*pointer_primitive_type=*/PRIMITIVE_TYPE_INVALID, element_size_in_bits,
       memory_space, split_configs,
-      /*physical_shape=*/std::nullopt);
+      /*physical_shape=*/std::nullopt, bit_planes);
 }
 
 /* static */ absl::StatusOr<Shape>
@@ -481,11 +486,16 @@ ShapeUtil::MakeValidatedShapeWithDescendingLayoutAndSamePhysicalLayout(
   if (shape.IsBuffer()) {
     ABSL_ASSIGN_OR_RETURN(new_shape, MakeValidatedBufferShape(new_shape));
   }
-  // Since the physical layout is kept the same, the tiles and element size are
-  // the same also.
+  // Since the physical layout is kept the same, the tiles, bit_planes, element
+  // size, and tail padding alignment are the same also.
   if (shape.has_layout()) {
     new_shape.mutable_layout()->mutable_tiles()->assign(
         shape.layout().tiles().begin(), shape.layout().tiles().end());
+    if (!shape.layout().bit_planes().empty()) {
+      new_shape.mutable_layout()->mutable_bit_planes()->assign(
+          shape.layout().bit_planes().begin(),
+          shape.layout().bit_planes().end());
+    }
     new_shape.mutable_layout()->set_element_size_in_bits(
         shape.layout().element_size_in_bits());
     new_shape.mutable_layout()->set_tail_padding_alignment_in_elements(
@@ -1057,6 +1067,13 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
       ExtentProduct</*kBoundedDynamicOk=*/false>(shape);
   CHECK(!count_overflow);
 
+  if (shape.has_layout() && !shape.layout().bit_planes().empty()) {
+    int64_t element_size_in_bits = ElementSizeInBits(shape);
+    auto [num_bits, overflow] =
+        OverflowSafeMultiply(element_count, element_size_in_bits);
+    CHECK(!overflow);
+    return CeilOfRatio<int64_t>(num_bits, CHAR_BIT);
+  }
   if (shape.has_layout() && shape.layout().element_size_in_bits() != 0) {
     int64_t element_size_in_bits = shape.layout().element_size_in_bits();
     auto [num_bits, overflow] =
@@ -1263,8 +1280,17 @@ absl::Status ValidateNonLayoutProperties(const Shape& shape) {
   }
   Shape new_shape = original;
   new_shape.set_element_type(type);
-  if (new_shape.has_layout() && !primitive_util::IsSubByteNonPredType(type)) {
-    new_shape.mutable_layout()->set_element_size_in_bits(0);
+  if (new_shape.has_layout()) {
+    if (!primitive_util::IsSubByteNonPredType(type)) {
+      new_shape.mutable_layout()->set_element_size_in_bits(0);
+    }
+    if (!new_shape.layout().bit_planes().empty() &&
+        (!primitive_util::IsArrayType(type) ||
+         !primitive_util::IsArrayType(original.element_type()) ||
+         primitive_util::LogicalBitWidth(type) !=
+             primitive_util::LogicalBitWidth(original.element_type()))) {
+      new_shape.mutable_layout()->clear_bit_planes();
+    }
   }
   return new_shape;
 }
@@ -1993,6 +2019,8 @@ bool ShapeUtil::BitcastDecompositionTrt::IsTranspose2Identity() const {
 bool ShapeUtil::IsDecomposableBitcast(const Shape& input_shape,
                                       const Shape& output_shape) {
   return input_shape.has_layout() && output_shape.has_layout() &&
+         input_shape.layout().bit_planes().empty() &&
+         output_shape.layout().bit_planes().empty() &&
          ElementsIn(input_shape) == ElementsIn(output_shape);
 }
 
@@ -2466,6 +2494,7 @@ bool ShapeUtil::DeviceShapeIsHostShape(const Shape& shape) {
     if (subshape.IsArray() && subshape.has_layout()) {
       const Layout& layout = subshape.layout();
       is_host_shape &= layout.tiles().empty();
+      is_host_shape &= layout.bit_planes().empty();
       is_host_shape &= layout.memory_space() == Layout::kDefaultMemorySpace;
       is_host_shape &= !layout.has_physical_shape();
       is_host_shape &= layout.element_size_in_bits() == 0;
@@ -2481,6 +2510,7 @@ Shape ShapeUtil::DeviceShapeToHostShape(Shape s) {
     if (subshape->IsArray() && subshape->has_layout()) {
       Layout* layout = subshape->mutable_layout();
       layout->clear_tiles();
+      layout->clear_bit_planes();
       layout->set_memory_space(Layout::kDefaultMemorySpace);
       layout->clear_physical_shape();
       layout->set_element_size_in_bits(0);
@@ -2529,21 +2559,326 @@ std::optional<absl::InlinedVector<int64_t, 4>> ShapeUtil::UnpackedByteStrides(
 
 /*static*/ std::optional<absl::InlinedVector<int64_t, 4>>
 ShapeUtil::ByteStrides(const Shape& shape) {
-  if (shape.layout().element_size_in_bits() % CHAR_BIT != 0) {
+  if (!shape.layout().bit_planes().empty() ||
+      shape.layout().element_size_in_bits() % CHAR_BIT != 0) {
     return std::nullopt;
   }
   return UnpackedByteStrides(shape);
 }
 
 /*static*/ int64_t ShapeUtil::ElementSizeInBits(const Shape& shape) {
-  if (shape.has_layout() && shape.layout().element_size_in_bits() != 0) {
-    return shape.layout().element_size_in_bits();
+  if (shape.has_layout()) {
+    if (!shape.layout().bit_planes().empty()) {
+      int64_t total_bits = 0;
+      for (const BitPlane& plane : shape.layout().bit_planes()) {
+        std::optional<int64_t> sum =
+            OverflowSafeAdd(total_bits, plane.bit_width());
+        CHECK(sum.has_value());
+        total_bits = *sum;
+      }
+      return total_bits;
+    }
+    if (shape.layout().element_size_in_bits() != 0) {
+      return shape.layout().element_size_in_bits();
+    }
   }
   return ShapeUtil::ByteSizeOfPrimitiveType(shape.element_type()) * CHAR_BIT;
 }
 
+namespace {
+
+using CoordInterval = std::pair<int64_t, int64_t>;
+using CoordBox = std::vector<CoordInterval>;
+
+int64_t CheckedAdd(int64_t a, int64_t b) {
+  std::optional<int64_t> sum = OverflowSafeAdd(a, b);
+  CHECK(sum.has_value());
+  return *sum;
+}
+
+int64_t CheckedMultiply(int64_t a, int64_t b) {
+  auto [prod, overflow] = OverflowSafeMultiply(a, b);
+  CHECK(!overflow);
+  return prod;
+}
+
+int64_t CheckedRoundUpTo(int64_t value, int64_t divisor) {
+  CHECK_GE(value, 0);
+  CHECK_GT(divisor, 0);
+  const int64_t quotient = value / divisor + (value % divisor != 0 ? 1 : 0);
+  return CheckedMultiply(quotient, divisor);
+}
+
+int64_t BitsToBytesCeil(int64_t bits) {
+  CHECK_GE(bits, 0);
+  return bits / CHAR_BIT + (bits % CHAR_BIT != 0 ? 1 : 0);
+}
+
+int64_t PaddedElementsForTiles(const Shape& shape,
+                               absl::Span<const Tile> tiles) {
+  std::vector<int64_t> phys_dims = LayoutUtil::PhysicalDimensions(shape);
+  if (!tiles.empty()) {
+    absl::Span<const int64_t> sub_tile_dims =
+        tiles.size() > 1 ? tiles[1].dimensions() : absl::Span<const int64_t>();
+    absl::StatusOr<LayoutUtil::ResolvedTileStep> step =
+        LayoutUtil::ResolveTileStep(phys_dims, tiles[0], sub_tile_dims);
+    CHECK_OK(step.status());
+    phys_dims = std::move(step->next_shape);
+  }
+  int64_t num_of_elements = 1;
+  for (int64_t d : phys_dims) {
+    num_of_elements = CheckedMultiply(num_of_elements, d);
+  }
+  return num_of_elements;
+}
+
+void PropagateBoxesThroughTiles(absl::Span<const Tile> tiles,
+                                std::vector<int64_t>& current_shape,
+                                std::vector<CoordBox>& boxes,
+                                int64_t* out_last_tile_rank) {
+  int64_t last_rank = 0;
+  for (size_t step_idx = 0; step_idx < tiles.size(); ++step_idx) {
+    const Tile& tile = tiles[step_idx];
+    absl::Span<const int64_t> sub_tile_dims =
+        (step_idx == 0 && tiles.size() > 1) ? tiles[1].dimensions()
+                                            : absl::Span<const int64_t>();
+    absl::StatusOr<LayoutUtil::ResolvedTileStep> step =
+        LayoutUtil::ResolveTileStep(current_shape, tile, sub_tile_dims);
+    CHECK_OK(step.status());
+    if (step->leading_pad_dims > 0) {
+      for (CoordBox& box : boxes) {
+        box.insert(box.begin(), step->leading_pad_dims, {0, 0});
+      }
+    }
+
+    std::vector<CoordBox> next_boxes;
+    for (const CoordBox& box : boxes) {
+      std::vector<CoordInterval> suffix_box(box.begin() + step->suffix_start,
+                                            box.end());
+      std::vector<int64_t> raw_dims = step->padded_suffix;
+      CoordBox combined_box;
+      combined_box.reserve(step->effective_tile_dims.size());
+      for (size_t i = 0; i < tile.dimensions().size(); ++i) {
+        if (tile.dimension(i) == Tile::kCombineDimension) {
+          suffix_box[i + 1] = {
+              CheckedAdd(CheckedMultiply(suffix_box[i].first, raw_dims[i + 1]),
+                         suffix_box[i + 1].first),
+              CheckedAdd(CheckedMultiply(suffix_box[i].second, raw_dims[i + 1]),
+                         suffix_box[i + 1].second)};
+          raw_dims[i + 1] = CheckedMultiply(raw_dims[i + 1], raw_dims[i]);
+        } else {
+          combined_box.push_back(suffix_box[i]);
+        }
+      }
+
+      struct SplitPair {
+        CoordBox outer;
+        CoordBox inner;
+      };
+      std::vector<SplitPair> partial = {{{}, {}}};
+      for (size_t j = 0; j < step->effective_tile_dims.size(); ++j) {
+        const auto [lo, hi] = combined_box[j];
+        const int64_t t = step->effective_tile_dims[j];
+        const int64_t q_lo = lo / t;
+        const int64_t q_hi = hi / t;
+        absl::InlinedVector<std::pair<CoordInterval, CoordInterval>, 3> pieces;
+        if (q_lo == q_hi) {
+          pieces.push_back({{q_lo, q_hi}, {lo % t, hi % t}});
+        } else {
+          int64_t mid_lo = q_lo;
+          if (lo % t != 0) {
+            pieces.push_back({{q_lo, q_lo}, {lo % t, t - 1}});
+            mid_lo = q_lo + 1;
+          }
+          const int64_t mid_hi = (hi % t == t - 1) ? q_hi : (q_hi - 1);
+          if (mid_lo <= mid_hi) {
+            pieces.push_back({{mid_lo, mid_hi}, {0, t - 1}});
+          }
+          if (hi % t != t - 1) {
+            pieces.push_back({{q_hi, q_hi}, {0, hi % t}});
+          }
+        }
+        std::vector<SplitPair> next_partial;
+        next_partial.reserve(partial.size() * pieces.size());
+        for (const SplitPair& sp : partial) {
+          for (const auto& [out_iv, in_iv] : pieces) {
+            SplitPair extended = sp;
+            extended.outer.push_back(out_iv);
+            extended.inner.push_back(in_iv);
+            next_partial.push_back(std::move(extended));
+          }
+        }
+        partial = std::move(next_partial);
+      }
+
+      for (SplitPair& sp : partial) {
+        CoordBox out_box(box.begin(), box.begin() + step->suffix_start);
+        out_box.insert(out_box.end(), sp.outer.begin(), sp.outer.end());
+        out_box.insert(out_box.end(), sp.inner.begin(), sp.inner.end());
+        next_boxes.push_back(std::move(out_box));
+      }
+    }
+
+    last_rank = static_cast<int64_t>(step->effective_tile_dims.size());
+    current_shape = std::move(step->next_shape);
+    boxes = std::move(next_boxes);
+  }
+  if (out_last_tile_rank != nullptr) {
+    *out_last_tile_rank = last_rank;
+  }
+}
+
+int64_t BoxMaxRowMajorIndex(absl::Span<const int64_t> shape_dims,
+                            absl::Span<const CoordInterval> box) {
+  CHECK_EQ(shape_dims.size(), box.size());
+  int64_t index = 0;
+  int64_t multiplier = 1;
+  for (int64_t i = static_cast<int64_t>(shape_dims.size()) - 1; i >= 0; --i) {
+    if (box[i].second != 0) {
+      index = CheckedAdd(index, CheckedMultiply(box[i].second, multiplier));
+    }
+    if (i > 0) {
+      multiplier = CheckedMultiply(multiplier, shape_dims[i]);
+    }
+  }
+  return index;
+}
+
+int64_t BitPlanesArrayDataSize(const Shape& shape) {
+  if (ShapeUtil::IsZeroElementArray(shape)) {
+    return 0;
+  }
+  const Layout& layout = shape.layout();
+  const std::vector<int64_t> phys_shape = LayoutUtil::PhysicalDimensions(shape);
+  CoordBox initial_box;
+  initial_box.reserve(phys_shape.size());
+  for (int64_t d : phys_shape) {
+    initial_box.push_back({0, d - 1});
+  }
+
+  if (!layout.tiles().empty()) {
+    std::vector<int64_t> expanded_shape = phys_shape;
+    std::vector<CoordBox> boxes = {initial_box};
+    int64_t innermost_rank = 0;
+    PropagateBoxesThroughTiles(layout.tiles(), expanded_shape, boxes,
+                               &innermost_rank);
+    const size_t prefix_len = expanded_shape.size() - innermost_rank;
+    absl::Span<const int64_t> prefix_shape =
+        absl::MakeConstSpan(expanded_shape).first(prefix_len);
+    int64_t max_strip_index = 0;
+    for (const CoordBox& box : boxes) {
+      max_strip_index = std::max(
+          max_strip_index,
+          BoxMaxRowMajorIndex(prefix_shape,
+                              absl::MakeConstSpan(box).first(prefix_len)));
+    }
+
+    std::vector<CoordBox> strip_boxes;
+    for (const CoordBox& box : boxes) {
+      if (BoxMaxRowMajorIndex(prefix_shape,
+                              absl::MakeConstSpan(box).first(prefix_len)) ==
+          max_strip_index) {
+        strip_boxes.emplace_back(box.begin() + prefix_len, box.end());
+      }
+    }
+    std::vector<int64_t> strip_shape(expanded_shape.begin() + prefix_len,
+                                     expanded_shape.end());
+    int64_t strip_elements = 1;
+    for (int64_t d : strip_shape) {
+      strip_elements = CheckedMultiply(strip_elements, d);
+    }
+    const int64_t strip_bits =
+        CheckedMultiply(strip_elements, ShapeUtil::ElementSizeInBits(shape));
+    int64_t prior_plane_bits = 0;
+    for (size_t q = 0; q + 1 < layout.bit_planes().size(); ++q) {
+      prior_plane_bits = CheckedAdd(
+          prior_plane_bits,
+          CheckedMultiply(strip_elements, layout.bit_planes(q).bit_width()));
+    }
+
+    const BitPlane& last_plane = layout.bit_planes().back();
+    if (!last_plane.tiles().empty()) {
+      PropagateBoxesThroughTiles(last_plane.tiles(), strip_shape, strip_boxes,
+                                 /*out_last_tile_rank=*/nullptr);
+    }
+    int64_t max_within_plane_index = 0;
+    for (const CoordBox& sbox : strip_boxes) {
+      max_within_plane_index = std::max(max_within_plane_index,
+                                        BoxMaxRowMajorIndex(strip_shape, sbox));
+    }
+    const int64_t max_bit_end =
+        CheckedAdd(CheckedAdd(CheckedMultiply(max_strip_index, strip_bits),
+                              prior_plane_bits),
+                   CheckedMultiply(CheckedAdd(max_within_plane_index, 1),
+                                   last_plane.bit_width()));
+    return BitsToBytesCeil(max_bit_end);
+  }
+
+  int64_t prior_plane_bits = 0;
+  for (size_t q = 0; q + 1 < layout.bit_planes().size(); ++q) {
+    int64_t plane_elements =
+        PaddedElementsForTiles(shape, layout.bit_planes(q).tiles());
+    if (layout.tail_padding_alignment_in_elements() != 1) {
+      plane_elements = CheckedRoundUpTo(
+          plane_elements, layout.tail_padding_alignment_in_elements());
+    }
+    prior_plane_bits = CheckedAdd(
+        prior_plane_bits,
+        CheckedMultiply(plane_elements, layout.bit_planes(q).bit_width()));
+  }
+
+  const BitPlane& last_plane = layout.bit_planes().back();
+  std::vector<int64_t> plane_shape = phys_shape;
+  std::vector<CoordBox> plane_boxes = {initial_box};
+  if (!last_plane.tiles().empty()) {
+    PropagateBoxesThroughTiles(last_plane.tiles(), plane_shape, plane_boxes,
+                               /*out_last_tile_rank=*/nullptr);
+  }
+  int64_t max_within_plane_index = 0;
+  for (const CoordBox& pbox : plane_boxes) {
+    max_within_plane_index = std::max(max_within_plane_index,
+                                      BoxMaxRowMajorIndex(plane_shape, pbox));
+  }
+  const int64_t max_bit_end = CheckedAdd(
+      prior_plane_bits, CheckedMultiply(CheckedAdd(max_within_plane_index, 1),
+                                        last_plane.bit_width()));
+  return BitsToBytesCeil(max_bit_end);
+}
+
+}  // namespace
+
 /*static*/ int64_t ShapeUtil::ArraySize(const Shape& shape) {
   CHECK(shape.IsArray());
+  if (!shape.layout().bit_planes().empty()) {
+    if (shape.is_unbounded_dynamic()) {
+      return Shape::kUnboundedSize;
+    }
+    if (!shape.layout().tiles().empty()) {
+      int64_t num_of_elements =
+          PaddedElementsForTiles(shape, shape.layout().tiles());
+      if (shape.layout().tail_padding_alignment_in_elements() != 1) {
+        num_of_elements = CheckedRoundUpTo(
+            num_of_elements,
+            shape.layout().tail_padding_alignment_in_elements());
+      }
+      const int64_t num_bits =
+          CheckedMultiply(num_of_elements, ElementSizeInBits(shape));
+      return BitsToBytesCeil(num_bits);
+    }
+    int64_t total_bits = 0;
+    for (const BitPlane& plane : shape.layout().bit_planes()) {
+      int64_t plane_elements = PaddedElementsForTiles(shape, plane.tiles());
+      if (shape.layout().tail_padding_alignment_in_elements() != 1) {
+        plane_elements = CheckedRoundUpTo(
+            plane_elements,
+            shape.layout().tail_padding_alignment_in_elements());
+      }
+      total_bits = CheckedAdd(
+          total_bits, CheckedMultiply(plane_elements, plane.bit_width()));
+    }
+    return BitsToBytesCeil(total_bits);
+  }
+
   if (shape.layout().tiles().empty()) {
     return ByteSizeOfElements(shape);
   }
@@ -2601,6 +2936,9 @@ ShapeUtil::ByteStrides(const Shape& shape) {
 
 /*static*/ int64_t ShapeUtil::ArrayDataSize(const Shape& shape) {
   CHECK(shape.IsArray());
+  if (!shape.layout().bit_planes().empty()) {
+    return BitPlanesArrayDataSize(shape);
+  }
   absl::InlinedVector<int64_t, 4> indices;
   for (int64_t dim : shape.dimensions()) {
     indices.push_back(dim - 1);
@@ -2639,7 +2977,7 @@ int64_t ShapeUtil::ForEachState::CalculateNumSteps() const {
                                                  const ShapeIndex& index) {
     if (subshape->has_layout()) {
       int element_size =
-          pack_subbyte_types &&
+          pack_subbyte_types && subshape->layout().bit_planes().empty() &&
                   primitive_util::IsSubByteNonPredType(subshape->element_type())
               ? primitive_util::BitWidth(subshape->element_type())
               : 0;

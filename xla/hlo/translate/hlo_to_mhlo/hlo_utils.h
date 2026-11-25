@@ -212,7 +212,10 @@ static bool HasCustomLayout(const Shape& shape) {
   if (shape.IsTuple()) {
     return llvm::any_of(shape.tuple_shapes(), HasCustomLayout);
   }
-  return shape.has_layout() && !shape.layout().minor_to_major().empty() &&
+  return shape.has_layout() &&
+         (!shape.layout().minor_to_major().empty() ||
+          !shape.layout().tiles().empty() ||
+          !shape.layout().bit_planes().empty()) &&
          shape.layout() != LayoutUtil::GetDefaultLayoutForShape(shape);
 }
 

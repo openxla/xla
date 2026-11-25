@@ -749,6 +749,13 @@ absl::Status CommonPjRtClient::Linearize(
     return absl::OkStatus();
   }
 
+  if (device_shape.has_layout() &&
+      !device_shape.layout().bit_planes().empty()) {
+    return absl::UnimplementedError(
+        absl::StrFormat("Linearize does not support bit-plane layout: %s",
+                        device_shape.ToString(/*print_layout=*/true)));
+  }
+
   PjRtDynamicShapeKind layout_kind =
       memory_space != nullptr ? GetDynamicShapeKind(memory_space->kind_id())
                               : GetPjRtDynamicShapeKind(device_shape);
@@ -1306,6 +1313,9 @@ bool CommonPjRtClient::ShouldPerformZeroCopyLinearize(
     absl::Span<int64_t const> dims,
     std::optional<absl::Span<int64_t const>> byte_strides,
     PjRtMemorySpace* memory_space) {
+  if (!device_shape.layout().bit_planes().empty()) {
+    return false;
+  }
   if (!device_shape.layout().tiles().empty()) {
     if (dims.size() != 1 || primitive_util::ByteWidth(type) != 4) {
       return false;
@@ -1546,6 +1556,9 @@ bool CommonPjRtClient::ShouldDoDirectTransfer(
   if (primitive_util::IsSubByteNonPredType(shape.element_type())) {
     return false;
   }
+  if (!shape.layout().bit_planes().empty()) {
+    return false;
+  }
   if (!shape.layout().tiles().empty()) {
     if (primitive_util::ByteWidth(shape.element_type()) > 4) {
       return false;
@@ -1591,6 +1604,12 @@ absl::Status CommonPjRtClient::Delinearize(absl::Span<const uint8_t> input_data,
         *tiled_linearizer_options_));
     raw_client()->RecordLinearizeBytes(/*is_h2d=*/false, input_data.size());
     return absl::OkStatus();
+  }
+
+  if (shape.has_layout() && !shape.layout().bit_planes().empty()) {
+    return absl::UnimplementedError(
+        absl::StrFormat("Delinearize does not support bit-plane layout: %s",
+                        shape.ToString(/*print_layout=*/true)));
   }
 
   xla::Layout literal_layout;
@@ -5004,13 +5023,15 @@ CommonPjRtBufferImpl::CopyToMemorySpace(PjRtMemorySpace* dst_memory_space) {
     if (!primitive_util::IsSubByteNonPredType(dest_shape.element_type())) {
       if (client()->IsOnCpu(dst_memory_space) &&
           xla::LayoutUtil::IsMonotonicWithDim0Major(dest_shape.layout()) &&
-          dest_shape.layout().tiles().empty()) {
+          dest_shape.layout().tiles().empty() &&
+          dest_shape.layout().bit_planes().empty()) {
         return CopyToCpuMemorySpace(std::move(dest_shape), dst_memory_space);
       }
       if (client()->IsOnCpu(memory_space()) &&
           xla::LayoutUtil::IsMonotonicWithDim0Major(
               on_device_shape().layout()) &&
-          on_device_shape().layout().tiles().empty()) {
+          on_device_shape().layout().tiles().empty() &&
+          on_device_shape().layout().bit_planes().empty()) {
         return CopyFromCpuToMemorySpace(std::move(dest_shape),
                                         dst_memory_space);
       }
@@ -5066,13 +5087,15 @@ CommonPjRtBufferImpl::CopyToMemorySpace(PjRtBuffer* donated_dst) {
     if (!primitive_util::IsSubByteNonPredType(dest_shape.element_type())) {
       if (client()->IsOnCpu(dst_memory_space) &&
           xla::LayoutUtil::IsMonotonicWithDim0Major(dest_shape.layout()) &&
-          dest_shape.layout().tiles().empty()) {
+          dest_shape.layout().tiles().empty() &&
+          dest_shape.layout().bit_planes().empty()) {
         return CopyToCpuMemorySpace(std::move(dest_shape), dst_memory_space);
       }
       if (client()->IsOnCpu(memory_space()) &&
           xla::LayoutUtil::IsMonotonicWithDim0Major(
               on_device_shape().layout()) &&
-          on_device_shape().layout().tiles().empty()) {
+          on_device_shape().layout().tiles().empty() &&
+          on_device_shape().layout().bit_planes().empty()) {
         return CopyFromCpuToMemorySpace(std::move(dest_shape), dst_memory_space,
                                         donated_dst);
       }

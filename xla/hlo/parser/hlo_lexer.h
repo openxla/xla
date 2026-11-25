@@ -90,6 +90,7 @@ enum class TokKind {
   kString,         // "abcd\"\n"
   kInt,            // 42
   kDecimal,        // 4.2
+  kAt,             // @
 };
 
 std::string TokKindToString(TokKind kind);

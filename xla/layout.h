@@ -21,6 +21,7 @@ limitations under the License.
 #include <memory>
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/base/attributes.h"
@@ -28,6 +29,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "xla/printer.h"
@@ -119,6 +121,69 @@ class Tile {
 
 using TileVector = absl::InlinedVector<Tile, 2>;
 
+// Describes a bit-plane within a split-element layout. Refer to
+// g3doc/third_party/xla/docs/tiled_layout.md for details.
+class BitPlane {
+ public:
+  BitPlane() = default;
+  BitPlane(int64_t bit_offset, int64_t bit_width,
+           absl::Span<const Tile> tiles = {})
+      : bit_offset_(bit_offset),
+        bit_width_(bit_width),
+        tiles_(tiles.begin(), tiles.end()) {}
+
+  static absl::StatusOr<BitPlane> FromProto(const BitPlaneProto& proto);
+
+  void ToProto(BitPlaneProto& proto) const;
+  BitPlaneProto ToProto() const;
+
+  bool operator==(const BitPlane& other) const {
+    return bit_offset_ == other.bit_offset_ && bit_width_ == other.bit_width_ &&
+           tiles() == other.tiles();
+  }
+  bool operator!=(const BitPlane& other) const { return !(*this == other); }
+
+  void Print(Printer* printer, bool print_bit_offset = true) const;
+  std::string ToString() const;
+
+  int64_t bit_offset() const { return bit_offset_; }
+  BitPlane& set_bit_offset(int64_t value) {
+    bit_offset_ = value;
+    return *this;
+  }
+
+  int64_t bit_width() const { return bit_width_; }
+  BitPlane& set_bit_width(int64_t value) {
+    bit_width_ = value;
+    return *this;
+  }
+
+  const Tile& tiles(int index) const { return tiles_[index]; }
+  Tile* mutable_tiles(int index) { return &tiles_[index]; }
+  Tile* add_tiles() {
+    tiles_.push_back(Tile());
+    return &tiles_.back();
+  }
+  BitPlane& clear_tiles() {
+    tiles_.clear();
+    return *this;
+  }
+  absl::Span<const Tile> tiles() const { return tiles_; }
+  TileVector* mutable_tiles() { return &tiles_; }
+
+  template <typename H>
+  friend H AbslHashValue(H h, const BitPlane& p) {
+    return H::combine(std::move(h), p.bit_offset_, p.bit_width_, p.tiles_);
+  }
+
+ private:
+  int64_t bit_offset_ = 0;
+  int64_t bit_width_ = 0;
+  TileVector tiles_;
+};
+
+using BitPlaneVector = absl::InlinedVector<BitPlane, 2>;
+
 // Describes how data is split between different memories. Each SplitConfig
 // object represents a split in one dimension. Each SplitConfig is associated
 // with a vector of split indices which point to the points in the iteration
@@ -209,7 +274,8 @@ class Layout {
                   int64_t element_size_in_bits = 0, int64_t memory_space = 0,
                   absl::Span<const SplitConfig> split_configs = {},
                   std::unique_ptr<Shape> physical_shape = nullptr,
-                  int64_t dynamic_shape_metadata_prefix_bytes = 0);
+                  int64_t dynamic_shape_metadata_prefix_bytes = 0,
+                  absl::Span<const BitPlane> bit_planes = {});
 
   Layout& operator=(const Layout& other);
   Layout& operator=(Layout&& other);
@@ -247,6 +313,8 @@ class Layout {
   //     #(type): The type of the indices.
   //     *(type): The type of the pointers.
   //     E(n): The element size in bits.
+  //     BP(...)...(...): Bit-plane decomposition for split-element layouts.
+  //                      Each (...) is "(bit_width[@bit_offset][:tiles])".
   //     S(n): The numeric value of thememory space. See the definition of
   //           Layout::memory_space() for details.
   //     SC(...)...(...): List of split configs, separated by nothing. Each
@@ -275,6 +343,12 @@ class Layout {
 
     Equal& IgnoreTiles() {
       ignore_tiles_ = true;
+      ignore_bit_planes_ = true;
+      return *this;
+    }
+
+    Equal& IgnoreBitPlanes() {
+      ignore_bit_planes_ = true;
       return *this;
     }
 
@@ -315,6 +389,7 @@ class Layout {
 
     Equal& MinorToMajorOnly() {
       return IgnoreTiles()
+          .IgnoreBitPlanes()
           .IgnoreTailPaddingAlignmentInElements()
           .IgnoreElementSize()
           .IgnoreIndexPrimitiveType()
@@ -326,6 +401,7 @@ class Layout {
 
    private:
     bool ignore_tiles_ = false;
+    bool ignore_bit_planes_ = false;
     bool ignore_tail_padding_alignment_in_elements_ = false;
     bool ignore_element_size_ = false;
     bool ignore_index_primitive_type_ = false;
@@ -437,13 +513,31 @@ class Layout {
   absl::Span<const SplitConfig> split_configs() const { return split_configs_; }
 
   // Methods for accessing the physical shape.
-  bool has_physical_shape() const { return physical_shape_ != nullptr; }
+  bool has_physical_shape() const {
+    return cold_data_ != nullptr && cold_data_->physical_shape != nullptr;
+  }
   const Shape& physical_shape() const {
     CHECK(has_physical_shape());
-    return *physical_shape_;
+    return *cold_data_->physical_shape;
   }
   Shape* mutable_physical_shape();
   void clear_physical_shape();
+
+  // Methods for accessing bit-planes.
+  const BitPlane& bit_planes(int index) const {
+    CHECK(cold_data_ != nullptr);
+    return cold_data_->bit_planes[index];
+  }
+  BitPlane* mutable_bit_planes(int index);
+  BitPlane* add_bit_planes();
+  Layout& add_bit_planes(const BitPlane& bit_plane);
+  Layout& clear_bit_planes();
+  absl::Span<const BitPlane> bit_planes() const {
+    return cold_data_ != nullptr
+               ? absl::Span<const BitPlane>(cold_data_->bit_planes)
+               : absl::Span<const BitPlane>();
+  }
+  BitPlaneVector* mutable_bit_planes();
 
   int64_t dynamic_shape_metadata_prefix_bytes() const {
     return dynamic_shape_metadata_prefix_bytes_;
@@ -462,13 +556,21 @@ class Layout {
 
   template <typename H>
   friend H AbslHashValue(H h, const Layout& l) {
-    return H::combine(std::move(h), l.minor_to_major_, l.tiles_,
+    return H::combine(std::move(h), l.minor_to_major_, l.tiles_, l.bit_planes(),
                       l.element_size_in_bits_, l.index_primitive_type_,
                       l.pointer_primitive_type_, l.memory_space_,
                       l.split_configs_, l.tail_padding_alignment_in_elements_);
   }
 
  private:
+  struct ColdData {
+    ColdData();
+    ~ColdData();
+    // The physical on-device shape used to represent a sparse array.
+    std::unique_ptr<Shape> physical_shape;
+    // Bit-plane decomposition for split-element layouts.
+    BitPlaneVector bit_planes;
+  };
   // The primitive type to use for sparse array indices and pointers.  Each of
   // these must either be INVALID, or an unsigned integer type.
   PrimitiveType index_primitive_type_ : 8;
@@ -512,8 +614,9 @@ class Layout {
   // Invariant: this must be >= 1.
   int64_t tail_padding_alignment_in_elements_ = 1;
 
-  // The physical on-device shape used to represent a sparse array.
-  std::unique_ptr<Shape> physical_shape_;
+  // Cold storage for rarely populated fields (`physical_shape` and
+  // `bit_planes`), keeping `sizeof(Layout)` unchanged in the common case.
+  std::unique_ptr<ColdData> cold_data_;
 
   // The dynamic shape metadata size in bytes in front of the shape data. The
   // field may be non-zero for a static shape whose associated buffer is for a
@@ -522,6 +625,7 @@ class Layout {
 };
 
 std::ostream& operator<<(std::ostream& out, const Tile& Tile);
+std::ostream& operator<<(std::ostream& out, const BitPlane& bit_plane);
 std::ostream& operator<<(std::ostream& out, const Layout& layout);
 
 }  // namespace xla

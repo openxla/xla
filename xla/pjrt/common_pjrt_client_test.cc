@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -43,19 +44,29 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_raw_client.h"
 #include "xla/pjrt/c/pjrt_c_api_status_utils.h"
+#include "xla/pjrt/device_event.h"
+#include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_common.h"
+#include "xla/pjrt/pjrt_compiler.h"
+#include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
+#include "xla/pjrt/plugin/xla_cpu/cpu_device_description.h"
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/pjrt/raw_pjrt_client.h"
 #include "xla/primitive_util.h"
+#include "xla/runtime/chip_id.h"
 #include "xla/runtime/device_id.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -66,6 +77,7 @@ namespace {
 using ::absl_testing::IsOk;
 using ::absl_testing::StatusIs;
 using ::testing::ElementsAre;
+using ::testing::HasSubstr;
 
 TEST(TransferIncarnationsTest, EmptySnapshotReturnsNullopt) {
   ASSERT_OK_AND_ASSIGN(auto transfer_incarnations,
@@ -626,6 +638,222 @@ TEST(PjRtFulfillAliasRawBufferCallbackTest, EmptyCallableProducesNullHandle) {
                 absl::AnyInvocable<absl::Status(
                     absl::StatusOr<PjRtRawBufferRef>) &&>{}),
             nullptr);
+}
+
+class DelegatingPjRtRawClient : public PjRtRawClient {
+ public:
+  explicit DelegatingPjRtRawClient(PjRtRawClientInterface* inner)
+      : inner_(inner) {}
+
+  AsyncWorkRunner* async_work_runner() const override {
+    return inner_->async_work_runner();
+  }
+  absl::StatusOr<PjRtRawBufferRef> AllocateRawBuffer(
+      PJRT_Memory* memory_space, size_t on_device_bytes_count,
+      bool retry_on_oom, PjRtDeviceEventRef allocate_after) override {
+    return inner_->AllocateRawBuffer(memory_space, on_device_bytes_count,
+                                     retry_on_oom, std::move(allocate_after));
+  }
+  absl::StatusOr<std::pair<PjRtDeviceEventPromiseRef, PjRtDeviceEventRef>>
+  CreateLinkedEventPromise(LocalDeviceId local_device_id, int memory_kind_id,
+                           absl::string_view debug_info) override {
+    return inner_->CreateLinkedEventPromise(local_device_id, memory_kind_id,
+                                            debug_info);
+  }
+  absl::StatusOr<PjRtDeviceEventRef> CreateDeviceEvent(
+      LocalDeviceId local_device_id, int memory_kind_id,
+      Future<> dependency) override {
+    return inner_->CreateDeviceEvent(local_device_id, memory_kind_id,
+                                     std::move(dependency));
+  }
+  absl::StatusOr<PjRtRawBufferRef> ImportForeignMemory(
+      PJRT_Memory* memory_space, void* device_ptr, size_t size,
+      PjRtOnceCallbackRef on_delete_callback, bool is_mutable) override {
+    return inner_->ImportForeignMemory(memory_space, device_ptr, size,
+                                       std::move(on_delete_callback),
+                                       is_mutable);
+  }
+  tsl::AsyncValueRef<PjRtExecutable> ToAsyncExecutable(
+      std::shared_ptr<PjRtExecutable> executable) const override {
+    return inner_->ToAsyncExecutable(std::move(executable));
+  }
+  std::pair<tsl::AsyncValueRef<PjRtExecutable>,
+            PjRtFulfillAsyncExecutableCallback>
+  CreateLinkedExecutablePromise() const override {
+    return inner_->CreateLinkedExecutablePromise();
+  }
+  absl::StatusOr<tsl::RCReference<PjRtExecutableLoadState>> MakeLoadState(
+      const LoadOptions& load_options) override {
+    return inner_->MakeLoadState(load_options);
+  }
+
+ private:
+  PjRtRawClientInterface* inner_;
+};
+
+class WholeTensorBitPlaneTopology : public PjRtTopologyDescription {
+ public:
+  explicit WholeTensorBitPlaneTopology(int bit_plane_memory_kind_id)
+      : bit_plane_memory_kind_id_(bit_plane_memory_kind_id) {}
+
+  PjRtPlatformId platform_id() const override { return CudaId(); }
+  absl::string_view platform_name() const override { return CudaName(); }
+  absl::string_view platform_version() const override { return "test"; }
+  std::vector<std::unique_ptr<const PjRtDeviceDescription>> DeviceDescriptions()
+      const override {
+    return {};
+  }
+  absl::StatusOr<uint64_t> Fingerprint() const override { return 0; }
+  const absl::flat_hash_map<std::string, PjRtDeviceAttribute>& Attributes()
+      const override {
+    return attributes_;
+  }
+  bool IsMemorySpaceOnCpu(int memory_space_kind_id) const override {
+    return memory_space_kind_id == UnpinnedHostMemorySpace::kKindId;
+  }
+  absl::StatusOr<Layout> GetDefaultLayout(
+      PrimitiveType element_type,
+      absl::Span<const int64_t> dims) const override {
+    return LayoutUtil::GetDefaultLayoutForShape(
+        ShapeUtil::MakeShape(element_type, dims));
+  }
+  absl::StatusOr<Shape> MakeCanonicalShapeForMemorySpace(
+      int memory_space_kind_id, Shape shape,
+      const Layout* layout) const override {
+    if (layout != nullptr) {
+      *shape.mutable_layout() = *layout;
+      return shape;
+    }
+    LayoutUtil::SetToDefaultLayout(&shape);
+    if (memory_space_kind_id == bit_plane_memory_kind_id_) {
+      shape.mutable_layout()->add_bit_planes(BitPlane(0, 32, {Tile({8, 128})}));
+      shape.mutable_layout()->add_bit_planes(
+          BitPlane(32, 32, {Tile({8, 128})}));
+    }
+    return shape;
+  }
+  absl::StatusOr<int> GetMemorySpaceKindForShape(
+      const Shape& shape) const override {
+    return CpuDeviceMemorySpace::kKindId;
+  }
+
+ private:
+  int bit_plane_memory_kind_id_;
+  absl::flat_hash_map<std::string, PjRtDeviceAttribute> attributes_;
+};
+
+struct TestBitPlaneClientBundle {
+  std::unique_ptr<PjRtClient> backing_cpu_client;
+  std::unique_ptr<CommonPjRtClient> client;
+  PjRtMemorySpace* device_space = nullptr;
+  PjRtMemorySpace* host_space = nullptr;
+};
+
+absl::StatusOr<TestBitPlaneClientBundle> MakeTestBitPlaneClient(
+    int bit_plane_memory_kind_id) {
+  TestBitPlaneClientBundle bundle;
+  ABSL_ASSIGN_OR_RETURN(bundle.backing_cpu_client,
+                        GetXlaPjrtCpuClient(CpuClientOptions{}));
+  auto* backing_common =
+      absl::down_cast<CommonPjRtClient*>(bundle.backing_cpu_client.get());
+  auto topology =
+      std::make_shared<WholeTensorBitPlaneTopology>(bit_plane_memory_kind_id);
+  PjRtPluginAttributes attrs;
+  attrs.pjrt_c_api_major_version = 0;
+  attrs.pjrt_c_api_minor_version = 0;
+  attrs.attributes["supports_predetermined_error"] = false;
+  bundle.client = std::make_unique<CommonPjRtClient>(
+      CudaId(), std::string(CudaName()), "test", /*process_index=*/0, topology,
+      std::make_unique<DelegatingPjRtRawClient>(backing_common->raw_client()),
+      /*kv_store=*/nullptr, attrs);
+
+  auto device = std::make_unique<CommonPjRtDevice>(
+      std::make_unique<CpuDeviceDescription>(0, 0), LocalDeviceId(0),
+      LocalChipId(0), /*is_addressable=*/true, bundle.client.get());
+  auto dev_space = std::make_unique<CpuDeviceMemorySpace>(0, device.get());
+  auto host_space = std::make_unique<UnpinnedHostMemorySpace>(1, device.get());
+  bundle.device_space = dev_space.get();
+  bundle.host_space = host_space.get();
+  device->AttachMemorySpace(bundle.device_space, /*is_default=*/true);
+  device->AttachMemorySpace(bundle.host_space);
+
+  std::vector<std::unique_ptr<PjRtDevice>> devices;
+  devices.push_back(std::move(device));
+  std::vector<std::unique_ptr<PjRtMemorySpace>> memory_spaces;
+  memory_spaces.push_back(std::move(dev_space));
+  memory_spaces.push_back(std::move(host_space));
+  bundle.client->AttachDevices(std::move(devices), std::move(memory_spaces));
+  return bundle;
+}
+
+TEST(CommonPjRtClientCopyToMemorySpaceTest,
+     WholeTensorBitPlanesBypassCpuRowMajorShortcuts) {
+  const Shape s64_plain = ShapeUtil::MakeShapeWithDenseLayout(
+      S64, {2, 2}, /*minor_to_major=*/{1, 0});
+  const Shape s64_whole_tensor_bp = ShapeUtil::MakeShapeWithDenseLayout(
+      S64, {2, 2}, /*minor_to_major=*/{1, 0}, /*tiles=*/{},
+      /*tail_padding_alignment_in_elements=*/1, /*element_size_in_bits=*/0,
+      /*memory_space=*/0, /*split_configs=*/{},
+      {BitPlane(0, 32, {Tile({8, 128})}), BitPlane(32, 32, {Tile({8, 128})})});
+
+  // 1. CopyToCpuMemorySpace gates (non-donated and donated_dst overloads):
+  // destination is on CPU with whole-tensor bit_planes (empty outer tiles).
+  {
+    ASSERT_OK_AND_ASSIGN(
+        TestBitPlaneClientBundle bundle,
+        MakeTestBitPlaneClient(UnpinnedHostMemorySpace::kKindId));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> src_buf,
+                         bundle.client->CreateUninitializedBuffer(
+                             s64_plain, bundle.device_space));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> copied,
+                         src_buf->CopyToMemorySpace(bundle.host_space));
+    EXPECT_THAT(copied->GetReadyFuture().Await(),
+                StatusIs(absl::StatusCode::kUnimplemented,
+                         HasSubstr("Linearize does not support bit-plane")));
+
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> donated_dst,
+                         bundle.client->CreateUninitializedBuffer(
+                             s64_whole_tensor_bp, bundle.host_space));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> copied_donated,
+                         src_buf->CopyToMemorySpace(donated_dst.get()));
+    EXPECT_THAT(copied_donated->GetReadyFuture().Await(),
+                StatusIs(absl::StatusCode::kUnimplemented,
+                         HasSubstr("Linearize does not support bit-plane")));
+  }
+
+  // 2. CopyFromCpuToMemorySpace gates (non-donated and donated_dst overloads):
+  // source is on CPU with whole-tensor bit_planes (empty outer tiles).
+  {
+    ASSERT_OK_AND_ASSIGN(
+        TestBitPlaneClientBundle plain_dst_bundle,
+        MakeTestBitPlaneClient(/*bit_plane_memory_kind_id=*/-1));
+    ASSERT_OK_AND_ASSIGN(
+        PjRtRawBufferRef raw_src,
+        plain_dst_bundle.client->AllocateRawBuffer(
+            plain_dst_bundle.host_space,
+            static_cast<size_t>(ShapeUtil::ByteSizeOf(s64_whole_tensor_bp)),
+            /*retry_on_oom=*/false, {}));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> src_buf,
+                         plain_dst_bundle.client->DefineBuffer(
+                             s64_whole_tensor_bp, plain_dst_bundle.host_space,
+                             std::move(raw_src), {}));
+
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PjRtBuffer> copied,
+        src_buf->CopyToMemorySpace(plain_dst_bundle.device_space));
+    EXPECT_THAT(copied->GetReadyFuture().Await(),
+                StatusIs(absl::StatusCode::kUnimplemented,
+                         HasSubstr("Delinearize does not support bit-plane")));
+
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> donated_dst,
+                         plain_dst_bundle.client->CreateUninitializedBuffer(
+                             s64_plain, plain_dst_bundle.device_space));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> copied_donated,
+                         src_buf->CopyToMemorySpace(donated_dst.get()));
+    EXPECT_THAT(copied_donated->GetReadyFuture().Await(),
+                StatusIs(absl::StatusCode::kUnimplemented,
+                         HasSubstr("Delinearize does not support bit-plane")));
+  }
 }
 
 }  // namespace

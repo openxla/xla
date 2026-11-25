@@ -305,6 +305,13 @@ bool HasMatchDimensionTile(const Shape& shape) {
       return true;
     }
   }
+  for (const BitPlane& plane : shape.layout().bit_planes()) {
+    for (const Tile& tile : plane.tiles()) {
+      if (absl::c_linear_search(tile.dimensions(), Tile::kMatchDimension)) {
+        return true;
+      }
+    }
+  }
   return false;
 }
 
@@ -313,6 +320,10 @@ bool HasMatchDimensionTile(const Shape& shape) {
 bool TransposeIsBitcast(const HloInstruction* transpose) {
   CHECK_EQ(HloOpcode::kTranspose, transpose->opcode());
   const HloInstruction* operand = transpose->operand(0);
+  if (!operand->shape().layout().bit_planes().empty() ||
+      !transpose->shape().layout().bit_planes().empty()) {
+    return false;
+  }
   if (!ShapeUtil::TransposeIsBitcast(operand->shape(), transpose->shape(),
                                      transpose->dimensions())) {
     return false;
@@ -356,6 +367,10 @@ PrecisionConfig SwapOperandsInDotPrecisionConfig(PrecisionConfig config) {
 bool ValidateTilingOfBitcast(
     const Shape& bitcast_shape, const Shape& op_shape,
     const std::vector<std::vector<int64_t>>& operand_map) {
+  if (!op_shape.layout().bit_planes().empty() ||
+      !bitcast_shape.layout().bit_planes().empty()) {
+    return false;
+  }
   if (op_shape.layout().tiles().empty() ||
       bitcast_shape.layout().tiles().empty()) {
     return true;
@@ -1557,7 +1572,8 @@ absl::Status AlgebraicSimplifierVisitor::HandleBitcast(
 
   auto not_tiled = [](const HloInstruction& instr) {
     return !instr.shape().has_layout() ||
-           instr.shape().layout().tiles().empty();
+           (instr.shape().layout().tiles().empty() &&
+            instr.shape().layout().bit_planes().empty());
   };
 
   // Simplify bitcast(unary_elementwise(bitcast(x))) to
@@ -1621,8 +1637,11 @@ absl::Status AlgebraicSimplifierVisitor::HandleBitcast(
   if (bitcast->opcode() == HloOpcode::kBitcast &&
       bitcast->operand(0)->opcode() == HloOpcode::kBroadcast) {
     // Make sure the bitcast and the broadcast have the same tiling.
-    bool enable_broadcast = bitcast->operand(0)->shape().layout().tiles() ==
-                            bitcast->shape().layout().tiles();
+    bool enable_broadcast =
+        bitcast->operand(0)->shape().layout().tiles() ==
+            bitcast->shape().layout().tiles() &&
+        bitcast->operand(0)->shape().layout().bit_planes().empty() &&
+        bitcast->shape().layout().bit_planes().empty();
     if (enable_broadcast) {
       // DeduceTransposeDimensionsForBitcast() checks whether the bitcast is a
       // transpose and returns the dimensions attribute if it is.
@@ -1911,8 +1930,13 @@ absl::Status AlgebraicSimplifierVisitor::HandleBitcastConvert(
   if (replaced) {
     return absl::OkStatus();
   }
+  const bool has_bit_planes =
+      (operand->shape().has_layout() &&
+       !operand->shape().layout().bit_planes().empty()) ||
+      (bitcast->shape().has_layout() &&
+       !bitcast->shape().layout().bit_planes().empty());
   if (options_.is_layout_sensitive() &&
-      options_.rewrite_no_op_bitcast_convert_to_bitcast()) {
+      options_.rewrite_no_op_bitcast_convert_to_bitcast() && !has_bit_planes) {
     // Equal shape ignoring element type implies same bitwidth, as for
     // different bitwidth shape inference would yield a different shape for
     // the output. A bitcast-convert with same shape but different bitwidth
@@ -1992,10 +2016,13 @@ absl::Status AlgebraicSimplifierVisitor::HandleCopy(HloInstruction* copy) {
       copy->operand(0)->user_count() == 1 &&
       ShapeUtil::ReshapeIsBitcast(copy->operand(0)->shape(), copy->shape()) &&
       (!options_.is_layout_sensitive() ||
-       (!HasMatchDimensionTile(copy->operand(0)->shape()) &&
-        !HasMatchDimensionTile(copy->shape())) ||
-       absl::c_equal(copy->operand(0)->shape().layout().tiles(),
-                     copy->shape().layout().tiles()))) {
+       (copy->operand(0)->shape().layout().bit_planes().empty() &&
+        copy->shape().layout().bit_planes().empty() &&
+        copy->operand(0)->operand(0)->shape().layout().bit_planes().empty() &&
+        ((!HasMatchDimensionTile(copy->operand(0)->shape()) &&
+          !HasMatchDimensionTile(copy->shape())) ||
+         absl::c_equal(copy->operand(0)->shape().layout().tiles(),
+                       copy->shape().layout().tiles()))))) {
     return ReplaceWithNewInstruction(
         copy,
         copy->operand(0)->CloneWithNewOperands(

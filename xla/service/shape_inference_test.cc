@@ -43,6 +43,8 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/test_helpers.h"
+#include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -6699,6 +6701,31 @@ TEST_F(ShapeInferenceTest, MulhiRequiresIntegralType) {
       absl_testing::StatusIs(
           absl::StatusCode::kInvalidArgument,
           HasSubstr("Expected integral type in argument to mulhi operation")));
+}
+
+TEST_F(ShapeInferenceTest, InferBitcastConvertClearsBitPlanes) {
+  ASSERT_OK_AND_ASSIGN(
+      Shape f6_shape,
+      ShapeUtil::MakeValidatedShapeWithDenseLayout(
+          F6E2M3FN, {16, 128}, {1, 0}, {Tile({16, 128})}, 1, 0, 0, {},
+          {BitPlane(0, 4, {Tile({8, 1})}), BitPlane(4, 2, {Tile({16, 1})})}));
+  ASSERT_OK_AND_ASSIGN(Shape f6_to_u8,
+                       ShapeInference::InferBitcastConvertShape(f6_shape, U8));
+  EXPECT_THAT(LayoutUtil::ValidateLayoutInShape(f6_to_u8),
+              absl_testing::IsOk());
+  EXPECT_TRUE(f6_to_u8.layout().bit_planes().empty());
+
+  ASSERT_OK_AND_ASSIGN(Shape s64_bp,
+                       ShapeUtil::MakeValidatedShapeWithDenseLayout(
+                           S64, {16, 128}, {1, 0}, {}, 1, 0, 0, {},
+                           {BitPlane(0, 32, {Tile({8, 128})}),
+                            BitPlane(32, 32, {Tile({8, 128})})}));
+  ASSERT_OK_AND_ASSIGN(Shape s64_to_s32,
+                       ShapeInference::InferBitcastConvertShape(s64_bp, S32));
+  EXPECT_THAT(LayoutUtil::ValidateLayoutInShape(s64_to_s32),
+              absl_testing::IsOk());
+  EXPECT_TRUE(s64_to_s32.layout().bit_planes().empty());
+  EXPECT_EQ(ShapeUtil::ArraySize(s64_to_s32), 16 * 128 * 2 * sizeof(int32_t));
 }
 
 }  // namespace

@@ -236,5 +236,17 @@ TEST(PrimitiveUtilTest, ByteWidthTypeSwitch) {
   }
 }
 
+TEST(PrimitiveUtilTest, LogicalBitWidth) {
+  EXPECT_EQ(primitive_util::BitWidth(F6E2M3FN), 8);
+  EXPECT_EQ(primitive_util::BitWidth(F6E3M2FN), 8);
+  EXPECT_EQ(primitive_util::LogicalBitWidth(F6E2M3FN), 6);
+  EXPECT_EQ(primitive_util::LogicalBitWidth(F6E3M2FN), 6);
+  EXPECT_EQ(primitive_util::LogicalBitWidth(F4E2M1FN), 4);
+  EXPECT_EQ(primitive_util::LogicalBitWidth(PRED), 1);
+  EXPECT_EQ(primitive_util::LogicalBitWidth(U4), 4);
+  EXPECT_EQ(primitive_util::LogicalBitWidth(F32), 32);
+  EXPECT_EQ(primitive_util::LogicalBitWidth(S64), 64);
+}
+
 }  // namespace
 }  // namespace xla
