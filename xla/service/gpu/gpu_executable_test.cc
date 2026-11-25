@@ -46,6 +46,7 @@ limitations under the License.
 #include "tsl/platform/path.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_cliques.h"
 #include "xla/backends/gpu/collectives/loopback_collectives.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
@@ -1957,6 +1958,9 @@ TEST_F(GpuExecutableTest,
                                /*computation_count=*/1);
   device_assn.FillIota(0);
   LoopbackCollectives loopback_collectives;
+  // Acquired cliques cache raw pointers to stack-local `executors`, so clear
+  // them before `executors` and `loopback_collectives` go out of scope.
+  absl::Cleanup destroy_cliques = [] { internal::DestroyAcquiredCliques(); };
   GpuExecutableRunOptions gpu_opts;
   gpu_opts.set_collectives(&loopback_collectives);
   FakeDeviceAddressAllocator allocator(platform);
