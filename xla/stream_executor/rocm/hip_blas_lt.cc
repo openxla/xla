@@ -992,6 +992,7 @@ auto BlasLt::GroupedMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
   hipblasLtHandle_t handle;
   {
     absl::MutexLock lock(blas_lt_.mu_);
+    TF_RET_CHECK(blas_lt_.handle_ != nullptr);
     TF_RET_CHECK(grouped_gemm_ != nullptr) << "Grouped GEMM is not initialized";
     grouped_gemm_->setMaxWorkspaceBytes(max_workspace_size);
     handle = blas_lt_.handle_.get();
