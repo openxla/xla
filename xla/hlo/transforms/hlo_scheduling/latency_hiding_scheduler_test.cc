@@ -19,6 +19,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
@@ -6820,6 +6821,204 @@ ENTRY entry {
   EXPECT_LT(GetIndex(seq, "ag0b_start"), GetIndex(seq, "other_start"));
   EXPECT_LT(GetIndex(seq, "other_start"), GetIndex(seq, "ag0b_done"));
   EXPECT_LT(GetIndex(seq, "ag0b_done"), GetIndex(seq, "other_done"));
+}
+
+TEST_F(LatencyHidingSchedulerTest, PrioritizeUnlockingOverlapComputeBottomUp) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule unlock_overlap_bottom_up, is_scheduled=true
+
+mid_comp {
+  fp0 = f32[16,256,256]{2,1,0} parameter(0)
+  ROOT fneg = f32[16,256,256]{2,1,0} negate(fp0)
+}
+
+ENTRY entry {
+  p0 = f32[16,64,256]{2,1,0} parameter(0)
+  p1 = f32[16,64,256]{2,1,0} parameter(1)
+  p2 = f32[8,256,256]{2,1,0} parameter(2)
+  p3 = f32[16,256,256]{2,1,0} parameter(3)
+  ag1_start = (f32[8,256,256]{2,1,0}, f32[16,256,256]{2,1,0})
+    all-gather-start(p2), replica_groups={{0,1}}, dimensions={0}
+  ag1_done = f32[16,256,256]{2,1,0} all-gather-done(ag1_start)
+  ag2_start = (f32[8,256,256]{2,1,0}, f32[16,256,256]{2,1,0})
+    all-gather-start(p2), replica_groups={{0,1}}, dimensions={0}
+  ag2_done = f32[16,256,256]{2,1,0} all-gather-done(ag2_start)
+  heavy_conv = f32[16,256,256]{2,1,0} convolution(p0, p1),
+    window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb
+  gate_unlock = f32[16,256,256]{2,1,0} add(heavy_conv, p3)
+  mid_fusion = f32[16,256,256]{2,1,0} fusion(p3), kind=kLoop, calls=mid_comp
+  gate_mid = f32[16,256,256]{2,1,0} multiply(mid_fusion, p3)
+  ROOT root = (f32[16,256,256]{2,1,0}, f32[16,256,256]{2,1,0},
+               f32[16,256,256]{2,1,0}, f32[16,256,256]{2,1,0})
+    tuple(ag1_done, ag2_done, gate_unlock, gate_mid)
+}
+)hlo";
+
+  auto run_and_measure = [&](SchedulerConfig cfg,
+                             LatencyHidingScheduler::SchedulerStatistics* stats)
+      -> absl::StatusOr<std::unique_ptr<HloModule>> {
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
+                          ParseHloText(kHlo));
+    auto sched_ctx = std::make_shared<const SchedulingContext>(
+        module.get(), std::make_unique<ApproximateLatencyEstimator>(),
+        std::make_unique<AsyncTracker>(cfg), &alias_info_, ShapeSizeBytes);
+    auto core = std::make_shared<DefaultSchedulerCore>(sched_ctx, cfg);
+    ABSL_RETURN_IF_ERROR(
+        LatencyHidingScheduler(sched_ctx, core).Run(module.get()).status());
+    ABSL_RETURN_IF_ERROR(module->schedule().Verify());
+    if (stats != nullptr) {
+      const HloComputation* entry = module->entry_computation();
+      *stats = LatencyHidingScheduler::LatencyHidingStatistics(
+          entry, module->schedule().sequence(entry).instructions(), sched_ctx);
+    }
+    return module;
+  };
+
+  SchedulerConfig base_cfg = GetDefaultSchedConfig();
+  base_cfg.all_gather_overlap_limit = 1;
+  base_cfg.aggressive_scheduling_policies = true;
+  EXPECT_FALSE(base_cfg.prioritize_unlocking_overlap_compute);
+
+  // Flag-off picks gate_mid first by original order, consuming both mid_fusion
+  // and heavy_conv under ag2 and leaving ag1 completely unhidden.
+  LatencyHidingScheduler::SchedulerStatistics stats_off;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> mod_off,
+                       run_and_measure(base_cfg, &stats_off));
+  const std::vector<HloInstruction*>& seq_off =
+      mod_off->schedule().sequence(mod_off->entry_computation()).instructions();
+  EXPECT_GT(GetIndex(seq_off, "mid_fusion"), GetIndex(seq_off, "ag1_done"));
+  EXPECT_LT(GetIndex(seq_off, "ag2_start"), GetIndex(seq_off, "heavy_conv"));
+  EXPECT_LT(GetIndex(seq_off, "mid_fusion"), GetIndex(seq_off, "ag2_done"));
+
+  // Flag-on picks gate_unlock first to unlock heavy_conv and hide ag2, freeing
+  // the all-gather resource so mid_fusion overlaps ag1.
+  SchedulerConfig on_cfg = base_cfg;
+  on_cfg.prioritize_unlocking_overlap_compute = true;
+  LatencyHidingScheduler::SchedulerStatistics stats_on;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> mod_on,
+                       run_and_measure(on_cfg, &stats_on));
+  const std::vector<HloInstruction*>& seq_on =
+      mod_on->schedule().sequence(mod_on->entry_computation()).instructions();
+  EXPECT_LT(GetIndex(seq_on, "ag2_start"), GetIndex(seq_on, "heavy_conv"));
+  EXPECT_LT(GetIndex(seq_on, "heavy_conv"), GetIndex(seq_on, "ag2_done"));
+  EXPECT_LT(GetIndex(seq_on, "ag1_start"), GetIndex(seq_on, "mid_fusion"));
+  EXPECT_LT(GetIndex(seq_on, "mid_fusion"), GetIndex(seq_on, "ag1_done"));
+  EXPECT_LE(stats_on.GetTotalWastedCycles() + 1000.0,
+            stats_off.GetTotalWastedCycles());
+
+  // With memory_usage well below memory_limit / 2, the tie-break activates.
+  SchedulerConfig low_pressure_cfg = on_cfg;
+  low_pressure_cfg.memory_limit = 512ULL * 1024 * 1024;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> mod_low_pressure,
+                       run_and_measure(low_pressure_cfg, /*stats=*/nullptr));
+  const std::vector<HloInstruction*>& seq_low_pressure =
+      mod_low_pressure->schedule()
+          .sequence(mod_low_pressure->entry_computation())
+          .instructions();
+  EXPECT_LT(GetIndex(seq_low_pressure, "ag1_start"),
+            GetIndex(seq_low_pressure, "mid_fusion"));
+  EXPECT_LT(GetIndex(seq_low_pressure, "mid_fusion"),
+            GetIndex(seq_low_pressure, "ag1_done"));
+
+  // Above memory_limit / 2 (root outputs alone hold 16 MiB > 4 MiB), the
+  // tie-break stays disabled and preserves the exact flag-off schedule.
+  SchedulerConfig high_pressure_off = base_cfg;
+  high_pressure_off.memory_limit = 8ULL * 1024 * 1024;
+  SchedulerConfig high_pressure_on = high_pressure_off;
+  high_pressure_on.prioritize_unlocking_overlap_compute = true;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> mod_hp_off,
+                       run_and_measure(high_pressure_off, /*stats=*/nullptr));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> mod_hp_on,
+                       run_and_measure(high_pressure_on, /*stats=*/nullptr));
+  const std::vector<HloInstruction*>& seq_hp_off =
+      mod_hp_off->schedule()
+          .sequence(mod_hp_off->entry_computation())
+          .instructions();
+  const std::vector<HloInstruction*>& seq_hp_on =
+      mod_hp_on->schedule()
+          .sequence(mod_hp_on->entry_computation())
+          .instructions();
+  ASSERT_EQ(seq_hp_off.size(), seq_hp_on.size());
+  for (size_t i = 0; i < seq_hp_off.size(); ++i) {
+    EXPECT_EQ(seq_hp_off.at(i)->name(), seq_hp_on.at(i)->name());
+  }
+}
+
+TEST_F(LatencyHidingSchedulerTest, PrioritizeUnlockingOverlapComputeTopDown) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule unlock_overlap_top_down, is_scheduled=true
+
+mid_comp {
+  fp0 = f32[16,256,256]{2,1,0} parameter(0)
+  ROOT fneg = f32[16,256,256]{2,1,0} negate(fp0)
+}
+
+ENTRY entry {
+  p0 = f32[16,64,256]{2,1,0} parameter(0)
+  p1 = f32[16,64,256]{2,1,0} parameter(1)
+  p2 = f32[8,256,256]{2,1,0} parameter(2)
+  p3 = f32[16,256,256]{2,1,0} parameter(3)
+  ag1_start = (f32[8,256,256]{2,1,0}, f32[16,256,256]{2,1,0})
+    all-gather-start(p2), replica_groups={{0,1}}, dimensions={0}
+  ag1_done = f32[16,256,256]{2,1,0} all-gather-done(ag1_start)
+  ag2_start = (f32[8,256,256]{2,1,0}, f32[16,256,256]{2,1,0})
+    all-gather-start(p2), replica_groups={{0,1}}, dimensions={0}
+  ag2_done = f32[16,256,256]{2,1,0} all-gather-done(ag2_start)
+  gate_mid = f32[16,256,256]{2,1,0} multiply(p3, p3)
+  mid_fusion = f32[16,256,256]{2,1,0} fusion(gate_mid), kind=kLoop, calls=mid_comp
+  gate_unlock = f32[16,64,256]{2,1,0} add(p0, p0)
+  heavy_conv = f32[16,256,256]{2,1,0} convolution(gate_unlock, p1),
+    window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb
+  ROOT root = (f32[16,256,256]{2,1,0}, f32[16,256,256]{2,1,0},
+               f32[16,256,256]{2,1,0}, f32[16,256,256]{2,1,0})
+    tuple(ag1_done, ag2_done, mid_fusion, heavy_conv)
+}
+)hlo";
+
+  auto run_and_measure = [&](bool enable_unlock,
+                             LatencyHidingScheduler::SchedulerStatistics* stats)
+      -> absl::StatusOr<std::unique_ptr<HloModule>> {
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
+                          ParseHloText(kHlo));
+    SchedulerConfig cfg = GetDefaultSchedConfig();
+    cfg.top_down_scheduling = true;
+    cfg.all_gather_overlap_limit = 1;
+    cfg.aggressive_scheduling_policies = true;
+    cfg.prioritize_unlocking_overlap_compute = enable_unlock;
+    auto sched_ctx = std::make_shared<const SchedulingContext>(
+        module.get(), std::make_unique<ApproximateLatencyEstimator>(),
+        std::make_unique<AsyncTracker>(cfg), &alias_info_, ShapeSizeBytes);
+    auto core = std::make_shared<DefaultSchedulerCore>(sched_ctx, cfg);
+    ABSL_RETURN_IF_ERROR(
+        LatencyHidingScheduler(sched_ctx, core).Run(module.get()).status());
+    ABSL_RETURN_IF_ERROR(module->schedule().Verify());
+    *stats = LatencyHidingScheduler::LatencyHidingStatistics(
+        module->entry_computation(),
+        module->schedule().sequence(module->entry_computation()).instructions(),
+        sched_ctx);
+    return module;
+  };
+
+  LatencyHidingScheduler::SchedulerStatistics stats_off;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> mod_off,
+                       run_and_measure(/*enable_unlock=*/false, &stats_off));
+  const std::vector<HloInstruction*>& seq_off =
+      mod_off->schedule().sequence(mod_off->entry_computation()).instructions();
+  EXPECT_LT(GetIndex(seq_off, "mid_fusion"), GetIndex(seq_off, "ag1_done"));
+  EXPECT_LT(GetIndex(seq_off, "heavy_conv"), GetIndex(seq_off, "ag1_done"));
+  EXPECT_LT(GetIndex(seq_off, "heavy_conv"), GetIndex(seq_off, "ag2_start"));
+
+  LatencyHidingScheduler::SchedulerStatistics stats_on;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> mod_on,
+                       run_and_measure(/*enable_unlock=*/true, &stats_on));
+  const std::vector<HloInstruction*>& seq_on =
+      mod_on->schedule().sequence(mod_on->entry_computation()).instructions();
+  EXPECT_LT(GetIndex(seq_on, "ag1_start"), GetIndex(seq_on, "heavy_conv"));
+  EXPECT_LT(GetIndex(seq_on, "heavy_conv"), GetIndex(seq_on, "ag1_done"));
+  EXPECT_LT(GetIndex(seq_on, "ag2_start"), GetIndex(seq_on, "mid_fusion"));
+  EXPECT_LT(GetIndex(seq_on, "mid_fusion"), GetIndex(seq_on, "ag2_done"));
+  EXPECT_LE(stats_on.GetTotalWastedCycles() + 1000.0,
+            stats_off.GetTotalWastedCycles());
 }
 
 }  // namespace
