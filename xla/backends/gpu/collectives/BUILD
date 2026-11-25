@@ -345,7 +345,9 @@ xla_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
-    ] + if_cuda_or_rocm_is_configured(["nccl_or_rccl_collectives"]),
+    ] + if_cuda_or_rocm_is_configured([
+        ":nccl_or_rccl_collectives",  # buildcleaner: keep
+    ]),
 )
 
 xla_test(

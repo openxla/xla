@@ -625,8 +625,8 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
     }
 
     std::shared_ptr<LockableGpuClique> published = emplaced.first->second;
-    LockableGpuClique::Lock lock = published->Acquire();
-    return OwnedCliqueLock{std::move(published), std::move(lock)};
+    LockableGpuClique::Lock clique_lock = published->Acquire();
+    return OwnedCliqueLock{std::move(published), std::move(clique_lock)};
   };
 
   // We include `run_id` to a rendezvous key to make sure that multiple
@@ -893,8 +893,8 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
     }
 
     std::shared_ptr<LockableGpuClique> published = emplaced.first->second;
-    LockableGpuClique::Lock lock = published->Acquire();
-    return OwnedCliqueLock{std::move(published), std::move(lock)};
+    LockableGpuClique::Lock clique_lock = published->Acquire();
+    return OwnedCliqueLock{std::move(published), std::move(clique_lock)};
   };
 
   // We include `run_id` to a rendezvous key to make sure that multiple
