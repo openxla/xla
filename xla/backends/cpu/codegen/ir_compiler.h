@@ -78,6 +78,11 @@ class IrCompiler : public llvm::orc::IRCompileLayer::IRCompiler {
 
     bool dfsan_enabled = false;
     std::vector<std::string> dfsan_abi_list_files;
+
+    // Relocation and code models for inferred target machines. When unset,
+    // `EngineBuilder`'s JIT defaults are used.
+    std::optional<llvm::Reloc::Model> reloc_model = std::nullopt;
+    std::optional<llvm::CodeModel::Model> code_model = std::nullopt;
   };
 
   // Compilation hooks for intercepting IR compilation stages.
@@ -95,18 +100,24 @@ class IrCompiler : public llvm::orc::IRCompileLayer::IRCompiler {
   IrCompiler(TargetMachineBuilder target_machine_builder, Options options,
              CompilationHooks hooks);
 
-  // Infers the `llvm::TargetMachine` for the targeted host.
+  // Infers the `llvm::TargetMachine` for the targeted host. When `reloc_model`
+  // or `code_model` is unset, `EngineBuilder`'s JIT defaults are used.
   static absl::StatusOr<std::unique_ptr<llvm::TargetMachine>>
-  InferTargetMachine(const llvm::TargetOptions& target_options,
-                     llvm::CodeGenOptLevel opt_level,
-                     const TargetMachineOptions& target_machine_options);
+  InferTargetMachine(
+      const llvm::TargetOptions& target_options,
+      llvm::CodeGenOptLevel opt_level,
+      const TargetMachineOptions& target_machine_options,
+      std::optional<llvm::Reloc::Model> reloc_model = std::nullopt,
+      std::optional<llvm::CodeModel::Model> code_model = std::nullopt);
 
   // Returns a target machine builder that uses `InferTargetMachine` defined
   // above to infer the target machine for the given options.
   static TargetMachineBuilder InferTargetMachineBuilder(
       const llvm::TargetOptions& target_options,
       llvm::CodeGenOptLevel opt_level,
-      const TargetMachineOptions& target_machine_options);
+      const TargetMachineOptions& target_machine_options,
+      std::optional<llvm::Reloc::Model> reloc_model = std::nullopt,
+      std::optional<llvm::CodeModel::Model> code_model = std::nullopt);
 
   // Compiles a `module` to an ObjectFile.
   llvm::Expected<std::unique_ptr<llvm::MemoryBuffer>> operator()(

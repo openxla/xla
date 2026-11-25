@@ -46,8 +46,11 @@ namespace xla::cpu {
 // done.
 class ContiguousSectionMemoryManager : public llvm::RTDyldMemoryManager {
  public:
+  // `extra_rw_data_size` is reserved on top of the read-write data size
+  // requested by RuntimeDyld, for allocations it doesn't account for.
   explicit ContiguousSectionMemoryManager(
-      llvm::SectionMemoryManager::MemoryMapper* mmapper);
+      llvm::SectionMemoryManager::MemoryMapper* mmapper,
+      uintptr_t extra_rw_data_size = 0);
   ~ContiguousSectionMemoryManager() override;
 
   bool needsToReserveAllocationSpace() override { return true; }
@@ -70,6 +73,7 @@ class ContiguousSectionMemoryManager : public llvm::RTDyldMemoryManager {
  private:
   llvm::SectionMemoryManager::MemoryMapper* mmapper_;
   bool mmapper_is_owned_;
+  uintptr_t extra_rw_data_size_;
 
   llvm::sys::MemoryBlock allocation_;
 

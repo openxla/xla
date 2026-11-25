@@ -17,23 +17,70 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <utility>
 
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "llvm/BinaryFormat/ELF.h"
 #include "llvm/ExecutionEngine/JITEventListener.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/Object/ObjectFile.h"
+#include "llvm/Object/SymbolicFile.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/TargetParser/Triple.h"
 #include "xla/backends/cpu/codegen/contiguous_section_memory_manager.h"
 #include "xla/backends/cpu/codegen/jit_memory_mapper.h"
 #include "xla/backends/cpu/codegen/object_buffer_identifier.h"
 
 namespace xla::cpu {
+
+// Workaround for an LLVM RuntimeDyld bug on x86_64 ELF PIC: external
+// R_X86_64_PLT32 calls use a GOT entry, but RuntimeDyld doesn't account for
+// them when reserving memory (`RuntimeDyldELF::relocationNeedsGot`).
+//
+// Returns an upper bound on the extra bytes needed.
+static uintptr_t EstimateUnaccountedGotSize(const llvm::MemoryBuffer& obj) {
+  llvm::Expected<std::unique_ptr<llvm::object::ObjectFile>> object_file =
+      llvm::object::ObjectFile::createObjectFile(obj.getMemBufferRef());
+  if (!object_file) {
+    llvm::consumeError(object_file.takeError());
+    return 0;
+  }
+  if (!(*object_file)->isELF() ||
+      (*object_file)->getArch() != llvm::Triple::x86_64) {
+    return 0;
+  }
+
+  uintptr_t num_entries = 0;
+  for (const llvm::object::SectionRef& section : (*object_file)->sections()) {
+    for (const llvm::object::RelocationRef& relocation :
+         section.relocations()) {
+      // This is only a problem for R_X86_64_PLT32 relocations.
+      if (relocation.getType() != llvm::ELF::R_X86_64_PLT32) {
+        continue;
+      }
+      llvm::object::symbol_iterator symbol = relocation.getSymbol();
+      if (symbol == (*object_file)->symbol_end()) {
+        continue;
+      }
+      llvm::Expected<uint32_t> flags = symbol->getFlags();
+      if (!flags) {
+        llvm::consumeError(flags.takeError());
+        ++num_entries;
+      } else if (*flags & llvm::object::SymbolRef::SF_Undefined) {
+        // Only symbols defined outside of the object need a GOT entry.
+        ++num_entries;
+      }
+    }
+  }
+  return num_entries * sizeof(uint64_t);
+}
 
 static std::unique_ptr<llvm::orc::RTDyldObjectLinkingLayer>
 CreateObjectLinkingLayer(llvm::orc::ExecutionSession& execution_session) {
@@ -42,7 +89,8 @@ CreateObjectLinkingLayer(llvm::orc::ExecutionSession& execution_session) {
         absl::string_view memory_region_name =
             ExtractMemoryRegionName(obj.getBufferIdentifier());
         return std::make_unique<ContiguousSectionMemoryManager>(
-            GetJitMemoryMapper(memory_region_name));
+            GetJitMemoryMapper(memory_region_name),
+            EstimateUnaccountedGotSize(obj));
       });
 }
 
