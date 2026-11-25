@@ -90,11 +90,11 @@ class SyclConvUtilsTest : public ::testing::Test {
 };
 
 TEST_F(SyclConvUtilsTest, RejectsEmptyWorkspace) {
-  EXPECT_THAT(CreateOneDnnConvPrimitive(pd_, stream_.get(),
-                                        OnednnConvBufferPointers{},
-                                        DeviceAddressBase()),
-              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
-                                     HasSubstr("needs a workspace of")));
+  EXPECT_THAT(
+      CreateOneDnnConvPrimitive(pd_, stream_.get(), OnednnConvBufferPointers{},
+                                DeviceAddressBase()),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             HasSubstr("needs a workspace of")));
 }
 
 TEST_F(SyclConvUtilsTest, RejectsUndersizedWorkspace) {
@@ -131,13 +131,12 @@ TEST_F(SyclConvUtilsTest, AcceptsWorkspaceOfRequiredSize) {
   ASSERT_FALSE(input.is_null() || filter.is_null() || output.is_null() ||
                workspace.is_null());
 
-  EXPECT_THAT(
-      CreateOneDnnConvPrimitive(
-          pd_, stream_.get(),
-          OnednnConvBufferPointers{input.opaque(), filter.opaque(),
-                                   output.opaque()},
-          workspace),
-      absl_testing::IsOk());
+  EXPECT_THAT(CreateOneDnnConvPrimitive(
+                  pd_, stream_.get(),
+                  OnednnConvBufferPointers{input.opaque(), filter.opaque(),
+                                           output.opaque()},
+                  workspace),
+              absl_testing::IsOk());
 
   executor_->Deallocate(&input);
   executor_->Deallocate(&filter);

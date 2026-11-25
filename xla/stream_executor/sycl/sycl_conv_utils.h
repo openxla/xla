@@ -169,10 +169,10 @@ absl::StatusOr<OneDnnConvPrimitiveDesc> CreateOneDnnConvPrimitiveDesc(
     const OneDnnConvConfig& config, Stream* stream);
 
 // Returns the workspace size, in bytes, that a convolution with this config
-// needs at run time. Used by the compiler, which has no stream, so the
-// primitive descriptor is built on the default oneDNN GPU engine.
+// needs at run time on the given device. Used by the compiler, which has no
+// stream, so the primitive descriptor is built on that device's engine.
 absl::StatusOr<size_t> ComputeOneDnnConvWorkspaceSize(
-    const OneDnnConvConfig& config);
+    const OneDnnConvConfig& config, int device_ordinal);
 
 absl::Status DoOneDnnConv(const OneDnnConvPrimitive& onednn_primitive);
 

@@ -29,11 +29,12 @@ namespace gpu {
 // Resizes the workspace of cuBLASLt matmul and DNN convolution custom calls to
 // what the oneDNN primitive behind them needs at run time. For matmul that is
 // the scratchpad; for convolution it is the scratchpad plus the pre-packed
-// filter. Added only by IntelGpuCompiler, after layout assignment.
+// filter. Added only by IntelGpuCompiler, after layout assignment. The sizes
+// are computed for the device with the given ordinal.
 class OneDnnWorkspacePass : public HloModulePass {
  public:
-  explicit OneDnnWorkspacePass(se::GpuComputeCapability gpu_version)
-      : gpu_version_(gpu_version) {}
+  OneDnnWorkspacePass(se::GpuComputeCapability gpu_version, int device_ordinal)
+      : gpu_version_(gpu_version), device_ordinal_(device_ordinal) {}
 
   absl::string_view name() const override { return "onednn-workspace"; }
 
@@ -44,6 +45,7 @@ class OneDnnWorkspacePass : public HloModulePass {
 
  private:
   se::GpuComputeCapability gpu_version_;
+  int device_ordinal_;
 };
 
 }  // namespace gpu

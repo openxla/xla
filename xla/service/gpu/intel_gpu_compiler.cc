@@ -120,9 +120,14 @@ absl::Status IntelGpuCompiler::OptimizeHloPostLayoutAssignment(
 
   HloPassPipeline post_pipeline("Intel GPU post-layout_assignment",
                                 compilation_stats);
+  // A deviceless compile has no stream executor; size the workspaces for the
+  // first device then.
+  const int device_ordinal =
+      stream_exec != nullptr ? stream_exec->device_ordinal() : 0;
   post_pipeline.AddPass<OneDnnWorkspacePass>(
       gpu_topology.gpu_target_config()
-          .device_description.gpu_compute_capability());
+          .device_description.gpu_compute_capability(),
+      device_ordinal);
   // Clean up the tuples left behind by OneDnnWorkspacePass.
   post_pipeline.AddPass<TupleSimplifier>();
   post_pipeline.AddPass<HloDCE>();

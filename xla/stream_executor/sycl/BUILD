@@ -691,6 +691,7 @@ sycl_library(
         "oneapi-only",
     ],
     deps = [
+        ":sycl_gpu_runtime",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/tsl/mkl:onednn",
@@ -698,9 +699,14 @@ sycl_library(
         "//xla/tsl/platform:logging",
         "//xla/tsl/protobuf:dnn_proto_cc",
         "//xla/tsl/util:env_var",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@local_config_sycl//sycl:sycl_headers",
         "@tsl//tsl/platform:str_util",
     ],
 )

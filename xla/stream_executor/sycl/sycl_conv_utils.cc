@@ -155,17 +155,6 @@ OneDnnConvWorkspaceLayout ComputeWorkspaceLayout(
   return layout;
 }
 
-absl::StatusOr<dnnl::engine> GetDefaultGpuEngine() {
-  try {
-    static const dnnl::engine* engine =
-        new dnnl::engine(dnnl::engine::kind::gpu, 0);
-    return *engine;
-  } catch (const dnnl::error& e) {
-    return absl::InternalError(
-        absl::StrCat("Failed to create oneDNN GPU engine: ", e.message));
-  }
-}
-
 // Builds a forward convolution primitive descriptor. `bias_md` is present only
 // when bias is fused into the pd (forward path with alpha == 1);
 // omit it otherwise. `post_ops_attr` defaults to empty for the bwd pds.
@@ -455,8 +444,9 @@ absl::StatusOr<OneDnnConvPrimitiveDesc> CreateOneDnnConvPrimitiveDesc(
 }
 
 absl::StatusOr<size_t> ComputeOneDnnConvWorkspaceSize(
-    const OneDnnConvConfig& config) {
-  ABSL_ASSIGN_OR_RETURN(dnnl::engine engine, GetDefaultGpuEngine());
+    const OneDnnConvConfig& config, int device_ordinal) {
+  ABSL_ASSIGN_OR_RETURN(dnnl::engine engine,
+                        GetEngineForDevice(device_ordinal));
   ABSL_ASSIGN_OR_RETURN(OneDnnConvPrimitiveDesc pd,
                         CreateOneDnnConvPrimitiveDesc(config, engine));
   return pd.workspace.total_size;

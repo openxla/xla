@@ -16,13 +16,20 @@ limitations under the License.
 #include "xla/stream_executor/sycl/onednn_util.h"
 
 #include <string>
+#include <sycl/sycl.hpp>  // NOLINT
 
+#include "absl/base/const_init.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/status.h"
+#include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "dnnl.hpp"
 #include "dnnl_sycl.hpp"
 #include "tsl/platform/str_util.h"
 #include "xla/primitive_util.h"
+#include "xla/stream_executor/sycl/sycl_gpu_runtime.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/util/env_var.h"
@@ -59,6 +66,30 @@ dnnl::engine FindOrCreateEngine(::sycl::queue* stream) {
       stream, dnnl::sycl_interop::make_engine(stream->get_device(),
                                               stream->get_context()));
   return it->second;
+}
+
+absl::StatusOr<dnnl::engine> GetEngineForDevice(int device_ordinal) {
+  static absl::Mutex mutex(absl::kConstInit);
+  static auto* device_engine_map = new absl::flat_hash_map<int, dnnl::engine>;
+
+  absl::MutexLock lock(mutex);
+  if (auto it = device_engine_map->find(device_ordinal);
+      it != device_engine_map->end()) {
+    return it->second;
+  }
+  ABSL_ASSIGN_OR_RETURN(::sycl::device device,
+                        SyclDevicePool::GetDevice(device_ordinal));
+  ABSL_ASSIGN_OR_RETURN(const ::sycl::context& context,
+                        SyclDevicePool::GetDeviceContext());
+  try {
+    auto [it, inserted] = device_engine_map->try_emplace(
+        device_ordinal, dnnl::sycl_interop::make_engine(device, context));
+    return it->second;
+  } catch (const dnnl::error& e) {
+    return absl::InternalError(
+        absl::StrCat("Failed to create oneDNN engine for device ",
+                     device_ordinal, ": ", e.message));
+  }
 }
 
 dnnl::fpmath_mode GetFP32MathMode() {

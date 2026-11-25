@@ -51,7 +51,7 @@ namespace {
 
 absl::StatusOr<size_t> ComputeMatmulWorkspaceSize(
     const HloInstruction* matmul_instr,
-    const se::GpuComputeCapability& gpu_version) {
+    const se::GpuComputeCapability& gpu_version, int device_ordinal) {
   ABSL_ASSIGN_OR_RETURN(GemmConfig gemm_config,
                         GemmConfig::For(matmul_instr, gpu_version));
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
@@ -62,14 +62,14 @@ absl::StatusOr<size_t> ComputeMatmulWorkspaceSize(
       stream_executor::sycl::sycl_gemm::AsSYCLEpilogue(config.epilogue()));
   ABSL_ASSIGN_OR_RETURN(
       auto prim_desc, stream_executor::sycl::CreateMatMulPrimDescFromGemmConfig(
-                          gemm_config, sycl_epilogue));
+                          gemm_config, sycl_epilogue, device_ordinal));
   return prim_desc->scratchpad_desc().get_size();
 }
 
 // Builds the same oneDNN convolution config that the runtime runner builds
 // from this custom call, so that both agree on the workspace size.
 absl::StatusOr<size_t> ComputeConvWorkspaceSize(
-    const HloCustomCallInstruction* conv_instr) {
+    const HloCustomCallInstruction* conv_instr, int device_ordinal) {
   ABSL_ASSIGN_OR_RETURN(GpuConvConfig gpu_config, GetGpuConvConfig(conv_instr));
   ABSL_ASSIGN_OR_RETURN(se::dnn::DataType input_type,
                         GetDNNDataTypeFromPrimitiveType(gpu_config.input_type));
@@ -92,7 +92,7 @@ absl::StatusOr<size_t> ComputeConvWorkspaceSize(
         gpu_config.fusion->mode, gpu_config.fusion->side_input_scale,
         gpu_config.fusion->leakyrelu_alpha};
   }
-  return se::sycl::ComputeOneDnnConvWorkspaceSize(config);
+  return se::sycl::ComputeOneDnnConvWorkspaceSize(config, device_ordinal);
 }
 
 // Matmul workspaces are never read after the call, so their shape is resized
@@ -155,7 +155,7 @@ absl::StatusOr<bool> OneDnnWorkspacePass::RunImpl(
           continue;
         }
         absl::StatusOr<size_t> size =
-            ComputeMatmulWorkspaceSize(instr, gpu_version_);
+            ComputeMatmulWorkspaceSize(instr, gpu_version_, device_ordinal_);
         if (!size.ok()) {
           VLOG(1) << "Failed to compute oneDNN workspace size for "
                   << instr->name() << ": " << size.status().message();
@@ -177,8 +177,8 @@ absl::StatusOr<bool> OneDnnWorkspacePass::RunImpl(
         if (!shape.IsTuple() || shape.tuple_shapes().size() != 2) {
           continue;
         }
-        absl::StatusOr<size_t> size =
-            ComputeConvWorkspaceSize(Cast<HloCustomCallInstruction>(instr));
+        absl::StatusOr<size_t> size = ComputeConvWorkspaceSize(
+            Cast<HloCustomCallInstruction>(instr), device_ordinal_);
         if (!size.ok()) {
           VLOG(1) << "Failed to compute oneDNN workspace size for "
                   << instr->name() << ": " << size.status().message();

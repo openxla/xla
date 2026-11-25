@@ -195,7 +195,8 @@ TEST_F(IntelGpuCompilerTest, WorkspacePassIsIdempotent) {
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        GetOptimizedModule(hlo_text));
-  OneDnnWorkspacePass pass(device_description().gpu_compute_capability());
+  OneDnnWorkspacePass pass(device_description().gpu_compute_capability(),
+                           /*device_ordinal=*/0);
   EXPECT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(false));
 }
 
@@ -224,7 +225,8 @@ TEST_F(IntelGpuCompilerTest, ConvWorkspaceResizeKeepsControlDependencies) {
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(hlo_text));
-  OneDnnWorkspacePass pass(device_description().gpu_compute_capability());
+  OneDnnWorkspacePass pass(device_description().gpu_compute_capability(),
+                           /*device_ordinal=*/0);
   ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
 
   const HloInstruction* new_conv = nullptr;
