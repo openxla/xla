@@ -17,7 +17,6 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -111,8 +110,7 @@ absl::Status IllegalAccess(se::Stream* stream, KernelHolder* holder) {
         gpu::CreateKernel("IllegalAccess", 0, kPtx, stream->parent(), 0));
   }
   return gpu::ExecuteKernelOnStream(*holder->kernel, {},
-                                    xla::gpu::LaunchDimensions(1, 1),
-                                    std::nullopt, stream);
+                                    xla::gpu::LaunchDimensions(1, 1), stream);
 }
 
 XLA_FFI_DEFINE_HANDLER(
