@@ -83,10 +83,10 @@ static_assert([]() constexpr {
 }());
 static_assert(XLA_FFI_KernelRegistry_Register_Result_STRUCT_SIZE ==
               XLA_FFI_STRUCT_SIZE(XLA_FFI_KernelRegistry_Register_Result,
-                                  already_cached));
+                                  already_loaded));
 static_assert(XLA_FFI_KernelRegistry_Register_Args_STRUCT_SIZE ==
               XLA_FFI_STRUCT_SIZE(XLA_FFI_KernelRegistry_Register_Args,
-                                  required_features));
+                                  result));
 
 static_assert(!CanLaunch<PrepareKernelRegistry>::value);
 static_assert(!CanLaunch<InitializeKernelRegistry>::value);
@@ -119,7 +119,7 @@ TEST(KernelRegistryFfiTest, KernelRegistry) {
     int32_t device_ordinal = 3;
     bool registered = false;
     bool launched = false;
-    const XLA_FFI_Kernel* last_cached_kernel = nullptr;
+    const XLA_FFI_Kernel* last_existing_kernel = nullptr;
     XLA_FFI_KernelFeatures last_required_features = 0;
   };
 
@@ -141,7 +141,7 @@ TEST(KernelRegistryFfiTest, KernelRegistry) {
     EXPECT_EQ(args->kernel_spec->format, XLA_FFI_SourceFormat_PTX);
     EXPECT_EQ(args->uses_pdl, 1);
     state->registered = true;
-    state->last_cached_kernel = args->cached_kernel;
+    state->last_existing_kernel = args->existing_kernel;
     state->last_required_features = args->required_features;
     EXPECT_NE(args->result, nullptr);
     if (args->result == nullptr) {
@@ -150,7 +150,7 @@ TEST(KernelRegistryFfiTest, KernelRegistry) {
     EXPECT_EQ(args->result->struct_size,
               XLA_FFI_KernelRegistry_Register_Result_STRUCT_SIZE);
     args->result->kernel = kExpectedKernel;
-    args->result->already_cached = args->cached_kernel != nullptr ? 1 : 0;
+    args->result->already_loaded = args->existing_kernel != nullptr ? 1 : 0;
     return nullptr;
   };
 
@@ -202,8 +202,8 @@ TEST(KernelRegistryFfiTest, KernelRegistry) {
       return first.error();
     }
     EXPECT_EQ(first->kernel, kExpectedKernel);
-    EXPECT_FALSE(first->already_cached);
-    EXPECT_EQ(state.last_cached_kernel, nullptr);
+    EXPECT_FALSE(first->already_loaded);
+    EXPECT_EQ(state.last_existing_kernel, nullptr);
     EXPECT_EQ(state.last_required_features, 0u);
     registered_kernel = first->kernel;
 
@@ -214,8 +214,8 @@ TEST(KernelRegistryFfiTest, KernelRegistry) {
       return cached.error();
     }
     EXPECT_EQ(cached->kernel, kExpectedKernel);
-    EXPECT_TRUE(cached->already_cached);
-    EXPECT_EQ(state.last_cached_kernel, kExpectedKernel);
+    EXPECT_TRUE(cached->already_loaded);
+    EXPECT_EQ(state.last_existing_kernel, kExpectedKernel);
     EXPECT_EQ(state.last_required_features, XLA_FFI_KERNEL_FEATURE_MULTIMEM);
     return Error::Success();
   };
