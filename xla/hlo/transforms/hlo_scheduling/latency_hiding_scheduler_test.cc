@@ -6822,5 +6822,298 @@ ENTRY entry {
   EXPECT_LT(GetIndex(seq, "ag0b_done"), GetIndex(seq, "other_done"));
 }
 
+// Emulates a target-defined FIFO queue (like SparseCore offload queuing) that
+// sets cumulative queue finish times on paired async nodes without adding
+// synthetic edges between already DAG-reachable operations.
+class DagReachableQueueAsyncTracker : public AsyncTracker {
+ public:
+  struct QueueState : public SchedulerCore::TargetDefinedState {
+    explicit QueueState(int* reset_counter) : reset_counter(reset_counter) {}
+    void Reset() override {
+      all_tasks_finish_time = 0.0;
+      if (reset_counter != nullptr) {
+        ++(*reset_counter);
+      }
+    }
+    LatencyEstimator::TimeCost all_tasks_finish_time = 0.0;
+    int* reset_counter = nullptr;
+  };
+
+  DagReachableQueueAsyncTracker(const SchedulerConfig& config,
+                                bool* enable_queue_ready_time,
+                                int* reset_counter)
+      : AsyncTracker(config),
+        enable_queue_ready_time_(enable_queue_ready_time),
+        reset_counter_(reset_counter) {}
+
+  using AsyncTracker::UpdateTargetDefinedStates;
+
+  void UpdateTargetDefinedStates(
+      const HloInstruction& hlo, const HloScheduleGraph* schedule_graph,
+      const LatencyEstimator* latency_estimator,
+      LatencyEstimator::TimeCost current_time,
+      SchedulerCore::SchedulingState* sched_state) override {
+    if (sched_state->target_defined_state == nullptr) {
+      sched_state->target_defined_state =
+          std::make_unique<QueueState>(reset_counter_);
+    }
+    if (enable_queue_ready_time_ != nullptr && !*enable_queue_ready_time_) {
+      return;
+    }
+    auto* state =
+        static_cast<QueueState*>(sched_state->target_defined_state.get());
+    if (!IsTopDownScheduling() && hlo.opcode() == HloOpcode::kAllGatherDone) {
+      HloGraphNode& start = schedule_graph->GetNode(hlo.operand(0));
+      const HloGraphNode& done = schedule_graph->GetNode(&hlo);
+      const LatencyEstimator::TimeCost latency =
+          latency_estimator->GetLatencyBetween(start, done);
+      const LatencyEstimator::TimeCost finish = std::max(
+          current_time + latency, state->all_tasks_finish_time + latency);
+      state->all_tasks_finish_time = finish;
+      start.SetReadyTime(finish);
+    } else if (IsTopDownScheduling() &&
+               hlo.opcode() == HloOpcode::kAllGatherStart) {
+      const HloInstruction* done_inst = nullptr;
+      for (const HloInstruction* user : hlo.users()) {
+        if (user->opcode() == HloOpcode::kAllGatherDone) {
+          done_inst = user;
+          break;
+        }
+      }
+      if (done_inst == nullptr) {
+        return;
+      }
+      const HloGraphNode& start = schedule_graph->GetNode(&hlo);
+      HloGraphNode& done = schedule_graph->GetNode(done_inst);
+      const LatencyEstimator::TimeCost latency =
+          latency_estimator->GetLatencyBetween(start, done);
+      const LatencyEstimator::TimeCost finish = std::max(
+          current_time + latency, state->all_tasks_finish_time + latency);
+      state->all_tasks_finish_time = finish;
+      done.SetReadyTime(finish);
+    }
+  }
+
+ private:
+  bool* enable_queue_ready_time_;
+  int* reset_counter_;
+};
+
+class QueueTestLatencyEstimator : public LatencyEstimator {
+ public:
+  TimeCost GetLatencyBetween(const HloGraphNode& from,
+                             const HloGraphNode& target) const override {
+    if ((from.GetOpcode() == HloOpcode::kAllGatherStart &&
+         target.GetOpcode() == HloOpcode::kAllGatherDone) ||
+        (from.GetOpcode() == HloOpcode::kCollectivePermuteStart &&
+         target.GetOpcode() == HloOpcode::kCollectivePermuteDone)) {
+      return 100.0;
+    }
+    return 0.0;
+  }
+
+  TimeCost NodeCost(const HloInstruction* instr) const override {
+    if (instr->name() == "c_cover1") {
+      return 101.0;
+    }
+    if (instr->name() == "c_match") {
+      return 105.0;
+    }
+    if (instr->name() == "c_oversized") {
+      return 500.0;
+    }
+    return 0.0;
+  }
+
+  int CyclesPerMicrosecond() const override { return 1; }
+};
+
+TEST_F(LatencyHidingSchedulerTest,
+       PreserveTargetDefinedReadyTimeBottomUpAndResetCleanup) {
+  constexpr absl::string_view kHlo = R"(
+HloModule dag_reachable_queue_bottom_up, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[16,16]{1,0} parameter(0)
+  p1 = f32[16,16]{1,0} parameter(1)
+  prev_start = (f32[16,16]{1,0}, f32[16,16]{1,0}) collective-permute-start(p0),
+      source_target_pairs={{0,1},{1,0}}
+  prev_done = f32[16,16]{1,0} collective-permute-done(prev_start)
+  ag0_start = (f32[16,16]{1,0}, f32[32,16]{1,0}) all-gather-start(prev_done),
+      dimensions={0}, replica_groups={{0,1}}
+  ag1_start = (f32[16,16]{1,0}, f32[32,16]{1,0}) all-gather-start(p1),
+      dimensions={0}, replica_groups={{0,1}}, control-predecessors={ag0_start}
+  ag0_done = f32[32,16]{1,0} all-gather-done(ag0_start)
+  ag1_done = f32[32,16]{1,0} all-gather-done(ag1_start),
+      control-predecessors={ag0_done}
+  c_cover1 = f32[16,16]{1,0} dot(p0, p1),
+      lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  c_match = f32[16,16]{1,0} dot(p1, p0),
+      lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  c_oversized = f32[16,16]{1,0} dot(p0, p0),
+      lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT root = (f32[32,16]{1,0}, f32[32,16]{1,0}, f32[16,16]{1,0},
+               f32[16,16]{1,0}, f32[16,16]{1,0})
+      tuple(ag0_done, ag1_done, c_cover1, c_match, c_oversized)
+}
+)";
+
+  SchedulerConfig base_config = GetDefaultSchedConfig();
+  base_config.all_gather_overlap_limit = 4;
+  base_config.parallel_collective_overlap_limit = 4;
+  base_config.aggressive_scheduling_policies = true;
+  base_config.prioritize_async_depth_over_stall = false;
+  EXPECT_FALSE(base_config.preserve_target_defined_ready_time);
+
+  // Default (flag-off): ag0_start's pre-populated finish time (200) is
+  // overwritten when ag1_start releases it at current_time=101, so neither
+  // c_match nor c_oversized is scheduled inside [ag0_start, ag1_start].
+  {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module, ParseHloText(kHlo));
+    bool enable_queue = true;
+    int resets = 0;
+    ASSERT_OK(RunScheduler(module.get(), base_config,
+                           std::make_unique<QueueTestLatencyEstimator>(),
+                           std::make_unique<DagReachableQueueAsyncTracker>(
+                               base_config, &enable_queue, &resets),
+                           /*legalizer_config=*/nullptr,
+                           /*skip_async_collective_creator=*/true));
+    const std::vector<HloInstruction*>& seq =
+        module->schedule().sequence(module->entry_computation()).instructions();
+    EXPECT_LT(GetIndex(seq, "c_match"), GetIndex(seq, "ag0_start"));
+    EXPECT_LT(GetIndex(seq, "c_oversized"), GetIndex(seq, "ag0_start"));
+    EXPECT_LT(GetIndex(seq, "ag0_start"), GetIndex(seq, "ag1_start"));
+    EXPECT_LT(GetIndex(seq, "ag1_start"), GetIndex(seq, "c_cover1"));
+    EXPECT_LT(GetIndex(seq, "c_cover1"), GetIndex(seq, "ag0_done"));
+  }
+
+  // Flag-on: ag0_start retains ready_time=200 > current_time=101 and enters
+  // next_ready_stack, so kAvoidWaste selects c_match (cost 105, matching the
+  // remaining 99-cycle queue window) over c_oversized (cost 500) to overlap
+  // between ag0_start and ag1_start. Re-running on the same SchedulingState
+  // verifies Reset() clears both node ready times and target_defined_state.
+  {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module, ParseHloText(kHlo));
+    SchedulerConfig preserve_config = base_config;
+    preserve_config.preserve_target_defined_ready_time = true;
+    bool enable_queue = true;
+    int resets = 0;
+    AliasInfo alias_info;
+    auto context = std::make_shared<const SchedulingContext>(
+        module.get(), std::make_shared<QueueTestLatencyEstimator>(),
+        std::make_unique<DagReachableQueueAsyncTracker>(preserve_config,
+                                                        &enable_queue, &resets),
+        &alias_info, ShapeSizeBytes);
+    DefaultSchedulerCore scheduler_core(context, preserve_config);
+    ASSERT_OK(scheduler_core.InitializeScheduler(module.get()));
+    HloComputation* entry = module->entry_computation();
+    ASSERT_OK_AND_ASSIGN(
+        std::shared_ptr<SchedulerCore::SchedulingState> sched_state,
+        scheduler_core.MakeSchedulingState(entry));
+
+    ASSERT_OK_AND_ASSIGN(
+        std::vector<HloInstruction*> seq1,
+        scheduler_core.ScheduleComputation(entry, sched_state));
+    EXPECT_LT(GetIndex(seq1, "c_oversized"), GetIndex(seq1, "ag0_start"));
+    EXPECT_LT(GetIndex(seq1, "ag0_start"), GetIndex(seq1, "c_match"));
+    EXPECT_LT(GetIndex(seq1, "c_match"), GetIndex(seq1, "ag1_start"));
+    EXPECT_LT(GetIndex(seq1, "ag1_start"), GetIndex(seq1, "c_cover1"));
+    EXPECT_LT(GetIndex(seq1, "c_cover1"), GetIndex(seq1, "ag0_done"));
+
+    // Disable queue ready-time updates on the second pass: ResetScheduling()
+    // must clear ag0_start's prior ready_time back to max().
+    enable_queue = false;
+    ASSERT_OK_AND_ASSIGN(
+        std::vector<HloInstruction*> seq2,
+        scheduler_core.ScheduleComputation(entry, sched_state));
+    EXPECT_EQ(resets, 1);
+    EXPECT_LT(GetIndex(seq2, "c_match"), GetIndex(seq2, "ag0_start"));
+
+    // Re-enable on the third pass: TargetDefinedState::Reset() must have
+    // cleared all_tasks_finish_time so the schedule matches seq1 identically.
+    enable_queue = true;
+    ASSERT_OK_AND_ASSIGN(
+        std::vector<HloInstruction*> seq3,
+        scheduler_core.ScheduleComputation(entry, sched_state));
+    EXPECT_EQ(resets, 2);
+    EXPECT_EQ(seq3, seq1);
+  }
+}
+
+TEST_F(LatencyHidingSchedulerTest, PreserveTargetDefinedReadyTimeTopDown) {
+  constexpr absl::string_view kHlo = R"(
+HloModule dag_reachable_queue_top_down, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[16,16]{1,0} parameter(0)
+  p1 = f32[16,16]{1,0} parameter(1)
+  ag0_start = (f32[16,16]{1,0}, f32[32,16]{1,0}) all-gather-start(p0),
+      dimensions={0}, replica_groups={{0,1}}
+  ag1_start = (f32[16,16]{1,0}, f32[32,16]{1,0}) all-gather-start(p1),
+      dimensions={0}, replica_groups={{0,1}}, control-predecessors={ag0_start}
+  ag0_done = f32[32,16]{1,0} all-gather-done(ag0_start)
+  ag1_done = f32[32,16]{1,0} all-gather-done(ag1_start),
+      control-predecessors={ag0_done}
+  next_start = (f32[32,16]{1,0}, f32[32,16]{1,0})
+      collective-permute-start(ag1_done), source_target_pairs={{0,1},{1,0}}
+  next_done = f32[32,16]{1,0} collective-permute-done(next_start)
+  c_cover1 = f32[16,16]{1,0} dot(p0, p1),
+      lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  c_match = f32[16,16]{1,0} dot(p1, p0),
+      lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  c_oversized = f32[16,16]{1,0} dot(p0, p0),
+      lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT root = (f32[32,16]{1,0}, f32[32,16]{1,0}, f32[16,16]{1,0},
+               f32[16,16]{1,0}, f32[16,16]{1,0})
+      tuple(ag0_done, next_done, c_cover1, c_match, c_oversized)
+}
+)";
+
+  auto run_with_flag =
+      [&](bool preserve) -> absl::StatusOr<std::vector<std::string>> {
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
+                          ParseHloText(kHlo));
+    SchedulerConfig config = GetDefaultSchedConfig();
+    config.top_down_scheduling = true;
+    config.all_gather_overlap_limit = 4;
+    config.parallel_collective_overlap_limit = 4;
+    config.aggressive_scheduling_policies = true;
+    config.prioritize_async_depth_over_stall = false;
+    config.preserve_target_defined_ready_time = preserve;
+    bool enable_queue = true;
+    int resets = 0;
+    ABSL_RETURN_IF_ERROR(
+        RunScheduler(module.get(), config,
+                     std::make_unique<QueueTestLatencyEstimator>(),
+                     std::make_unique<DagReachableQueueAsyncTracker>(
+                         config, &enable_queue, &resets),
+                     /*legalizer_config=*/nullptr,
+                     /*skip_async_collective_creator=*/true)
+            .status());
+    std::vector<std::string> names;
+    for (const HloInstruction* inst : module->schedule()
+                                          .sequence(module->entry_computation())
+                                          .instructions()) {
+      names.push_back(std::string(inst->name()));
+    }
+    return names;
+  };
+
+  auto idx = [](const std::vector<std::string>& names, absl::string_view name) {
+    return std::distance(names.begin(), absl::c_find(names, name));
+  };
+
+  ASSERT_OK_AND_ASSIGN(std::vector<std::string> seq_off, run_with_flag(false));
+  EXPECT_LT(idx(seq_off, "ag0_done"), idx(seq_off, "ag1_done"));
+  EXPECT_LT(idx(seq_off, "ag1_done"), idx(seq_off, "c_match"));
+
+  ASSERT_OK_AND_ASSIGN(std::vector<std::string> seq_on, run_with_flag(true));
+  EXPECT_LT(idx(seq_on, "ag1_start"), idx(seq_on, "c_cover1"));
+  EXPECT_LT(idx(seq_on, "c_cover1"), idx(seq_on, "ag0_done"));
+  EXPECT_LT(idx(seq_on, "ag0_done"), idx(seq_on, "c_match"));
+  EXPECT_LT(idx(seq_on, "c_match"), idx(seq_on, "ag1_done"));
+  EXPECT_LT(idx(seq_on, "ag1_done"), idx(seq_on, "c_oversized"));
+}
+
 }  // namespace
 }  // namespace xla

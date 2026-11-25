@@ -2121,6 +2121,7 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
   // been scheduled and the latency of the edge connecting this node to that
   // node.
   HloGraphNode::TimeCost schedule_time = sched_state->current_time;
+  bool uses_shareable_resource = false;
   for (HloEdge& pred :
        top_down_scheduling_ ? n->GetPredecessors() : n->GetSuccessors()) {
     const HloGraphNode::TimeCost time_from_edge =
@@ -2130,6 +2131,9 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
       // Adjust the ready time if this edge uses shareable resources
       auto occupied_resources =
           n->GetShareableResourcesOnEdge(sched_state->sched_graph.get(), pred);
+      if (!occupied_resources.empty()) {
+        uses_shareable_resource = true;
+      }
       for (const int64_t resource : occupied_resources) {
         auto occupiers = sched_state->shareable_resource_occupiers[resource];
         for (auto [occupier_edge, edge_pft] : occupiers) {
@@ -2145,6 +2149,13 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
         }
       }
     }
+  }
+  if (sched_state->config.preserve_target_defined_ready_time &&
+      !uses_shareable_resource &&
+      !(sched_state->config.enable_selective_resources &&
+        n->ReleasesSelectiveResource()) &&
+      n->GetReadyTime() < std::numeric_limits<HloGraphNode::TimeCost>::max()) {
+    schedule_time = std::max(schedule_time, n->GetReadyTime());
   }
   // Set the ready time to the scheduled time for scheduled nodes.
   n->SetReadyTime(schedule_time);
@@ -2251,6 +2262,11 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
       edge.Target().SetOutdegree(0);
     }
     LatencyEstimator::TimeCost ready_time = current_time;
+    if (sched_state->config.preserve_target_defined_ready_time &&
+        edge.Target().GetReadyTime() <
+            std::numeric_limits<LatencyEstimator::TimeCost>::max()) {
+      ready_time = std::max(ready_time, edge.Target().GetReadyTime());
+    }
     for (HloEdge& pred : top_down_scheduling_ ? edge.Target().GetPredecessors()
                                               : edge.Target().GetSuccessors()) {
       const LatencyEstimator::TimeCost edge_time =

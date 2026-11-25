@@ -77,6 +77,9 @@ struct SchedulerConfig {
   bool enable_cpd_for_sync_collective = true;
   // If set, only log computations that match the given regular expression.
   std::string log_computation_re;
+  // If true, preserve finite node ready times pre-populated by
+  // AsyncTracker::UpdateTargetDefinedStates when releasing ready nodes.
+  bool preserve_target_defined_ready_time = false;
 };
 
 }  // namespace xla
