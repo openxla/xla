@@ -2754,6 +2754,56 @@ struct OpVerifiers : private DialectBindings {
     }
     return success();
   }
+
+  template <typename AllocaUnionOpT>
+  static LogicalResult verifyAllocaUnionOp(AllocaUnionOpT op) {
+    ArrayRef<int32_t> group_sizes = op.getGroupSizes();
+    if (group_sizes.empty()) {
+      return op.emitOpError("expected at least one group in group_sizes");
+    }
+    int64_t expected_results = 0;
+    for (auto [group_idx, group_size] : llvm::enumerate(group_sizes)) {
+      if (group_size <= 0) {
+        return op.emitOpError("group #")
+               << group_idx << " size must be positive, got " << group_size;
+      }
+      expected_results += group_size;
+    }
+    const size_t num_results = op.getResults().size();
+    if (expected_results != static_cast<int64_t>(num_results)) {
+      return op.emitOpError("sum of group_sizes (")
+             << expected_results << ") must equal number of results ("
+             << num_results << ")";
+    }
+
+    Attribute first_space;
+    for (auto [idx, result] : llvm::enumerate(op.getResults())) {
+      auto memref_type = cast<MemRefType>(result.getType());
+      if (!memref_type.hasStaticShape()) {
+        return op.emitOpError("result #")
+               << idx << " must have a static shape, got " << memref_type;
+      }
+      if (!memref_type.getElementType().isIntOrFloat()) {
+        return op.emitOpError("result #")
+               << idx << " must have int or float element type, got "
+               << memref_type.getElementType();
+      }
+      if (idx == 0) {
+        first_space = memref_type.getMemorySpace();
+        if (!HasMemorySpace(memref_type, MemorySpace::kVmem) &&
+            !HasMemorySpace(memref_type, MemorySpace::kSmem)) {
+          return op.emitOpError("results must be in vmem or smem, got ")
+                 << first_space;
+        }
+      } else if (memref_type.getMemorySpace() != first_space) {
+        return op.emitOpError(
+                   "all results must share the same memory space, "
+                   "got ")
+               << first_space << " and " << memref_type.getMemorySpace();
+      }
+    }
+    return success();
+  }
 };
 
 }  // namespace mlir::tpu::impl
