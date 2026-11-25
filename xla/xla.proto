@@ -2112,7 +2112,12 @@ message DebugOptions {
 
   optional string xla_gpu_compileiq_db_path = 588;
 
-  // Next id: 591
+  // On ROCm, routes the operations hipDNN can serve through its graph API
+  // instead of MIOpen. When false, every convolution, normalization and
+  // attention op keeps using the legacy MIOpen path.
+  optional bool xla_gpu_enable_hipdnn = 591;
+
+  // Next id: 592
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

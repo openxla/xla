@@ -21,17 +21,21 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
-#include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/device_description.h"
 
 namespace xla {
 namespace gpu {
 
 // Rewrites norm patterns into Custom Calls to the cuDNN library. Currently, the
 // forward and backward passes of layer norm patterns are implemented.
+//
+// On ROCm the same Custom Calls are served by hipDNN, so the pass also accepts
+// a RocmComputeCapability; the AMDGPU pipeline only adds it under
+// --xla_gpu_enable_hipdnn.
 class CudnnNormRewriter : public HloModulePass {
  public:
   explicit CudnnNormRewriter(
-      const se::CudaComputeCapability& cuda_compute_capability);
+      const se::GpuComputeCapability& gpu_compute_capability);
   absl::string_view name() const override { return "norm-rewriter"; }
 
  protected:
@@ -40,7 +44,7 @@ class CudnnNormRewriter : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
-  se::CudaComputeCapability cuda_compute_capability_;
+  se::GpuComputeCapability gpu_compute_capability_;
 };
 
 }  // namespace gpu
