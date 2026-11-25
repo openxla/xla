@@ -97,6 +97,7 @@ def xla_test(
         env = {},
         backend_tags = {},
         backend_args = {},
+        backend_env = {},
         backend_kwargs = {},
         linkstatic = None,
         fail_if_no_test_linked = True,
@@ -169,6 +170,8 @@ def xla_test(
       backend_tags: A dict mapping backend name to list of additional tags to
         use for that target.
       backend_args: A dict mapping backend name to list of additional args to
+        use for that target.
+      backend_env: A dict mapping backend name to dict of additional env vars to
         use for that target.
       backend_kwargs: A dict mapping backend name to list of additional keyword
         arguments to pass to strict_cc_test. Only use for kwargs that don't have a
@@ -283,7 +286,11 @@ def xla_test(
         modifiers = backend.split("_")
         device = modifiers.pop(0)
 
-        this_backend_env = dict(env)
+        merged_user_env = dict(env)
+        for k, v in backend_env.get(backend, {}).items():
+            merged_user_env[k] = v
+
+        this_backend_env = dict(merged_user_env)
         for k, v in {
             "XLA_TEST_DEVICE": device,
             "XLA_TEST_DEVICE_TYPE": device_type_for_env,
@@ -292,7 +299,7 @@ def xla_test(
             this_backend_env[k] = v
 
         if not use_legacy_runtime:
-            if "XLA_ALLOW_GET_DEFAULT_PLATFORM" in env:
+            if "XLA_ALLOW_GET_DEFAULT_PLATFORM" in merged_user_env:
                 fail("XLA_ALLOW_GET_DEFAULT_PLATFORM should not be set multiple times.")
             this_backend_env["XLA_ALLOW_GET_DEFAULT_PLATFORM"] = "false"
 
@@ -313,7 +320,7 @@ def xla_test(
 
         if backend == "cpu" and test_cpu_fast_compile:
             fast_compile_test_name = test_name + "_fast_compile"
-            fast_compile_env = dict(env)
+            fast_compile_env = dict(merged_user_env)
             for k, v in {
                 "XLA_TEST_DEVICE": device,
                 "XLA_TEST_DEVICE_TYPE": device_type_for_env,
@@ -321,7 +328,7 @@ def xla_test(
             }.items():
                 fast_compile_env[k] = v
             if not use_legacy_runtime:
-                if "XLA_ALLOW_GET_DEFAULT_PLATFORM" in env:
+                if "XLA_ALLOW_GET_DEFAULT_PLATFORM" in merged_user_env:
                     fail("XLA_ALLOW_GET_DEFAULT_PLATFORM should not be set multiple times.")
                 fast_compile_env["XLA_ALLOW_GET_DEFAULT_PLATFORM"] = "false"
             if "XLA_FLAGS" in fast_compile_env:
