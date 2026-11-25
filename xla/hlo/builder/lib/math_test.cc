@@ -485,9 +485,10 @@ TEST_F(MathTest, Digamma) {
 }
 
 TEST_F(MathTest, DigammaPoles) {
-  // digamma has a pole at zero and at every negative integer. The two one-sided
-  // limits agree at zero, so return -inf there (for -0.0 as well); at the
-  // negative integers they disagree, so return nan.
+  // digamma has a pole at zero and at every negative integer. At zero the limit
+  // is -inf from the right and +inf from the left, so the sign of the zero
+  // picks the side; at the negative integers nothing picks a side, so return
+  // nan.
   XlaBuilder builder(TestName());
   auto x = ConstantR1<float>(&builder, {0.0, -0.0, -1.0, -2.0, -10.0, -1.5});
   Digamma(x);
@@ -496,7 +497,7 @@ TEST_F(MathTest, DigammaPoles) {
       0.57721566490153286060651209008240243104215933593992;
   std::vector<float> expected = {
       -std::numeric_limits<float>::infinity(),
-      -std::numeric_limits<float>::infinity(),
+      std::numeric_limits<float>::infinity(),
       std::numeric_limits<float>::quiet_NaN(),
       std::numeric_limits<float>::quiet_NaN(),
       std::numeric_limits<float>::quiet_NaN(),
