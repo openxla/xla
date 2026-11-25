@@ -380,7 +380,8 @@ bool IsChangeTilingCopyFusion(const HloInstruction* instr) {
   return fusion_root->opcode() == HloOpcode::kCopy &&
          Layout::Equal().IgnoreTiles().IgnoreMemorySpace()(operand_layout,
                                                            output_layout) &&
-         operand_tiles != output_tiles;
+         (operand_tiles != output_tiles ||
+          operand_layout.bit_planes() != output_layout.bit_planes());
 }
 
 bool IsStandardAssociativeScan(const HloInstruction* instruction) {

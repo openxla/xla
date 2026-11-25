@@ -1937,6 +1937,20 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "sub_byte_normalization_test",
+    srcs = ["sub_byte_normalization_test.cc"],
+    deps = [
+        ":sub_byte_normalization",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "sub_byte_collective_normalization",
     srcs = ["sub_byte_collective_normalization.cc"],
@@ -2515,6 +2529,7 @@ xla_cc_test(
     ],
     deps = [
         ":layout_normalization",
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/transforms/expanders:scatter_simplifier",

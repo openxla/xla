@@ -90,6 +90,13 @@ void GenericTransferManager::TransferLiteralFromDevice(
         device_buffer.on_device_shape(),
         [&](const Shape& subshape, const ShapeIndex& index) -> absl::Status {
           if (subshape.IsArray()) {
+            if (subshape.has_layout() &&
+                !subshape.layout().bit_planes().empty()) {
+              return absl::UnimplementedError(absl::StrFormat(
+                  "GenericTransferManager does not support bit-plane layouts: "
+                  "%s",
+                  subshape.ToString(/*print_layout=*/true)));
+            }
             if (PackSubbyteTypes() &&
                 primitive_util::IsSubByteNonPredType(subshape.element_type())) {
               if (!subshape.is_static()) {
@@ -165,6 +172,12 @@ absl::Status GenericTransferManager::TransferLiteralToDeviceAsync(
       [&](const Shape& device_subshape,
           const ShapeIndex& index) -> absl::Status {
         if (device_subshape.IsArray()) {
+          if (device_subshape.has_layout() &&
+              !device_subshape.layout().bit_planes().empty()) {
+            return absl::UnimplementedError(absl::StrFormat(
+                "GenericTransferManager does not support bit-plane layouts: %s",
+                device_subshape.ToString(/*print_layout=*/true)));
+          }
           se::DeviceAddressBase device_memory = device_buffer.buffer(index);
 
           auto TransferBuffer = [&](const void* source) -> absl::Status {

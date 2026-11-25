@@ -111,7 +111,8 @@ bool IsPassthroughBitcastOrReshape(const HloInstruction* instr,
     return instr->opcode() == HloOpcode::kReshape;
   }
   return src.has_layout() && dst.has_layout() && src.layout().tiles().empty() &&
-         dst.layout().tiles().empty() &&
+         dst.layout().tiles().empty() && src.layout().bit_planes().empty() &&
+         dst.layout().bit_planes().empty() &&
          src.layout().element_size_in_bits() ==
              dst.layout().element_size_in_bits() &&
          src.layout().memory_space() == dst.layout().memory_space() &&

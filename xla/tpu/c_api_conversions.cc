@@ -198,6 +198,8 @@ void Destroy(XLA_Shape* c_shape) {
 }
 
 void ToC(const xla::Layout& layout, XLA_Layout* c_layout) {
+  CHECK(layout.bit_planes().empty())
+      << "XLA_Layout C API does not support bit_planes: " << layout.ToString();
   CreateVector(layout.minor_to_major(), &c_layout->minor_to_major);
   c_layout->index_primitive_type = layout.index_primitive_type();
   c_layout->pointer_primitive_type = layout.pointer_primitive_type();

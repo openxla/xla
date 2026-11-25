@@ -23,12 +23,15 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "tsl/platform/logging.h"
 #include "xla/debug_options_flags.h"
+#include "xla/layout.h"
 #include "xla/service/backend.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/dump.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/types.h"
@@ -106,8 +109,9 @@ CompileOnlyService::CompileAheadOfTime(
   TF_RET_CHECK(computation.computation.has_host_program_shape());
   auto update_shape_with_empty_tiles = [this](Shape* subshape,
                                               const xla::ShapeIndex& index) {
-    if (subshape->IsArray() &&
-        (!subshape->has_layout() || subshape->layout().tiles().empty())) {
+    if (subshape->IsArray() && (!subshape->has_layout() ||
+                                (subshape->layout().tiles().empty() &&
+                                 subshape->layout().bit_planes().empty()))) {
       *subshape = compiler_->DefaultDeviceShapeRepresentation(*subshape);
     }
   };

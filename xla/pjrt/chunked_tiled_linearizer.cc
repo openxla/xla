@@ -64,6 +64,7 @@ TiledLinearizer::CreateChunkedTransposePlan(
   const Layout& device_layout = device_shape.layout();
   if (device_layout.tail_padding_alignment_in_elements() != 1 ||
       !device_layout.split_configs().empty() ||
+      !device_layout.bit_planes().empty() ||
       device_layout.dynamic_shape_metadata_prefix_bytes() != 0 ||
       device_layout.has_physical_shape()) {
     return nullptr;
@@ -151,7 +152,7 @@ TiledLinearizer::CreateChunkedTransposePlan(
     }
     const Layout& l = s.layout();
     return l.minor_to_major().size() == dims.size() && l.tiles().empty() &&
-           l.element_size_in_bits() == 0 &&
+           l.bit_planes().empty() && l.element_size_in_bits() == 0 &&
            l.tail_padding_alignment_in_elements() == 1 &&
            l.split_configs().empty() &&
            l.dynamic_shape_metadata_prefix_bytes() == 0 &&

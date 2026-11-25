@@ -333,7 +333,7 @@ nb::ndarray<> LiteralToNdarray(Literal& obj) {
 
   const Layout& layout = shape.layout();
 
-  if (!layout.tiles().empty()) {
+  if (!layout.tiles().empty() || !layout.bit_planes().empty()) {
     throw XlaRuntimeError(
         "Creating an array from a tiled Literal is not supported.");
   }
@@ -420,6 +420,54 @@ NB_MODULE(_hlo, m) {
              new (self)
                  Layout(xla_minor_to_major, xla_tiles, element_size_in_bits);
            })
+      .def("__init__",
+           [](Layout* self, nb::typed<nb::sequence, int> minor_to_major,
+              nb::typed<nb::sequence, nb::typed<nb::tuple, int, nb::ellipsis>>
+                  tiling,
+              int64_t element_size_in_bits,
+              nb::typed<
+                  nb::sequence,
+                  nb::typed<nb::tuple, int, int,
+                            nb::typed<nb::sequence,
+                                      nb::typed<nb::tuple, int, nb::ellipsis>>>>
+                  bit_planes) {
+             std::vector<Tile> xla_tiles;
+             xla_tiles.reserve(nb::len(tiling.ptr()));
+             for (auto tile : tiling) {
+               xla_tiles.push_back(Tile(
+                   SequenceToVector<int64_t>(nb::cast<nb::sequence>(tile))));
+             }
+             std::vector<BitPlane> xla_bit_planes;
+             xla_bit_planes.reserve(nb::len(bit_planes.ptr()));
+             for (auto plane_obj : bit_planes) {
+               nb::sequence plane_seq = nb::cast<nb::sequence>(plane_obj);
+               if (nb::len(plane_seq.ptr()) != 3) {
+                 throw XlaRuntimeError(
+                     "Layout bit_planes entries must be 3-tuples "
+                     "(bit_offset, bit_width, tiles).");
+               }
+               int64_t bit_offset = nb::cast<int64_t>(plane_seq[0]);
+               int64_t bit_width = nb::cast<int64_t>(plane_seq[1]);
+               nb::sequence plane_tiles_seq =
+                   nb::cast<nb::sequence>(plane_seq[2]);
+               std::vector<Tile> plane_tiles;
+               plane_tiles.reserve(nb::len(plane_tiles_seq.ptr()));
+               for (auto ptile : plane_tiles_seq) {
+                 plane_tiles.push_back(Tile(
+                     SequenceToVector<int64_t>(nb::cast<nb::sequence>(ptile))));
+               }
+               xla_bit_planes.emplace_back(bit_offset, bit_width, plane_tiles);
+             }
+             std::vector<int64_t> xla_minor_to_major =
+                 SequenceToVector<int64_t>(minor_to_major);
+             new (self) Layout(xla_minor_to_major, xla_tiles,
+                               PRIMITIVE_TYPE_INVALID, PRIMITIVE_TYPE_INVALID,
+                               /*tail_padding_alignment_in_elements=*/1,
+                               element_size_in_bits, /*memory_space=*/0,
+                               /*split_configs=*/{}, /*physical_shape=*/nullptr,
+                               /*dynamic_shape_metadata_prefix_bytes=*/0,
+                               xla_bit_planes);
+           })
       .def("minor_to_major",
            [](Layout layout) { return SpanToNbTuple(layout.minor_to_major()); })
       .def("element_size_in_bits", &Layout::element_size_in_bits)
@@ -432,18 +480,36 @@ NB_MODULE(_hlo, m) {
              }
              return result;
            })
+      .def("bit_planes",
+           [](const Layout& layout)
+               -> nb::typed<
+                   nb::list,
+                   nb::typed<nb::tuple, int, int,
+                             nb::typed<nb::tuple,
+                                       nb::typed<nb::tuple, int, nb::ellipsis>,
+                                       nb::ellipsis>>> {
+             nb::list result;
+             for (const BitPlane& plane : layout.bit_planes()) {
+               nb::list plane_tiles;
+               for (const Tile& t : plane.tiles()) {
+                 plane_tiles.append(SpanToNbTuple(t.dimensions()));
+               }
+               result.append(nb::make_tuple(plane.bit_offset(),
+                                            plane.bit_width(),
+                                            nb::tuple(plane_tiles)));
+             }
+             return result;
+           })
       .def(
           "__eq__",
-          [](const Layout& layout, const Layout& other) {
-            return layout == other;
-          },
+          [](const Layout& layout,
+             const Layout& other) { return layout == other; },
           nb::is_operator(),
           nb::sig("def __eq__(self, other: object, /) -> bool"))
       .def(
           "__ne__",
-          [](const Layout& layout, const Layout& other) {
-            return layout != other;
-          },
+          [](const Layout& layout,
+             const Layout& other) { return layout != other; },
           nb::is_operator(),
           nb::sig("def __ne__(self, other: object, /) -> bool"))
       .def("__str__", &Layout::ToString)

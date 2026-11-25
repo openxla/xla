@@ -297,7 +297,8 @@ void UpdateEntryComputationLayout(
           }
 
           if (!empty_tiles_only ||
-              (empty_tiles_only && subshape->layout().tiles().empty())) {
+              (empty_tiles_only && subshape->layout().tiles().empty() &&
+               subshape->layout().bit_planes().empty())) {
             *subshape = shape_representation_fn(*subshape);
           }
         });
