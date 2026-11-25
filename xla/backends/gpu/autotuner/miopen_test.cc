@@ -15,12 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/miopen.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -30,13 +29,16 @@ limitations under the License.
 #include "xla/backends/gpu/amdgpu_compiler.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/compiler.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/platform_util.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
@@ -105,6 +107,7 @@ class MIOpenBackendTest : public HloHardwareIndependentTestBase {
             stream_executor_,
             [](auto& opts) {
               opts.set_xla_gpu_autotune_level(1);
+              opts.set_xla_gpu_enable_miopen_fused_convs(true);
               return &opts;
             }(debug_options_),
             &compiler_, &target_config_, &allocator_) {}
@@ -199,6 +202,146 @@ TEST_F(MIOpenBackendTest, ApplyConfigToMIOpenCustomCallWithWorkspace) {
   EXPECT_THAT(gpu_config.cudnn_conv_backend_config().algorithm(),
               EqualsProto(config));
   EXPECT_EQ(replaced_instr->shape().tuple_shapes(1).dimensions(0), 1024);
+}
+
+const char kMIOpenFusedCustomCallRootHlo[] = R"(
+  HloModule module
+
+  ENTRY %main {
+    %arg0 = f32[32,8,1,1]{3,2,1,0} parameter(0)
+    %arg1 = f32[32,8,1,1]{3,2,1,0} parameter(1)
+    %bias = f32[32]{0} parameter(2)
+    ROOT %cudnn-conv-bias-activation = (f32[32,32,1,1]{3,2,1,0}, u8[0]{0})
+      custom-call(%arg0, %arg1, %bias),
+      custom_call_target="__cudnn$convBiasActivationForward",
+      window={size=1x1},
+      dim_labels=bf01_oi01->bf01,
+      backend_config={
+        "cudnn_conv_backend_config":{
+          "activation_mode":"kNone",
+          "conv_result_scale":1,
+          "side_input_scale":0,
+          "leakyrelu_alpha":0
+        },
+      }
+  })";
+
+TEST_F(MIOpenBackendTest,
+       GetSupportedConfigsFromFusedCustomCallWithFusedConvs) {
+  if (!IsRocm()) {
+    GTEST_SKIP() << "Skipping test on non-ROCm platform";
+  }
+  if (stream_executor_->GetDeviceDescription().runtime_version() <
+      se::SemanticVersion(7, 14, 0)) {
+    GTEST_SKIP() << "Fused convolutions require ROCm 7.14 or newer";
+  }
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> hlo_module,
+      ParseAndReturnVerifiedModule(kMIOpenFusedCustomCallRootHlo));
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<BackendConfig>> configs,
+      backend_.GetSupportedConfigs(
+          *hlo_module->entry_computation()->root_instruction()));
+
+  int num_fused = 0;
+  int num_unfused = 0;
+  for (const std::unique_ptr<BackendConfig>& config : configs) {
+    ASSERT_TRUE(config->has_algorithm());
+    int64_t algo_id = config->algorithm().algo_id();
+    ASSERT_NE(algo_id, 0);
+    if (algo_id < 0) {
+      ++num_fused;
+    } else {
+      ++num_unfused;
+    }
+  }
+  EXPECT_GT(num_fused, 0);
+  EXPECT_GT(num_unfused, 0);
+}
+
+TEST_F(MIOpenBackendTest,
+       GetSupportedConfigsFromFusedCustomCallWithoutFusedConvs) {
+  if (!IsRocm()) {
+    GTEST_SKIP() << "Skipping test on non-ROCm platform";
+  }
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> hlo_module,
+      ParseAndReturnVerifiedModule(kMIOpenFusedCustomCallRootHlo));
+  DebugOptions options = debug_options_;
+  options.set_xla_gpu_enable_miopen_fused_convs(false);
+  MIOpenBackend backend_wo_fused_convs(stream_executor_, &options, &compiler_,
+                                       &target_config_, &allocator_);
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<BackendConfig>> configs,
+      backend_wo_fused_convs.GetSupportedConfigs(
+          *hlo_module->entry_computation()->root_instruction()));
+  ASSERT_FALSE(configs.empty());
+  for (const std::unique_ptr<BackendConfig>& config : configs) {
+    ASSERT_TRUE(config->has_algorithm());
+    EXPECT_GT(config->algorithm().algo_id(), 0);
+  }
+}
+
+TEST_F(MIOpenBackendTest,
+       GetSupportedConfigsFromFusedCustomCallWithoutAutotune) {
+  if (!IsRocm()) {
+    GTEST_SKIP() << "Skipping test on non-ROCm platform";
+  }
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> hlo_module,
+      ParseAndReturnVerifiedModule(kMIOpenFusedCustomCallRootHlo));
+  DebugOptions options = debug_options_;
+  options.set_xla_gpu_autotune_level(0);
+  MIOpenBackend backend_wo_autotune(stream_executor_, &options, &compiler_,
+                                    &target_config_, &allocator_);
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<BackendConfig>> configs,
+      backend_wo_autotune.GetSupportedConfigs(
+          *hlo_module->entry_computation()->root_instruction()));
+  ASSERT_FALSE(configs.empty());
+  for (const std::unique_ptr<BackendConfig>& config : configs) {
+    ASSERT_TRUE(config->has_algorithm());
+    EXPECT_GT(config->algorithm().algo_id(), 0);
+  }
+}
+
+TEST_F(MIOpenBackendTest, ApplyUnfusedConfigToRootFusedCustomCall) {
+  if (!IsRocm()) {
+    GTEST_SKIP() << "Skipping test on non-ROCm platform";
+  }
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> hlo_module,
+      ParseAndReturnVerifiedModule(kMIOpenFusedCustomCallRootHlo));
+  HloComputation* computation = hlo_module->entry_computation();
+  MIOpenBackendConfig config;
+  config.set_algo_id(1);
+  BackendConfig backend_config;
+  *backend_config.mutable_algorithm() = config;
+  ASSERT_OK(
+      backend_.ApplyConfig(*computation->root_instruction(), backend_config));
+
+  // The decomposed result replaces the fused custom-call as the root, so the
+  // bias is not lost: root = (conv + broadcast(bias), u8[0]).
+  const HloInstruction* root = computation->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kTuple);
+  ASSERT_EQ(root->operand_count(), 2);
+  const HloInstruction* conv_bias = root->operand(0);
+  ASSERT_EQ(conv_bias->opcode(), HloOpcode::kAdd);
+  ASSERT_EQ(conv_bias->operand(0)->opcode(), HloOpcode::kGetTupleElement);
+  EXPECT_EQ(conv_bias->operand(1)->opcode(), HloOpcode::kBroadcast);
+  EXPECT_EQ(conv_bias->operand(1)->operand(0)->opcode(), HloOpcode::kParameter);
+
+  const HloInstruction* conv = conv_bias->operand(0)->operand(0);
+  ASSERT_EQ(conv->opcode(), HloOpcode::kCustomCall);
+  EXPECT_EQ(conv->custom_call_target(), "__cudnn$convForward");
+  EXPECT_EQ(conv->name(), "cudnn-conv-bias-activation");
+  EXPECT_EQ(conv->operand_count(), 2);
+  ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
+                       conv->backend_config<GpuBackendConfig>());
+  EXPECT_THAT(gpu_config.cudnn_conv_backend_config().algorithm(),
+              EqualsProto(config));
+  EXPECT_EQ(gpu_config.cudnn_conv_backend_config().activation_mode(),
+            se::dnn::ActivationMode::kNone);
 }
 
 }  // namespace gpu
