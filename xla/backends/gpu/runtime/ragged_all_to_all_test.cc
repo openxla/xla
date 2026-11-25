@@ -400,6 +400,9 @@ TEST_P(RaggedAllToAllKernelTest, KernelWithSymmetricMemory) {
     ASSERT_TRUE(!output_buffer_address.is_null());
 
     ASSERT_OK(streams[i]->MemZero(&output_buffer_address, total_bytes));
+    // The kernel writes to this buffer from the stream of the first device,
+    // which is not ordered after a zero fill still running on this stream.
+    ASSERT_OK(streams[i]->BlockHostUntilDone());
 
     output_buffers.push_back(std::move(output_buffer));
   }
