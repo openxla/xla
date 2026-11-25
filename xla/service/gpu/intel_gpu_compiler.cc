@@ -21,7 +21,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/conv_padding_legalization.h"
 #include "xla/backends/gpu/transforms/conv_rewriter.h"
 #include "xla/backends/gpu/transforms/cudnn_fused_conv_rewriter.h"
-#include "xla/backends/gpu/transforms/sycl_gemm_workspace_pass.h"
+#include "xla/backends/gpu/transforms/onednn_workspace_pass.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/convert_mover.h"
 #include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/reshape_mover.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/service/dump.h"
@@ -122,6 +123,9 @@ absl::Status IntelGpuCompiler::OptimizeHloPostLayoutAssignment(
   post_pipeline.AddPass<OneDnnWorkspacePass>(
       gpu_topology.gpu_target_config()
           .device_description.gpu_compute_capability());
+  // Clean up the tuples left behind by OneDnnWorkspacePass.
+  post_pipeline.AddPass<TupleSimplifier>();
+  post_pipeline.AddPass<HloDCE>();
   return post_pipeline.Run(hlo_module).status();
 }
 

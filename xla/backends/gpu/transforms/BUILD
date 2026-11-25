@@ -2228,9 +2228,9 @@ cc_library(
 )
 
 cc_library(
-    name = "sycl_gemm_workspace_pass",
-    srcs = ["sycl_gemm_workspace_pass.cc"],
-    hdrs = ["sycl_gemm_workspace_pass.h"],
+    name = "onednn_workspace_pass",
+    srcs = ["onednn_workspace_pass.cc"],
+    hdrs = ["onednn_workspace_pass.h"],
     tags = [
         "gpu",
         "oneapi-only",

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/transforms/sycl_gemm_workspace_pass.h"
+#include "xla/backends/gpu/transforms/onednn_workspace_pass.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -76,14 +76,17 @@ absl::StatusOr<size_t> ComputeConvWorkspaceSize(
   ABSL_ASSIGN_OR_RETURN(
       se::dnn::DataType output_type,
       GetDNNDataTypeFromPrimitiveType(gpu_config.output_type));
-  se::sycl::OneDnnConvConfig config{CudnnConvKindToProto(gpu_config.kind),
-                                    input_type,
-                                    output_type,
-                                    gpu_config.input_descriptor,
-                                    gpu_config.filter_descriptor,
-                                    gpu_config.output_descriptor,
-                                    gpu_config.conv_desc,
-                                    gpu_config.conv_result_scale};
+  // Only the fused runner takes conv_result_scale; the unfused runner uses the
+  // default of 1.0.
+  se::sycl::OneDnnConvConfig config{
+      CudnnConvKindToProto(gpu_config.kind),
+      input_type,
+      output_type,
+      gpu_config.input_descriptor,
+      gpu_config.filter_descriptor,
+      gpu_config.output_descriptor,
+      gpu_config.conv_desc,
+      gpu_config.fusion.has_value() ? gpu_config.conv_result_scale : 1.0};
   if (gpu_config.fusion.has_value()) {
     config.fusion = se::sycl::OneDnnConvConfig::Fusion{
         gpu_config.fusion->mode, gpu_config.fusion->side_input_scale,
@@ -125,6 +128,10 @@ absl::Status ResizeConvWorkspace(HloInstruction* conv_instr,
       HloInstruction::CreateConstant(LiteralUtil::CreateR1<uint8_t>({}))));
   HloInstruction* new_tuple = computation->AddInstruction(
       HloInstruction::CreateTuple(new_tuple_elements));
+  // Control predecessors must still run before the new call, and control
+  // successors after the repackaged result.
+  ABSL_RETURN_IF_ERROR(conv_instr->CopyAllControlDepsTo(new_call, new_tuple));
+  ABSL_RETURN_IF_ERROR(conv_instr->DropAllControlDeps());
   return computation->ReplaceInstruction(conv_instr, new_tuple);
 }
 
@@ -154,7 +161,12 @@ absl::StatusOr<bool> OneDnnWorkspacePass::RunImpl(
                   << instr->name() << ": " << size.status().message();
           continue;
         }
-        ResizeMatmulWorkspace(instr, *size);
+        const int64_t bytes = *size;
+        if (ShapeUtil::Compatible(shape.tuple_shapes(1),
+                                  ShapeUtil::MakeShape(S8, {bytes}))) {
+          continue;
+        }
+        ResizeMatmulWorkspace(instr, bytes);
         changed = true;
       } else if (IsCustomCallToDnnConvolution(*instr)) {
         // Graph convolutions are not supported by the oneDNN runner.
@@ -172,11 +184,21 @@ absl::StatusOr<bool> OneDnnWorkspacePass::RunImpl(
                   << instr->name() << ": " << size.status().message();
           continue;
         }
-        // ConvRewriter already creates the workspace as u8[0].
-        if (*size == 0) {
+        const int64_t bytes = *size;
+        const Shape& workspace = shape.tuple_shapes(1);
+        if (ShapeUtil::Compatible(workspace,
+                                  ShapeUtil::MakeShape(U8, {bytes}))) {
           continue;
         }
-        ABSL_RETURN_IF_ERROR(ResizeConvWorkspace(instr, *size));
+        // ResizeConvWorkspace repackages the call with a u8[0] constant, so it
+        // only handles the u8[0] workspace that ConvRewriter creates.
+        if (!ShapeUtil::Compatible(workspace, ShapeUtil::MakeShape(U8, {0}))) {
+          VLOG(1) << "Not resizing the workspace of " << instr->name()
+                  << ": expected u8[0], got "
+                  << ShapeUtil::HumanString(workspace);
+          continue;
+        }
+        ABSL_RETURN_IF_ERROR(ResizeConvWorkspace(instr, bytes));
         changed = true;
       }
     }

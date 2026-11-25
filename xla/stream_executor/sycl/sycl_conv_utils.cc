@@ -26,8 +26,8 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
-#include "xla/service/gpu/gpu_constants.h"
 #include "xla/shape.h"
+#include "xla/stream_executor/sycl/sycl_gpu_runtime.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/tsl/util/env_var.h"
 #include "xla/util.h"
@@ -44,6 +44,8 @@ using ConvBwdFilterPd = dnnl::convolution_backward_weights::primitive_desc;
 
 namespace {
 
+// TODO(intel-tf): Use dnnl::scratchpad_mode::user and place the scratchpad in
+// the workspace if these reorders ever need one.
 ReorderOp CreateReorderOp(const dnnl::memory& src, const dnnl::memory& dst) {
   ReorderOp reorder;
   reorder.primitive = dnnl::reorder(src, dst);
@@ -148,9 +150,7 @@ OneDnnConvWorkspaceLayout ComputeWorkspaceLayout(
   layout.scratchpad_offset =
       layout.scratchpad_size == 0
           ? layout.internal_filter_size
-          : xla::RoundUpTo(
-                layout.internal_filter_size,
-                static_cast<size_t>(xla::gpu::kXlaAllocatedBufferAlignBytes));
+          : xla::RoundUpTo(layout.internal_filter_size, kUsmAlignBytes);
   layout.total_size = layout.scratchpad_offset + layout.scratchpad_size;
   return layout;
 }
@@ -212,8 +212,9 @@ ConvOp BuildConvOp(const Pd& pd, dnnl::memory src, int src_arg_key,
   }
   const dnnl::memory::desc weights_target_desc = WeightsTargetDesc(pd);
   if (filter_md != weights_target_desc) {
-    op.internal_filter =
-        CreateDnnlMemory(weights_target_desc, engine, workspace);
+    op.internal_filter = dnnl::sycl_interop::make_memory(
+        weights_target_desc, engine, dnnl::sycl_interop::memory_kind::usm,
+        workspace);
     *out_filter_reorder = prepack_filter
                               ? CreateReorderOp(op.filter, op.internal_filter)
                               : CreateReorderOp(op.internal_filter, op.filter);
@@ -469,6 +470,11 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
     return absl::InvalidArgumentError(absl::StrCat(
         "oneDNN convolution needs a workspace of ", pd.workspace.total_size,
         " bytes but got ", workspace.size(), " bytes"));
+  }
+  if (pd.workspace.total_size > 0 && workspace.opaque() == nullptr) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "oneDNN convolution needs a workspace of ", pd.workspace.total_size,
+        " bytes but got a null workspace buffer"));
   }
   char* workspace_base = static_cast<char*>(workspace.opaque());
   OneDnnConvPrimitive onednn_conv_primitive;

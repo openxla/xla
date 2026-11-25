@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_BACKENDS_GPU_TRANSFORMS_SYCL_GEMM_WORKSPACE_PASS_H_
-#define XLA_BACKENDS_GPU_TRANSFORMS_SYCL_GEMM_WORKSPACE_PASS_H_
+#ifndef XLA_BACKENDS_GPU_TRANSFORMS_ONEDNN_WORKSPACE_PASS_H_
+#define XLA_BACKENDS_GPU_TRANSFORMS_ONEDNN_WORKSPACE_PASS_H_
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
@@ -49,4 +49,4 @@ class OneDnnWorkspacePass : public HloModulePass {
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_BACKENDS_GPU_TRANSFORMS_SYCL_GEMM_WORKSPACE_PASS_H_
+#endif  // XLA_BACKENDS_GPU_TRANSFORMS_ONEDNN_WORKSPACE_PASS_H_
