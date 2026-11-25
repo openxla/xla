@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/backends/gpu/target_lowering/load_ir_module.h"
 #include "xla/debug_options_flags.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 namespace {
