@@ -146,12 +146,20 @@ const HloInstruction* StripBitcasts(const HloInstruction* instr) {
 }
 
 bool HasSupportedShapes(const HloInstruction* hero) {
+  // Only array operands and results can be sliced, and fusion cost analysis
+  // cannot count elements of token-typed fusion operands.
   for (const HloInstruction* operand : hero->operands()) {
-    if (operand->shape().IsTuple()) {
+    if (!operand->shape().IsArray()) {
       LOG(WARNING) << "DynamicSliceFusionRewriterV2: skipping " << hero->name()
-                   << " because operand " << operand->name() << " is a tuple";
+                   << " because operand " << operand->name()
+                   << " is not an array";
       return false;
     }
+  }
+  if (!hero->shape().IsArray() && !hero->shape().IsTuple()) {
+    LOG(WARNING) << "DynamicSliceFusionRewriterV2: skipping " << hero->name()
+                 << " because its result is not an array";
+    return false;
   }
   if (hero->shape().IsTuple()) {
     for (const Shape& tuple_shape : hero->shape().tuple_shapes()) {
@@ -159,6 +167,12 @@ bool HasSupportedShapes(const HloInstruction* hero) {
         LOG(WARNING) << "DynamicSliceFusionRewriterV2: skipping "
                      << hero->name()
                      << " because nested tuple results are not supported";
+        return false;
+      }
+      if (!tuple_shape.IsArray()) {
+        LOG(WARNING) << "DynamicSliceFusionRewriterV2: skipping "
+                     << hero->name()
+                     << " because a tuple result element is not an array";
         return false;
       }
     }
