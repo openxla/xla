@@ -16,11 +16,11 @@
 // RUN:   | FileCheck %s --check-prefix=INSERT
 // RUN: xla-opt %s -split-input-file -xla-gpu-insert-pdl \
 // RUN:   -triton-xla-extract-insert-to-triton \
-// RUN:   -xla-lower-pdl-wait \
+// RUN:   -xla-gpu-lower-pdl-wait \
 // RUN:   | FileCheck %s --check-prefix=LOWER
 // RUN: xla-opt %s -split-input-file -xla-gpu-insert-pdl \
 // RUN:   -triton-xla-extract-insert-to-triton="allow_tma=1 num_stages=3" \
-// RUN:   -xla-lower-pdl-wait \
+// RUN:   -xla-gpu-lower-pdl-wait \
 // RUN:   | FileCheck %s --check-prefix=LOWER-TMA
 
 func.func @basic(%arg0: !tt.ptr<bf16>, %arg1: !tt.ptr<bf16>) {

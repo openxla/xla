@@ -17,7 +17,7 @@
 // RUN: emitters_opt %s --allow-unregistered-dialect -split-input-file \
 // RUN: -xla-gpu-insert-pdl \
 // RUN: -xla-gpu-lower-tensors="gpu_compute_capability='cuda_compute_capability {major: 9}'" \
-// RUN: -xla-lower-pdl-wait \
+// RUN: -xla-gpu-lower-pdl-wait \
 // RUN: | FileCheck %s --check-prefix=LOWER
 
 func.func @pdl_entry_store(%arg0: tensor<8xf32> {xla.slice_index = 0}) -> tensor<8xf32> attributes {xla.entry} {
