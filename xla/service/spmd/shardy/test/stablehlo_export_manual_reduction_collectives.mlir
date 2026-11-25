@@ -813,6 +813,66 @@ func.func @unreduced_max_sharded_transpose_of_sharded_dot_without_unreduced(%arg
   return %1 : tensor<2x8xf32>
 }
 
+// -----
 
+sdy.mesh @mesh_x_2_y_2 = <["x"=2, "y"=2]>
+sdy.mesh @mesh_x_4_y_2 = <["x"=4, "y"=2]>
 
+// localDimSize = 2147483648 (> INT32_MAX) and output dim = 4294967296.
+// CHECK-LABEL: func @sharded_to_unreduced_large_local_dim
+func.func @sharded_to_unreduced_large_local_dim(%arg0: tensor<4294967296x8xf32> {sdy.sharding = #sdy.sharding<@mesh_x_2_y_2, [{"x"}, {"y"}]>}) -> tensor<4294967296x8xf32> {
+  // CHECK-NEXT: %[[MANUAL_COMP:.*]] = sdy.manual_computation(%arg0)
+  // CHECK-SAME:     in_shardings=[<@mesh_x_2_y_2, [{"x"}, {"y"}]>]
+  // CHECK-SAME:     out_shardings=[<@mesh_x_2_y_2, [{}, {"y"}], unreduced={"x"}>]
+  // CHECK-SAME:     manual_axes={"x", "y"} (%arg1: tensor<2147483648x4xf32>) {
+  // CHECK:        %[[BROADCAST:.*]] = stablehlo.broadcast %{{.*}}, sizes = [4294967296, 4] : (tensor<f32>) -> tensor<4294967296x4xf32>
+  // CHECK-NEXT:   %[[PID:.*]] = stablehlo.partition_id : tensor<ui32>
+  // CHECK-NEXT:   %[[PID_I32:.*]] = stablehlo.convert %[[PID]] : (tensor<ui32>) -> tensor<i32>
+  // CHECK-NEXT:   %[[C2_Y:.*]] = stablehlo.constant dense<2> : tensor<i32>
+  // CHECK-NEXT:   %[[REM_Y:.*]] = stablehlo.remainder %[[PID_I32]], %[[C2_Y]] : tensor<i32>
+  // CHECK-NEXT:   %[[DIV_Y:.*]] = stablehlo.divide %[[PID_I32]], %[[C2_Y]] : tensor<i32>
+  // CHECK-NEXT:   %[[C2_X:.*]] = stablehlo.constant dense<2> : tensor<i32>
+  // CHECK-NEXT:   %[[REM_X:.*]] = stablehlo.remainder %[[DIV_Y]], %[[C2_X]] : tensor<i32>
+  // CHECK-NEXT:   %[[DIV_X:.*]] = stablehlo.divide %[[DIV_Y]], %[[C2_X]] : tensor<i32>
+  // CHECK-NEXT:   %[[C0:.*]] = stablehlo.constant dense<0> : tensor<i64>
+  // CHECK-NEXT:   %[[REM_X_I64:.*]] = stablehlo.convert %[[REM_X]] : (tensor<i32>) -> tensor<i64>
+  // CHECK-NEXT:   %[[LOCAL_DIM:.*]] = stablehlo.constant dense<2147483648> : tensor<i64>
+  // CHECK-NEXT:   %[[MULT:.*]] = stablehlo.multiply %[[REM_X_I64]], %[[LOCAL_DIM]] : tensor<i64>
+  // CHECK-NEXT:   %[[DUS:.*]] = stablehlo.dynamic_update_slice %[[BROADCAST]], %arg1, %[[MULT]], %[[C0]] : (tensor<4294967296x4xf32>, tensor<2147483648x4xf32>, tensor<i64>, tensor<i64>) -> tensor<4294967296x4xf32>
+  // CHECK-NEXT:   sdy.return %[[DUS]] : tensor<4294967296x4xf32>
+  // CHECK-NEXT: } : (tensor<4294967296x8xf32>) -> tensor<4294967296x8xf32>
+  // CHECK-NEXT: return %[[MANUAL_COMP]] : tensor<4294967296x8xf32>
+  %0 = sdy.sharded_to_unreduced [{"x"}, {}] %arg0 out_sharding=<@mesh_x_2_y_2, [{}, {"y"}], unreduced={"x"}> : tensor<4294967296x8xf32>
+  return %0 : tensor<4294967296x8xf32>
+}
+
+// localDimSize = 1073741824 (fits in i32), but offset * localDimSize reaches
+// 3 * 1073741824 = 3221225472 (> INT32_MAX).
+// CHECK-LABEL: func @sharded_to_unreduced_large_output_dim_small_local_dim
+func.func @sharded_to_unreduced_large_output_dim_small_local_dim(%arg0: tensor<4294967296x8xf32> {sdy.sharding = #sdy.sharding<@mesh_x_4_y_2, [{"x"}, {"y"}]>}) -> tensor<4294967296x8xf32> {
+  // CHECK:        %[[C0:.*]] = stablehlo.constant dense<0> : tensor<i64>
+  // CHECK-NEXT:   %[[OFFSET_I64:.*]] = stablehlo.convert %{{.*}} : (tensor<i32>) -> tensor<i64>
+  // CHECK-NEXT:   %[[LOCAL_DIM:.*]] = stablehlo.constant dense<1073741824> : tensor<i64>
+  // CHECK-NEXT:   %[[MULT:.*]] = stablehlo.multiply %[[OFFSET_I64]], %[[LOCAL_DIM]] : tensor<i64>
+  // CHECK-NEXT:   %[[DUS:.*]] = stablehlo.dynamic_update_slice %{{.*}}, %arg1, %[[MULT]], %[[C0]] : (tensor<4294967296x4xf32>, tensor<1073741824x4xf32>, tensor<i64>, tensor<i64>) -> tensor<4294967296x4xf32>
+  // CHECK-NEXT:   sdy.return %[[DUS]] : tensor<4294967296x4xf32>
+  %0 = sdy.sharded_to_unreduced [{"x"}, {}] %arg0 out_sharding=<@mesh_x_4_y_2, [{}, {"y"}], unreduced={"x"}> : tensor<4294967296x8xf32>
+  return %0 : tensor<4294967296x8xf32>
+}
+
+// Unpadded global dim is INT32_MAX (2147483647), padded output dim crosses
+// INT32_MAX to 2147483648.
+// CHECK-LABEL: func @sharded_to_unreduced_non_divisible_pads_past_int32_max
+func.func @sharded_to_unreduced_non_divisible_pads_past_int32_max(%arg0: tensor<2147483647x8xf32> {sdy.sharding = #sdy.sharding<@mesh_x_4_y_2, [{"x"}, {"y"}]>}) -> tensor<2147483647x8xf32> {
+  // CHECK:        stablehlo.pad %arg0, %{{.*}}, low = [0, 0], high = [1, 0], interior = [0, 0] {{.*}} : (tensor<2147483647x8xf32>, tensor<f32>) -> tensor<2147483648x8xf32>
+  // CHECK:        %[[C0:.*]] = stablehlo.constant dense<0> : tensor<i64>
+  // CHECK-NEXT:   %[[OFFSET_I64:.*]] = stablehlo.convert %{{.*}} : (tensor<i32>) -> tensor<i64>
+  // CHECK-NEXT:   %[[LOCAL_DIM:.*]] = stablehlo.constant dense<536870912> : tensor<i64>
+  // CHECK-NEXT:   %[[MULT:.*]] = stablehlo.multiply %[[OFFSET_I64]], %[[LOCAL_DIM]] : tensor<i64>
+  // CHECK-NEXT:   %[[DUS:.*]] = stablehlo.dynamic_update_slice %{{.*}}, %arg1, %[[MULT]], %[[C0]] : (tensor<2147483648x4xf32>, tensor<536870912x4xf32>, tensor<i64>, tensor<i64>) -> tensor<2147483648x4xf32>
+  // CHECK-NEXT:   sdy.return %[[DUS]] : tensor<2147483648x4xf32>
+  // CHECK:        stablehlo.slice %{{.*}} [0:2147483647, 0:8] {{.*}} : (tensor<2147483648x8xf32>) -> tensor<2147483647x8xf32>
+  %0 = sdy.sharded_to_unreduced [{"x"}, {}] %arg0 out_sharding=<@mesh_x_4_y_2, [{}, {"y"}], unreduced={"x"}> : tensor<2147483647x8xf32>
+  return %0 : tensor<2147483647x8xf32>
+}
 
