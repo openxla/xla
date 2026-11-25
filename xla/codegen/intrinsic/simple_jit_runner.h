@@ -178,6 +178,15 @@ llvm::Function* CreateKTimesWrapper(llvm::Module* module,
                                     llvm::Function* original_func,
                                     int unroll_factor, size_t vector_size);
 
+// Wraps an LLVM function taking a floating-point scalar or vector argument so
+// that it accepts an integer of the same bit width via bitcast for C++ ABI
+// interop.
+llvm::Function* CreateWrapperIntArgToFp(llvm::Function* func);
+
+// Wraps an LLVM function returning a floating-point scalar or vector so that it
+// returns an integer of the same bit width via bitcast for C++ ABI interop.
+llvm::Function* CreateWrapperFpRetToInt(llvm::Function* func);
+
 }  // namespace xla::codegen::intrinsic
 
 #endif  // XLA_CODEGEN_INTRINSIC_SIMPLE_JIT_RUNNER_H_

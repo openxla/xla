@@ -97,6 +97,10 @@ def ExpandFloatOpsPass : Pass<"xla-expand-float-ops", "mlir::ModuleOp"> {
   let options = [
     Option<"approximate_tanh_", "approximate_tanh", "bool", /*default=*/"true",
            "Use built-in MLIR approximation for tanh.">,
+    Option<"expand_f8_conversions_", "expand_f8_conversions", "bool",
+           /*default=*/"true",
+           "Expand 8-bit float truncf/extf inline instead of deferring to "
+           "the XLA intrinsic library.">,
   ];
 }
 

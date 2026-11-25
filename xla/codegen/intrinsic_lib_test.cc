@@ -391,6 +391,80 @@ TEST(IntrinsicLibTest, CppGenIntrinsicLibraryPreservesNoInline) {
   EXPECT_FALSE(llvm::verifyModule(dst_module, &llvm::errs()));
 }
 
+TEST(IntrinsicLibTest, FpTruncAndFpExtVectorizationsRespectMaxBitWidth) {
+  auto descs_for = [](int prefer_vector_width, absl::string_view scalar_name) {
+    IntrinsicOptions options;
+    options.prefer_vector_width = prefer_vector_width;
+    auto lib = IntrinsicFunctionLib(options);
+    std::vector<std::string> descs;
+    for (const auto& vec_desc : lib.Vectorizations()) {
+      if (vec_desc.getScalarFnName().str() == scalar_name) {
+        descs.push_back(ToString(vec_desc));
+      }
+    }
+    return descs;
+  };
+
+  // With 256-bit cap, f8 <-> f32 caps at v8 (256-bit f32), f8 <-> f64 caps at
+  // v4 (256-bit f64), and f8 <-> f16/bf16 allows v16 (256-bit f16/bf16).
+  EXPECT_THAT(descs_for(256, "xla.fpext.f8e4m3fn.to.f32"),
+              UnorderedElementsAre("xla.fpext.f8e4m3fn.to.f32:xla.fpext."
+                                   "v2f8e4m3fn.to.v2f32:2:_ZGV_LLVM_N2v",
+                                   "xla.fpext.f8e4m3fn.to.f32:xla.fpext."
+                                   "v4f8e4m3fn.to.v4f32:4:_ZGV_LLVM_N4v",
+                                   "xla.fpext.f8e4m3fn.to.f32:xla.fpext."
+                                   "v8f8e4m3fn.to.v8f32:8:_ZGV_LLVM_N8v"));
+  EXPECT_THAT(descs_for(256, "xla.fpext.f8e4m3fn.to.f64"),
+              UnorderedElementsAre("xla.fpext.f8e4m3fn.to.f64:xla.fpext."
+                                   "v2f8e4m3fn.to.v2f64:2:_ZGV_LLVM_N2v",
+                                   "xla.fpext.f8e4m3fn.to.f64:xla.fpext."
+                                   "v4f8e4m3fn.to.v4f64:4:_ZGV_LLVM_N4v"));
+  EXPECT_THAT(descs_for(256, "xla.fpext.f8e4m3fn.to.f16"),
+              UnorderedElementsAre("xla.fpext.f8e4m3fn.to.f16:xla.fpext."
+                                   "v2f8e4m3fn.to.v2f16:2:_ZGV_LLVM_N2v",
+                                   "xla.fpext.f8e4m3fn.to.f16:xla.fpext."
+                                   "v4f8e4m3fn.to.v4f16:4:_ZGV_LLVM_N4v",
+                                   "xla.fpext.f8e4m3fn.to.f16:xla.fpext."
+                                   "v8f8e4m3fn.to.v8f16:8:_ZGV_LLVM_N8v",
+                                   "xla.fpext.f8e4m3fn.to.f16:xla.fpext."
+                                   "v16f8e4m3fn.to.v16f16:16:_ZGV_LLVM_N16v"));
+  EXPECT_THAT(descs_for(256, "xla.fptrunc.f32.to.f8e4m3fn"),
+              UnorderedElementsAre("xla.fptrunc.f32.to.f8e4m3fn:xla.fptrunc."
+                                   "v2f32.to.v2f8e4m3fn:2:_ZGV_LLVM_N2v",
+                                   "xla.fptrunc.f32.to.f8e4m3fn:xla.fptrunc."
+                                   "v4f32.to.v4f8e4m3fn:4:_ZGV_LLVM_N4v",
+                                   "xla.fptrunc.f32.to.f8e4m3fn:xla.fptrunc."
+                                   "v8f32.to.v8f8e4m3fn:8:_ZGV_LLVM_N8v"));
+  EXPECT_THAT(
+      descs_for(256, "xla.fptrunc.bf16.to.f8e8m0fnu"),
+      UnorderedElementsAre("xla.fptrunc.bf16.to.f8e8m0fnu:xla.fptrunc.v2bf16."
+                           "to.v2f8e8m0fnu:2:_ZGV_LLVM_N2v",
+                           "xla.fptrunc.bf16.to.f8e8m0fnu:xla.fptrunc.v4bf16."
+                           "to.v4f8e8m0fnu:4:_ZGV_LLVM_N4v",
+                           "xla.fptrunc.bf16.to.f8e8m0fnu:xla.fptrunc.v8bf16."
+                           "to.v8f8e8m0fnu:8:_ZGV_LLVM_N8v",
+                           "xla.fptrunc.bf16.to.f8e8m0fnu:xla.fptrunc.v16bf16."
+                           "to.v16f8e8m0fnu:16:_ZGV_LLVM_N16v"));
+
+  // With 512-bit cap, f8 <-> f32 allows v16 while f8 <-> f64 caps at v8.
+  EXPECT_THAT(descs_for(512, "xla.fpext.f8e4m3fn.to.f32"),
+              UnorderedElementsAre("xla.fpext.f8e4m3fn.to.f32:xla.fpext."
+                                   "v2f8e4m3fn.to.v2f32:2:_ZGV_LLVM_N2v",
+                                   "xla.fpext.f8e4m3fn.to.f32:xla.fpext."
+                                   "v4f8e4m3fn.to.v4f32:4:_ZGV_LLVM_N4v",
+                                   "xla.fpext.f8e4m3fn.to.f32:xla.fpext."
+                                   "v8f8e4m3fn.to.v8f32:8:_ZGV_LLVM_N8v",
+                                   "xla.fpext.f8e4m3fn.to.f32:xla.fpext."
+                                   "v16f8e4m3fn.to.v16f32:16:_ZGV_LLVM_N16v"));
+  EXPECT_THAT(descs_for(512, "xla.fpext.f8e4m3fn.to.f64"),
+              UnorderedElementsAre("xla.fpext.f8e4m3fn.to.f64:xla.fpext."
+                                   "v2f8e4m3fn.to.v2f64:2:_ZGV_LLVM_N2v",
+                                   "xla.fpext.f8e4m3fn.to.f64:xla.fpext."
+                                   "v4f8e4m3fn.to.v4f64:4:_ZGV_LLVM_N4v",
+                                   "xla.fpext.f8e4m3fn.to.f64:xla.fpext."
+                                   "v8f8e4m3fn.to.v8f64:8:_ZGV_LLVM_N8v"));
+}
+
 }  // namespace
 
 }  // namespace xla::codegen::intrinsics

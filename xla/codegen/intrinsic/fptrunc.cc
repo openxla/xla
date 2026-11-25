@@ -15,18 +15,15 @@ limitations under the License.
 
 #include "xla/codegen/intrinsic/fptrunc.h"
 
+#include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <optional>
-#include <string>
-#include <vector>
 
 #include "absl/log/check.h"
-#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "llvm/ADT/APFloat.h"
-#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/BasicBlock.h"
@@ -34,19 +31,19 @@ limitations under the License.
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
 #include "llvm/Support/Casting.h"
 #include "xla/codegen/intrinsic/type.h"
 #include "xla/primitive_util.h"
-#include "xla/service/llvm_ir/llvm_util.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::codegen::intrinsics {
 namespace {
+
 llvm::Function* CreateFunction(llvm::Module* module, Type from, Type to) {
   DCHECK_OK(Type::VerifySameWidth(from, to));
   llvm::LLVMContext& context = module->getContext();
@@ -57,13 +54,14 @@ llvm::Function* CreateFunction(llvm::Module* module, Type from, Type to) {
       module->getOrInsertFunction(FpTrunc::Name({from, to}), function_type)
           .getCallee());
   func->getArg(0)->setName("arg");
+  func->setDoesNotAccessMemory();
+  func->setDoesNotThrow();
+  func->setWillReturn();
   return func;
 }
-}  // namespace
 
 // Truncates an f32 value (scalar or vector) to bf16 with correct rounding.
-static llvm::Function* TruncateF32ToBf16(llvm::Module* module, Type from,
-                                         Type to) {
+llvm::Function* TruncateF32ToBf16(llvm::Module* module, Type from, Type to) {
   llvm::LLVMContext& context = module->getContext();
   llvm::IRBuilder<> builder(context);
   llvm::Function* func = CreateFunction(module, from, to);
@@ -113,420 +111,201 @@ static llvm::Function* TruncateF32ToBf16(llvm::Module* module, Type from,
   return func;
 }
 
-static llvm::Function* ExtendF8e5m2ToF16(llvm::Module* module, Type from,
-                                         Type to) {
-  llvm::LLVMContext& context = module->getContext();
-  llvm::IRBuilder<> builder(context);
-  llvm::Function* func = CreateFunction(module, from, to);
-  llvm::BasicBlock* entry_bb = llvm::BasicBlock::Create(context, "entry", func);
-  builder.SetInsertPoint(entry_bb);
+// Branchless integer bit conversion (RTNE) from `f32` or `f64` to an 8-bit
+// float, supporting both scalar and vector types.
+llvm::Value* EmitWideFloatToByteFloat(llvm::IRBuilder<>& b,
+                                      PrimitiveType src_type,
+                                      PrimitiveType dst_type,
+                                      std::optional<size_t> vector_width,
+                                      llvm::Value* in) {
+  DCHECK(src_type == F32 || src_type == F64);
+  llvm::LLVMContext& context = b.getContext();
+  const llvm::fltSemantics* sem = GetByteFloatSemantics(dst_type);
+  CHECK_NE(sem, nullptr);
 
-  llvm::Value* as_int16 = builder.CreateZExt(
-      func->getArg(0), Type(S16, from.vector_width()).to_ir_type(context));
-  llvm::Value* shifted = builder.CreateShl(as_int16, 8);
-  builder.CreateRet(builder.CreateBitCast(shifted, to.to_ir_type(context)));
-  return func;
-}
+  const bool is_f64 = (src_type == F64);
+  const int fx_bits = is_f64 ? 64 : 32;
+  const int fx_mant = is_f64 ? 52 : 23;
+  const int fx_bias = is_f64 ? 1023 : 127;
+  const uint64_t abs_mask = is_f64 ? 0x7FFFFFFFFFFFFFFFULL : 0x7FFFFFFFULL;
+  const uint64_t inf_bits = is_f64 ? 0x7FF0000000000000ULL : 0x7F800000ULL;
 
-static llvm::Function* ExtendF8e4m3fnToF16(llvm::Module* module, Type from,
-                                           Type to) {
-  llvm::LLVMContext& context = module->getContext();
-  llvm::IRBuilder<> b(context);
-  llvm::Function* func = CreateFunction(module, from, to);
-  llvm::BasicBlock* entry_bb = llvm::BasicBlock::Create(context, "entry", func);
-  b.SetInsertPoint(entry_bb);
-  llvm::Value* f8_value = func->getArg(0);
+  llvm::Type* ix_type =
+      Type(is_f64 ? U64 : U32, vector_width).to_ir_type(context);
+  llvm::Type* fx_type = Type(src_type, vector_width).to_ir_type(context);
+  llvm::Type* i8_type = Type(U8, vector_width).to_ir_type(context);
+  auto cx = [&](uint64_t v) { return llvm::ConstantInt::get(ix_type, v); };
 
-  using llvm::Value;
+  llvm::Value* u = b.CreateBitCast(in, ix_type);
+  llvm::Value* sign_bit = b.CreateLShr(u, cx(fx_bits - 1));
+  llvm::Value* abs_u = b.CreateAnd(u, cx(abs_mask));
 
-  llvm::Type* i8_type = from.to_ir_type(context);
-  llvm::Type* i16_type = Type(U16, to.vector_width()).to_ir_type(context);
-  auto i8_const = [i8_type](int val) {
-    return llvm::ConstantInt::get(i8_type, val);
-  };
-  auto i16_const = [i16_type](int val) {
-    return llvm::ConstantInt::get(i16_type, val);
-  };
+  const bool has_inf = primitive_util::HasInfinity(dst_type);
+  const bool is_fnuz = !has_inf && !primitive_util::HasNegativeZero(dst_type);
+  const uint64_t max_finite =
+      llvm::APFloat::getLargest(*sem).bitcastToAPInt().getZExtValue();
+  const uint64_t pos_inf =
+      llvm::APFloat::getInf(*sem).bitcastToAPInt().getZExtValue();
+  const uint64_t pos_nan =
+      llvm::APFloat::getNaN(*sem).bitcastToAPInt().getZExtValue();
 
-  // Cast the input value to an integer for bitwise manipulation. Get the
-  // absolute value of the input value.
-  //   f8_as_int = bitcast(f16_value, int)
-  //   f8_abs_bits = f8_as_int & 0x7F
-  Value* f8_as_int = b.CreateBitCast(f8_value, i8_type);
-  Value* f8_abs_bits = b.CreateAnd(f8_as_int, i8_const(0x7F));
-
-  // We assume below that the value is neither NaN nor denormal. If it NaN or
-  // denormal, the output is set to NaN or zero at the end using Select
-  // instructions.
-
-  // Get the sign:
-  //   f16_sign = (f8_as_int & 0x80) << 8
-  Value* f8_sign = b.CreateAnd(f8_as_int, i8_const(0x80));
-  Value* f16_sign = b.CreateZExt(f8_sign, i16_type);
-  f16_sign = b.CreateShl(f16_sign, i16_const(8));
-
-  constexpr int exponent_bias_difference = 15 - 7;
-  constexpr int f16_mantissa_bits = 10;
-  constexpr int f8_mantissa_bits = 3;
-  constexpr int mantissa_bits_difference = f16_mantissa_bits - f8_mantissa_bits;
-  constexpr int f8_mantissa_mask = (1 << f8_mantissa_bits) - 1;
-
-  // Get the exponent:
-  //   f8_exponent = (f8_as_int & 0x78) >> f8_mantissa_bits
-  Value* f8_exponent_bits = b.CreateAnd(f8_as_int, i8_const(0x78));
-  Value* f8_exponent =
-      b.CreateLShr(f8_exponent_bits, i8_const(f8_mantissa_bits));
-
-  // Adjust the exponent by adding the difference in exponent bias:
-  //   f16_exponent = (f8_exponent + exponent_bias_difference)
-  //                  << f16_mantissa_bits
-  Value* f16_exponent =
-      b.CreateAdd(f8_exponent, i8_const(exponent_bias_difference));
-  f16_exponent = b.CreateZExt(f16_exponent, i16_type);
-  f16_exponent = b.CreateShl(f16_exponent, i16_const(f16_mantissa_bits));
-
-  // Get the mantissa:
-  //   f16_mantissa = (f8_mantissa & f8_mantissa_mask)
-  //                  << mantissa_bits_difference
-  Value* f8_mantissa = b.CreateAnd(f8_as_int, i8_const(f8_mantissa_mask));
-  Value* f16_mantissa = b.CreateZExt(f8_mantissa, i16_type);
-  f16_mantissa = b.CreateShl(f16_mantissa, i16_const(mantissa_bits_difference));
-
-  // Combine the exponent and mantissa:
-  //   f16_as_int = f16_exponent | f16_mantissa
-  Value* f16_as_int = b.CreateOr(f16_exponent, f16_mantissa);
-
-  // Set output to NaN if input is NaN
-  //   f16_as_int = f8_abs_bits == 0x7F ? 0x7E00 : f16_as_int
-  Value* is_nan = b.CreateICmpEQ(f8_abs_bits, i8_const(0x7F));
-  f16_as_int = b.CreateSelect(is_nan, i16_const(0x7E00), f16_as_int);
-
-  // Map from F8 denormal value to F16 value.
-  int f8_denormal_to_f16[8] = {
-      0x0000,  // 0
-      0x1800,  // 1/8 * 2^-6
-      0x1C00,  // 2/8 * 2^-6
-      0x1E00,  // 3/8 * 2^-6
-      0x2000,  // 4/8 * 2^-6
-      0x2100,  // 5/8 * 2^-6
-      0x2200,  // 6/8 * 2^-6
-      0x2300,  // 7/8 * 2^-6
-  };
-
-  // If the F8 value is denormal, use the map above to determine the correct F16
-  // value.
-  //    if (f8_abs_bits < 8) { f16_as_int = f8_denormal_to_f16[f8_abs_bits]; }
-  for (int i = 0; i < 8; i++) {
-    Value* is_denormal_value = b.CreateICmpEQ(f8_abs_bits, i8_const(i));
-    f16_as_int = b.CreateSelect(is_denormal_value,
-                                i16_const(f8_denormal_to_f16[i]), f16_as_int);
-  }
-
-  // Set the sign bit.
-  //   f16_as_int |= f16_sign
-  f16_as_int = b.CreateOr(f16_as_int, f16_sign);
-  b.CreateRet(b.CreateBitCast(f16_as_int, to.to_ir_type(context)));
-  return func;
-}
-
-// For debugging purposes; print floating point values to stdout.
-void EmitPrintf(llvm::Module* module, Type ty, llvm::Value* value,
-                llvm::IRBuilder<>* b) {
-  llvm::FunctionType* printf_type =
-      llvm::FunctionType::get(b->getInt32Ty(), {b->getPtrTy()}, true);
-  llvm::FunctionCallee printf =
-      module->getOrInsertFunction("printf", printf_type);
-  std::string format_str = "FpTrunc Printf " + ty.name() + " ";
-  if (ty.element_type() == F16) {
-    ty = Type(F32, ty.vector_width());
-    value = b->CreateFPExt(value, b->getFloatTy());
-  }
-  for (int i = 0; i < ty.vector_width().value_or(1); ++i) {
-    switch (ty.element_type()) {
-      case F32:
-        format_str += "%f ";
-        break;
-      case F64:
-        format_str += "%F ";
-        break;
-      default:
-        LOG(FATAL) << "Unsupported type: " << ty.name();
+  if (dst_type == F8E8M0FNU) {
+    llvm::Value* res;
+    if (is_f64) {
+      // In f64, 2^-127 is normal (biased exponent 896). Any positive value
+      // below 2^-127 clamps to 0x00 (the minimum representable value).
+      const uint64_t min_e8m0_bits = uint64_t{896} << 52;
+      const uint64_t half_ulp = uint64_t{1} << 51;
+      llvm::Value* normal_res = b.CreateLShr(
+          b.CreateAdd(b.CreateSub(abs_u, cx(min_e8m0_bits)), cx(half_ulp)),
+          cx(52));
+      res = b.CreateSelect(b.CreateICmpUGE(abs_u, cx(min_e8m0_bits)),
+                           normal_res, cx(0));
+    } else {
+      // In f32, 2^-127 is subnormal (0x00400000); 1.5 * 2^-127 is 0x00600000.
+      llvm::Value* normal_res =
+          b.CreateLShr(b.CreateAdd(abs_u, cx(0x00400000u)), cx(23));
+      llvm::Value* subnorm_res =
+          b.CreateSelect(b.CreateICmpUGE(abs_u, cx(0x00600000u)), cx(1), cx(0));
+      res = b.CreateSelect(b.CreateICmpUGE(abs_u, cx(0x00800000u)), normal_res,
+                           subnorm_res);
     }
+    res =
+        b.CreateSelect(b.CreateICmpUGT(res, cx(max_finite)), cx(pos_nan), res);
+    llvm::Value* is_neg_or_zero = b.CreateOr(b.CreateICmpNE(sign_bit, cx(0)),
+                                             b.CreateICmpEQ(abs_u, cx(0)));
+    res = b.CreateSelect(is_neg_or_zero, cx(pos_nan), res);
+    return b.CreateTrunc(res, i8_type);
   }
-  format_str += "\n";
 
-  llvm::Value* format_str_ptr = b->CreateGlobalString(format_str);
-  std::vector<llvm::Value*> args = {format_str_ptr};
-  if (ty.vector_width().has_value()) {
-    for (int i = 0; i < ty.vector_width().value(); ++i) {
-      args.push_back(b->CreateExtractElement(value, i));
-    }
+  const int mant_bits = llvm::APFloat::semanticsPrecision(*sem) - 1;
+  const int bias = 1 - llvm::APFloat::semanticsMinExponent(*sem);
+  const int mant_shift = fx_mant - mant_bits;
+  const uint64_t bias_diff = static_cast<uint64_t>(fx_bias - bias) << fx_mant;
+  const uint64_t half_m1 = (uint64_t{1} << (mant_shift - 1)) - 1;
+  const uint64_t min_normal = static_cast<uint64_t>(fx_bias + 1 - bias)
+                              << fx_mant;
+  // Subnormal RTNE magic constant: 2^(fx_mant + 1 - bias - mant_bits), whose
+  // ULP is the exact subnormal quantum 2^(1 - bias - mant_bits). For any
+  // 0 <= |x| < 2^(1 - bias), fadd_rn(|x|, magic) lies in [magic, 2*magic) and
+  // performs a single exact RTNE rounding, yielding the subnormal code (or
+  // smallest normal code 2^mant_bits on carry) in the low bits.
+  const uint64_t magic_bits =
+      static_cast<uint64_t>(fx_bias + fx_mant + 1 - bias - mant_bits)
+      << fx_mant;
+
+  // Normal path: abs_u >= min_normal >= bias_diff, and max abs_u minus
+  // bias_diff + half_m1 + 1 never overflows ix_type.
+  llvm::Value* n_sub = b.CreateSub(abs_u, cx(bias_diff));
+  llvm::Value* n_lsb = b.CreateAnd(b.CreateLShr(n_sub, cx(mant_shift)), cx(1));
+  llvm::Value* n_raw = b.CreateLShr(
+      b.CreateAdd(b.CreateAdd(n_sub, cx(half_m1)), n_lsb), cx(mant_shift));
+  llvm::Value* n_res =
+      (pos_inf == max_finite + 1)
+          ? static_cast<llvm::Value*>(b.CreateIntrinsic(
+                llvm::Intrinsic::umin, {ix_type}, {n_raw, cx(pos_inf)}))
+          : b.CreateSelect(b.CreateICmpUGT(n_raw, cx(max_finite)), cx(pos_inf),
+                           n_raw);
+
+  // Subnormal path: clamp to min_normal so the input to fadd is always finite
+  // and non-negative (avoiding poison under fast-math nnan/ninf and blocking
+  // FMA contraction with upstream ops), then do a single hardware fadd_rn.
+  llvm::Value* s_abs_u = b.CreateIntrinsic(llvm::Intrinsic::umin, {ix_type},
+                                           {abs_u, cx(min_normal)});
+  llvm::Value* abs_fp = b.CreateBitCast(s_abs_u, fx_type);
+  llvm::Value* magic_fp = b.CreateBitCast(cx(magic_bits), fx_type);
+  llvm::Value* s_res = b.CreateSub(
+      b.CreateBitCast(b.CreateFAdd(abs_fp, magic_fp), ix_type), cx(magic_bits));
+
+  llvm::Value* res =
+      b.CreateSelect(b.CreateICmpUGE(abs_u, cx(min_normal)), n_res, s_res);
+
+  llvm::Value* sign = b.CreateShl(sign_bit, cx(7));
+  llvm::Value* signed_res = b.CreateOr(sign, res);
+  if (is_fnuz) {
+    res = b.CreateSelect(b.CreateICmpEQ(res, cx(0)), cx(0), signed_res);
   } else {
-    args.push_back(value);
+    res = signed_res;
   }
-  b->CreateCall(printf, args);
+
+  if (has_inf) {
+    // Inf already maps through n_res -> pos_inf | sign. Only NaN needs an
+    // explicit override because pos_nan != pos_inf.
+    llvm::Value* nan_val = b.CreateOr(sign, cx(pos_nan));
+    res = b.CreateSelect(b.CreateICmpUGT(abs_u, cx(inf_bits)), nan_val, res);
+  }
+  // For non-Inf formats (f8e4m3fn and FNUZ), pos_inf == pos_nan and
+  // (pos_nan | sign) == neg_nan, so n_res already produces the exact Inf and
+  // NaN encoding without an extra select.
+
+  return b.CreateTrunc(res, i8_type);
 }
 
-// Converts a floating-point value to an 8-bit floating-point value with
-// specified properties.
-//
-// This function is vector-capable. If `from_type` is a vector type, it will
-// generate vector instructions for the conversion.
 absl::StatusOr<llvm::Function*> EmitFxxToF8E(llvm::Module* module,
                                              const Type& from, const Type& to) {
-  llvm::LLVMContext& context = module->getContext();
-  llvm::IRBuilder<> b(context);
   if (!from.is_scalar() && !from.is_vector()) {
     return absl::InvalidArgumentError("from_type must be a scalar or vector.");
   }
   ABSL_RETURN_IF_ERROR(Type::VerifySameWidth(from, to));
 
+  const PrimitiveType fx_type = from.element_type();
+  const PrimitiveType f8_type = to.element_type();
+  if (GetByteFloatSemantics(f8_type) == nullptr) {
+    return Internal("Unsupported fptrunc conversion: from=%s to=%s",
+                    from.name(), to.name());
+  }
+
+  llvm::LLVMContext& context = module->getContext();
+  llvm::IRBuilder<> b(context);
   llvm::Function* func = CreateFunction(module, from, to);
   llvm::BasicBlock* entry_bb = llvm::BasicBlock::Create(context, "entry", func);
   b.SetInsertPoint(entry_bb);
   llvm::Value* from_value = func->getArg(0);
 
-  const PrimitiveType fx_type = from.element_type();
-  if (fx_type != F16 && fx_type != F32 && fx_type != F64) {
-    return absl::InvalidArgumentError("from_type must be F16, F32, or F64.");
+  if (fx_type == F32 || fx_type == F64) {
+    b.CreateRet(EmitWideFloatToByteFloat(b, fx_type, f8_type,
+                                         from.vector_width(), from_value));
+    return func;
+  }
+  if (fx_type == BF16) {
+    // bf16 -> f32 is lossless, so truncating via f32 avoids double rounding.
+    llvm::Type* i16_type = Type(U16, from.vector_width()).to_ir_type(context);
+    llvm::Type* i32_type = Type(U32, from.vector_width()).to_ir_type(context);
+    llvm::Type* f32_type = Type(F32, from.vector_width()).to_ir_type(context);
+    llvm::Value* as_i32 =
+        b.CreateZExt(b.CreateBitCast(from_value, i16_type), i32_type);
+    llvm::Value* f32 = b.CreateBitCast(b.CreateShl(as_i32, 16), f32_type);
+    b.CreateRet(
+        EmitWideFloatToByteFloat(b, F32, f8_type, from.vector_width(), f32));
+    return func;
+  }
+  if (fx_type == F16) {
+    // f16 -> f32 is lossless, so truncating via f32 avoids double rounding.
+    llvm::Type* f32_type = Type(F32, from.vector_width()).to_ir_type(context);
+    llvm::Value* f32 = b.CreateFPExt(from_value, f32_type);
+    b.CreateRet(
+        EmitWideFloatToByteFloat(b, F32, f8_type, from.vector_width(), f32));
+    return func;
   }
 
-  const uint64_t fx_width = primitive_util::BitWidth(fx_type);
-  const uint64_t fx_bias = primitive_util::ExponentBias(fx_type);
-  const uint64_t fx_mantissa_bits =
-      primitive_util::SignificandWidth(fx_type) - 1;
-  const uint64_t fx_exp_bits = primitive_util::ExponentWidth(fx_type);
-  const uint64_t f8_exp_bits = primitive_util::ExponentWidth(to.element_type());
-  const bool is_fnuz = !primitive_util::HasInfinity(to.element_type()) &&
-                       !primitive_util::HasNegativeZero(to.element_type());
-  // HACK: The F8E4M3FNUZ format has a max value of 240, which implies a bias
-  // of 8. The value in primitive_util is 7.
-  // Verified with ml_dtypes
-  int f8_bias = primitive_util::ExponentBias(to.element_type());
-  if (to.element_type() == F8E4M3FNUZ) {
-    f8_bias = 8;
-  }
-
-  const uint64_t f8_mantissa_bits =
-      primitive_util::SignificandWidth(to.element_type()) - 1;
-  const int64_t exponent_bias_diff =
-      static_cast<int64_t>(fx_bias) - static_cast<int64_t>(f8_bias);
-  // Ensure we don't have a ridiculous bias difference that would exceed our
-  // source bit-width. For F16/F32/F64, a bias difference of 1 (15 vs 16) is
-  // perfectly fine.
-  DCHECK_LT(std::abs(exponent_bias_diff), (1LL << fx_exp_bits))
-      << "Bias difference is too large to represent in source type";
-  DCHECK_LT(fx_mantissa_bits - f8_mantissa_bits, 64)
-      << "Trying to shift by too many bits; " << fx_mantissa_bits << " "
-      << f8_mantissa_bits;
-
-  const PrimitiveType ix_primitive_type =
-      primitive_util::UnsignedIntegralTypeForBitWidth(fx_width);
-  llvm::Type* ix_type =
-      Type(ix_primitive_type, from.vector_width()).to_ir_type(context);
-  llvm::Type* i8_type = to.to_ir_type(context);
-
-  auto make_const = [&](uint64_t val, llvm::Type* type) -> llvm::Constant* {
-    llvm::IntegerType* scalar_ty =
-        llvm::IntegerType::get(context, type->getScalarSizeInBits());
-    uint64_t mask = (scalar_ty->getBitWidth() == 64)
-                        ? ~0ULL
-                        : ((1ULL << scalar_ty->getBitWidth()) - 1);
-    llvm::Constant* scalar_const =
-        llvm::ConstantInt::get(scalar_ty, val & mask);
-    if (type->isVectorTy()) {
-      auto vec_ty = llvm::cast<llvm::FixedVectorType>(type);
-      return llvm::ConstantVector::getSplat(vec_ty->getElementCount(),
-                                            scalar_const);
-    }
-    return scalar_const;
-  };
-
-  auto ix_const = [&](uint64_t val) { return make_const(val, ix_type); };
-  auto i8_const = [&](uint64_t val) { return make_const(val, i8_type); };
-
-  // If biases and exponent widths are identical (e.g., F16 -> F8E5M2),
-  // we can delegate all logic to EmitReducePrecisionIR and do a simple shift.
-  if (fx_bias == f8_bias && fx_exp_bits == f8_exp_bits) {
-    LOG(INFO) << "Using fast path for " << from.name() << " -> " << to.name();
-    ABSL_ASSIGN_OR_RETURN(
-        llvm::Value * reduced_precision,
-        llvm_ir::EmitReducePrecisionIR(
-            /*src_ty=*/fx_type, from_value,
-            /*dest_exponent_bits=*/f8_exp_bits,  // <-- Pass DEST exp bits
-            /*dest_mantissa_bits=*/f8_mantissa_bits,
-            /*quiet_nans=*/true, &b));
-
-    // Bitcast to integer to perform the shift.
-    llvm::Value* as_int = b.CreateBitCast(reduced_precision, ix_type);
-
-    // Shift the 8 relevant bits (1 sign + 5 exp + 2 mantissa for F8E5M2)
-    // into position. The shift amount is the difference in mantissa bits.
-    const uint64_t mantissa_shift = fx_mantissa_bits - f8_mantissa_bits;
-    llvm::Value* shifted = b.CreateLShr(as_int, ix_const(mantissa_shift));
-
-    // Truncate from i16/i32/i64 down to i8.
-    llvm::Value* truncated = b.CreateTrunc(shifted, i8_type);
-
-    b.CreateRet(truncated);
-    return func;  // We are done, skip the general "slow" logic.
-  }
-
-  llvm::Constant* nosign_mask = ix_const((1ULL << (fx_width - 1)) - 1);
-  llvm::Constant* sign_mask = ix_const(1ULL << (fx_width - 1));
-  uint64_t min_normal_threshold =
-      (exponent_bias_diff > 0) ? (exponent_bias_diff + 1) : 1;
-  llvm::Constant* min_normal_value =
-      ix_const(min_normal_threshold << fx_mantissa_bits);
-
-  using llvm::Value;
-  Value* fx_as_int = b.CreateBitCast(from_value, ix_type);
-  Value* fx_abs_bits = b.CreateAnd(fx_as_int, nosign_mask);
-
-  Value* fx_sign = b.CreateAnd(fx_as_int, sign_mask);
-  fx_sign = b.CreateLShr(fx_sign, ix_const(fx_width - 8));
-  Value* f8_sign = b.CreateTrunc(fx_sign, i8_type);
-
-  // To avoid `ReducePrecision`'s assumptions, we only use it for mantissa
-  // rounding, keeping the original exponent bits.
-  absl::StatusOr<Value*> fx_reduced_statusor = llvm_ir::EmitReducePrecisionIR(
-      /*src_ty=*/fx_type, from_value,
-      /*dest_exponent_bits=*/primitive_util::ExponentWidth(fx_type),
-      /*dest_mantissa_bits=*/f8_mantissa_bits,
-      /*quiet_nans=*/true, &b);
-  CHECK_OK(fx_reduced_statusor.status());  // Crash OK
-  Value* fx_reduced = b.CreateBitCast(fx_reduced_statusor.value(), ix_type);
-  fx_reduced = b.CreateAnd(fx_reduced, nosign_mask);
-
-  // Round small values up to the minimum normal F8 value.
-  fx_reduced = b.CreateSelect(b.CreateICmpULT(fx_reduced, min_normal_value),
-                              min_normal_value, fx_reduced);
-
-  // Adjust the exponent bias.
-  if (exponent_bias_diff > 0) {
-    // Source bias is larger (standard case): Subtract the difference
-    fx_reduced = b.CreateSub(fx_reduced,
-                             ix_const(static_cast<uint64_t>(exponent_bias_diff)
-                                      << fx_mantissa_bits));
-  } else if (exponent_bias_diff < 0) {
-    // Destination bias is larger (F16 -> F8E5M2FNUZ): Add the difference
-    // Since `exponent_bias_diff` is negative, we negate it to get a positive
-    // value for the left shift.
-    fx_reduced = b.CreateAdd(fx_reduced,
-                             ix_const(static_cast<uint64_t>(-exponent_bias_diff)
-                                      << fx_mantissa_bits));
-  }  // If bias_diff == 0, we do nothing.
-  // Shift mantissa into place.
-  Value* f8_bits_shifted =
-      b.CreateLShr(fx_reduced, ix_const(fx_mantissa_bits - f8_mantissa_bits));
-  Value* f8_bits = b.CreateTrunc(f8_bits_shifted, i8_type);
-
-  // Calculate the threshold for overflow. This is the largest value that maps
-  // to a finite F8 value, including a rounding component.
-  const bool has_inf = primitive_util::HasInfinity(to.element_type());
-  const uint64_t max_finite_f8_exp =
-      has_inf ? (1ULL << f8_exp_bits) - 2 : (1ULL << f8_exp_bits) - 1;
-  const uint64_t max_finite_f8_man = (1ULL << f8_mantissa_bits) - 1;
-  const uint64_t max_finite_fx_exp = static_cast<uint64_t>(
-      static_cast<int64_t>(max_finite_f8_exp) + exponent_bias_diff);
-  const uint64_t man_shift = fx_mantissa_bits - f8_mantissa_bits;
-  const uint64_t max_finite_value_exp = max_finite_fx_exp << fx_mantissa_bits;
-  const uint64_t max_finite_value_man = max_finite_f8_man << man_shift;
-  const uint64_t rounding_bits = 1ULL << (man_shift - 1);
-  const uint64_t max_finite_repr =
-      max_finite_value_exp | max_finite_value_man | rounding_bits;
-  Value* is_overflow = b.CreateICmpUGT(fx_abs_bits, ix_const(max_finite_repr));
-
-  // Handle format-specific overflow behavior.
-  if (has_inf) {
-    // For standard formats, overflow becomes infinity.
-    // Also propagate Inf/NaN.
-    const uint64_t fx_exp_mask =
-        ((1ULL << primitive_util::ExponentWidth(fx_type)) - 1)
-        << fx_mantissa_bits;
-    Value* is_inf_or_nan_input = b.CreateICmpEQ(
-        b.CreateAnd(fx_abs_bits, ix_const(fx_exp_mask)), ix_const(fx_exp_mask));
-
-    const uint64_t fx_mantissa_mask = (1ULL << fx_mantissa_bits) - 1;
-    Value* fx_mantissa = b.CreateAnd(fx_abs_bits, ix_const(fx_mantissa_mask));
-    Value* is_nan_input = b.CreateAnd(is_inf_or_nan_input,
-                                      b.CreateICmpNE(fx_mantissa, ix_const(0)));
-
-    const uint64_t f8_exp_mask = ((1ULL << f8_exp_bits) - 1)
-                                 << f8_mantissa_bits;
-    const uint64_t f8_qnan_mantissa = 1ULL << (f8_mantissa_bits - 1);
-    const uint64_t f8_nan_pattern = f8_exp_mask | f8_qnan_mantissa;
-    // If the input is NaN, the output is NaN.
-    // If the input is Inf or overflows, the output is Inf.
-    // Otherwise, it's the computed finite value.
-    Value* finite_or_inf =
-        b.CreateSelect(is_overflow, i8_const(f8_exp_mask), f8_bits);
-    Value* inf_or_nan = b.CreateSelect(is_nan_input, i8_const(f8_nan_pattern),
-                                       i8_const(f8_exp_mask));
-    f8_bits = b.CreateSelect(is_inf_or_nan_input, inf_or_nan, finite_or_inf);
-  } else {
-    DCHECK_GE(fx_exp_bits, f8_exp_bits) << "Trying to convert from a narrower "
-                                           "exponent bit width."
-                                        << fx_type << " " << to.name();
-    // For fn/fnuz formats, overflow and input Inf/NaN become NaN.
-    const uint64_t fx_exp_mask =
-        ((1ULL << primitive_util::ExponentWidth(fx_type)) - 1)
-        << fx_mantissa_bits;
-    Value* is_inf_or_nan_input = b.CreateICmpEQ(
-        b.CreateAnd(fx_abs_bits, ix_const(fx_exp_mask)), ix_const(fx_exp_mask));
-
-    const uint64_t f8_nan_pattern =
-        is_fnuz ? 0x80 : (1ULL << (f8_exp_bits + f8_mantissa_bits)) - 1;
-
-    Value* is_special = b.CreateOr(is_overflow, is_inf_or_nan_input);
-    f8_bits = b.CreateSelect(is_special, i8_const(f8_nan_pattern), f8_bits);
-
-    if (is_fnuz) {
-      // For FNUZ, the NaN value is used for all special cases, and it is
-      // unsigned.
-      f8_sign = b.CreateSelect(is_special, i8_const(0), f8_sign);
-    }
-  }
-
-  // Handle halfway points for denormals.
-  f8_bits = llvm_ir::HandleHalfwayPointsFxToF8(
-      /*fx_type=*/fx_type, /*f8_exponent_bits=*/f8_exp_bits,
-      /*f8_mantissa_bits=*/f8_mantissa_bits, /*f8_bias=*/f8_bias,
-      /*fx_abs_bits=*/fx_abs_bits, /*f8_bits=*/f8_bits,
-      /*vector_width=*/from.vector_width(), &b);
-
-  // For FNUZ types, -0.0 should become +0.0. Since f8_bits is derived from
-  // fx_abs_bits, it will be 0 if the input is +/-0.0. We just need to
-  // ensure the sign bit is not set in this case.
-  if (is_fnuz) {
-    Value* is_zero = b.CreateICmpEQ(fx_abs_bits, ix_const(0));
-    f8_sign = b.CreateSelect(is_zero, i8_const(0), f8_sign);
-  }
-
-  // Apply the sign bit.
-  f8_bits = b.CreateOr(f8_bits, f8_sign);
-
-  b.CreateRet(f8_bits);
-  return func;
+  func->eraseFromParent();
+  return absl::InvalidArgumentError(
+      "from_type must be F16, BF16, F32, or F64.");
 }
+
+}  // namespace
 
 absl::StatusOr<llvm::Function*> FpTrunc::CreateDefinition(llvm::Module* module,
                                                           Type from, Type to) {
   ABSL_RETURN_IF_ERROR(Type::VerifySameWidth(from, to));
 
   if (primitive_util::IsF8Type(to.element_type()) &&
-      (from.element_type() == F16 || from.element_type() == F32 ||
-       from.element_type() == F64)) {
+      (from.element_type() == F16 || from.element_type() == BF16 ||
+       from.element_type() == F32 || from.element_type() == F64)) {
     return EmitFxxToF8E(module, from, to);
   }
   if (from.element_type() == F32 && to.element_type() == BF16) {
     return TruncateF32ToBf16(module, from, to);
-  }
-  if (from.element_type() == F8E5M2 && to.element_type() == F16) {
-    return ExtendF8e5m2ToF16(module, from, to);
-  }
-  if (from.element_type() == F8E4M3FN && to.element_type() == F16) {
-    return ExtendF8e4m3fnToF16(module, from, to);
   }
 
   return Internal("Unsupported fptrunc conversion: from=%s to=%s", from.name(),

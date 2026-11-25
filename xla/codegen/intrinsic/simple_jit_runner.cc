@@ -332,4 +332,55 @@ llvm::Function* CreateKTimesWrapper(llvm::Module* module,
 
   return wrapper_func;
 }
+
+llvm::Function* CreateWrapperIntArgToFp(llvm::Function* func) {
+  llvm::LLVMContext& context = func->getContext();
+  llvm::IRBuilder<> builder(context);
+  llvm::Value* wrapped_arg = func->getArg(0);
+  llvm::Type* int_arg_type = llvm::IntegerType::get(
+      context, wrapped_arg->getType()->getScalarSizeInBits());
+  if (auto vec_type =
+          llvm::dyn_cast<llvm::VectorType>(wrapped_arg->getType())) {
+    int_arg_type =
+        llvm::VectorType::get(int_arg_type, vec_type->getElementCount());
+  }
+  llvm::Function* wrapper = llvm::Function::Create(
+      llvm::FunctionType::get(func->getReturnType(), {int_arg_type}, false),
+      llvm::GlobalValue::ExternalLinkage, func->getName() + "_itofp",
+      func->getParent());
+  wrapper->copyAttributesFrom(func);
+  llvm::BasicBlock* entry_bb =
+      llvm::BasicBlock::Create(context, "entry", wrapper);
+  builder.SetInsertPoint(entry_bb);
+  llvm::Value* float_arg =
+      builder.CreateBitCast(wrapper->getArg(0), wrapped_arg->getType());
+  llvm::Value* ret = builder.CreateCall(func, {float_arg});
+  builder.CreateRet(ret);
+  return wrapper;
+}
+
+llvm::Function* CreateWrapperFpRetToInt(llvm::Function* func) {
+  llvm::LLVMContext& context = func->getContext();
+  llvm::IRBuilder<> builder(context);
+  llvm::Type* ret_type = func->getReturnType();
+  llvm::Type* int_ret_type =
+      llvm::IntegerType::get(context, ret_type->getScalarSizeInBits());
+  if (auto vec_type = llvm::dyn_cast<llvm::VectorType>(ret_type)) {
+    int_ret_type =
+        llvm::VectorType::get(int_ret_type, vec_type->getElementCount());
+  }
+  llvm::Function* wrapper = llvm::Function::Create(
+      llvm::FunctionType::get(int_ret_type, {func->getArg(0)->getType()},
+                              false),
+      llvm::GlobalValue::ExternalLinkage, func->getName() + "_fptoi",
+      func->getParent());
+  wrapper->copyAttributesFrom(func);
+  llvm::BasicBlock* entry_bb =
+      llvm::BasicBlock::Create(context, "entry", wrapper);
+  builder.SetInsertPoint(entry_bb);
+  llvm::Value* ret = builder.CreateCall(func, {wrapper->getArg(0)});
+  ret = builder.CreateBitCast(ret, int_ret_type);
+  builder.CreateRet(ret);
+  return wrapper;
+}
 }  // namespace xla::codegen::intrinsic

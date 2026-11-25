@@ -15,27 +15,37 @@ limitations under the License.
 
 #include "xla/codegen/intrinsic/fptrunc.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <ios>
 #include <limits>
 #include <memory>
+#include <type_traits>
 #include <utility>
+#include <vector>
 
+#include "absl/status/status.h"
+#include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/FMF.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
-#include "llvm/IR/Value.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Target/TargetMachine.h"
+#include "xla/codegen/intrinsic/intrinsic_compiler_lib.h"
 #include "xla/codegen/intrinsic/simple_jit_runner.h"
 #include "xla/codegen/intrinsic/type.h"
+#include "xla/types.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::codegen::intrinsics {
@@ -51,65 +61,6 @@ TEST(FpTruncTest, VectorIninsic) {
             "xla.fptrunc.v4f32.to.v4bf16");
 }
 
-// This function takes in an LLVM function that expects an fp argument and
-// wraps it in a new function that takes in an integer argument of the same
-// bit width as the fp argument and bitcasts it to the fp type.
-// Because there's no great native C++ fp16 type, we need to pass integer
-// values of the right bit width to the intrinsic. But because the calling
-// convention looks for fp arguments in fp registers, the intrinsic won't see
-// these arguments at all so we need to create a wrapper function that converts
-// the integer arguments to fp for interop with C++ here in this test.
-llvm::Function* CreateWrapperIntArgToFp(llvm::Function* func) {
-  llvm::LLVMContext& context = func->getContext();
-  llvm::IRBuilder<> builder(context);
-  llvm::Value* wrapped_arg = func->getArg(0);
-  llvm::Type* int_arg_type = llvm::IntegerType::get(
-      context, wrapped_arg->getType()->getScalarSizeInBits());
-  if (auto vec_type =
-          llvm::dyn_cast<llvm::VectorType>(wrapped_arg->getType())) {
-    int_arg_type =
-        llvm::VectorType::get(int_arg_type, vec_type->getElementCount());
-  }
-  llvm::Function* wrapper = llvm::Function::Create(
-      llvm::FunctionType::get(func->getReturnType(), {int_arg_type}, false),
-      llvm::GlobalValue::ExternalLinkage, func->getName() + "_itofp",
-      func->getParent());
-  wrapper->copyAttributesFrom(func);
-  llvm::BasicBlock* entry_bb =
-      llvm::BasicBlock::Create(context, "entry", wrapper);
-  builder.SetInsertPoint(entry_bb);
-  llvm::Value* float_arg =
-      builder.CreateBitCast(wrapper->getArg(0), wrapped_arg->getType());
-  llvm::Value* ret = builder.CreateCall(func, {float_arg});
-  builder.CreateRet(ret);
-  return wrapper;
-}
-
-llvm::Function* CreateWrapperFpRetToInt(llvm::Function* func) {
-  llvm::LLVMContext& context = func->getContext();
-  llvm::IRBuilder<> builder(context);
-  llvm::Type* ret_type = func->getReturnType();
-  llvm::Type* int_ret_type =
-      llvm::IntegerType::get(context, ret_type->getScalarSizeInBits());
-  if (auto vec_type = llvm::dyn_cast<llvm::VectorType>(ret_type)) {
-    int_ret_type =
-        llvm::VectorType::get(int_ret_type, vec_type->getElementCount());
-  }
-  llvm::Function* wrapper = llvm::Function::Create(
-      llvm::FunctionType::get(int_ret_type, {func->getArg(0)->getType()},
-                              false),
-      llvm::GlobalValue::ExternalLinkage, func->getName() + "_fptoi",
-      func->getParent());
-  wrapper->copyAttributesFrom(func);
-  llvm::BasicBlock* entry_bb =
-      llvm::BasicBlock::Create(context, "entry", wrapper);
-  builder.SetInsertPoint(entry_bb);
-  llvm::Value* ret = builder.CreateCall(func, {wrapper->getArg(0)});
-  ret = builder.CreateBitCast(ret, int_ret_type);
-  builder.CreateRet(ret);
-  return wrapper;
-}
-
 JitRunner CreateJitRunner(Type from, Type to) {
   auto context = std::make_unique<llvm::LLVMContext>();
   auto module = std::make_unique<llvm::Module>("test_module", *context);
@@ -119,11 +70,11 @@ JitRunner CreateJitRunner(Type from, Type to) {
   func->setLinkage(llvm::Function::ExternalLinkage);
   EXPECT_FALSE(llvm::verifyFunction(*func));
 
-  llvm::Function* wrapper = CreateWrapperIntArgToFp(func);
+  llvm::Function* wrapper = intrinsic::CreateWrapperIntArgToFp(func);
   wrapper->setLinkage(llvm::Function::ExternalLinkage);
   EXPECT_FALSE(llvm::verifyFunction(*wrapper));
 
-  llvm::Function* wrapper2 = CreateWrapperFpRetToInt(func);
+  llvm::Function* wrapper2 = intrinsic::CreateWrapperFpRetToInt(func);
   wrapper2->setLinkage(llvm::Function::ExternalLinkage);
   EXPECT_FALSE(llvm::verifyFunction(*wrapper2));
 
@@ -164,32 +115,6 @@ TEST(FpTruncExecutionTest, F16ToF8e4m3fn_Vector4) {
   EXPECT_EQ(actuals[1], 0x0);
   EXPECT_EQ(actuals[2], static_cast<int8_t>(0b11000000));
   EXPECT_EQ(actuals[3], static_cast<int8_t>(0b00110000));
-}
-
-TEST(FpTruncExecutionTest, F8e4m3fnToF16) {
-  JitRunner jit = CreateJitRunner(Type::S(F8E4M3FN), Type::S(F16));
-  auto fptrunc = jit.GetScalarFn<int16_t(int8_t)>(
-      FpTrunc::Name({Type::S(F8E4M3FN), Type::S(F16)}) + "_fptoi");
-  EXPECT_EQ(fptrunc(static_cast<int8_t>(0b11000000)),
-            static_cast<int16_t>(0b1100000000000000));  // -2.0
-  EXPECT_EQ(fptrunc(static_cast<int8_t>(0b00110000)),
-            static_cast<int16_t>(0b0011100000000000));  // 0.5
-  EXPECT_EQ(fptrunc(static_cast<int8_t>(0b10110000)),
-            static_cast<int16_t>(0b1011100000000000));  // -0.5
-}
-
-TEST(FpTruncExecutionTest, F8e4m3fnToF16_Vector4) {
-  JitRunner jit = CreateJitRunner(Type::V(F8E4M3FN, 4), Type::V(F16, 4));
-  auto fptrunc = jit.GetVectorizedFn<4, int16_t, int8_t>(
-      FpTrunc::Name({Type::V(F8E4M3FN, 4), Type::V(F16, 4)}) + "_fptoi");
-  std::array<int8_t, 4> vals = {static_cast<int8_t>(0b11000000), 0x0,
-                                static_cast<int8_t>(0b10110000),
-                                static_cast<int8_t>(0b00110000)};
-  std::array<int16_t, 4> actuals = fptrunc(vals);
-  EXPECT_EQ(actuals[0], static_cast<int16_t>(0b1100000000000000));
-  EXPECT_EQ(actuals[1], static_cast<int16_t>(0b0000000000000000));
-  EXPECT_EQ(actuals[2], static_cast<int16_t>(0b1011100000000000));
-  EXPECT_EQ(actuals[3], static_cast<int16_t>(0b0011100000000000));
 }
 
 TEST(FpTruncExecutionTest, F32ToF8e4m3fn) {
@@ -606,6 +531,224 @@ TEST(FpTruncExecutionTest, F16ToF8e5m2) {
   EXPECT_EQ(fptrunc(static_cast<int16_t>(0x3C00)), 0x3C);
   // 1.5 (0 01111 1000000000) -> 1.5 (0 01111 10)
   EXPECT_EQ(fptrunc(static_cast<int16_t>(0x3E00)), 0x3E);
+}
+
+namespace {
+
+absl::Status AddFpTruncFunctions(llvm::Module* module, PrimitiveType from,
+                                 PrimitiveType to, bool set_fast_math = false) {
+  auto add_one = [&](Type f, Type t) -> absl::Status {
+    ABSL_ASSIGN_OR_RETURN(llvm::Function * func,
+                          FpTrunc::CreateDefinition(module, f, t));
+    func->setLinkage(llvm::Function::ExternalLinkage);
+    if (set_fast_math) {
+      for (llvm::BasicBlock& bb : *func) {
+        for (llvm::Instruction& inst : bb) {
+          if (llvm::isa<llvm::FPMathOperator>(inst)) {
+            inst.setFastMathFlags(llvm::FastMathFlags::getFast());
+          }
+        }
+      }
+    }
+    if (llvm::verifyFunction(*func)) {
+      return absl::InternalError(
+          absl::StrCat("LLVM verification failed for ", func->getName().str()));
+    }
+    llvm::Function* wrapper = intrinsic::CreateWrapperIntArgToFp(func);
+    wrapper->setLinkage(llvm::Function::ExternalLinkage);
+    if (llvm::verifyFunction(*wrapper)) {
+      return absl::InternalError(absl::StrCat("LLVM verification failed for ",
+                                              wrapper->getName().str()));
+    }
+    return absl::OkStatus();
+  };
+  ABSL_RETURN_IF_ERROR(add_one(Type::S(from), Type::S(to)));
+  for (size_t width : {4, 8, 16}) {
+    ABSL_RETURN_IF_ERROR(add_one(Type::V(from, width), Type::V(to, width)));
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<JitRunner> CreateAllF8FromJitRunner(PrimitiveType from,
+                                                   bool set_fast_math = false) {
+  auto context = std::make_unique<llvm::LLVMContext>();
+  auto module =
+      std::make_unique<llvm::Module>("fptrunc_all_f8_module", *context);
+  for (PrimitiveType f8_type : {F8E4M3FN, F8E5M2, F8E4M3, F8E3M4, F8E4M3FNUZ,
+                                F8E5M2FNUZ, F8E4M3B11FNUZ, F8E8M0FNU}) {
+    ABSL_RETURN_IF_ERROR(
+        AddFpTruncFunctions(module.get(), from, f8_type, set_fast_math));
+  }
+  if (set_fast_math) {
+    intrinsic::RunInlineAndOptPasses(*module);
+    if (llvm::verifyModule(*module)) {
+      return absl::InternalError("LLVM verification failed for module");
+    }
+  }
+  return JitRunner(std::move(module), std::move(context));
+}
+
+template <typename Src, typename SrcBits, typename F8>
+uint8_t ExpectedTruncBits(SrcBits bits) {
+  Src src;
+  std::memcpy(&src, &bits, sizeof(Src));
+  F8 expected;
+  if constexpr (std::is_same_v<Src, half> || std::is_same_v<Src, bfloat16>) {
+    expected = static_cast<F8>(static_cast<float>(src));
+  } else {
+    expected = static_cast<F8>(src);
+  }
+  uint8_t expected_bits = 0;
+  std::memcpy(&expected_bits, &expected, 1);
+  return expected_bits;
+}
+
+template <typename Src, typename SrcBits, typename F8, size_t Width>
+void VerifyVectorTrunc(JitRunner& jit, PrimitiveType from_type,
+                       PrimitiveType to_type,
+                       const std::vector<SrcBits>& inputs) {
+  auto fn = jit.GetVectorizedFn<Width, uint8_t, SrcBits>(
+      FpTrunc::Name({Type::V(from_type, Width), Type::V(to_type, Width)}) +
+      "_itofp");
+  for (size_t base = 0; base < inputs.size(); base += Width) {
+    std::array<SrcBits, Width> in{};
+    for (size_t lane = 0; lane < Width; ++lane) {
+      in[lane] = inputs[base + lane];
+    }
+    std::array<uint8_t, Width> out = fn(in);
+    for (size_t lane = 0; lane < Width; ++lane) {
+      EXPECT_EQ(out[lane], (ExpectedTruncBits<Src, SrcBits, F8>(in[lane])))
+          << "width=" << Width << " input=0x" << std::hex << in[lane];
+    }
+  }
+}
+
+template <typename Src, typename SrcBits, typename F8>
+void VerifyAllWidthsTrunc(JitRunner& jit, PrimitiveType from_type,
+                          PrimitiveType to_type,
+                          const std::vector<SrcBits>& inputs) {
+  auto scalar_fn = jit.GetScalarFn<uint8_t(SrcBits)>(
+      FpTrunc::Name({Type::S(from_type), Type::S(to_type)}) + "_itofp");
+  for (SrcBits bits : inputs) {
+    EXPECT_EQ(scalar_fn(bits), (ExpectedTruncBits<Src, SrcBits, F8>(bits)))
+        << "scalar input=0x" << std::hex << bits;
+  }
+  VerifyVectorTrunc<Src, SrcBits, F8, 4>(jit, from_type, to_type, inputs);
+  VerifyVectorTrunc<Src, SrcBits, F8, 8>(jit, from_type, to_type, inputs);
+  VerifyVectorTrunc<Src, SrcBits, F8, 16>(jit, from_type, to_type, inputs);
+}
+
+template <typename Src, typename SrcBits>
+void VerifyAllF8TypesTrunc(JitRunner& jit, PrimitiveType from_type,
+                           const std::vector<SrcBits>& inputs) {
+  VerifyAllWidthsTrunc<Src, SrcBits, float8_e4m3fn>(jit, from_type, F8E4M3FN,
+                                                    inputs);
+  VerifyAllWidthsTrunc<Src, SrcBits, float8_e5m2>(jit, from_type, F8E5M2,
+                                                  inputs);
+  VerifyAllWidthsTrunc<Src, SrcBits, float8_e4m3>(jit, from_type, F8E4M3,
+                                                  inputs);
+  VerifyAllWidthsTrunc<Src, SrcBits, float8_e3m4>(jit, from_type, F8E3M4,
+                                                  inputs);
+  VerifyAllWidthsTrunc<Src, SrcBits, float8_e4m3fnuz>(jit, from_type,
+                                                      F8E4M3FNUZ, inputs);
+  VerifyAllWidthsTrunc<Src, SrcBits, float8_e5m2fnuz>(jit, from_type,
+                                                      F8E5M2FNUZ, inputs);
+  VerifyAllWidthsTrunc<Src, SrcBits, float8_e4m3b11fnuz>(jit, from_type,
+                                                         F8E4M3B11FNUZ, inputs);
+  VerifyAllWidthsTrunc<Src, SrcBits, float8_e8m0fnu>(jit, from_type, F8E8M0FNU,
+                                                     inputs);
+}
+
+std::vector<uint32_t> BuildDenseF32Inputs() {
+  const std::array<uint32_t, 36> mant_samples = {
+      0x000000u, 0x000001u, 0x07FFFFu, 0x080000u, 0x080001u, 0x0FFFFFu,
+      0x100000u, 0x100001u, 0x17FFFFu, 0x180000u, 0x180001u, 0x1FFFFFu,
+      0x200000u, 0x200001u, 0x27FFFFu, 0x280000u, 0x280001u, 0x2FFFFFu,
+      0x300000u, 0x300001u, 0x380000u, 0x3FFFFFu, 0x400000u, 0x400001u,
+      0x4FFFFFu, 0x500000u, 0x5FFFFFu, 0x600000u, 0x600001u, 0x680000u,
+      0x6FFFFFu, 0x700000u, 0x700001u, 0x77FFFFu, 0x780000u, 0x7FFFFFu,
+  };
+  std::vector<uint32_t> inputs;
+  inputs.reserve(2 * 256 * mant_samples.size() + 16);
+  for (uint32_t sign : {0u, 1u}) {
+    for (uint32_t exp = 0; exp < 256; ++exp) {
+      for (uint32_t mant : mant_samples) {
+        inputs.push_back((sign << 31) | (exp << 23) | mant);
+      }
+    }
+  }
+  while (inputs.size() % 16 != 0) {
+    inputs.push_back(0);
+  }
+  return inputs;
+}
+
+std::vector<uint64_t> BuildDenseF64Inputs() {
+  const std::array<uint64_t, 18> mant_samples = {
+      0x0000000000000ULL, 0x0000000000001ULL, 0x07FFFFFFFFFFFULL,
+      0x0800000000000ULL, 0x0800000000001ULL, 0x0FFFFFFFFFFFFULL,
+      0x1000000000000ULL, 0x1000000000001ULL, 0x2000000000000ULL,
+      0x3FFFFFFFFFFFFULL, 0x4000000000000ULL, 0x4000000000001ULL,
+      0x7FFFFFFFFFFFFULL, 0x8000000000000ULL, 0x8000000000001ULL,
+      0xC000000000000ULL, 0xFFFFFFFFFFFFEULL, 0xFFFFFFFFFFFFFULL,
+  };
+  std::vector<uint64_t> exp_samples = {0, 1, 2, 894, 895, 896, 897, 898};
+  for (uint64_t e = 1000; e <= 1048; ++e) {
+    exp_samples.push_back(e);
+  }
+  for (uint64_t e :
+       {1148ULL, 1149ULL, 1150ULL, 1151ULL, 1152ULL, 2046ULL, 2047ULL}) {
+    exp_samples.push_back(e);
+  }
+  std::vector<uint64_t> inputs;
+  inputs.reserve(2 * exp_samples.size() * mant_samples.size() + 16);
+  for (uint64_t sign : {0ULL, 1ULL}) {
+    for (uint64_t exp : exp_samples) {
+      for (uint64_t mant : mant_samples) {
+        inputs.push_back((sign << 63) | (exp << 52) | mant);
+      }
+    }
+  }
+  while (inputs.size() % 16 != 0) {
+    inputs.push_back(0);
+  }
+  return inputs;
+}
+
+}  // namespace
+
+TEST(FpTruncExecutionTest, ExhaustiveAllF16ToAllF8) {
+  std::vector<uint16_t> all_u16(65536);
+  for (int i = 0; i < 65536; ++i) {
+    all_u16[i] = static_cast<uint16_t>(i);
+  }
+  ASSERT_OK_AND_ASSIGN(JitRunner jit, CreateAllF8FromJitRunner(F16));
+  VerifyAllF8TypesTrunc<half, uint16_t>(jit, F16, all_u16);
+}
+
+TEST(FpTruncExecutionTest, ExhaustiveAllBf16ToAllF8) {
+  std::vector<uint16_t> all_u16(65536);
+  for (int i = 0; i < 65536; ++i) {
+    all_u16[i] = static_cast<uint16_t>(i);
+  }
+  ASSERT_OK_AND_ASSIGN(JitRunner jit, CreateAllF8FromJitRunner(BF16));
+  VerifyAllF8TypesTrunc<bfloat16, uint16_t>(jit, BF16, all_u16);
+}
+
+TEST(FpTruncExecutionTest, DenseF32ToAllF8) {
+  ASSERT_OK_AND_ASSIGN(JitRunner jit, CreateAllF8FromJitRunner(F32));
+  VerifyAllF8TypesTrunc<float, uint32_t>(jit, F32, BuildDenseF32Inputs());
+}
+
+TEST(FpTruncExecutionTest, DenseF64ToAllF8) {
+  ASSERT_OK_AND_ASSIGN(JitRunner jit, CreateAllF8FromJitRunner(F64));
+  VerifyAllF8TypesTrunc<double, uint64_t>(jit, F64, BuildDenseF64Inputs());
+}
+
+TEST(FpTruncExecutionTest, DenseF32ToAllF8FastMathSafe) {
+  ASSERT_OK_AND_ASSIGN(JitRunner jit,
+                       CreateAllF8FromJitRunner(F32, /*set_fast_math=*/true));
+  VerifyAllF8TypesTrunc<float, uint32_t>(jit, F32, BuildDenseF32Inputs());
 }
 
 }  // namespace xla::codegen::intrinsics

@@ -43,23 +43,15 @@ class FpTrunc : public Intrinsic<FpTrunc> {
         {Type::V(xla::F32, 4), Type::V(xla::BF16, 4)},
         {Type::V(xla::F32, 8), Type::V(xla::BF16, 8)},
         {Type::V(xla::F32, 16), Type::V(xla::BF16, 16)},
-        {Type::S(F8E5M2), Type::S(F16)},
-        {Type::V(F8E5M2, 2), Type::V(F16, 2)},
-        {Type::V(F8E5M2, 4), Type::V(F16, 4)},
-        {Type::V(F8E5M2, 8), Type::V(F16, 8)},
-        {Type::S(F8E4M3FN), Type::S(F16)},
-        {Type::V(F8E4M3FN, 2), Type::V(F16, 2)},
-        {Type::V(F8E4M3FN, 4), Type::V(F16, 4)},
-        {Type::V(F8E4M3FN, 8), Type::V(F16, 8)},
     };
 
-    // Handle all FxxToF8e conversions.
-    for (PrimitiveType fx_type : {F16, F32, F64}) {
-      for (PrimitiveType f8_type : {F8E4M3, F8E4M3FN, F8E4M3B11FNUZ, F8E3M4,
-                                    F8E4M3FNUZ, F8E5M2, F8E5M2FNUZ}) {
-        // Not yet supported: F8E8M0FNU
+    // Handle all Fxx -> F8 conversions.
+    for (PrimitiveType fx_type : {F16, BF16, F32, F64}) {
+      for (PrimitiveType f8_type :
+           {F8E4M3, F8E4M3FN, F8E4M3B11FNUZ, F8E3M4, F8E4M3FNUZ, F8E5M2,
+            F8E5M2FNUZ, F8E8M0FNU}) {
         supported_types.push_back({Type::S(fx_type), Type::S(f8_type)});
-        for (int8_t vector_width : {2, 4, 8}) {
+        for (int8_t vector_width : {2, 4, 8, 16}) {
           supported_types.push_back(
               {Type::V(fx_type, vector_width), Type::V(f8_type, vector_width)});
         }

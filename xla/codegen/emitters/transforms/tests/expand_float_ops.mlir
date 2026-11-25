@@ -15,6 +15,7 @@
 // RUN: emitters_opt %s -split-input-file -xla-expand-float-ops -canonicalize | FileCheck %s
 // RUN: emitters_opt %s -split-input-file -xla-expand-float-ops="approximate_tanh=false" -canonicalize
 // RUN | FileCheck %s -check-prefixes=CHECK-NO-APPROX-TANH
+// RUN: emitters_opt %s -split-input-file -xla-expand-float-ops="expand_f8_conversions=false" | FileCheck %s --check-prefix=CHECK-NO-F8
 
 module {
   func.func @tanh(%arg0: f32) -> f32 {
@@ -127,6 +128,8 @@ module {
 // correctness.
 // CHECK-LABEL: @double_to_f8
 // CHECK-NOT: arith.truncf
+// CHECK-NO-F8-LABEL: @double_to_f8
+// CHECK-NO-F8: arith.truncf %arg0 : f64 to f8E5M2
 
 // -----
 
@@ -143,6 +146,8 @@ module {
 // CHECK: %[[EXT:.*]] = arith.extf {{.*}} : bf16 to f32
 // CHECK: arith.truncf %[[EXT]] : f32 to f16
 // CHECK-NOT: arith.truncf
+// CHECK-NO-F8-LABEL: @bf16_to_f8
+// CHECK-NO-F8: arith.truncf %arg0 : bf16 to f8E5M2
 
 // -----
 
@@ -155,6 +160,8 @@ module {
 
 // CHECK-LABEL: @f4_to_f16
 // CHECK-NOT: arith.extf
+// CHECK-NO-F8-LABEL: @f4_to_f16
+// CHECK-NO-F8-NOT: arith.extf
 
 // -----
 
@@ -167,6 +174,9 @@ module {
 
 // CHECK-LABEL: @f16_to_f4
 // CHECK-NOT: arith.truncf
+// CHECK-NO-F8-LABEL: @f16_to_f4
+// CHECK-NO-F8-NOT: arith.truncf
+// CHECK-NO-F8: return
 
 // -----
 
@@ -251,6 +261,9 @@ module {
 // CHECK-LABEL: @maximumf_f8
 // CHECK-NOT: arith.maximumf {{.*}}f8E4M3FN
 // CHECK: arith.maximumf {{.*}} : f32
+// CHECK-NO-F8-LABEL: @maximumf_f8
+// CHECK-NO-F8: arith.extf {{.*}} : f8E4M3FN to f32
+// CHECK-NO-F8: arith.truncf {{.*}} : f32 to f8E4M3FN
 
 // -----
 
@@ -264,3 +277,34 @@ module {
 // CHECK-LABEL: @minimumf_f8
 // CHECK-NOT: arith.minimumf {{.*}}f8E4M3FN
 // CHECK: arith.minimumf {{.*}} : f32
+// CHECK-NO-F8-LABEL: @minimumf_f8
+// CHECK-NO-F8: arith.extf {{.*}} : f8E4M3FN to f32
+// CHECK-NO-F8: arith.truncf {{.*}} : f32 to f8E4M3FN
+
+// -----
+
+module {
+  func.func @f8_to_f32(%arg0: f8E4M3FN) -> f32 {
+    %ret = arith.extf %arg0 : f8E4M3FN to f32
+    return %ret : f32
+  }
+}
+
+// CHECK-LABEL: @f8_to_f32
+// CHECK-NOT: arith.extf
+// CHECK-NO-F8-LABEL: @f8_to_f32
+// CHECK-NO-F8: arith.extf %arg0 : f8E4M3FN to f32
+
+// -----
+
+module {
+  func.func @f8_to_f4(%arg0: f8E5M2) -> f4E2M1FN {
+    %ret = arith.truncf %arg0 : f8E5M2 to f4E2M1FN
+    return %ret : f4E2M1FN
+  }
+}
+
+// CHECK-LABEL: @f8_to_f4
+// CHECK-NOT: arith.truncf
+// CHECK-NO-F8-LABEL: @f8_to_f4
+// CHECK-NO-F8-NOT: arith.truncf
