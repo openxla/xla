@@ -65,6 +65,62 @@ GetOrCreateAllocationReadyEvent(const xla::RawSEDeviceMemory& device_buffer,
   }
   return result;
 }
+
+absl::StatusOr<xla::PjRtDeviceEventRef> CopyHostMemoryAndReturnEvent(
+    xla::PjRtStreamExecutorRawClient* client,
+    tsl::RCReference<xla::PjRtStreamExecutorRawBuffer> buf,
+    const tsl::AsyncValueRef<xla::RawSEDeviceMemory>& device_buffer,
+    xla::PjRtDeviceEventRefVector dependencies,
+    absl::AnyInvocable<void(void*)> copy_fn) {
+  xla::BufferSequencingEventRef device_event =
+      xla::BufferSequencingEvent::Create(client->async_work_runner());
+  device_buffer.AndThen([client, buf = std::move(buf),
+                         dependencies = std::move(dependencies),
+                         copy_fn = std::move(copy_fn), device_event]() mutable {
+    if (buf->device_buffer().IsError()) {
+      client->SetEventAsError(device_event, buf->device_buffer().GetError());
+      return;
+    }
+    absl::StatusOr<xla::BufferSequencingEventRef> alloc_event =
+        buf->device_buffer()->GetDefinitionEvent(client->async_work_runner(),
+                                                 /*nullptr_if_past=*/true);
+    if (!alloc_event.ok()) {
+      client->SetEventAsError(device_event, alloc_event.status());
+      return;
+    }
+    auto run_copy = [client, device_event, buf = std::move(buf),
+                     dependencies = dependencies, alloc_event = *alloc_event,
+                     copy_fn = std::move(copy_fn)]() mutable {
+      absl::Status status = xla::GetErrors(dependencies);
+      if (status.ok() && alloc_event) {
+        if (const absl::Status* error = alloc_event.GetErrorIfPresent()) {
+          status = *error;
+        }
+      }
+      if (!status.ok()) {
+        client->SetEventAsError(device_event, status);
+        return;
+      }
+      copy_fn(buf->device_buffer()->opaque());
+      std::unique_ptr<stream_executor::Stream> stream =
+          buf->local_device()->BorrowStreamFromPool();
+      absl::Status record_status = client->AllocateAndRecordEvent(
+          device_event, buf->local_device(), stream.get(),
+          "PjRtStreamExecutorRawBuffer::CopyHostMemory");
+      buf->local_device()->ReturnStreamToPool(std::move(stream));
+      if (!record_status.ok() && !device_event->IsDefined()) {
+        device_event->SetDefinedStatus(record_status);
+      }
+    };
+    xla::ScopedLauncher launcher(std::move(run_copy),
+                                 client->async_work_runner());
+    launcher.AddDependency(dependencies);
+    if (*alloc_event) {
+      launcher.AddDependency(alloc_event->GetAsyncValue());
+    }
+  });
+  return xla::PjRtDeviceEventRef(std::move(device_event));
+}
 }  // namespace
 
 namespace xla {
@@ -113,6 +169,18 @@ absl::StatusOr<PjRtDeviceEventRef>
 PjRtStreamExecutorRawBuffer::CopyRawHostToDeviceAndReturnEvent(
     const void* src, int64_t offset, int64_t transfer_size,
     PjRtDeviceEventRefVector dependencies) {
+  if (client_->IsOnCpu(memory_space_)) {
+    ABSL_RETURN_IF_ERROR(ValidateSlice(offset, transfer_size));
+    return CopyHostMemoryAndReturnEvent(
+        client_, tsl::FormRef(this), device_buffer_, std::move(dependencies),
+        [src, offset, transfer_size](void* host_ptr) {
+          if (transfer_size > 0) {
+            tsl::profiler::TraceMe trace("PinnedHost CopyRawHostToDevice");
+            std::memcpy(static_cast<uint8_t*>(host_ptr) + offset, src,
+                        transfer_size);
+          }
+        });
+  }
   se::Stream* stream = local_device_->host_to_device_stream();
   auto device_event =
       BufferSequencingEvent::Create(client_->async_work_runner());
@@ -197,6 +265,18 @@ absl::StatusOr<PjRtDeviceEventRef>
 PjRtStreamExecutorRawBuffer::CopyRawDeviceToHostAndReturnEvent(
     void* dst, int64_t offset, int64_t transfer_size,
     PjRtDeviceEventRefVector dependencies) {
+  if (client_->IsOnCpu(memory_space_)) {
+    ABSL_RETURN_IF_ERROR(ValidateSlice(offset, transfer_size));
+    return CopyHostMemoryAndReturnEvent(
+        client_, tsl::FormRef(this), device_buffer_, std::move(dependencies),
+        [dst, offset, transfer_size](void* host_ptr) {
+          if (transfer_size > 0) {
+            tsl::profiler::TraceMe trace("PinnedHost CopyRawDeviceToHost");
+            std::memcpy(dst, static_cast<const uint8_t*>(host_ptr) + offset,
+                        transfer_size);
+          }
+        });
+  }
   se::Stream* stream = local_device_->GetDeviceToHostStream();
   auto device_event =
       BufferSequencingEvent::Create(client_->async_work_runner());

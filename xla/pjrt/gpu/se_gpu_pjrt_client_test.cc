@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -64,6 +65,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "google/protobuf/text_format.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "riegeli/bytes/string_reader.h"
@@ -154,6 +156,7 @@ using ::testing::_;
 using ::testing::AllOf;
 using ::testing::AnyOf;
 using ::testing::Contains;
+using ::testing::Each;
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::Eq;
@@ -2491,13 +2494,19 @@ class RecordingAllocator : public HostMemoryAllocator {
  public:
   using AllocationSet = absl::flat_hash_set<const void*>;
 
-  explicit RecordingAllocator(AllocationSet& allocations, Options options)
-      : allocations_(allocations), options_(std::move(options)) {}
+  explicit RecordingAllocator(AllocationSet& allocations, Options options,
+                              std::atomic<int>* total_allocations = nullptr)
+      : allocations_(allocations),
+        options_(std::move(options)),
+        total_allocations_(total_allocations) {}
 
   OwnedPtr Allocate(size_t size, const AllocateOptions& options) override {
     auto* const buffer = static_cast<uint8_t*>(operator new(size));
     CHECK_OK(options_.map_fn(std::nullopt, buffer, size));
     allocations_.insert(buffer);
+    if (total_allocations_ != nullptr) {
+      total_allocations_->fetch_add(1, std::memory_order_relaxed);
+    }
 
     return xla::HostMemoryAllocator::OwnedPtr(
         buffer, xla::HostMemoryAllocator::Deleter{
@@ -2515,6 +2524,7 @@ class RecordingAllocator : public HostMemoryAllocator {
  private:
   AllocationSet& allocations_;
   Options options_;
+  std::atomic<int>* total_allocations_;
 };
 
 TEST(StreamExecutorGpuClientTest, PinnedHostWithCustomHostMemoryAllocator) {
@@ -2555,6 +2565,140 @@ TEST(StreamExecutorGpuClientTest, PinnedHostWithCustomHostMemoryAllocator) {
   std::vector<int32_t> expected{1, 2, 3, 4};
   EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
                                      *literal));
+}
+
+TEST(StreamExecutorGpuClientTest,
+     PinnedHostRawTransfersDoNotAllocateStagingBuffer) {
+  GpuClientOptions options = GetTestGpuClientOptions();
+  options.should_stage_host_to_device_transfers = true;
+
+  RecordingAllocator::AllocationSet allocations;
+  std::atomic<int> total_allocations = 0;
+  options.host_memory_allocator_factory =
+      [&](HostMemoryAllocator::Options allocator_options)
+      -> absl::StatusOr<std::unique_ptr<HostMemoryAllocator>> {
+    return std::make_unique<RecordingAllocator>(
+        allocations, std::move(allocator_options), &total_allocations);
+  };
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetStreamExecutorGpuClient(options));
+  ASSERT_GE(client->addressable_devices().size(), 1);
+  ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * pinned_memory_space,
+                       client->addressable_devices()[0]->memory_space_by_kind(
+                           PinnedHostMemorySpace::kKind));
+
+  const std::vector<int32_t> data = {10, 20, 30, 40};
+  Shape shape = ShapeUtil::MakeShape(S32, {4});
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>
+          transfer_manager,
+      client->CreateBuffersForAsyncHostToDevice({shape}, pinned_memory_space));
+  std::unique_ptr<PjRtBuffer> buffer = transfer_manager->RetrieveBuffer(0);
+
+  // Transfer raw bytes from unpinned host memory into the pinned_host buffer.
+  EXPECT_OK(transfer_manager->TransferRawDataToBuffer(
+      0,
+      absl::string_view(reinterpret_cast<const char*>(data.data()),
+                        data.size() * sizeof(int32_t)),
+      []() {}));
+  EXPECT_OK(buffer->GetReadyFuture().Await());
+
+  // Only the pinned_host buffer itself should have been allocated; no staging
+  // buffer should be allocated for the H2D raw transfer.
+  EXPECT_THAT(allocations, SizeIs(1));
+  EXPECT_EQ(total_allocations.load(std::memory_order_relaxed), 1);
+
+  // Copy raw bytes out to unpinned host memory (both full buffer and slice).
+  std::vector<int32_t> dst(4, 0);
+  EXPECT_OK(buffer->CopyRawToHost(dst.data(), 0, dst.size() * sizeof(int32_t))
+                .Await());
+  EXPECT_EQ(dst, data);
+
+  std::vector<int32_t> slice_dst(2, 0);
+  EXPECT_OK(buffer
+                ->CopyRawToHostFuture(Future<void*>(slice_dst.data()),
+                                      sizeof(int32_t), 2 * sizeof(int32_t))
+                .Await());
+  EXPECT_EQ(slice_dst, (std::vector<int32_t>{20, 30}));
+
+  // Still only the single pinned_host buffer allocation.
+  EXPECT_THAT(allocations, SizeIs(1));
+  EXPECT_EQ(total_allocations.load(std::memory_order_relaxed), 1);
+}
+
+TEST(StreamExecutorGpuClientTest,
+     PinnedHostRawTransferWaitsForComputeSynchronizedReuse) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
+  ASSERT_GE(client->addressable_devices().size(), 1);
+  ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * pinned_memory_space,
+                       client->addressable_devices()[0]->memory_space_by_kind(
+                           PinnedHostMemorySpace::kKind));
+
+  constexpr int64_t kNumElems = 1 << 20;
+  const Shape shape = ShapeUtil::MakeShape(S32, {kNumElems});
+  constexpr absl::string_view kMlirProgram = R"(
+    func.func public @main(%arg0: tensor<1048576xi32> {
+        mhlo.memory_kind = "pinned_host"
+    }) -> (tensor<1048576xi32> {
+        mhlo.memory_kind = "device"
+    }) {
+      %0 = stablehlo.custom_call @annotate_device_placement(%arg0) {
+        has_side_effect = true,
+        mhlo.frontend_attributes = {_xla_buffer_placement = "device"}
+      } : (tensor<1048576xi32>) -> tensor<1048576xi32>
+      %1 = stablehlo.constant dense<1> : tensor<1048576xi32>
+      %2 = stablehlo.add %0, %1 : tensor<1048576xi32>
+      return %2 : tensor<1048576xi32>
+    }
+  )";
+  auto context = std::make_unique<mlir::MLIRContext>();
+  ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                       ParseMlirModuleString(kMlirProgram, *context));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(
+          MaybeOwningMlirModule(std::move(context), std::move(module)), {}));
+
+  std::vector<int32_t> ones(kNumElems, 1);
+  std::vector<int32_t> twos(kNumElems, 2);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager> txm1,
+      client->CreateBuffersForAsyncHostToDevice({shape}, pinned_memory_space));
+  std::unique_ptr<PjRtBuffer> b1 = txm1->RetrieveBuffer(0);
+  EXPECT_OK(txm1->TransferRawDataToBuffer(
+      0,
+      absl::string_view(reinterpret_cast<const char*>(ones.data()),
+                        ones.size() * sizeof(int32_t)),
+      []() {}));
+  EXPECT_OK(b1->GetReadyFuture().Await());
+
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> results,
+      executable->Execute({{b1.get()}}, ExecuteOptions()));
+
+  // Delete b1 while compute_stream may still be reading it, returning its
+  // pinned_host memory to the BFC allocator under kComputeSynchronized.
+  b1.reset();
+
+  // Allocate b2 (may reuse b1's memory) and immediately overwrite it via a raw
+  // host-to-device transfer; this must wait for the prior compute_stream work.
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager> txm2,
+      client->CreateBuffersForAsyncHostToDevice({shape}, pinned_memory_space));
+  std::unique_ptr<PjRtBuffer> b2 = txm2->RetrieveBuffer(0);
+  EXPECT_OK(txm2->TransferRawDataToBuffer(
+      0,
+      absl::string_view(reinterpret_cast<const char*>(twos.data()),
+                        twos.size() * sizeof(int32_t)),
+      []() {}));
+
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> literal,
+                       results[0][0]->ToLiteral().Await());
+  EXPECT_THAT(literal->data<int32_t>(), Each(2));
+  EXPECT_OK(b2->GetReadyFuture().Await());
 }
 
 TEST(StreamExecutorGpuClientTest, OpaqueDeviceMemoryDataPointer) {
