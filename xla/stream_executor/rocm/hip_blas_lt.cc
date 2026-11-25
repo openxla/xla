@@ -15,6 +15,7 @@ limitations under the License.
 #include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <new>
 #include <optional>
@@ -311,6 +312,17 @@ static absl::StatusOr<hipblasLtEpilogue_t> AsHipblasLtEpilogue(
   }
 }
 
+// Whether hipBLASLt may route this GEMM to RocRoller. RocRoller keeps a
+// per-handle kernel cache without internal locking that both the heuristic
+// query and hipblasLtMatmul read and populate.
+bool MayUseRocRoller(gpu::ScaleMode scale_mode) {
+  static const bool forced = [] {
+    const char* env = std::getenv("HIPBLASLT_USE_ROCROLLER");
+    return env != nullptr && env[0] == '1';
+  }();
+  return forced || scale_mode == gpu::ScaleMode::kBlockScaling;
+}
+
 }  // namespace
 
 absl::Status BlasLt::Init() {
@@ -462,14 +474,20 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
     }
   }
 
-  // Not under mu_: the first query per problem type can take ~1 s. hipBLASLt
-  // (1.4.x, 1.5.0) only reads the handle, which it never modifies after
-  // creation, and locks its shared Tensile library state internally.
+  // The first query per problem type can take ~1 s, so it does not hold mu_:
+  // hipBLASLt only reads the handle there and locks its shared Tensile library
+  // state internally. RocRoller GEMMs serialize on rocroller_mu_ instead.
   int found_algorithm_count = 0;
-  auto error = hipblasLtMatmulAlgoGetHeuristic(
-      handle, op_desc_.get(), a_desc_.get(), b_desc_.get(), c_desc_.get(),
-      d_desc_.get(), preference.get(), max_algorithm_count, results.data(),
-      &found_algorithm_count);
+  hipblasStatus_t error;
+  {
+    absl::MutexLockMaybe rocroller_lock(MayUseRocRoller(op_desc_.scale_mode())
+                                            ? &blas_lt_.rocroller_mu_
+                                            : nullptr);
+    error = hipblasLtMatmulAlgoGetHeuristic(
+        handle, op_desc_.get(), a_desc_.get(), b_desc_.get(), c_desc_.get(),
+        d_desc_.get(), preference.get(), max_algorithm_count, results.data(),
+        &found_algorithm_count);
+  }
   if (error != 0) {
     VLOG(0) << "hipblasLtMatmulAlgoGetHeuristic returned " << (int)error;
     SE_HIPBLAS_RETURN_IF_ERROR(error);
@@ -903,6 +921,9 @@ absl::Status BlasLt::RegularMatmulPlan::ExecuteOnStream(
   }
 
   {
+    absl::MutexLockMaybe rocroller_lock(MayUseRocRoller(op_desc_.scale_mode())
+                                            ? &blas_lt_.rocroller_mu_
+                                            : nullptr);
     absl::MutexLock lock(blas_lt_.mu_);
     TF_RET_CHECK(blas_lt_.handle_ != nullptr);
     // We must set the bias and aux pointers while holding the mutex, to avoid a

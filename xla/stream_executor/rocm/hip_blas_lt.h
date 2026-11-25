@@ -259,6 +259,7 @@ class BlasLt : public gpu::BlasLt {
       const gpu::GemmConfig& cfg, Epilogue epilogue) const;
 
   StreamExecutor* executor_;
+  mutable absl::Mutex rocroller_mu_;
   mutable absl::Mutex mu_;
   Owned<hipblasLtHandle_t> handle_ ABSL_GUARDED_BY(mu_);
 };
