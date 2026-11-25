@@ -916,6 +916,94 @@ TEST_F(LocalClientExecuteTest, InfeedOutfeedTest) {
   LiteralTestUtil::ExpectR1Equal<float>({-4.0, 125.0, 45.0}, result);
 }
 
+TEST_F(LocalClientExecuteTest, CpuFtzControlsSubnormalsOnCallerThread) {
+  if (!test::DeviceIs(test::kCpu)) {
+    GTEST_SKIP() << "xla_cpu_ftz only applies to the CPU backend";
+  }
+
+  XlaBuilder builder(TestName());
+  XlaOp x = Parameter(&builder, 0, ShapeUtil::MakeShape(F32, {4}), "x");
+  Mul(x, ConstantR0<float>(&builder, 0.5f));
+  XlaComputation computation = builder.Build().value();
+
+  // Halving the first two inputs and the last one yields subnormals.
+  ScopedShapedBuffer x_array = LiteralToShapedBuffer(
+      LiteralUtil::CreateR1<float>({1e-44f, -1e-44f, 2.0f, 1e-38f}));
+
+  // With xla_cpu_ftz=true (default), subnormals are flushed to zero.
+  {
+    ExecutableBuildOptions build_options = DefaultExecutableBuildOptions();
+    build_options.mutable_debug_options()->set_xla_cpu_ftz(true);
+    ScopedShapedBuffer result = ExecuteLocallyOrDie(
+        computation, {&x_array}, build_options, DefaultExecutableRunOptions());
+    Literal literal = ShapedBufferToLiteral(result);
+    EXPECT_EQ(literal.Get<float>({0}), 0.0f);
+    EXPECT_EQ(literal.Get<float>({1}), 0.0f);
+    EXPECT_FLOAT_EQ(literal.Get<float>({2}), 1.0f);
+    EXPECT_EQ(literal.Get<float>({3}), 0.0f);
+  }
+
+  // With xla_cpu_ftz=false, subnormals are preserved.
+  {
+    ExecutableBuildOptions build_options = DefaultExecutableBuildOptions();
+    build_options.mutable_debug_options()->set_xla_cpu_ftz(false);
+    ScopedShapedBuffer result = ExecuteLocallyOrDie(
+        computation, {&x_array}, build_options, DefaultExecutableRunOptions());
+    Literal literal = ShapedBufferToLiteral(result);
+    EXPECT_EQ(literal.Get<float>({0}), 1e-44f * 0.5f);
+    EXPECT_EQ(literal.Get<float>({1}), -1e-44f * 0.5f);
+    EXPECT_FLOAT_EQ(literal.Get<float>({2}), 1.0f);
+    EXPECT_EQ(literal.Get<float>({3}), 1e-38f * 0.5f);
+  }
+}
+
+TEST_F(LocalClientExecuteTest, CpuFtzDisabledPreservesSubnormalsOnWorkers) {
+  if (!test::DeviceIs(test::kCpu)) {
+    GTEST_SKIP() << "xla_cpu_ftz only applies to the CPU backend";
+  }
+
+  // A dot large enough to be partitioned across intra-op worker threads, which
+  // flush denormals by default.
+  static constexpr int64_t kDim = 256;
+  const Shape mat_shape = ShapeUtil::MakeShape(F32, {kDim, kDim});
+  XlaBuilder builder(TestName());
+  XlaOp lhs = Parameter(&builder, 0, mat_shape, "lhs");
+  XlaOp rhs = Parameter(&builder, 1, mat_shape, "rhs");
+  Dot(lhs, rhs);
+  XlaComputation computation = builder.Build().value();
+
+  // lhs is all subnormals and rhs is 0.5 * identity, so every output element
+  // is a (smaller) subnormal.
+  const float subnormal = 1e-44f;
+  Literal lhs_literal(mat_shape);
+  Literal rhs_literal(mat_shape);
+  absl::Span<float> lhs_data = lhs_literal.data<float>();
+  absl::Span<float> rhs_data = rhs_literal.data<float>();
+  for (int64_t i = 0; i < kDim * kDim; ++i) {
+    lhs_data[i] = subnormal;
+    rhs_data[i] = 0.0f;
+  }
+  for (int64_t i = 0; i < kDim; ++i) {
+    rhs_data[i * kDim + i] = 0.5f;
+  }
+  ScopedShapedBuffer lhs_array = LiteralToShapedBuffer(lhs_literal);
+  ScopedShapedBuffer rhs_array = LiteralToShapedBuffer(rhs_literal);
+
+  ExecutableBuildOptions build_options = DefaultExecutableBuildOptions();
+  build_options.mutable_debug_options()->set_xla_cpu_ftz(false);
+  ScopedShapedBuffer result =
+      ExecuteLocallyOrDie(computation, {&lhs_array, &rhs_array}, build_options,
+                          DefaultExecutableRunOptions());
+  Literal literal = ShapedBufferToLiteral(result);
+
+  absl::Span<const float> out = literal.data<float>();
+  ASSERT_EQ(out.size(), kDim * kDim);
+  const float expected = subnormal * 0.5f;
+  for (int64_t i = 0; i < kDim * kDim; ++i) {
+    ASSERT_EQ(out[i], expected) << "Flushed at index " << i;
+  }
+}
+
 // Benchmark that measures the overhead of the LocalClient API when running a
 // trivial computation
 void BM_LocalClientOverhead(::testing::benchmark::State& state) {
