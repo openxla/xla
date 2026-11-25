@@ -6822,5 +6822,187 @@ ENTRY entry {
   EXPECT_LT(GetIndex(seq, "ag0b_done"), GetIndex(seq, "other_done"));
 }
 
+TEST_F(LatencyHidingSchedulerTest,
+       GraphProcessingHookDynamicEdgesRefreshAnalysisAndRevertOnReset) {
+  constexpr absl::string_view kHlo = R"(
+HloModule hook_refresh_analysis, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[16,64,256] parameter(0)
+  p1 = f32[16,64,256] parameter(1)
+  ag_start = (f32[16,64,256], f32[32,64,256]) all-gather-start(p0),
+      replica_groups={{0,1}}, dimensions={0}
+  ag_done = f32[32,64,256] all-gather-done(ag_start)
+  ag_user = f32[32,64,256] negate(ag_done)
+  gated = f32[16,64,256] add(p0, p1)
+  cover = f32[16,64,256] subtract(p0, p1)
+  ROOT out = (f32[32,64,256], f32[16,64,256], f32[16,64,256])
+      tuple(ag_user, gated, cover)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseHloText(kHlo));
+  HloComputation* entry = hlo_module->entry_computation();
+
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.aggressive_scheduling_policies = true;
+  auto scheduling_context = std::make_shared<const SchedulingContext>(
+      hlo_module.get(), std::make_unique<ApproximateLatencyEstimator>(),
+      std::make_unique<AsyncTracker>(sched_config), &alias_info_,
+      ShapeSizeBytes);
+  DefaultSchedulerCore scheduler_core(scheduling_context, sched_config);
+  ASSERT_OK(scheduler_core.InitializeScheduler(hlo_module.get()));
+
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<SchedulerCore::SchedulingState> state,
+                       scheduler_core.MakeSchedulingState(entry));
+  auto default_state =
+      std::dynamic_pointer_cast<DefaultSchedulerCore::SchedulingState>(state);
+  ASSERT_NE(default_state, nullptr);
+  HloScheduleGraph* graph = default_state->sched_graph.get();
+
+  const HloInstruction* ag_start =
+      FindInstruction(hlo_module.get(), "ag_start");
+  const HloInstruction* ag_done = FindInstruction(hlo_module.get(), "ag_done");
+  const HloInstruction* ag_user = FindInstruction(hlo_module.get(), "ag_user");
+  const HloInstruction* gated = FindInstruction(hlo_module.get(), "gated");
+  const HloInstruction* out = entry->root_instruction();
+
+  EXPECT_FALSE(graph->HasDynamicEdges());
+  const double static_gated_async_depth = graph->GetNode(gated).GetAsyncDepth();
+  const double static_gated_depth = graph->GetNode(gated).GetDepth();
+  const int64_t static_gated_graph_depth =
+      graph->GetNode(gated).GetGraphDepth();
+  const double static_ag_start_async_height =
+      graph->GetNode(ag_start).GetAsyncHeight();
+  EXPECT_EQ(static_gated_async_depth, 0.0);
+  EXPECT_GT(graph->GetNode(ag_done).GetAsyncDepth(), 0.0);
+
+  // Hook adds a zero-latency ordering edge `ag_user -> gated`.
+  state->graph_processing_hook = [&](HloScheduleGraph* g) {
+    HloGraphNode::AddDependency(&g->GetNode(ag_user), &g->GetNode(gated), 0.0);
+    return absl::OkStatus();
+  };
+
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> hooked_seq,
+                       scheduler_core.ScheduleComputation(entry, state));
+  EXPECT_TRUE(graph->HasDynamicEdges());
+  EXPECT_EQ(graph->GetNode(gated).GetAsyncDepth(),
+            graph->GetNode(ag_done).GetAsyncDepth());
+  EXPECT_GE(
+      graph->GetNode(gated).GetDepth(),
+      graph->GetNode(ag_user).GetDepth() + graph->GetNode(ag_user).GetCost());
+  EXPECT_GE(graph->GetNode(gated).GetGraphDepth(),
+            graph->GetNode(ag_user).GetGraphDepth() + 1);
+  EXPECT_GT(graph->GetNode(gated).GetDepth(), static_gated_depth);
+  EXPECT_GT(graph->GetNode(gated).GetGraphDepth(), static_gated_graph_depth);
+  EXPECT_GE(graph->GetNode(ag_start).GetAsyncHeight(),
+            static_ag_start_async_height);
+
+  // With refreshed AsyncDepth, bottom-up kAsyncDepth drains `gated` ahead of
+  // independent `cover`, unlocking `ag_done` early so `cover` overlaps inside
+  // `[ag_start, ag_done]` (without refresh, kOriginalOrder picks `cover` first
+  // and places `cover` after `ag_done`).
+  EXPECT_LT(GetIndex(hooked_seq, "ag_start"), GetIndex(hooked_seq, "cover"));
+  EXPECT_LT(GetIndex(hooked_seq, "cover"), GetIndex(hooked_seq, "ag_done"));
+  EXPECT_LT(GetIndex(hooked_seq, "ag_user"), GetIndex(hooked_seq, "gated"));
+
+  // Verify explicit edge latency propagation and `ready_nodes_if_scheduled_`
+  // right after refresh: `ag_user` gains outdegree 2 (`out` and `gated`).
+  graph->ResetScheduling();
+  EXPECT_FALSE(graph->HasDynamicEdges());
+  const size_t static_out_ready_neighbors =
+      graph->GetNode(out).GetReadyNodesIfScheduled();
+  constexpr double kHookEdgeLatency = 250.0;
+  HloGraphNode::AddDependency(&graph->GetNode(ag_user), &graph->GetNode(gated),
+                              kHookEdgeLatency);
+  graph->RefreshAfterDynamicEdgeAdditions();
+  EXPECT_EQ(graph->GetNode(out).GetReadyNodesIfScheduled(),
+            static_out_ready_neighbors - 1);
+  EXPECT_GE(graph->GetNode(gated).GetDepth(),
+            graph->GetNode(ag_user).GetDepth() +
+                graph->GetNode(ag_user).GetCost() + kHookEdgeLatency);
+
+  // Re-running on the same SchedulingState with a preference-only hook must
+  // revert dynamic edges and restore static depths/heights with no leftovers.
+  state->graph_processing_hook = [&](HloScheduleGraph* g) {
+    g->GetNode(gated).SetPreference(1.0);
+    return absl::OkStatus();
+  };
+  ASSERT_OK(scheduler_core.ScheduleComputation(entry, state));
+  EXPECT_FALSE(graph->HasDynamicEdges());
+  EXPECT_EQ(graph->GetNode(gated).GetAsyncDepth(), static_gated_async_depth);
+  EXPECT_EQ(graph->GetNode(gated).GetDepth(), static_gated_depth);
+  EXPECT_EQ(graph->GetNode(gated).GetGraphDepth(), static_gated_graph_depth);
+  EXPECT_EQ(graph->GetNode(ag_start).GetAsyncHeight(),
+            static_ag_start_async_height);
+}
+
+TEST_F(LatencyHidingSchedulerTest,
+       TopDownGraphProcessingHookDynamicEdgeRefreshesAsyncHeight) {
+  constexpr absl::string_view kHlo = R"(
+HloModule hook_refresh_top_down, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[16,64,256] parameter(0)
+  p1 = f32[16,64,256] parameter(1)
+  cover = f32[16,256,256] convolution(p0, p1),
+      window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb
+  blocker = f32[16,64,256] add(p0, p1)
+  ag_start = (f32[16,64,256], f32[32,64,256]) all-gather-start(p0),
+      replica_groups={{0,1}}, dimensions={0}
+  ag_done = f32[32,64,256] all-gather-done(ag_start)
+  ROOT out = (f32[16,256,256], f32[16,64,256], f32[32,64,256])
+      tuple(cover, blocker, ag_done)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseHloText(kHlo));
+  HloComputation* entry = hlo_module->entry_computation();
+
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.top_down_scheduling = true;
+  sched_config.aggressive_scheduling_policies = true;
+  auto scheduling_context = std::make_shared<const SchedulingContext>(
+      hlo_module.get(), std::make_unique<ApproximateLatencyEstimator>(),
+      std::make_unique<AsyncTracker>(sched_config), &alias_info_,
+      ShapeSizeBytes);
+  DefaultSchedulerCore scheduler_core(scheduling_context, sched_config);
+  ASSERT_OK(scheduler_core.InitializeScheduler(hlo_module.get()));
+
+  const HloInstruction* blocker = FindInstruction(hlo_module.get(), "blocker");
+  const HloInstruction* ag_start =
+      FindInstruction(hlo_module.get(), "ag_start");
+
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<SchedulerCore::SchedulingState> state,
+                       scheduler_core.MakeSchedulingState(entry));
+  auto default_state =
+      std::dynamic_pointer_cast<DefaultSchedulerCore::SchedulingState>(state);
+  ASSERT_NE(default_state, nullptr);
+  HloScheduleGraph* graph = default_state->sched_graph.get();
+  EXPECT_EQ(graph->GetNode(blocker).GetAsyncHeight(), 0.0);
+  EXPECT_GT(graph->GetNode(ag_start).GetAsyncHeight(), 0.0);
+
+  // Hook gates `ag_start` behind `blocker`; refreshed AsyncHeight prioritizes
+  // `blocker` ahead of `cover` so `cover` hides inside `[ag_start, ag_done]`.
+  state->graph_processing_hook = [&](HloScheduleGraph* g) {
+    HloGraphNode::AddDependency(&g->GetNode(blocker), &g->GetNode(ag_start),
+                                1.0);
+    return absl::OkStatus();
+  };
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> seq,
+                       scheduler_core.ScheduleComputation(entry, state));
+  EXPECT_EQ(graph->GetNode(blocker).GetAsyncHeight(),
+            graph->GetNode(ag_start).GetAsyncHeight());
+  EXPECT_LT(GetIndex(seq, "blocker"), GetIndex(seq, "ag_start"));
+  EXPECT_LT(GetIndex(seq, "ag_start"), GetIndex(seq, "cover"));
+  EXPECT_LT(GetIndex(seq, "cover"), GetIndex(seq, "ag_done"));
+
+  // Clearing the hook restores `blocker`'s zero static AsyncHeight.
+  state->graph_processing_hook = nullptr;
+  ASSERT_OK(scheduler_core.ScheduleComputation(entry, state));
+  EXPECT_FALSE(graph->HasDynamicEdges());
+  EXPECT_EQ(graph->GetNode(blocker).GetAsyncHeight(), 0.0);
+}
+
 }  // namespace
 }  // namespace xla

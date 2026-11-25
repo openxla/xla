@@ -2759,6 +2759,9 @@ DefaultSchedulerCore::ScheduleComputation(
   if (sched_state->graph_processing_hook) {
     ABSL_RETURN_IF_ERROR(
         sched_state->graph_processing_hook(sched_state->sched_graph.get()));
+    if (sched_state->sched_graph->HasDynamicEdges()) {
+      sched_state->sched_graph->RefreshAfterDynamicEdgeAdditions();
+    }
   }
 
   VLOG(5) << "Just built graph:";
