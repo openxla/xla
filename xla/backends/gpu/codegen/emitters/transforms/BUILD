@@ -116,6 +116,7 @@ cc_library(
         "@llvm-project//mlir:MathTransforms",
         "@llvm-project//mlir:NVVMDialect",
         "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:ROCDLDialect",
         "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:SCFUtils",
         "@llvm-project//mlir:Support",

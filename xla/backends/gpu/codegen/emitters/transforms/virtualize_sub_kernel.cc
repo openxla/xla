@@ -25,6 +25,7 @@ limitations under the License.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/Dialect/LLVMIR/ROCDLDialect.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -126,6 +127,38 @@ int64_t PackSubKernelSharedMemory(mlir::ModuleOp sub_module) {
   return total_bytes;
 }
 
+// Removes leftover Triton metadata from the functions of `module`: `ttg.*`
+// function attributes (e.g. the scratch memory sizes the AMD backend attaches
+// to the kernel) and `tt.*` argument attributes (e.g. `tt.divisibility`).
+// Neither dialect has an LLVM translation interface, so leaving them behind
+// makes translating the launcher module to LLVM IR fail.
+void StripTritonAttrs(mlir::ModuleOp module) {
+  module.walk([](mlir::LLVM::LLVMFuncOp func) {
+    llvm::SmallVector<llvm::StringRef> names_to_erase;
+    for (mlir::NamedAttribute attr : func->getDiscardableAttrs()) {
+      if (attr.getName().getValue().starts_with("ttg.")) {
+        names_to_erase.push_back(attr.getName().getValue());
+      }
+    }
+    for (llvm::StringRef name : names_to_erase) {
+      func->removeAttr(name);
+    }
+    for (unsigned idx = 0; idx < func.getNumArguments(); ++idx) {
+      llvm::SmallVector<llvm::StringRef> arg_names_to_erase;
+      if (mlir::DictionaryAttr arg_attrs = func.getArgAttrDict(idx)) {
+        for (mlir::NamedAttribute attr : arg_attrs) {
+          if (attr.getName().getValue().starts_with("tt.")) {
+            arg_names_to_erase.push_back(attr.getName().getValue());
+          }
+        }
+      }
+      for (llvm::StringRef name : arg_names_to_erase) {
+        func.removeArgAttr(idx, name);
+      }
+    }
+  });
+}
+
 void ReplaceAllAndErase(mlir::ImplicitLocOpBuilder& b,
                         llvm::ArrayRef<mlir::Operation*> ops, mlir::Value val) {
   for (mlir::Operation* op : ops) {
@@ -142,32 +175,32 @@ mlir::Value CreateI32Const(mlir::ImplicitLocOpBuilder& b, int64_t val) {
       b, b.getI32Type(), b.getI32IntegerAttr(static_cast<int32_t>(val)));
 }
 
-template <typename IdXOp, typename IdYOp, typename IdZOp, typename DimXOp,
-          typename DimYOp, typename DimZOp>
-mlir::LogicalResult VirtualizeIds(mlir::LLVM::LLVMFuncOp func,
-                                  mlir::ImplicitLocOpBuilder& b, int64_t dim_x,
-                                  int64_t dim_y, int64_t dim_z,
-                                  mlir::Value linear_id) {
-  llvm::SmallVector<mlir::Operation*> x_ops;
-  llvm::SmallVector<mlir::Operation*> y_ops;
-  llvm::SmallVector<mlir::Operation*> z_ops;
-  llvm::SmallVector<mlir::Operation*> dim_x_ops;
-  llvm::SmallVector<mlir::Operation*> dim_y_ops;
-  llvm::SmallVector<mlir::Operation*> dim_z_ops;
+// Collects the `OpX`/`OpY`/`OpZ` ops of `func` into `x_ops`/`y_ops`/`z_ops`,
+// skipping `exclude`. Matching ops in other functions of the module are an
+// error, except for already-virtualized 1D thread ID reads in nested
+// sub-kernels when `allow_nested_thread_id_x` is set.
+template <typename OpX, typename OpY, typename OpZ>
+mlir::LogicalResult CollectDimensionalOps(
+    mlir::LLVM::LLVMFuncOp func, mlir::Operation* exclude,
+    bool allow_nested_thread_id_x,
+    llvm::SmallVectorImpl<mlir::Operation*>& x_ops,
+    llvm::SmallVectorImpl<mlir::Operation*>& y_ops,
+    llvm::SmallVectorImpl<mlir::Operation*>& z_ops) {
   auto module = func->getParentOfType<mlir::ModuleOp>();
   mlir::WalkResult walk_res = module.walk([&](mlir::Operation* op) {
-    if (op == linear_id.getDefiningOp()) {
+    if (op == exclude) {
       return mlir::WalkResult::advance();
     }
-    if (!mlir::isa<IdXOp, IdYOp, IdZOp, DimXOp, DimYOp, DimZOp>(op)) {
+    if (!mlir::isa<OpX, OpY, OpZ>(op)) {
       return mlir::WalkResult::advance();
     }
     if (op->getParentOfType<mlir::LLVM::LLVMFuncOp>() != func) {
       // Nested sub-kernels (e.g. phases of a `PhasedBlockClusterFusion`) have
       // already been virtualized and may contain 1D `nvvm.read.ptx.sreg.tid.x`
-      // reads, which remain valid when the outer sub-kernel is also 1D in
-      // threads.
-      if (mlir::isa<mlir::NVVM::ThreadIdXOp>(op) && dim_y == 1 && dim_z == 1) {
+      // (`rocdl.workitem.id.x`) reads, which remain valid when the outer
+      // sub-kernel is also 1D in threads.
+      if (mlir::isa<mlir::NVVM::ThreadIdXOp, mlir::ROCDL::ThreadIdXOp>(op) &&
+          allow_nested_thread_id_x) {
         return mlir::WalkResult::advance();
       }
       op->emitError(
@@ -175,31 +208,78 @@ mlir::LogicalResult VirtualizeIds(mlir::LLVM::LLVMFuncOp func,
           "supported in horizontal fusion.");
       return mlir::WalkResult::interrupt();
     }
-    if (mlir::isa<IdXOp>(op)) {
+    if (mlir::isa<OpX>(op)) {
       x_ops.push_back(op);
-    } else if (mlir::isa<IdYOp>(op)) {
+    } else if (mlir::isa<OpY>(op)) {
       y_ops.push_back(op);
-    } else if (mlir::isa<IdZOp>(op)) {
+    } else {
       z_ops.push_back(op);
-    } else if (mlir::isa<DimXOp>(op)) {
-      dim_x_ops.push_back(op);
-    } else if (mlir::isa<DimYOp>(op)) {
-      dim_y_ops.push_back(op);
-    } else if (mlir::isa<DimZOp>(op)) {
-      dim_z_ops.push_back(op);
     }
     return mlir::WalkResult::advance();
   });
-  if (walk_res.wasInterrupted()) {
+  return mlir::failure(walk_res.wasInterrupted());
+}
+
+// The static grid or thread-block dimensions of a sub-kernel, together with
+// their materialized `i32` constants. The constants are shared between
+// dimension-read replacement and ID delinearization.
+struct SubKernelDims {
+  SubKernelDims(mlir::ImplicitLocOpBuilder& b, int64_t x, int64_t y, int64_t z)
+      : x(x),
+        y(y),
+        z(z),
+        x_const(CreateI32Const(b, x)),
+        y_const(CreateI32Const(b, y)),
+        z_const(CreateI32Const(b, z)) {}
+
+  // True if the sub-kernel is 1D in this set of dimensions.
+  bool is_1d() const { return y == 1 && z == 1; }
+
+  int64_t x;
+  int64_t y;
+  int64_t z;
+  mlir::Value x_const;
+  mlir::Value y_const;
+  mlir::Value z_const;
+};
+
+// Replaces the grid/block dimension reads of `func` with `dims`. The ROCDL
+// dialect has no dimension-read ops (`gpu.grid_dim`/`gpu.block_dim` lower to
+// `__ockl_*` calls), so this only applies to NVVM.
+template <typename DimXOp, typename DimYOp, typename DimZOp>
+mlir::LogicalResult VirtualizeDims(mlir::LLVM::LLVMFuncOp func,
+                                   mlir::ImplicitLocOpBuilder& b,
+                                   const SubKernelDims& dims) {
+  llvm::SmallVector<mlir::Operation*> dim_x_ops;
+  llvm::SmallVector<mlir::Operation*> dim_y_ops;
+  llvm::SmallVector<mlir::Operation*> dim_z_ops;
+  if (mlir::failed(CollectDimensionalOps<DimXOp, DimYOp, DimZOp>(
+          func, /*exclude=*/nullptr,
+          /*allow_nested_thread_id_x=*/dims.is_1d(), dim_x_ops, dim_y_ops,
+          dim_z_ops))) {
     return mlir::failure();
   }
+  ReplaceAllAndErase(b, dim_x_ops, dims.x_const);
+  ReplaceAllAndErase(b, dim_y_ops, dims.y_const);
+  ReplaceAllAndErase(b, dim_z_ops, dims.z_const);
+  return mlir::success();
+}
 
-  mlir::Value dim_x_const = CreateI32Const(b, dim_x);
-  mlir::Value dim_y_const = CreateI32Const(b, dim_y);
-  mlir::Value dim_z_const = CreateI32Const(b, dim_z);
-  ReplaceAllAndErase(b, dim_x_ops, dim_x_const);
-  ReplaceAllAndErase(b, dim_y_ops, dim_y_const);
-  ReplaceAllAndErase(b, dim_z_ops, dim_z_const);
+// Replaces the hardware ID reads of `func` with the coordinates obtained by
+// delinearizing `linear_id` over `dims`.
+template <typename IdXOp, typename IdYOp, typename IdZOp>
+mlir::LogicalResult VirtualizeIds(mlir::LLVM::LLVMFuncOp func,
+                                  mlir::ImplicitLocOpBuilder& b,
+                                  const SubKernelDims& dims,
+                                  mlir::Value linear_id) {
+  llvm::SmallVector<mlir::Operation*> x_ops;
+  llvm::SmallVector<mlir::Operation*> y_ops;
+  llvm::SmallVector<mlir::Operation*> z_ops;
+  if (mlir::failed(CollectDimensionalOps<IdXOp, IdYOp, IdZOp>(
+          func, /*exclude=*/linear_id.getDefiningOp(),
+          /*allow_nested_thread_id_x=*/dims.is_1d(), x_ops, y_ops, z_ops))) {
+    return mlir::failure();
+  }
 
   if (x_ops.empty() && y_ops.empty() && z_ops.empty()) {
     return mlir::success();
@@ -209,13 +289,13 @@ mlir::LogicalResult VirtualizeIds(mlir::LLVM::LLVMFuncOp func,
   mlir::Value id_x = linear_id;
   mlir::Value id_y = zero;
   mlir::Value id_z = zero;
-  if (dim_y > 1 || dim_z > 1) {
-    id_x = mlir::LLVM::URemOp::create(b, linear_id, dim_x_const);
-    mlir::Value id_yz = mlir::LLVM::UDivOp::create(b, linear_id, dim_x_const);
+  if (dims.y > 1 || dims.z > 1) {
+    id_x = mlir::LLVM::URemOp::create(b, linear_id, dims.x_const);
+    mlir::Value id_yz = mlir::LLVM::UDivOp::create(b, linear_id, dims.x_const);
     id_y = id_yz;
-    if (dim_z > 1) {
-      id_y = mlir::LLVM::URemOp::create(b, id_yz, dim_y_const);
-      id_z = mlir::LLVM::UDivOp::create(b, id_yz, dim_y_const);
+    if (dims.z > 1) {
+      id_y = mlir::LLVM::URemOp::create(b, id_yz, dims.y_const);
+      id_z = mlir::LLVM::UDivOp::create(b, id_yz, dims.y_const);
     }
   }
   ReplaceAllAndErase(b, x_ops, id_x);
@@ -358,25 +438,52 @@ class VirtualizeSubKernelPass
       func.setArgAttrsAttr(b.getArrayAttr(new_arg_attrs));
     }
 
-    // 3. Virtualize NVVM block IDs and grid dims.
+    // 3. Virtualize block IDs and grid dims. ROCDL has no grid dimension ops.
+    SubKernelDims grid_dims(b, block_dim_x_, block_dim_y_, block_dim_z_);
+    if (!is_amd_gpu_ &&
+        mlir::failed(
+            VirtualizeDims<mlir::NVVM::GridDimXOp, mlir::NVVM::GridDimYOp,
+                           mlir::NVVM::GridDimZOp>(func, b, grid_dims))) {
+      signalPassFailure();
+      return;
+    }
     if (mlir::failed(
-            VirtualizeIds<mlir::NVVM::BlockIdXOp, mlir::NVVM::BlockIdYOp,
-                          mlir::NVVM::BlockIdZOp, mlir::NVVM::GridDimXOp,
-                          mlir::NVVM::GridDimYOp, mlir::NVVM::GridDimZOp>(
-                func, b, block_dim_x_, block_dim_y_, block_dim_z_,
-                rel_bid_i32))) {
+            is_amd_gpu_
+                ? VirtualizeIds<mlir::ROCDL::BlockIdXOp,
+                                mlir::ROCDL::BlockIdYOp,
+                                mlir::ROCDL::BlockIdZOp>(func, b, grid_dims,
+                                                         rel_bid_i32)
+                : VirtualizeIds<mlir::NVVM::BlockIdXOp, mlir::NVVM::BlockIdYOp,
+                                mlir::NVVM::BlockIdZOp>(func, b, grid_dims,
+                                                        rel_bid_i32))) {
       signalPassFailure();
       return;
     }
 
-    // 4. Virtualize NVVM thread IDs and block dims.
-    mlir::Value raw_tid = mlir::NVVM::ThreadIdXOp::create(b, b.getI32Type());
-    if (mlir::failed(
-            VirtualizeIds<mlir::NVVM::ThreadIdXOp, mlir::NVVM::ThreadIdYOp,
-                          mlir::NVVM::ThreadIdZOp, mlir::NVVM::BlockDimXOp,
-                          mlir::NVVM::BlockDimYOp, mlir::NVVM::BlockDimZOp>(
-                func, b, thread_dim_x_, thread_dim_y_, thread_dim_z_,
-                raw_tid))) {
+    // 4. Virtualize thread IDs and block dims. ROCDL has no block dimension
+    // ops.
+    mlir::Value raw_tid;
+    if (is_amd_gpu_) {
+      raw_tid = mlir::ROCDL::ThreadIdXOp::create(b, b.getI32Type());
+    } else {
+      raw_tid = mlir::NVVM::ThreadIdXOp::create(b, b.getI32Type());
+    }
+    SubKernelDims thread_dims(b, thread_dim_x_, thread_dim_y_, thread_dim_z_);
+    if (!is_amd_gpu_ &&
+        mlir::failed(
+            VirtualizeDims<mlir::NVVM::BlockDimXOp, mlir::NVVM::BlockDimYOp,
+                           mlir::NVVM::BlockDimZOp>(func, b, thread_dims))) {
+      signalPassFailure();
+      return;
+    }
+    if (mlir::failed(is_amd_gpu_ ? VirtualizeIds<mlir::ROCDL::ThreadIdXOp,
+                                                 mlir::ROCDL::ThreadIdYOp,
+                                                 mlir::ROCDL::ThreadIdZOp>(
+                                       func, b, thread_dims, raw_tid)
+                                 : VirtualizeIds<mlir::NVVM::ThreadIdXOp,
+                                                 mlir::NVVM::ThreadIdYOp,
+                                                 mlir::NVVM::ThreadIdZOp>(
+                                       func, b, thread_dims, raw_tid))) {
       signalPassFailure();
       return;
     }
@@ -413,6 +520,10 @@ class VirtualizeSubKernelPass
     func->removeAttr("nvvm.cluster_dim");
     func->removeAttr("rocdl.kernel");
     func->removeAttr("rocdl.flat_work_group_size");
+
+    // Drop leftover Triton metadata, which is meaningless once the sub-kernel
+    // is spliced into the non-Triton launcher module.
+    StripTritonAttrs(module);
   }
 };
 
