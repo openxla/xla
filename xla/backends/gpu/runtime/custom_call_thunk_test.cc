@@ -1337,10 +1337,10 @@ TEST(CustomCallThunkTest, KernelRegistryInitializeExecuteAndRecord) {
       [&](ffi::InitializeKernelRegistry registry) -> absl::Status {
         ABSL_ASSIGN_OR_RETURN(
             ffi::RegisterResult registered,
-            registry.Register("AddI32",
-                              reinterpret_cast<const char*>(fatbin.data()),
-                              fatbin.size(), ffi::SourceFormat::kCubin,
-                              /*uses_pdl=*/false));
+            registry.Register(
+                "AddI32", reinterpret_cast<const char*>(fatbin.data()),
+                fatbin.size(), ffi::SourceFormat::kCubin,
+                /*uses_pdl=*/false, ffi::RequiredFeatures::None()));
         registered_kernel = registered.kernel;
         return absl::OkStatus();
       });
@@ -1416,10 +1416,10 @@ TEST(CustomCallThunkTest, KernelRegistryPrepareAndExecute) {
       [&](ffi::PrepareKernelRegistry registry) -> absl::Status {
         ABSL_ASSIGN_OR_RETURN(
             ffi::RegisterResult registered,
-            registry.Register("AddI32",
-                              reinterpret_cast<const char*>(fatbin.data()),
-                              fatbin.size(), ffi::SourceFormat::kCubin,
-                              /*uses_pdl=*/false));
+            registry.Register(
+                "AddI32", reinterpret_cast<const char*>(fatbin.data()),
+                fatbin.size(), ffi::SourceFormat::kCubin,
+                /*uses_pdl=*/false, ffi::RequiredFeatures::None()));
         registered_kernel = registered.kernel;
         return absl::OkStatus();
       });
