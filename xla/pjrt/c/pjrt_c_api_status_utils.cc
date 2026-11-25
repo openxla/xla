@@ -35,6 +35,15 @@ limitations under the License.
 
 namespace pjrt {
 
+namespace {
+
+template <typename R, typename... Params, typename... Args>
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI R NoCfiCall(R (*fn)(Params...), Args&&... args) {
+  return fn(std::forward<Args>(args)...);
+}
+
+}  // namespace
+
 PJRT_ErrorDeleter MakeErrorDeleter(const PJRT_Api* api) {
   return [api](PJRT_Error* error) -> void {
     PJRT_Error_Destroy_Args destroy_args;
@@ -42,7 +51,7 @@ PJRT_ErrorDeleter MakeErrorDeleter(const PJRT_Api* api) {
     destroy_args.extension_start = nullptr;
     destroy_args.error = error;
 
-    api->PJRT_Error_Destroy(&destroy_args);
+    NoCfiCall(api->PJRT_Error_Destroy, &destroy_args);
   };
 }
 
@@ -51,7 +60,7 @@ PJRT_Error_Code GetErrorCode(const PJRT_Error* error, const PJRT_Api* api) {
   args.struct_size = PJRT_Error_GetCode_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
   args.error = error;
-  pjrt::LogFatalIfPjrtError(api->PJRT_Error_GetCode(&args), api);
+  pjrt::LogFatalIfPjrtError(NoCfiCall(api->PJRT_Error_GetCode, &args), api);
   return args.code;
 }
 
@@ -128,7 +137,7 @@ absl::string_view GetPjrtErrorMessage(const PJRT_Error* error,
   message_args.struct_size = PJRT_Error_Message_Args_STRUCT_SIZE;
   message_args.extension_start = nullptr;
   message_args.error = error;
-  api->PJRT_Error_Message(&message_args);
+  NoCfiCall(api->PJRT_Error_Message, &message_args);
   return absl::string_view(message_args.message, message_args.message_size);
 }
 
@@ -160,7 +169,8 @@ absl::Status PjrtErrorToStatus(const PJRT_Error* error, const PJRT_Api* api) {
                                                          std::move(value_cord));
       };
       args.user_arg = &status;
-      pjrt::LogFatalIfPjrtError(api->PJRT_Error_ForEachPayload(&args), api);
+      pjrt::LogFatalIfPjrtError(
+          NoCfiCall(api->PJRT_Error_ForEachPayload, &args), api);
     }
   }
   return status;
