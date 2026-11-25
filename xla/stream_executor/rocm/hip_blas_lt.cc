@@ -398,6 +398,7 @@ absl::Status BlasLt::Init() {
 auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
                                               size_t max_workspace_size) const
     -> absl::StatusOr<std::vector<MatmulAlgorithm>> {
+  absl::MutexLock plan_lock(plan_mu_);
   max_algorithm_count = std::min(max_algorithm_count, size_t{INT_MAX});
   std::vector<hipblasLtMatmulHeuristicResult_t> results(max_algorithm_count);
 
@@ -881,6 +882,7 @@ absl::Status BlasLt::RocBlasGemmPlan::ExecuteOnStream(
 absl::Status BlasLt::RegularMatmulPlan::ExecuteOnStream(
     Stream* stream, const gpu::BlasLt::MemoryArgs& args,
     blas::ProfileResult* profile_result) const {
+  absl::MutexLock plan_lock(plan_mu_);
   if (!algorithm_.has_value()) {
     return absl::InternalError(
         "Algorithm must be set before calling ExecuteOnStream!");
@@ -926,8 +928,6 @@ absl::Status BlasLt::RegularMatmulPlan::ExecuteOnStream(
                                             : nullptr);
     absl::MutexLock lock(blas_lt_.mu_);
     TF_RET_CHECK(blas_lt_.handle_ != nullptr);
-    // We must set the bias and aux pointers while holding the mutex, to avoid a
-    // potential race condition from multiple threads sharing the same plan.
     if (op_desc_.has_bias_epilogue() && args.bias != nullptr) {
       ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                                    HIPBLASLT_MATMUL_DESC_BIAS_POINTER,
@@ -987,20 +987,20 @@ absl::Status BlasLt::RegularMatmulPlan::ExecuteOnStream(
 auto BlasLt::GroupedMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
                                               size_t max_workspace_size) const
     -> absl::StatusOr<std::vector<MatmulAlgorithm>> {
+  absl::MutexLock plan_lock(plan_mu_);
   std::unique_ptr<ActivateContext> activation = blas_lt_.executor_->Activate();
 
+  TF_RET_CHECK(grouped_gemm_ != nullptr) << "Grouped GEMM is not initialized";
+  grouped_gemm_->setMaxWorkspaceBytes(max_workspace_size);
   hipblasLtHandle_t handle;
   {
     absl::MutexLock lock(blas_lt_.mu_);
     TF_RET_CHECK(blas_lt_.handle_ != nullptr);
-    TF_RET_CHECK(grouped_gemm_ != nullptr) << "Grouped GEMM is not initialized";
-    grouped_gemm_->setMaxWorkspaceBytes(max_workspace_size);
     handle = blas_lt_.handle_.get();
   }
 
   // Not under mu_, as in RegularMatmulPlan::GetAlgorithms: the first
-  // GetAllAlgos call can take several seconds. The isAlgoSupported() loop
-  // below only touches this plan's grouped_gemm_ and also runs unlocked.
+  // GetAllAlgos call can take several seconds.
   const ProblemType& problem = problem_type_;
   hipblaslt_libstdcxx::Vector<hipblasLtMatmulHeuristicResult_t> heuristicResult;
   hipblasStatus_t status = hipblaslt_libstdcxx::GetAllAlgos(
@@ -1110,6 +1110,7 @@ absl::Status BlasLt::GroupedMatmulPlan::DoInitialize(
       AsHipblasDataType(cfg_.type_c), AsHipblasDataType(cfg_.type_d),
       AsHipblasComputeType(compute_type));
 
+  absl::MutexLock plan_lock(plan_mu_);
   absl::MutexLock lock(blas_lt_.mu_);
   problem_type_ = ProblemType{problem.getOpA(),        problem.getOpB(),
                               problem.getTypeA(),      problem.getTypeB(),
@@ -1186,6 +1187,7 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
 absl::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(
     Stream* stream, const MemoryArgs& args,
     blas::ProfileResult* profile_result) const {
+  absl::MutexLock plan_lock(plan_mu_);
   if (!algorithm_.has_value()) {
     return absl::InternalError(
         "Algorithm must be set before calling ExecuteOnStream!");

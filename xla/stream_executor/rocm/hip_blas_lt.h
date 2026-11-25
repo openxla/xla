@@ -133,6 +133,7 @@ class BlasLt : public gpu::BlasLt {
       if (palgo == nullptr) {
         return absl::InternalError("Invalid algorithm type!");
       }
+      absl::MutexLock lock(plan_mu_);
       algorithm_ = *palgo;
       workspace_size_ = algorithm.workspace_size;
       return absl::OkStatus();
@@ -140,7 +141,7 @@ class BlasLt : public gpu::BlasLt {
 
    private:
     const BlasLt& blas_lt_;
-    MatmulDesc op_desc_;
+    MatmulDesc op_desc_ ABSL_GUARDED_BY(plan_mu_);
     MatrixLayout a_desc_;
     MatrixLayout b_desc_;
     MatrixLayout c_desc_;
@@ -148,8 +149,11 @@ class BlasLt : public gpu::BlasLt {
     alignas(16) std::array<uint8_t, kMaxScaleBytes> alpha_, beta_;
     bool must_swap_operands_;
     bool has_d_scale_;
-    mutable std::optional<hipblasLtMatmulAlgo_t> algorithm_;
-    size_t workspace_size_ = 0;
+    mutable absl::Mutex plan_mu_ ABSL_ACQUIRED_BEFORE(blas_lt_.rocroller_mu_,
+                                                      blas_lt_.mu_);
+    mutable std::optional<hipblasLtMatmulAlgo_t> algorithm_
+        ABSL_GUARDED_BY(plan_mu_);
+    size_t workspace_size_ ABSL_GUARDED_BY(plan_mu_) = 0;
   };  // class RegularMatmulPlan
 
   class GroupedMatmulPlan : public gpu::BlasLt::MatmulPlan {
@@ -173,6 +177,7 @@ class BlasLt : public gpu::BlasLt {
       if (palgo == nullptr) {
         return absl::InternalError("Invalid algorithm type!");
       }
+      absl::MutexLock lock(plan_mu_);
       algorithm_ = *palgo;
       algorithm_dirty_ = true;
       return absl::OkStatus();
@@ -199,10 +204,15 @@ class BlasLt : public gpu::BlasLt {
     gpu::GroupedGemmConfig cfg_;
     Epilogue epilogue_ = Epilogue::kDefault;
     ProblemType problem_type_{};
-    std::unique_ptr<hipblaslt_ext::GroupedGemm> grouped_gemm_;
-    mutable std::optional<hipblasLtMatmulAlgo_t> algorithm_;
-    mutable bool algorithm_dirty_ = false;
-    mutable DeviceAddressBase saved_address_workspace_{};
+    mutable absl::Mutex plan_mu_ ABSL_ACQUIRED_BEFORE(blas_lt_.rocroller_mu_,
+                                                      blas_lt_.mu_);
+    std::unique_ptr<hipblaslt_ext::GroupedGemm> grouped_gemm_
+        ABSL_GUARDED_BY(plan_mu_);
+    mutable std::optional<hipblasLtMatmulAlgo_t> algorithm_
+        ABSL_GUARDED_BY(plan_mu_);
+    mutable bool algorithm_dirty_ ABSL_GUARDED_BY(plan_mu_) = false;
+    mutable DeviceAddressBase saved_address_workspace_
+        ABSL_GUARDED_BY(plan_mu_){};
     // Saved default activation parameters from hipBLASLt
     int32_t activation_type_ = 0;
     int8_t bias_type_ = 0;
