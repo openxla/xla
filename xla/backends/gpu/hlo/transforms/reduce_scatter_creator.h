@@ -27,10 +27,9 @@ namespace gpu {
 
 // Transforms dynamic-slice(all-reduce) to a reduce-scatter. Copies and
 // elementwise operations with scalar-broadcast operands between the all-reduce
-// and the dynamic-slice are moved after the dynamic-slice first; this move is
-// kept even when no reduce-scatter can be created afterwards. A reshape is only
-// supported directly between the all-reduce and the dynamic-slice, not combined
-// with such intermediate operations.
+// and the dynamic-slice are re-created on the result of the reduce-scatter. A
+// reshape is only supported directly between the all-reduce and the
+// dynamic-slice, not combined with such intermediate operations.
 class ReduceScatterCreator : public HloModulePass {
  public:
   ReduceScatterCreator() = default;

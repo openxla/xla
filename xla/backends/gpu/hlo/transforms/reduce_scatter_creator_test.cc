@@ -476,8 +476,7 @@ ENTRY %AllReduce {
 
 TEST_F(GpuReduceScatterCreatorTest, AllReplicasScaledWrongOffsets) {
   // The offsets do not select the shard of each replica, so no reduce-scatter
-  // is created. The dynamic-slice is still moved next to the all-reduce, and
-  // the multiply runs on the sliced result.
+  // is created and the module is left unchanged.
   absl::string_view hlo_string = R"hlo(
 HloModule AllReduce
 
@@ -510,14 +509,12 @@ ENTRY %AllReduce {
                                             /*num_replicas=*/8,
                                             /*num_partitions=*/1,
                                             /*use_spmd_partitioning=*/false,
-                                            /*expect_change=*/true));
-  ASSERT_THAT(
+                                            /*expect_change=*/false));
+  EXPECT_THAT(
       module->entry_computation()->root_instruction(),
-      GmockMatch(m::Multiply(m::DynamicSlice(m::AllReduce(m::Parameter(0)),
-                                             m::Op(), m::Op(), m::Op()),
-                             m::Broadcast(m::Parameter(1)))));
-  EXPECT_EQ(module->entry_computation()->root_instruction()->shape(),
-            ShapeUtil::MakeShape(F32, {4, 8, 128}));
+      GmockMatch(m::DynamicSlice(m::Multiply(m::AllReduce(m::Parameter(0)),
+                                             m::Broadcast(m::Parameter(1))),
+                                 m::Op(), m::Op(), m::Op())));
   EXPECT_EQ(AllReduceCount(module), 1);
   EXPECT_EQ(ReduceScatterCount(module), 0);
 }

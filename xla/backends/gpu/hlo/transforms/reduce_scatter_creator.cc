@@ -22,9 +22,11 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -32,7 +34,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/collective_opt_utils.h"
-#include "xla/service/decision.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
@@ -44,112 +45,23 @@ namespace xla {
 namespace gpu {
 namespace {
 
-// Decides whether `instruction` is a broadcast of a scalar that can be
-// re-created with a different shape. A broadcast with control dependencies
-// cannot, as the new broadcast would not be ordered by them.
-Decision CanRecreateScalarBroadcast(const HloInstruction* instruction) {
-  if (instruction->opcode() != HloOpcode::kBroadcast ||
-      !ShapeUtil::IsScalar(instruction->operand(0)->shape())) {
-    return Decision::Forbid("not a broadcast of a scalar");
-  }
-  if (instruction->HasControlDependencies()) {
-    return Decision::Forbid("the scalar broadcast has control dependencies");
-  }
-  return Decision::Allow();
-}
-
-// Decides whether a dynamic-slice of `user` can be replaced by `user` applied
-// to a dynamic-slice of `operand`. This is the case if `user` only applies a
-// per-element function to `operand`: it is either a copy, or an elementwise
-// operation whose remaining operands are all broadcasts of scalars.
-Decision CanSliceCommuteWithUser(const HloInstruction* user,
-                                 const HloInstruction* operand) {
-  if (user->HasSideEffect()) {
-    return Decision::Forbid("the user has side effects");
-  }
-  if (user->HasControlDependencies()) {
-    return Decision::Forbid("the user has control dependencies");
-  }
-  if (!user->shape().IsArray() || user->shape().is_dynamic()) {
-    return Decision::Forbid("the user does not have a static array shape");
-  }
-  if (!ShapeUtil::SameDimensions(user->shape(), operand->shape())) {
-    return Decision::Forbid("the user changes the dimensions");
-  }
-  if (user->opcode() == HloOpcode::kCopy) {
-    return Decision::Allow();
-  }
-  if (!user->IsElementwise()) {
-    return Decision::Forbid("the user is neither a copy nor elementwise");
-  }
-  if (user->OperandIndices(operand).size() != 1) {
-    return Decision::Forbid("the user consumes the operand more than once");
-  }
-  if (!absl::c_all_of(user->operands(), [&](const HloInstruction* other) {
-        return other == operand ||
-               CanRecreateScalarBroadcast(other).IsAllowed();
-      })) {
-    return Decision::Forbid(
-        "another operand of the user is not a scalar broadcast without "
-        "control dependencies");
-  }
-  return Decision::Allow();
-}
-
-// Rewrites
-//   dynamic-slice(f_n(...f_1(all-reduce)...), offsets)
-// into
-//   f_n(...f_1(dynamic-slice(all-reduce, offsets))...)
-// where every f_i is a copy or an elementwise operation whose other operands
-// are scalar broadcasts, and every instruction of the chain has a single user.
-// The SPMD partitioner emits such chains, for example when a gradient is scaled
-// before it is sliced to the shard of the current partition. Moving the
-// dynamic-slice next to the all-reduce exposes the reduce-scatter pattern, and
-// the elementwise operations then run on the slice only.
-absl::StatusOr<bool> SinkDynamicSliceThroughElementwise(
-    HloAllReduceInstruction* ar) {
-  if (!ar->shape().IsArray() || ar->shape().is_dynamic()) {
-    return false;
-  }
-  std::vector<HloInstruction*> chain;
-  HloInstruction* current = ar;
-  HloInstruction* ds = nullptr;
-  while (current->user_count() == 1) {
-    HloInstruction* user = *current->users().begin();
-    if (user->opcode() == HloOpcode::kDynamicSlice) {
-      if (user->operand(0) == current &&
-          user->OperandIndices(current).size() == 1 &&
-          !user->HasControlDependencies() && !user->shape().is_dynamic()) {
-        ds = user;
-      }
-      break;
-    }
-    Decision can_commute = CanSliceCommuteWithUser(user, current);
-    if (can_commute.IsForbidden()) {
-      VLOG(2) << "Cannot move a dynamic-slice above " << user->name() << ": "
-              << can_commute.Explain();
-      break;
-    }
-    chain.push_back(user);
-    current = user;
-  }
-  if (ds == nullptr || chain.empty()) {
-    return false;
-  }
-
-  HloComputation* computation = ar->parent();
+// Re-creates `chain`, the copies and elementwise operations between `ar` and
+// the dynamic-slice that was matched as a reduce-scatter, on the result of
+// `reduce_scatter`. Slicing commutes with these operations, so applying them
+// to the shard produced by the reduce-scatter gives the same result as slicing
+// their output. Returns the last re-created instruction.
+HloInstruction* RecreateElementwiseOnReduceScatter(
+    absl::Span<HloInstruction* const> chain, const HloInstruction* ar,
+    HloInstruction* reduce_scatter) {
+  HloComputation* computation = reduce_scatter->parent();
   // The new shapes get the default layout. This pass runs before layout
   // assignment, where every shape still has the default layout.
-  auto sliced_shape = [&](const HloInstruction* instruction) {
+  auto scattered_shape = [&](const HloInstruction* instruction) {
     return ShapeUtil::MakeShape(instruction->shape().element_type(),
-                                ds->shape().dimensions());
+                                reduce_scatter->shape().dimensions());
   };
-  std::vector<HloInstruction*> ds_operands(ds->operands().begin(),
-                                           ds->operands().end());
-  ds_operands[0] = ar;
-  HloInstruction* result = computation->AddInstruction(
-      ds->CloneWithNewOperands(sliced_shape(ar), ds_operands));
-  HloInstruction* previous = ar;
+  HloInstruction* result = reduce_scatter;
+  const HloInstruction* previous = ar;
   for (HloInstruction* instruction : chain) {
     std::vector<HloInstruction*> operands;
     operands.reserve(instruction->operand_count());
@@ -160,16 +72,38 @@ absl::StatusOr<bool> SinkDynamicSliceThroughElementwise(
         // Clone the scalar broadcast to keep its metadata.
         operands.push_back(
             computation->AddInstruction(operand->CloneWithNewOperands(
-                sliced_shape(operand), {operand->mutable_operand(0)})));
+                scattered_shape(operand), {operand->mutable_operand(0)})));
       }
     }
-    result = computation->AddInstruction(
-        instruction->CloneWithNewOperands(sliced_shape(instruction), operands));
+    result = computation->AddInstruction(instruction->CloneWithNewOperands(
+        scattered_shape(instruction), operands));
     previous = instruction;
   }
-  ABSL_RETURN_IF_ERROR(ds->ReplaceAllUsesWith(result));
-  ABSL_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(ds));
-  return true;
+  return result;
+}
+
+// Removes `chain`, which is dead after its dynamic-slice user was removed,
+// together with the scalar broadcasts that are no longer used.
+absl::Status RemoveElementwiseChain(absl::Span<HloInstruction* const> chain) {
+  for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+    HloInstruction* instruction = *it;
+    HloComputation* computation = instruction->parent();
+    std::vector<HloInstruction*> broadcasts;
+    for (HloInstruction* operand : instruction->operands()) {
+      if (operand->opcode() == HloOpcode::kBroadcast &&
+          !absl::c_linear_search(broadcasts, operand)) {
+        broadcasts.push_back(operand);
+      }
+    }
+    ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(instruction));
+    for (HloInstruction* broadcast : broadcasts) {
+      if (broadcast->IsDead()) {
+        ABSL_RETURN_IF_ERROR(
+            computation->RemoveInstructionAndUnusedOperands(broadcast));
+      }
+    }
+  }
+  return absl::OkStatus();
 }
 
 }  // namespace
@@ -189,18 +123,14 @@ absl::StatusOr<bool> ReduceScatterCreator::RunImpl(
         continue;
       }
       auto* ar = Cast<HloAllReduceInstruction>(instruction);
-      // The dynamic-slice is moved next to the all-reduce before matching, and
-      // deliberately stays there even if no reduce-scatter is created below
-      // (for example because the slice offset is not a per-device shard
-      // offset). The move is exact and never increases the amount of work: the
-      // elementwise operations run on the slice instead of the full all-reduce
-      // result.
-      ABSL_ASSIGN_OR_RETURN(bool sunk, SinkDynamicSliceThroughElementwise(ar));
-      changed |= sunk;
-      auto ar_spec = MatchReduceScatter(ar, config.num_partitions(),
-                                        config.replica_count(),
-                                        /*allow_multiple_split_dims=*/false,
-                                        /*allow_intervening_reshape=*/true);
+      auto ar_spec = MatchReduceScatter(
+          ar, config.num_partitions(), config.replica_count(),
+          /*allow_multiple_split_dims=*/false,
+          /*allow_intervening_reshape=*/true, /*min_rank=*/1,
+          HloPredicateIsOp<HloOpcode::kPartitionId>,
+          HloPredicateIsOp<HloOpcode::kReplicaId>,
+          /*allow_intervening_bitcast=*/false,
+          /*allow_intervening_elementwise=*/true);
       if (!ar_spec) {
         VLOG(2) << "Cannot match reduce-scatter " << ar->ToString();
         continue;
@@ -250,12 +180,18 @@ absl::StatusOr<bool> ReduceScatterCreator::RunImpl(
       // explicitly preserve the source collective configuration.
       ars->CopyBackendConfigFrom(ar);
 
-      // If there was an intervening reshape, reshape the non-split dimensions
-      // to match that existing reshape. Basically we can just reshape the ars
-      // result to the dynamic slice shape.
+      const std::vector<HloInstruction*>& elementwise =
+          ar_spec->intervening_elementwise;
       HloInstruction* result = ars;
       HloInstruction* reshape = nullptr;
-      if (ds->operand(0) != ar) {
+      if (!elementwise.empty()) {
+        // If there were intervening copies or elementwise operations, re-create
+        // them on the result of the reduce-scatter.
+        result = RecreateElementwiseOnReduceScatter(elementwise, ar, ars);
+      } else if (ds->operand(0) != ar) {
+        // If there was an intervening reshape, reshape the non-split dimensions
+        // to match that existing reshape. Basically we can just reshape the ars
+        // result to the dynamic slice shape.
         reshape = ds->mutable_operand(0);
         result = computation->AddInstruction(
             HloInstruction::CreateReshape(ds->shape(), result));
@@ -269,6 +205,7 @@ absl::StatusOr<bool> ReduceScatterCreator::RunImpl(
       if (reshape) {
         ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(reshape));
       }
+      ABSL_RETURN_IF_ERROR(RemoveElementwiseChain(elementwise));
       ABSL_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(ar));
       changed = true;
     }

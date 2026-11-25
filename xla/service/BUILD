@@ -103,6 +103,7 @@ cc_library(
     hdrs = ["collective_opt_utils.h"],
     deps = [
         ":collective_ops_utils",
+        ":decision",
         ":pattern_matcher",
         "//xla:shape_util",
         "//xla:util",
