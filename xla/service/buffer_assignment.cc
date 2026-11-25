@@ -3763,6 +3763,7 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
       HeapSimulator::Options options;
       options.alloc_constants = opts_.allocate_buffers_for_constants;
       options.view_color = opts_.dus_view_color;
+      options.extend_live_ranges = opts_.extend_live_ranges;
       options.buffers_to_assign = &color_map[color];
       HeapSimulator::Result<HloValue> result;
       ABSL_ASSIGN_OR_RETURN(
@@ -3793,6 +3794,7 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
         HeapSimulator::Options options;
         options.buffers_to_assign = &color_map[color];
         options.view_color = opts_.dus_view_color;
+        options.extend_live_ranges = opts_.extend_live_ranges;
         HeapSimulator::Result<HloValue> result;
         ABSL_ASSIGN_OR_RETURN(
             result, HeapSimulator::Run(
@@ -4070,6 +4072,9 @@ BufferAssigner::CreateAssignment(
     ExtendViewBaseLiveRanges(hlo_live_range.get(),
                              alias_analysis->dataflow_analysis(),
                              *opts_.dus_view_color);
+  }
+  if (opts_.extend_live_ranges != nullptr) {
+    opts_.extend_live_ranges(*alias_analysis, hlo_live_range.get());
   }
 
   VLOG(1) << "Assigning buffers to module " << module->name();

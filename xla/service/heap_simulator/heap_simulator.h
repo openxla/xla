@@ -130,6 +130,9 @@ class HeapSimulator {
     HeapSimulatorTrace debug_trace;
   };
 
+  using LiveRangeExtender =
+      std::function<void(const HloAliasAnalysis&, HloLiveRange*)>;
+
   // The different options to be passed to the Run() APIs.
   struct Options {
     Options()
@@ -152,6 +155,10 @@ class HeapSimulator {
     // readers read the value's buffer through the view, so it must not be
     // recycled before them.
     std::optional<int64_t> view_color;
+    // Optional target hook to extend buffer live ranges before define/free
+    // events are scheduled (for example when an asynchronous operation's
+    // completion wait is deferred to a later instruction on the same queue).
+    LiveRangeExtender extend_live_ranges;
   };
 
   // Returns the minimum memory required to compute an HLO module where all
