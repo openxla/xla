@@ -22,6 +22,8 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "xla/hlo/ir/mesh_and_axis.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -33,7 +35,10 @@ namespace xla {
 namespace {
 
 using DimensionSharding = NamedSharding::DimensionSharding;
+using ::absl_testing::IsOkAndHolds;
+using ::absl_testing::StatusIs;
 using ::testing::ElementsAre;
+using ::testing::HasSubstr;
 
 TEST(NamedShardingTest, AxisNameCtor) {
   Mesh mesh_abcde({2, 4, 3, 8, 2}, {"a", "b", "c", "d", "e"});
@@ -279,7 +284,8 @@ TEST(NamedShardingTest, ToStringUnreducedEnum) {
             "{mesh['a'=2,'b'=8,'c'=4], [], unreduced=max{'a', 'b':(4)2}}");
 
   NamedShardingProto proto = sharding.ToProto();
-  NamedSharding from_proto = NamedSharding::FromProto(proto);
+  ASSERT_OK_AND_ASSIGN(NamedSharding from_proto,
+                       NamedSharding::FromProto(proto));
   EXPECT_EQ(from_proto.ToString(),
             "{mesh['a'=2,'b'=8,'c'=4], [], unreduced=max{'a', 'b':(4)2}}");
 }
@@ -649,8 +655,95 @@ TEST(NamedShardingTest, NegativeAxisIndexFromProto) {
   NamedShardingProto proto = NamedSharding(Mesh({2}, {"a"})).ToProto();
   proto.add_dim_shardings()->add_axes()->set_mesh_axis_index(-1);
 
-  EXPECT_DEATH(NamedSharding::FromProto(proto),
-               "Axis index must be non-negative.*Axis index: -1");
+  EXPECT_THAT(NamedSharding::FromProto(proto),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Axis index must be non-negative. Axis "
+                                 "index: -1")));
+}
+
+TEST(NamedShardingTest, FromProtoRejectsInvalidShardings) {
+  const NamedShardingProto base =
+      NamedSharding(Mesh({2, 4}, {"a", "b"})).ToProto();
+  {
+    // Axis index out of bounds.
+    NamedShardingProto proto = base;
+    proto.add_dim_shardings()->add_axes()->set_mesh_axis_index(2);
+    EXPECT_THAT(NamedSharding::FromProto(proto),
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("Axis index must be less than number of "
+                                   "axes")));
+  }
+  {
+    // Overlapping axes.
+    NamedShardingProto proto = base;
+    proto.add_dim_shardings()->add_axes()->set_mesh_axis_index(0);
+    proto.add_dim_shardings()->add_axes()->set_mesh_axis_index(0);
+    EXPECT_THAT(NamedSharding::FromProto(proto),
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("Axes cannot coexist or axes overlap")));
+  }
+  {
+    // Unsorted replicated axes.
+    NamedShardingProto proto = base;
+    proto.add_replicated_axes()->set_mesh_axis_index(1);
+    proto.add_replicated_axes()->set_mesh_axis_index(0);
+    EXPECT_THAT(NamedSharding::FromProto(proto),
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("Replicated axes must be sorted")));
+  }
+  {
+    // Sub-axis size of 1.
+    NamedShardingProto proto = base;
+    AxisRefProto* axis = proto.add_dim_shardings()->add_axes();
+    axis->set_mesh_axis_index(1);
+    axis->mutable_sub_axis_info()->set_pre_size(1);
+    axis->mutable_sub_axis_info()->set_size(1);
+    EXPECT_THAT(NamedSharding::FromProto(proto),
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("sub-axis size must be > 1")));
+  }
+  {
+    // pre_size * size wraps to 0, which would divide by zero in validation.
+    NamedShardingProto proto = base;
+    AxisRefProto* axis = proto.add_unreduced_axes();
+    axis->set_mesh_axis_index(1);
+    axis->mutable_sub_axis_info()->set_pre_size(int64_t{1} << 62);
+    axis->mutable_sub_axis_info()->set_size(4);
+    EXPECT_THAT(NamedSharding::FromProto(proto),
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("sub-axis pre_size * size overflows")));
+  }
+  {
+    // pre_size * size wraps to 2, which would pass validation.
+    NamedShardingProto proto = base;
+    AxisRefProto* axis = proto.add_manual_axes();
+    axis->set_mesh_axis_index(1);
+    axis->mutable_sub_axis_info()->set_pre_size(6148914691236517206);
+    axis->mutable_sub_axis_info()->set_size(3);
+    EXPECT_THAT(NamedSharding::FromProto(proto),
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("sub-axis pre_size * size overflows")));
+  }
+  {
+    // Invalid mesh.
+    NamedShardingProto proto = base;
+    proto.mutable_mesh()->mutable_axes(0)->set_size(0);
+    EXPECT_THAT(NamedSharding::FromProto(proto),
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("Mesh axis size must be positive")));
+  }
+}
+
+TEST(NamedShardingTest, TryCreate) {
+  Mesh mesh({2, 4}, {"a", "b"});
+  DimensionSharding ds_a({AxisRef(0)}, /*is_closed=*/true);
+  DimensionSharding ds_c({AxisRef(2)}, /*is_closed=*/true);
+  EXPECT_THAT(NamedSharding::TryCreate(mesh, {ds_a}),
+              IsOkAndHolds(NamedSharding(mesh, {ds_a})));
+  EXPECT_THAT(NamedSharding::TryCreate(mesh, {ds_c}),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Axis index must be less than number of "
+                                 "axes")));
 }
 
 TEST(NamedShardingTest, OverlappingAxesSameDimValidation) {
@@ -741,8 +834,10 @@ TEST(NamedShardingTest, SubAxisOverflowFromProto) {
         proto.add_dim_shardings()->add_axes()->mutable_sub_axis_info();
     sub_axis->set_pre_size(4611686018427387904);
     sub_axis->set_size(4);
-    EXPECT_DEATH(NamedSharding::FromProto(proto),
-                 "sub-axis pre_size \\* size overflows int64_t");
+    EXPECT_THAT(NamedSharding::FromProto(proto),
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("sub-axis pre_size * size overflows "
+                                   "int64_t")));
   }
   {
     // pre_size * size wraps to 2 mod 2^64 (previously bypassed Validate and
@@ -752,8 +847,10 @@ TEST(NamedShardingTest, SubAxisOverflowFromProto) {
         proto.add_dim_shardings()->add_axes()->mutable_sub_axis_info();
     sub_axis->set_pre_size(6148914691236517206);
     sub_axis->set_size(3);
-    EXPECT_DEATH(NamedSharding::FromProto(proto),
-                 "sub-axis pre_size \\* size overflows int64_t");
+    EXPECT_THAT(NamedSharding::FromProto(proto),
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("sub-axis pre_size * size overflows "
+                                   "int64_t")));
   }
 }
 
@@ -928,9 +1025,7 @@ TEST(NamedShardingTest, NamedShardingProtoConversion) {
             manual_axes { mesh_axis_index: 2 }
           )pb")));
 
-  NamedSharding from_proto = NamedSharding::FromProto(proto);
-
-  EXPECT_EQ(sharding, from_proto);
+  EXPECT_THAT(NamedSharding::FromProto(proto), IsOkAndHolds(sharding));
 }
 
 TEST(NamedShardingPredicatesTest, HasPartialReplication_SingleDevice) {
