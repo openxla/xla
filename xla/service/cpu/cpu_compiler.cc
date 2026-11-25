@@ -90,6 +90,7 @@ limitations under the License.
 #include "xla/backends/cpu/transforms/embedded_while_loop_unroller.h"
 #include "xla/backends/cpu/transforms/fusion_wrapper.h"
 #include "xla/backends/cpu/transforms/library_rewriter.h"
+#include "xla/backends/cpu/transforms/reduction_dimension_normalizer.h"
 #include "xla/backends/cpu/transforms/small_while_loop_hoisting_pass.h"
 #include "xla/backends/cpu/ynn_support.h"
 #include "xla/comparison_util.h"
@@ -876,6 +877,10 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     pipeline.AddPass<FlattenCallGraph>();
   }
 
+  // Keep reduction chains free of size-one axes for both library and loop
+  // fusion. Run after reshape sinking, which could otherwise undo this.
+  pipeline.AddPass<ReductionDimensionNormalizer>();
+  pipeline.AddPass<HloDCE>();
   pipeline.AddPass<CpuLayoutAssignment>(
       module->mutable_entry_computation_layout(), target_machine_features);
   // Run SubByteNormalization because CpuLayoutAssignment may modify a

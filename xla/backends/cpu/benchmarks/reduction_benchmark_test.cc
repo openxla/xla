@@ -33,6 +33,57 @@ limitations under the License.
 
 namespace xla::cpu {
 
+// Compare (N,) with (N,1) for the elementwise chain from issue #53437.
+// Run with default flags and with
+// --xla_cpu_experimental_ynn_fusion_type=-reduce to cover both CPU paths.
+template <PrimitiveType type>
+static void BM_ReduceLog1pExp(benchmark::State& state,
+                              HloBenchmarkOptions options) {
+  const bool column_vector = state.range(0);
+  const int64_t n = 1000000;
+  std::vector<int64_t> dimensions = {n};
+  if (column_vector) {
+    dimensions.push_back(1);
+  }
+  absl::string_view hlo = R"(
+HloModule reduce_log1p_exp
+add {
+  a = $type[] parameter(0)
+  b = $type[] parameter(1)
+  ROOT sum = $type[] add(a, b)
+}
+ENTRY main {
+  p = $type[$shape] parameter(0)
+  a = $type[$shape] abs(p)
+  n = $type[$shape] negate(a)
+  e = $type[$shape] exponential(n)
+  l = $type[$shape] log-plus-one(e)
+  z = $type[] constant(0)
+  ROOT r = $type[] reduce(l, z), dimensions={$dims}, to_apply=add
+})";
+  std::minstd_rand0 engine;
+  auto input = LiteralUtil::CreateRandomLiteral<type>(
+      ShapeUtil::MakeShape(type, dimensions), &engine, 0.0, 1.0);
+  CHECK_OK(input.status());
+  std::vector<const Literal*> args = {&*input};
+  CHECK_OK(RunHloBenchmark(state, hlo, args,
+                           {{"$type", type == F32 ? "f32" : "f64"},
+                            {"$shape", column_vector ? "1000000,1" : "1000000"},
+                            {"$dims", column_vector ? "0,1" : "0"}},
+                           options));
+}
+
+XLA_CPU_BENCHMARK(BM_ReduceLog1pExp<F32>)
+    ->ArgName("column_vector")
+    ->Arg(0)
+    ->Arg(1)
+    ->MeasureProcessCPUTime();
+XLA_CPU_BENCHMARK(BM_ReduceLog1pExp<F64>)
+    ->ArgName("column_vector")
+    ->Arg(0)
+    ->Arg(1)
+    ->MeasureProcessCPUTime();
+
 static void BM_ReduceAddF32(benchmark::State& state,
                             HloBenchmarkOptions options) {
   int64_t d0 = state.range(0);
