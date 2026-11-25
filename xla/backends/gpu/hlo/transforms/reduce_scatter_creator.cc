@@ -19,6 +19,7 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
@@ -31,6 +32,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/collective_opt_utils.h"
+#include "xla/service/decision.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
@@ -42,37 +44,56 @@ namespace xla {
 namespace gpu {
 namespace {
 
-// Returns true if `instruction` is a broadcast of a scalar that can be
+// Decides whether `instruction` is a broadcast of a scalar that can be
 // re-created with a different shape. A broadcast with control dependencies
 // cannot, as the new broadcast would not be ordered by them.
-bool IsScalarBroadcast(const HloInstruction* instruction) {
-  return instruction->opcode() == HloOpcode::kBroadcast &&
-         !instruction->HasControlDependencies() &&
-         ShapeUtil::IsScalar(instruction->operand(0)->shape());
+Decision CanRecreateScalarBroadcast(const HloInstruction* instruction) {
+  if (instruction->opcode() != HloOpcode::kBroadcast ||
+      !ShapeUtil::IsScalar(instruction->operand(0)->shape())) {
+    return Decision::Forbid("not a broadcast of a scalar");
+  }
+  if (instruction->HasControlDependencies()) {
+    return Decision::Forbid("the scalar broadcast has control dependencies");
+  }
+  return Decision::Allow();
 }
 
-// Returns true if `user` only applies a per-element function to `operand`: it
-// is either a copy, or an elementwise operation whose remaining operands are
-// all broadcasts of scalars. Slicing commutes with such an instruction.
-bool IsSliceCommutingUser(const HloInstruction* user,
-                          const HloInstruction* operand) {
-  if (user->HasSideEffect() || user->HasControlDependencies() ||
-      !user->shape().IsArray() ||
-      !ShapeUtil::SameDimensions(user->shape(), operand->shape())) {
-    return false;
+// Decides whether a dynamic-slice of `user` can be replaced by `user` applied
+// to a dynamic-slice of `operand`. This is the case if `user` only applies a
+// per-element function to `operand`: it is either a copy, or an elementwise
+// operation whose remaining operands are all broadcasts of scalars.
+Decision CanSliceCommuteWithUser(const HloInstruction* user,
+                                 const HloInstruction* operand) {
+  if (user->HasSideEffect()) {
+    return Decision::Forbid("the user has side effects");
+  }
+  if (user->HasControlDependencies()) {
+    return Decision::Forbid("the user has control dependencies");
+  }
+  if (!user->shape().IsArray() || user->shape().is_dynamic()) {
+    return Decision::Forbid("the user does not have a static array shape");
+  }
+  if (!ShapeUtil::SameDimensions(user->shape(), operand->shape())) {
+    return Decision::Forbid("the user changes the dimensions");
   }
   if (user->opcode() == HloOpcode::kCopy) {
-    return true;
+    return Decision::Allow();
   }
-  if (!user->IsElementwise() || user->OperandIndices(operand).size() != 1) {
-    return false;
+  if (!user->IsElementwise()) {
+    return Decision::Forbid("the user is neither a copy nor elementwise");
   }
-  for (const HloInstruction* other : user->operands()) {
-    if (other != operand && !IsScalarBroadcast(other)) {
-      return false;
-    }
+  if (user->OperandIndices(operand).size() != 1) {
+    return Decision::Forbid("the user consumes the operand more than once");
   }
-  return true;
+  if (!absl::c_all_of(user->operands(), [&](const HloInstruction* other) {
+        return other == operand ||
+               CanRecreateScalarBroadcast(other).IsAllowed();
+      })) {
+    return Decision::Forbid(
+        "another operand of the user is not a scalar broadcast without "
+        "control dependencies");
+  }
+  return Decision::Allow();
 }
 
 // Rewrites
@@ -87,7 +108,7 @@ bool IsSliceCommutingUser(const HloInstruction* user,
 // the elementwise operations then run on the slice only.
 absl::StatusOr<bool> SinkDynamicSliceThroughElementwise(
     HloAllReduceInstruction* ar) {
-  if (!ar->shape().IsArray()) {
+  if (!ar->shape().IsArray() || ar->shape().is_dynamic()) {
     return false;
   }
   std::vector<HloInstruction*> chain;
@@ -98,12 +119,15 @@ absl::StatusOr<bool> SinkDynamicSliceThroughElementwise(
     if (user->opcode() == HloOpcode::kDynamicSlice) {
       if (user->operand(0) == current &&
           user->OperandIndices(current).size() == 1 &&
-          !user->HasControlDependencies()) {
+          !user->HasControlDependencies() && !user->shape().is_dynamic()) {
         ds = user;
       }
       break;
     }
-    if (!IsSliceCommutingUser(user, current)) {
+    Decision can_commute = CanSliceCommuteWithUser(user, current);
+    if (can_commute.IsForbidden()) {
+      VLOG(2) << "Cannot move a dynamic-slice above " << user->name() << ": "
+              << can_commute.Explain();
       break;
     }
     chain.push_back(user);

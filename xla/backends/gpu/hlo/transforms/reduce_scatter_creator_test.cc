@@ -140,7 +140,7 @@ ENTRY %AllReduce {
 }
 
 TEST_F(GpuReduceScatterCreatorTest, AllReplicasThroughScalarMultiplyAndCopy) {
-  absl::string_view hlo_string = R"(
+  absl::string_view hlo_string = R"hlo(
 HloModule AllReduce
 
 %sum {
@@ -167,7 +167,7 @@ ENTRY %AllReduce {
   ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%copy, %offset, %zero, %zero),
     dynamic_slice_sizes={4,8,128}
 }
-)";
+)hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
                                             /*num_replicas=*/8,
@@ -188,7 +188,7 @@ ENTRY %AllReduce {
 }
 
 TEST_F(GpuReduceScatterCreatorTest, AllReplicasThroughConvert) {
-  absl::string_view hlo_string = R"(
+  absl::string_view hlo_string = R"hlo(
 HloModule AllReduce
 
 %sum {
@@ -212,7 +212,7 @@ ENTRY %AllReduce {
   ROOT %dynamic-slice = bf16[4,8,128] dynamic-slice(%convert, %offset, %zero, %zero),
     dynamic_slice_sizes={4,8,128}
 }
-)";
+)hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
                                             /*num_replicas=*/8,
@@ -229,7 +229,7 @@ ENTRY %AllReduce {
 TEST_F(GpuReduceScatterCreatorTest, AllReplicasThroughNonScalarMultiply) {
   // The other operand of the multiply is not a scalar broadcast, so the
   // dynamic-slice cannot be moved next to the all-reduce.
-  absl::string_view hlo_string = R"(
+  absl::string_view hlo_string = R"hlo(
 HloModule AllReduce
 
 %sum {
@@ -253,7 +253,7 @@ ENTRY %AllReduce {
   ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%scaled, %offset, %zero, %zero),
     dynamic_slice_sizes={4,8,128}
 }
-)";
+)hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
                                             /*num_replicas=*/8,
@@ -266,7 +266,7 @@ ENTRY %AllReduce {
 
 TEST_F(GpuReduceScatterCreatorTest, AllReplicasScaledResultWithTwoUsers) {
   // The scaled all-reduce result is also used in full, so it has to stay.
-  absl::string_view hlo_string = R"(
+  absl::string_view hlo_string = R"hlo(
 HloModule AllReduce
 
 %sum {
@@ -293,7 +293,7 @@ ENTRY %AllReduce {
     dynamic_slice_sizes={4,8,128}
   ROOT %tuple = (f32[32,8,128], f32[4,8,128]) tuple(%scaled, %dynamic-slice)
 }
-)";
+)hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
                                             /*num_replicas=*/8,
@@ -306,7 +306,7 @@ ENTRY %AllReduce {
 
 TEST_F(GpuReduceScatterCreatorTest, AllReplicasThroughClampWithScalarBounds) {
   // Both other operands of the clamp are scalar broadcasts.
-  absl::string_view hlo_string = R"(
+  absl::string_view hlo_string = R"hlo(
 HloModule AllReduce
 
 %sum {
@@ -334,7 +334,7 @@ ENTRY %AllReduce {
   ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%clamp, %offset, %zero, %zero),
     dynamic_slice_sizes={4,8,128}
 }
-)";
+)hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
                                             /*num_replicas=*/8,
@@ -351,7 +351,7 @@ ENTRY %AllReduce {
 }
 
 TEST_F(GpuReduceScatterCreatorTest, AllPartitionsThroughScalarMultiply) {
-  absl::string_view hlo_string = R"(
+  absl::string_view hlo_string = R"hlo(
 HloModule AllReduce
 
 %sum {
@@ -377,7 +377,7 @@ ENTRY %AllReduce {
   ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%scaled, %offset, %zero, %zero),
     dynamic_slice_sizes={4,8,128}
 }
-)";
+)hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
                                             /*num_replicas=*/2,
@@ -395,7 +395,7 @@ ENTRY %AllReduce {
 TEST_F(GpuReduceScatterCreatorTest, AllReplicasScaledResultWithControlDep) {
   // The multiply has a control dependency, which would be lost if it were
   // re-created on the sliced result.
-  absl::string_view hlo_string = R"(
+  absl::string_view hlo_string = R"hlo(
 HloModule AllReduce
 
 %sum {
@@ -422,7 +422,7 @@ ENTRY %AllReduce {
   ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%scaled, %offset, %zero, %zero),
     dynamic_slice_sizes={4,8,128}
 }
-)";
+)hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
                                             /*num_replicas=*/8,
@@ -436,7 +436,7 @@ ENTRY %AllReduce {
 TEST_F(GpuReduceScatterCreatorTest, AllReplicasScalarBroadcastWithControlDep) {
   // The scalar broadcast has a control dependency. A broadcast re-created with
   // the sliced shape would not be ordered by it, so the multiply stays.
-  absl::string_view hlo_string = R"(
+  absl::string_view hlo_string = R"hlo(
 HloModule AllReduce
 
 %sum {
@@ -463,7 +463,7 @@ ENTRY %AllReduce {
   ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%scaled, %offset, %zero, %zero),
     dynamic_slice_sizes={4,8,128}
 }
-)";
+)hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
                                             /*num_replicas=*/8,
@@ -478,7 +478,7 @@ TEST_F(GpuReduceScatterCreatorTest, AllReplicasScaledWrongOffsets) {
   // The offsets do not select the shard of each replica, so no reduce-scatter
   // is created. The dynamic-slice is still moved next to the all-reduce, and
   // the multiply runs on the sliced result.
-  absl::string_view hlo_string = R"(
+  absl::string_view hlo_string = R"hlo(
 HloModule AllReduce
 
 %sum {
@@ -504,7 +504,7 @@ ENTRY %AllReduce {
   ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%scaled, %offset, %zero, %zero),
     dynamic_slice_sizes={4,8,128}
 }
-)";
+)hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
                                             /*num_replicas=*/8,
