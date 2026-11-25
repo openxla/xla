@@ -301,12 +301,10 @@ xla_cc_test(
     srcs = ["reduction_dimension_normalizer_test.cc"],
     deps = [
         ":reduction_dimension_normalizer",
-        "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/status:status_matchers",
-        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
     ],
 )
