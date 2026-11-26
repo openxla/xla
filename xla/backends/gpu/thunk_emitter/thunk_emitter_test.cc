@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/thunk_emitter.h"
+#include "xla/backends/gpu/thunk_emitter/thunk_emitter.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>

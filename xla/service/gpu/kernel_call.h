@@ -16,35 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_KERNEL_CALL_H_
 #define XLA_SERVICE_GPU_KERNEL_CALL_H_
 
-#include <cstdint>
-#include <string>
-#include <vector>
-
-#include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
-#include "mlir/IR/MLIRContext.h"
-#include "xla/stream_executor/launch_dim.h"
-
-namespace xla::gpu {
-
-struct KernelCall {
-  std::string name;
-  std::string kernel_data;
-  enum class KernelType {
-    kPtxSource,
-    kCudaBinary,
-  } kernel_type;
-
-  stream_executor::BlockDim block_dim;
-  stream_executor::ThreadDim thread_dim;
-  size_t shared_mem;
-  std::vector<int32_t> output_indices;
-
-  // Parse the metadata of a __gpu$xla.gpu.ptx call.
-  static absl::StatusOr<KernelCall> Parse(absl::string_view backend_config,
-                                          mlir::MLIRContext* mlir_context);
-};
-
-}  // namespace xla::gpu
+// IWYU pragma: private, include "xla/backends/gpu/thunk_emitter/kernel_call.h"
+#include "xla/backends/gpu/thunk_emitter/kernel_call.h"  // IWYU pragma: export // INLINER_FORWARD_TO
 
 #endif  // XLA_SERVICE_GPU_KERNEL_CALL_H_

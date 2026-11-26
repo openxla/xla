@@ -25,11 +25,11 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/kernels/ptx_custom_kernel.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/gpu_constants.h"
+#include "xla/backends/gpu/thunk_emitter/kernel_call.h"
+#include "xla/backends/gpu/thunk_emitter/ptx_custom_kernel_emitter.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/gpu/custom_kernel_emitter.h"
 #include "xla/service/gpu/ir_emitter_context.h"
-#include "xla/service/gpu/kernel_call.h"
 #include "xla/service/gpu/launch_dimensions.h"
 
 namespace xla::gpu {

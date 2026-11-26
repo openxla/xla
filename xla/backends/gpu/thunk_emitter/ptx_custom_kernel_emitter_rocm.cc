@@ -17,8 +17,8 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "xla/backends/gpu/thunk_emitter/ptx_custom_kernel_emitter.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/gpu/custom_kernel_emitter.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 
 namespace xla {

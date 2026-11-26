@@ -16,27 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_CUSTOM_KERNEL_EMITTER_H_
 #define XLA_SERVICE_GPU_CUSTOM_KERNEL_EMITTER_H_
 
-#include <memory>
-
-#include "absl/status/statusor.h"
-
-namespace xla {
-
-// Forward declaration to avoid heavy includes.
-class HloCustomCallInstruction;
-
-namespace gpu {
-
-class Thunk;
-class IrEmitterContext;
-
-// Emit a platform-specific custom kernel thunk for PTX custom calls.
-// This function has separate implementations for CUDA and ROCm backends,
-// selected at build time via conditional compilation in BUILD rules.
-absl::StatusOr<std::unique_ptr<Thunk>> EmitPtxCustomKernelThunk(
-    const HloCustomCallInstruction* instr, IrEmitterContext* context);
-
-}  // namespace gpu
-}  // namespace xla
+// IWYU pragma: private, include "xla/backends/gpu/thunk_emitter/ptx_custom_kernel_emitter.h"
+#include "xla/backends/gpu/thunk_emitter/ptx_custom_kernel_emitter.h"  // IWYU pragma: export // INLINER_FORWARD_TO
 
 #endif  // XLA_SERVICE_GPU_CUSTOM_KERNEL_EMITTER_H_
