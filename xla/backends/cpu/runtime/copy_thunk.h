@@ -43,6 +43,12 @@ class CopyThunk final : public Thunk {
       Info info, BufferAllocation::Slice src_buffer, const Shape& src_shape,
       BufferAllocation::Slice dst_buffer, const Shape& dst_shape);
 
+  // Returns true if copying between distinct buffers of `src_shape` and
+  // `dst_shape` dispatches parallel tasks when an intra op thread pool is
+  // available.
+  static bool UsesParallelExecution(const Shape& src_shape,
+                                    const Shape& dst_shape);
+
   tsl::AsyncValueRef<ExecuteEvent> Execute(const ExecuteParams& params) final;
 
   BufferUses buffer_uses() const final {

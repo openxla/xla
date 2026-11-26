@@ -32,12 +32,20 @@ namespace xla::cpu {
 class TargetMachineFeaturesStub : public TargetMachineFeatures {
  public:
   explicit TargetMachineFeaturesStub(
-      std::function<int64_t(int64_t)> min_alignment)
+      std::function<int64_t(int64_t)> min_alignment,
+      int32_t vector_register_byte_size = kX86AvxVectorByteSize,
+      std::string enabled_target_features = "")
       : TargetMachineFeatures(/*target_machine=*/nullptr),
-        min_alignment_(std::move(min_alignment)) {}
+        min_alignment_(std::move(min_alignment)),
+        vector_register_byte_size_(vector_register_byte_size),
+        enabled_target_features_(std::move(enabled_target_features)) {}
 
   int vectorization_factor_in_bytes() const final {
     LOG(FATAL) << "Unexpected call to " << __func__;
+  }
+
+  int32_t vector_register_byte_size() const final {
+    return vector_register_byte_size_;
   }
 
   int vector_register_byte_size(const llvm::Function& function) const final {
@@ -61,12 +69,18 @@ class TargetMachineFeaturesStub : public TargetMachineFeatures {
     LOG(FATAL) << "Unexpected call to " << __func__;
   }
 
+  std::string get_enabled_target_features() const final {
+    return enabled_target_features_;
+  }
+
   const llvm::TargetMachine* target_machine() const final {
     LOG(FATAL) << "Unexpected call to " << __func__;
   }
 
  private:
   std::function<int64_t(int64_t)> min_alignment_;
+  int32_t vector_register_byte_size_;
+  std::string enabled_target_features_;
 };
 
 }  // namespace xla::cpu

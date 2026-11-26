@@ -274,6 +274,80 @@ DotImplementationStrategy GetNonBatchDotImplementationStrategy(
   return DotImplementationStrategy::kNaiveLlvmIr;
 }
 
+// Computes the number of parallel tasks along dimension `m` for tiled GEMV
+// (accumulating along `k`).
+int64_t ComputeTiledGemvNumTasks(int64_t m, int64_t k, bool allow_parallelism) {
+  if (!allow_parallelism || m <= 1 || k <= 0) {
+    return 1;
+  }
+  // We parallelize the GEMV computation to have at least this many FMA
+  // instructions per task. In debug builds we prefer smaller tasks to test that
+  // we correctly parallelize the loop.
+  static constexpr int64_t kFmaPerTask = [] {
+    if constexpr (tsl::kIsDebugBuild) {
+      return 1 << 12;  // 4096 FMA/task
+    } else {
+      return 1 << 19;  // 0.5M FMA/task
+    }
+  }();
+
+  // GEMV has very little data reuse, and we hit memory bandwidth bound before
+  // we hit compute bound. Limit the number of tasks to avoid excessive task
+  // scheduling overheads.
+  static constexpr int64_t kMaxTasks = 8;
+
+  const int64_t m_per_task = tsl::MathUtil::CeilOfRatio(kFmaPerTask, k);
+  return std::clamp<int64_t>(tsl::MathUtil::CeilOfRatio(m, m_per_task), 1,
+                             kMaxTasks);
+}
+
+bool ShouldParallelizeBatchDot(int64_t lhs_inner_elements,
+                               int64_t rhs_inner_elements,
+                               bool allow_parallelism) {
+  static constexpr int64_t kParallelLoopThreshold = 32768;
+  return allow_parallelism && (lhs_inner_elements > kParallelLoopThreshold ||
+                               rhs_inner_elements > kParallelLoopThreshold);
+}
+
+uint64_t GetNonBatchDotWorkGroupCount(
+    const HloModuleConfig& config, const DotInfo& dot_info,
+    const TargetMachineFeatures& target_machine_features,
+    bool allow_parallelism) {
+  if (!allow_parallelism || dot_info.lhs_shape.is_unbounded_dynamic() ||
+      dot_info.rhs_shape.is_unbounded_dynamic() ||
+      ShapeUtil::IsScalar(dot_info.lhs_shape) ||
+      ShapeUtil::IsScalar(dot_info.rhs_shape) ||
+      dot_info.dim_nums.lhs_contracting_dimensions_size() != 1 ||
+      dot_info.dim_nums.rhs_contracting_dimensions_size() != 1) {
+    return 1;
+  }
+  if (GetNonBatchDotImplementationStrategy(config, dot_info,
+                                           target_machine_features,
+                                           /*allow_runtime_calls=*/false) !=
+      DotImplementationStrategy::kTiledLlvmIrGemv) {
+    return 1;
+  }
+  if (dot_info.lhs_shape.dimensions().size() > 2 ||
+      dot_info.rhs_shape.dimensions().size() > 2 ||
+      dot_info.result_shape.dimensions().size() > 2) {
+    return 1;
+  }
+  const int64_t lhs_contracting =
+      dot_info.dim_nums.lhs_contracting_dimensions(0);
+  const int64_t rhs_contracting =
+      dot_info.dim_nums.rhs_contracting_dimensions(0);
+  const int64_t m = dot_info.lhs_shape.dimensions().size() <= 1
+                        ? 1LL
+                        : dot_info.lhs_shape.dimensions(1LL - lhs_contracting);
+  const int64_t k = dot_info.lhs_shape.dimensions(lhs_contracting);
+  const int64_t n = dot_info.rhs_shape.dimensions().size() <= 1
+                        ? 1LL
+                        : dot_info.rhs_shape.dimensions(1LL - rhs_contracting);
+  const int64_t parallel_m = m == 1 ? n : m;
+  return static_cast<uint64_t>(
+      ComputeTiledGemvNumTasks(parallel_m, k, allow_parallelism));
+}
+
 // Helper class for emitting LLVM IR to perform the dot operation.
 class DotOpEmitter {
  public:
@@ -523,32 +597,7 @@ int64_t DotOpEmitter::EmitTiledLlvmIrGemv() {
           ? kUnknownTargetVectorRegisterSize
           : target_vector_register_element_size;
 
-  // We parallelize the GEMV computation to have at least this many FMA
-  // instructions per task. In debug builds we prefer smaller tasks to test that
-  // we correctly parallelize the loop.
-  static constexpr int64_t kFmaPerTask = [] {
-    if constexpr (tsl::kIsDebugBuild) {
-      return 1 << 12;  // 4096 FMA/task
-    } else {
-      return 1 << 19;  // 0.5M FMA/task
-    }
-  }();
-
-  // GEMV has very little data reuse, and we hit memory bandwidth bound
-  // before we hit compute bound. So we limit the number of tasks to avoid
-  // excessive task scheduling overheads.
-  static constexpr int64_t kMaxTasks = 8;
-
-  // Compute into how many tasks along the parallel dimension 'm' we can divide
-  // the work (we do accumulation along the k dimension).
-  int64_t m_per_task = tsl::MathUtil::CeilOfRatio(kFmaPerTask, k);
-  int64_t num_tasks =
-      std::min(tsl::MathUtil::CeilOfRatio(m, m_per_task), kMaxTasks);
-
-  // If parallelism is not allowed, we always assume that we execute one task.
-  if (!allow_parallelism_) {
-    num_tasks = 1;
-  }
+  const int64_t num_tasks = ComputeTiledGemvNumTasks(m, k, allow_parallelism_);
 
   if (is_column_major_matrix_vector_gemv) {
     VLOG(2) << "Emitting column major matrix-vector multiply with m = " << m
@@ -1087,11 +1136,8 @@ absl::StatusOr<DotOpWorkGroupDim> EmitBatchDotOperation(
       ShapeUtil::ElementsIn(DropFirstDim(rhs_array_reshaped.GetShape()));
 
   // If inner dot is big enough and we have a work group id, use parallel
-  // loop to parallelize the batch dimension. Threshold picked randomly based
-  // on micro-benchmarks and needs more tuning.
-  static constexpr int64_t kParallelLoopThreshold = 32768;
-  if (allow_parallelism && (lhs_size > kParallelLoopThreshold ||
-                            rhs_size > kParallelLoopThreshold)) {
+  // loop to parallelize the batch dimension.
+  if (ShouldParallelizeBatchDot(lhs_size, rhs_size, allow_parallelism)) {
     ABSL_ASSIGN_OR_RETURN(auto inner_dims, inner_dot(work_group_id.x));
     DCHECK_EQ(inner_dims.y, 1);
     return DotOpWorkGroupDim{static_cast<uint64_t>(batch_count), inner_dims.x};
@@ -1195,6 +1241,51 @@ bool DotOperandsAndResultMustHaveRowMajorLayout(
 
   return impl_strategy == DotImplementationStrategy::kTiledLlvmIrGemm ||
          impl_strategy == DotImplementationStrategy::kEigen;
+}
+
+DotOpWorkGroupDim GetDotOpWorkGroupDim(
+    const HloModuleConfig& hlo_module_config, const HloInstruction& dot,
+    const TargetMachineFeatures& target_machine_features,
+    bool allow_parallelism) {
+  if (!allow_parallelism || dot.opcode() != HloOpcode::kDot) {
+    return DotOpWorkGroupDim{1, 1};
+  }
+  const DotDimensionNumbers& dnums = dot.dot_dimension_numbers();
+  if (dnums.lhs_contracting_dimensions_size() != 1 ||
+      dnums.rhs_contracting_dimensions_size() != 1 ||
+      dnums.lhs_batch_dimensions_size() != dnums.rhs_batch_dimensions_size()) {
+    return DotOpWorkGroupDim{1, 1};
+  }
+  DotInfo dot_info(dot);
+  if (dot_info.lhs_shape.is_unbounded_dynamic() ||
+      dot_info.rhs_shape.is_unbounded_dynamic() ||
+      dot_info.result_shape.is_unbounded_dynamic()) {
+    return DotOpWorkGroupDim{1, 1};
+  }
+  if (!IsBatchDot(dot_info)) {
+    return DotOpWorkGroupDim{GetNonBatchDotWorkGroupCount(
+                                 hlo_module_config, dot_info,
+                                 target_machine_features, allow_parallelism),
+                             1};
+  }
+  const int64_t num_batch_dims = dnums.lhs_batch_dimensions_size();
+  int64_t batch_count = 1;
+  for (int64_t i = 0; i < num_batch_dims; ++i) {
+    if (dnums.lhs_batch_dimensions(i) != i ||
+        dnums.rhs_batch_dimensions(i) != i) {
+      return DotOpWorkGroupDim{1, 1};
+    }
+    batch_count *= dot_info.lhs_shape.dimensions(i);
+  }
+  const DotInfo inner = InnerDotInfo(dot_info);
+  const uint64_t inner_x = GetNonBatchDotWorkGroupCount(
+      hlo_module_config, inner, target_machine_features, allow_parallelism);
+  if (ShouldParallelizeBatchDot(ShapeUtil::ElementsIn(inner.lhs_shape),
+                                ShapeUtil::ElementsIn(inner.rhs_shape),
+                                allow_parallelism)) {
+    return DotOpWorkGroupDim{static_cast<uint64_t>(batch_count), inner_x};
+  }
+  return DotOpWorkGroupDim{1, inner_x};
 }
 
 absl::StatusOr<DotOpWorkGroupDim> EmitDotOperation(
