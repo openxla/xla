@@ -42,7 +42,6 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/DebugStringHelper.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/codegen/computation_kernel_arguments.h"
 #include "xla/backends/cpu/codegen/dot/dot_kernel_emitter.h"
@@ -60,6 +59,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/cpu/runtime/all_to_all_thunk.h"
 #include "xla/backends/cpu/runtime/call_thunk.h"
+#include "xla/backends/cpu/runtime/collective_broadcast_thunk.h"
 #include "xla/backends/cpu/runtime/collective_permute_thunk.h"
 #include "xla/backends/cpu/runtime/collective_thunk.h"
 #include "xla/backends/cpu/runtime/conditional_thunk.h"
@@ -127,6 +127,7 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/profiler/lib/traceme.h"
 
 #ifdef XLA_ONEDNN
 #include "xla/backends/cpu/runtime/onednn/onednn_op_thunk.h"
@@ -405,6 +406,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
       return EmitReduceScatterThunk(instruction);
     case HloOpcode::kAllToAll:
       return EmitAllToAllThunk(instruction);
+    case HloOpcode::kCollectiveBroadcast:
+      return EmitCollectiveBroadcastThunk(instruction);
     case HloOpcode::kCollectivePermute:
       return EmitCollectivePermuteThunk(instruction);
 
@@ -514,6 +517,17 @@ static absl::StatusOr<CollectiveThunk::OpParams> GetCollectiveOpParams(
   };
 }
 
+// CollectiveBroadcast instruction does not have `use_global_device_ids` field.
+static absl::StatusOr<CollectiveThunk::OpParams> GetCollectiveOpParams(
+    const HloCollectiveBroadcastInstruction* instruction) {
+  return CollectiveThunk::OpParams{
+      /*op_id=*/instruction->unique_id(),
+      /*has_channel_id=*/instruction->channel_id().has_value(),
+      /*use_global_device_ids=*/std::nullopt,
+      /*replica_groups=*/instruction->replica_groups(),
+  };
+}
+
 // TODO(ezhulenev): Figure out why CollectivePermute instruction does not have
 // `use_global_device_ids` field and how to unify it with every other collective
 // operation.
@@ -571,6 +585,25 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitAllGatherThunk(
 
   return ThunkSequence::Of<AllGatherThunk>(
       ThunkInfo(all_gather), std::move(op_params), std::move(op_buffers),
+      std::move(op_resources));
+}
+
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectiveBroadcastThunk(
+    const HloInstruction* instruction) {
+  auto* broadcast = Cast<HloCollectiveBroadcastInstruction>(instruction);
+  if (broadcast->has_dynamic_root()) {
+    return Unimplemented(
+        "collective-broadcast with a dynamic root is not supported on CPU");
+  }
+
+  ABSL_ASSIGN_OR_RETURN(CollectiveBroadcastThunk::OpParams op_params,
+                        GetCollectiveOpParams(broadcast));
+  ABSL_ASSIGN_OR_RETURN(CollectiveBroadcastThunk::OpBuffers op_buffers,
+                        GetCollectiveOpBuffers(broadcast, buffer_assignment_));
+  CollectiveBroadcastThunk::OpResources op_resources = {communicator_resource_};
+
+  return ThunkSequence::Of<CollectiveBroadcastThunk>(
+      ThunkInfo(broadcast), std::move(op_params), std::move(op_buffers),
       std::move(op_resources));
 }
 

@@ -590,6 +590,7 @@ cc_library(
         "//xla/backends/cpu/runtime:all_reduce_thunk",
         "//xla/backends/cpu/runtime:all_to_all_thunk",
         "//xla/backends/cpu/runtime:call_thunk",
+        "//xla/backends/cpu/runtime:collective_broadcast_thunk",
         "//xla/backends/cpu/runtime:collective_permute_thunk",
         "//xla/backends/cpu/runtime:collective_thunk",
         "//xla/backends/cpu/runtime:conditional_thunk",

@@ -93,6 +93,8 @@ message AllReduceThunkProto {
 
 message AllToAllThunkProto {}  // NOTE(basioli) empty for now
 
+message CollectiveBroadcastThunkProto {}
+
 message ReduceScatterThunkProto {
   string reduction_kind = 1;
 }
@@ -115,6 +117,7 @@ message CollectiveThunkProto {
     AllToAllThunkProto all_to_all_thunk = 6;
     ReduceScatterThunkProto reduce_scatter_thunk = 7;
     CollectivePermuteThunkProto collective_permute_thunk = 8;
+    CollectiveBroadcastThunkProto collective_broadcast_thunk = 9;
   }
 }
 
