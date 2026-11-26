@@ -238,6 +238,7 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/scatter_expander.h"
 #include "xla/hlo/transforms/expanders/scatter_simplifier.h"
 #include "xla/hlo/transforms/expanders/select_and_scatter_expander.h"
+#include "xla/hlo/transforms/expanders/shuffle_expander.h"
 #include "xla/hlo/transforms/expanders/stable_sort_expander.h"
 #include "xla/hlo/transforms/expanders/stochastic_convert_decomposer.h"
 #include "xla/hlo/transforms/host_offload_legalize.h"
@@ -1028,6 +1029,10 @@ absl::Status RunOptimizationPasses(
     pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/false);
     pipeline.AddPass<HloDCE>();
   }();
+
+  // Expand shuffles after DynamicPadder and initial simplification so
+  // algebraic simplification and constant folding see the original kShuffle.
+  pipeline.AddPass<ShuffleExpander>();
 
   // Do not merge dots when they are assigned different stream ids.
   std::function<int64_t(const HloInstruction* dot)> queue_id =

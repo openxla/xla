@@ -175,6 +175,7 @@ bool IsPureDataMovement(HloOpcode opcode) {
     case HloOpcode::kReshape:
     case HloOpcode::kReverse:
     case HloOpcode::kSelect:
+    case HloOpcode::kShuffle:
     case HloOpcode::kSlice:
     case HloOpcode::kTranspose:
       return true;

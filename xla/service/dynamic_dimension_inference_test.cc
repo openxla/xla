@@ -1908,5 +1908,50 @@ ENTRY tfcompile.377 {
   ASSERT_OK(RunInference());
 }
 
+TEST_F(DynamicDimensionInferenceTest,
+       ShuffleUnshuffledDynamicDimPassesThrough) {
+  const char* hlo = R"(
+HloModule test
+
+ENTRY main {
+  p0 = f32[<=4,8] parameter(0)
+  ROOT shuffle = f32[<=4,8] shuffle(p0), dimensions={1}, mode=rotate, shifts={2}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo));
+  auto* p0 = module_->entry_computation()->parameter_instruction(0);
+  auto* size = module_->entry_computation()->AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(3)));
+  auto* set_size = module_->entry_computation()->AddInstruction(
+      HloInstruction::CreateSetDimensionSize(p0->shape(), p0, size, 0));
+  auto* shuffle = module_->entry_computation()->root_instruction();
+  ASSERT_OK(shuffle->ReplaceOperandWith(0, set_size));
+
+  ASSERT_OK(RunInference());
+  EXPECT_EQ(inference_->GetDynamicSize(shuffle, {}, 0), size);
+  EXPECT_EQ(inference_->GetDynamicSize(shuffle, {}, 1), nullptr);
+}
+
+TEST_F(DynamicDimensionInferenceTest, ShuffleDynamicShuffledDimUnimplemented) {
+  const char* hlo = R"(
+HloModule test
+
+ENTRY main {
+  p0 = f32[<=4,8] parameter(0)
+  ROOT shuffle = f32[<=4,8] shuffle(p0), dimensions={0}, mode=rotate, shifts={2}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo));
+  auto* p0 = module_->entry_computation()->parameter_instruction(0);
+  auto* size = module_->entry_computation()->AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(3)));
+  auto* set_size = module_->entry_computation()->AddInstruction(
+      HloInstruction::CreateSetDimensionSize(p0->shape(), p0, size, 0));
+  auto* shuffle = module_->entry_computation()->root_instruction();
+  ASSERT_OK(shuffle->ReplaceOperandWith(0, set_size));
+
+  EXPECT_EQ(RunInference().code(), absl::StatusCode::kUnimplemented);
+}
+
 }  // namespace
 }  // namespace xla
