@@ -26,6 +26,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/hash/hash.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -951,6 +952,154 @@ TEST_F(HloInstructionTest, PrecisionConfigMethodConsistency) {
       HloInstruction::CreateDot(ShapeUtil::MakeShape(F32, {2, 2}), lhs.get(),
                                 rhs.get(), dnums, PrecisionConfig());
   EXPECT_TRUE(dot->SupportsPrecisionConfig());
+}
+
+TEST_F(HloInstructionTest, IdenticalTreatsEmptyAndDefaultPrecisionConfigEqual) {
+  // Guard against new fields being added to PrecisionConfig without updating
+  // PrecisionConfigsIdentical and HashPrecisionConfig.
+  EXPECT_EQ(PrecisionConfig::descriptor()->field_count(), 2)
+      << "PrecisionConfig changed; update PrecisionConfigsIdentical, "
+         "HashPrecisionConfig, and this test.";
+
+  const Shape mat_shape = ShapeUtil::MakeShape(F32, {2, 2});
+  std::unique_ptr<HloInstruction> lhs =
+      HloInstruction::CreateParameter(0, mat_shape, "lhs");
+  std::unique_ptr<HloInstruction> rhs =
+      HloInstruction::CreateParameter(1, mat_shape, "rhs");
+  std::unique_ptr<HloInstruction> group_sizes =
+      HloInstruction::CreateParameter(2, ShapeUtil::MakeShape(S32, {1}), "gs");
+  std::unique_ptr<HloInstruction> lhs_scale =
+      HloInstruction::CreateParameter(3, mat_shape, "lhs_scale");
+  std::unique_ptr<HloInstruction> rhs_scale =
+      HloInstruction::CreateParameter(4, mat_shape, "rhs_scale");
+
+  PrecisionConfig empty_pc;
+  PrecisionConfig default_pc;
+  default_pc.add_operand_precision(PrecisionConfig::DEFAULT);
+  default_pc.add_operand_precision(PrecisionConfig::DEFAULT);
+
+  PrecisionConfig high_short_pc;
+  high_short_pc.add_operand_precision(PrecisionConfig::HIGH);
+  PrecisionConfig high_padded_pc;
+  high_padded_pc.add_operand_precision(PrecisionConfig::HIGH);
+  high_padded_pc.add_operand_precision(PrecisionConfig::DEFAULT);
+  PrecisionConfig default_high_pc;
+  default_high_pc.add_operand_precision(PrecisionConfig::DEFAULT);
+  default_high_pc.add_operand_precision(PrecisionConfig::HIGH);
+
+  PrecisionConfig algo_empty_pc;
+  algo_empty_pc.set_algorithm(PrecisionConfig::ALG_DOT_BF16_BF16_F32);
+  PrecisionConfig algo_default_pc = default_pc;
+  algo_default_pc.set_algorithm(PrecisionConfig::ALG_DOT_BF16_BF16_F32);
+
+  DotDimensionNumbers dnums;
+  dnums.add_lhs_contracting_dimensions(1);
+  dnums.add_rhs_contracting_dimensions(0);
+
+  // kDot
+  std::unique_ptr<HloInstruction> dot_empty = HloInstruction::CreateDot(
+      mat_shape, lhs.get(), rhs.get(), dnums, empty_pc);
+  std::unique_ptr<HloInstruction> dot_default = HloInstruction::CreateDot(
+      mat_shape, lhs.get(), rhs.get(), dnums, default_pc);
+  std::unique_ptr<HloInstruction> dot_high_short = HloInstruction::CreateDot(
+      mat_shape, lhs.get(), rhs.get(), dnums, high_short_pc);
+  std::unique_ptr<HloInstruction> dot_high_padded = HloInstruction::CreateDot(
+      mat_shape, lhs.get(), rhs.get(), dnums, high_padded_pc);
+  std::unique_ptr<HloInstruction> dot_default_high = HloInstruction::CreateDot(
+      mat_shape, lhs.get(), rhs.get(), dnums, default_high_pc);
+  std::unique_ptr<HloInstruction> dot_algo_empty = HloInstruction::CreateDot(
+      mat_shape, lhs.get(), rhs.get(), dnums, algo_empty_pc);
+  std::unique_ptr<HloInstruction> dot_algo_default = HloInstruction::CreateDot(
+      mat_shape, lhs.get(), rhs.get(), dnums, algo_default_pc);
+
+  EXPECT_TRUE(dot_empty->Identical(*dot_default));
+  EXPECT_TRUE(dot_default->Identical(*dot_empty));
+  EXPECT_EQ(absl::HashOf(*dot_empty), absl::HashOf(*dot_default));
+  EXPECT_TRUE(dot_high_short->Identical(*dot_high_padded));
+  EXPECT_EQ(absl::HashOf(*dot_high_short), absl::HashOf(*dot_high_padded));
+  EXPECT_FALSE(dot_empty->Identical(*dot_high_padded));
+  EXPECT_FALSE(dot_high_padded->Identical(*dot_default_high));
+  EXPECT_FALSE(dot_empty->Identical(*dot_algo_empty));
+  EXPECT_TRUE(dot_algo_empty->Identical(*dot_algo_default));
+  EXPECT_EQ(absl::HashOf(*dot_algo_empty), absl::HashOf(*dot_algo_default));
+
+  // kDotGeneral
+  auto dot_gen_empty = std::make_unique<HloDotGeneralInstruction>(
+      mat_shape, std::vector<HloInstruction*>{lhs.get(), rhs.get()}, dnums,
+      empty_pc, SparsityConfig(), BlockScalingConfig());
+  auto dot_gen_default = std::make_unique<HloDotGeneralInstruction>(
+      mat_shape, std::vector<HloInstruction*>{lhs.get(), rhs.get()}, dnums,
+      default_pc, SparsityConfig(), BlockScalingConfig());
+  auto dot_gen_high_short = std::make_unique<HloDotGeneralInstruction>(
+      mat_shape, std::vector<HloInstruction*>{lhs.get(), rhs.get()}, dnums,
+      high_short_pc, SparsityConfig(), BlockScalingConfig());
+  auto dot_gen_high = std::make_unique<HloDotGeneralInstruction>(
+      mat_shape, std::vector<HloInstruction*>{lhs.get(), rhs.get()}, dnums,
+      high_padded_pc, SparsityConfig(), BlockScalingConfig());
+  EXPECT_TRUE(dot_gen_empty->Identical(*dot_gen_default));
+  EXPECT_EQ(absl::HashOf(*dot_gen_empty), absl::HashOf(*dot_gen_default));
+  EXPECT_TRUE(dot_gen_high_short->Identical(*dot_gen_high));
+  EXPECT_EQ(absl::HashOf(*dot_gen_high_short), absl::HashOf(*dot_gen_high));
+  EXPECT_FALSE(dot_gen_empty->Identical(*dot_gen_high));
+
+  // kConvolution
+  Window window;
+  ConvolutionDimensionNumbers conv_dnums;
+  std::unique_ptr<HloInstruction> conv_empty = HloInstruction::CreateConvolve(
+      mat_shape, {lhs.get(), rhs.get()}, /*feature_group_count=*/1,
+      /*batch_group_count=*/1, window, conv_dnums, empty_pc);
+  std::unique_ptr<HloInstruction> conv_default = HloInstruction::CreateConvolve(
+      mat_shape, {lhs.get(), rhs.get()}, /*feature_group_count=*/1,
+      /*batch_group_count=*/1, window, conv_dnums, default_pc);
+  std::unique_ptr<HloInstruction> conv_high = HloInstruction::CreateConvolve(
+      mat_shape, {lhs.get(), rhs.get()}, /*feature_group_count=*/1,
+      /*batch_group_count=*/1, window, conv_dnums, high_padded_pc);
+  EXPECT_TRUE(conv_empty->Identical(*conv_default));
+  EXPECT_EQ(absl::HashOf(*conv_empty), absl::HashOf(*conv_default));
+  EXPECT_FALSE(conv_empty->Identical(*conv_high));
+
+  // kCustomCall
+  std::unique_ptr<HloInstruction> cc_empty = HloInstruction::CreateCustomCall(
+      mat_shape, {lhs.get(), rhs.get()}, "my_target");
+  std::unique_ptr<HloInstruction> cc_default = HloInstruction::CreateCustomCall(
+      mat_shape, {lhs.get(), rhs.get()}, "my_target");
+  *cc_default->mutable_precision_config() = default_pc;
+  std::unique_ptr<HloInstruction> cc_high = HloInstruction::CreateCustomCall(
+      mat_shape, {lhs.get(), rhs.get()}, "my_target");
+  *cc_high->mutable_precision_config() = high_padded_pc;
+  EXPECT_TRUE(cc_empty->Identical(*cc_default));
+  EXPECT_EQ(absl::HashOf(*cc_empty), absl::HashOf(*cc_default));
+  EXPECT_FALSE(cc_empty->Identical(*cc_high));
+
+  // kRaggedDot
+  RaggedDotDimensionNumbers ragged_dnums;
+  *ragged_dnums.mutable_dot_dimension_numbers() = dnums;
+  auto rdot_empty = std::make_unique<HloRaggedDotInstruction>(
+      mat_shape, lhs.get(), rhs.get(), group_sizes.get(), ragged_dnums,
+      empty_pc);
+  auto rdot_default = std::make_unique<HloRaggedDotInstruction>(
+      mat_shape, lhs.get(), rhs.get(), group_sizes.get(), ragged_dnums,
+      default_pc);
+  auto rdot_high = std::make_unique<HloRaggedDotInstruction>(
+      mat_shape, lhs.get(), rhs.get(), group_sizes.get(), ragged_dnums,
+      high_padded_pc);
+  EXPECT_TRUE(rdot_empty->Identical(*rdot_default));
+  EXPECT_EQ(absl::HashOf(*rdot_empty), absl::HashOf(*rdot_default));
+  EXPECT_FALSE(rdot_empty->Identical(*rdot_high));
+
+  // kScaledDot
+  auto sdot_empty = std::make_unique<HloScaledDotInstruction>(
+      mat_shape, lhs.get(), rhs.get(), lhs_scale.get(), rhs_scale.get(), dnums,
+      empty_pc);
+  auto sdot_default = std::make_unique<HloScaledDotInstruction>(
+      mat_shape, lhs.get(), rhs.get(), lhs_scale.get(), rhs_scale.get(), dnums,
+      default_pc);
+  auto sdot_high = std::make_unique<HloScaledDotInstruction>(
+      mat_shape, lhs.get(), rhs.get(), lhs_scale.get(), rhs_scale.get(), dnums,
+      high_padded_pc);
+  EXPECT_TRUE(sdot_empty->Identical(*sdot_default));
+  EXPECT_EQ(absl::HashOf(*sdot_empty), absl::HashOf(*sdot_default));
+  EXPECT_FALSE(sdot_empty->Identical(*sdot_high));
 }
 
 TEST_F(HloInstructionTest, DetachFromOperandsWithDuplicateOperands) {
