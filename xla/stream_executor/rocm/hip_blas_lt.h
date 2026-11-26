@@ -260,7 +260,7 @@ class BlasLt : public gpu::BlasLt {
 
   StreamExecutor* executor_;
   mutable absl::Mutex rocroller_mu_;
-  mutable absl::Mutex mu_;
+  mutable absl::Mutex mu_ ABSL_ACQUIRED_AFTER(rocroller_mu_);
   Owned<hipblasLtHandle_t> handle_ ABSL_GUARDED_BY(mu_);
 };
 
