@@ -118,11 +118,15 @@ TEST(RocmTracerTest, GpuAgentDataMatchesHipDeviceProperties) {
   const auto& agent = agents[0];
 
   if (props.major >= 10) {
-    // GPUs of GFX >= 10.0 may use workgroup mode, which makes HIP API report CU count as half of a real count.
-    // Since HIP API doesn't have a runtime call to determine whether we are in WGP mode or not, and since WGP mode
-    // is the default one for Radeon GPUs, we want to match any of 2 possible values here.
-    EXPECT_THAT(agent.cu_count, ::testing::AnyOf(static_cast<uint32_t>(props.multiProcessorCount),
-                                                 2 * static_cast<uint32_t>(props.multiProcessorCount)));
+    // GPUs of GFX >= 10.0 may use workgroup mode, which makes HIP API report CU
+    // count as half of a real count. Since HIP API doesn't have a runtime call
+    // to determine whether we are in WGP mode or not, and since WGP mode is the
+    // default one for Radeon GPUs, we want to match any of 2 possible values
+    // here.
+    EXPECT_THAT(
+        agent.cu_count,
+        ::testing::AnyOf(static_cast<uint32_t>(props.multiProcessorCount),
+                         2 * static_cast<uint32_t>(props.multiProcessorCount)));
   } else {
     EXPECT_EQ(agent.cu_count, static_cast<uint32_t>(props.multiProcessorCount));
   }
