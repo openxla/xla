@@ -13,9 +13,9 @@ To update to a new commit:
 
 load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 
-# Vendored from mori tag: xla-pin-20261124
-_MORI_COMMIT = "af28410eec7728e1be87a9c8da87c6e23a4e6c23"
-_MORI_SHA256 = "25c20e96f2a8b4505ca3753cf990c1333af58a87da86e3374e454bf941332b5a"
+# Vendored from mori tag: xla-pin-20261126
+_MORI_COMMIT = "92f6bfeeb03dd28f62685a25fed4e298da332267"
+_MORI_SHA256 = "c0085a7c93449a2c113b2c80b4d8ffc18ab4f284c2d00b32d8c24e6c3f682e48"
 
 def xla_repo():
     """Registers @roc_mori, fetched from GitHub and overlaid with our BUILD files."""
