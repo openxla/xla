@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -26,7 +25,6 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
@@ -41,7 +39,6 @@ limitations under the License.
 #include "xla/python/ifrt/ir/ifrt_interfaces.h"
 #include "xla/python/ifrt/ir/ifrt_ops.h"
 #include "xla/python/ifrt/ir/import/passes.h"  // IWYU pragma: keep
-#include "xla/python/ifrt/memory.h"
 
 namespace xla {
 namespace ifrt {
@@ -50,19 +47,6 @@ namespace ifrt {
 #include "xla/python/ifrt/ir/import/passes.h.inc"
 
 namespace {
-
-// Returns the effective memory-kind name of `type`.
-llvm::StringRef GetMemoryKind(IfrtArrayType type) {
-  const mlir::StringAttr attr = type.getMemoryKindAttr();
-  return attr != nullptr ? attr.getValue()
-                         : llvm::StringRef(MemoryKind().value());
-}
-
-// Returns true if `lhs` and `rhs` have the same effective `MemoryKind`.
-bool HasSameMemoryKind(IfrtArrayType lhs, IfrtArrayType rhs) {
-  return lhs.getMemoryKindAttr() == rhs.getMemoryKindAttr() ||
-         GetMemoryKind(lhs) == GetMemoryKind(rhs);
-}
 
 // Sentinel `ArrayStateRef::num_shards` indicating that `ArrayStateRef::index`
 // stores a single `ArrayState` ID inline rather than a `shard_arena_` offset.
@@ -222,7 +206,6 @@ class DonationTracker {
           out_shards[input_index] = ref.index;
         } else {
           const llvm::ArrayRef<int32_t> shard_ids = GetShardArenaIds(ref);
-          CHECK_EQ(shard_ids.size(), 1);
           out_shards[input_index] = shard_ids.front();
         }
       }
@@ -500,13 +483,9 @@ mlir::LogicalResult VerifyCallOpAliasesAndDonations(IfrtCallOpInterface op,
   const unsigned num_inputs = static_cast<unsigned>(num_inputs_size);
   llvm::SmallBitVector donated_or_aliased_inputs(num_inputs);
   for (const int32_t input_index : op.getDonatedInputIndices()) {
-    CHECK_GE(input_index, 0);
-    CHECK_LT(static_cast<unsigned>(input_index), num_inputs);
     donated_or_aliased_inputs.set(static_cast<unsigned>(input_index));
   }
   for (const IoAlias& io_alias : op.getIoAliasPairs()) {
-    CHECK_GE(io_alias.input_index, 0);
-    CHECK_LT(static_cast<unsigned>(io_alias.input_index), num_inputs);
     donated_or_aliased_inputs.set(static_cast<unsigned>(io_alias.input_index));
   }
 
@@ -578,7 +557,7 @@ mlir::LogicalResult VerifyCopyArraysOp(CopyArraysOp op,
   const llvm::ArrayRef<int> in_devices = first_in_array.getDevices();
   const llvm::ArrayRef<int> out_devices = first_out_array.getDevices();
   const bool same_memory_kind =
-      (donated || reuse) && HasSameMemoryKind(first_in_array, first_out_array);
+      (donated || reuse) && first_in_array.HasSameMemoryKind(first_out_array);
   const bool all_devices_equal =
       same_memory_kind &&
       first_in_array.getDevicesAttr() == first_out_array.getDevicesAttr();
@@ -597,8 +576,8 @@ mlir::LogicalResult VerifyCopyArraysOp(CopyArraysOp op,
 
   bool any_device_equal = all_devices_equal;
   if (same_memory_kind && !any_device_equal) {
-    const size_t min_shards = std::min(in_devices.size(), out_devices.size());
-    for (size_t shard_index = 0; shard_index < min_shards; ++shard_index) {
+    for (size_t shard_index = 0; shard_index < in_devices.size();
+         ++shard_index) {
       if (in_devices[shard_index] == out_devices[shard_index]) {
         any_device_equal = true;
         break;
@@ -632,8 +611,7 @@ mlir::LogicalResult VerifyCopyArraysOp(CopyArraysOp op,
        llvm::zip_equal(in_views, out_shards_list)) {
     for (size_t shard_index = 0; shard_index < out_shards.size();
          ++shard_index) {
-      if (shard_index < in_devices.size() &&
-          in_devices[shard_index] == out_devices[shard_index]) {
+      if (in_devices[shard_index] == out_devices[shard_index]) {
         int32_t dst_array_id = tracker.GetArrayIdForShard(in_view, shard_index);
         if (donated) {
           auto [it, inserted] =
@@ -676,8 +654,6 @@ mlir::LogicalResult VerifyRemapArraysOp(RemapArraysOp op,
   llvm::DenseMap<int32_t, int32_t> remapped_donated_shard_id;
   for (const IfrtArrayMappingAttr array_mapping :
        op.getMappings().getAsRange<IfrtArrayMappingAttr>()) {
-    CHECK_GE(array_mapping.getInArrayIndex(), 0);
-    CHECK_GE(array_mapping.getOutArrayIndex(), 0);
     const DonationTracker::ArrayView in_view =
         in_views[static_cast<size_t>(array_mapping.getInArrayIndex())];
     llvm::MutableArrayRef<int32_t> out_shards =
@@ -689,12 +665,6 @@ mlir::LogicalResult VerifyRemapArraysOp(RemapArraysOp op,
       int64_t in_shard = in_interval.getStart();
       int64_t out_shard = out_interval.getStart();
       while (in_shard < in_interval.getEnd()) {
-        CHECK_GE(in_shard, 0);
-        CHECK_GE(out_shard, 0);
-        CHECK_LE(static_cast<uint64_t>(in_shard),
-                 static_cast<uint64_t>(std::numeric_limits<size_t>::max()));
-        CHECK_LE(static_cast<uint64_t>(out_shard),
-                 static_cast<uint64_t>(std::numeric_limits<size_t>::max()));
         int32_t dst_array_id =
             tracker.GetArrayIdForShard(in_view, static_cast<size_t>(in_shard));
         if (donated) {

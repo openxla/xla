@@ -15,7 +15,12 @@
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "GPU_DEFAULT_BACKENDS",
+    "NVIDIA_GPU_DEFAULT_BACKENDS",
+    "xla_test",
+)
 load(
     "//xla/tsl/platform:build_config.bzl",
     "tf_proto_library",
@@ -65,12 +70,12 @@ cc_library(
     deps = [
         ":fusion_emitter",
         "//xla/backends/gpu/runtime:cudnn_thunk",
+        "//xla/backends/gpu/runtime:gpu_constants",
         "//xla/backends/gpu/runtime:thunk",
         "//xla/backends/gpu/target_config:cudnn_device_props_json",
         "//xla/codegen/emitters:computation_fingerprint",
         "//xla/codegen/emitters:kernel_arguments",
         "//xla/hlo/ir:hlo",
-        "//xla/service/gpu:gpu_constants",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:ir_emitter_context",
         "//xla/tsl/platform:statusor",
@@ -83,7 +88,7 @@ cc_library(
 xla_test(
     name = "cudnn_test",
     srcs = ["cudnn_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     shard_count = 5,
     tags = ["cuda-only"],
     deps = [
@@ -92,9 +97,9 @@ xla_test(
         "//xla:error_spec",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
-        "//xla/backends/autotuner:backends_proto_cc",
+        "//xla/backends/core/autotuner:backends_proto_cc",
+        "//xla/backends/gpu/hlo/transforms:cudnn_fusion_compiler",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
-        "//xla/backends/gpu/transforms:cudnn_fusion_compiler",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:pattern_matcher_gmock",
@@ -138,13 +143,13 @@ xla_test(
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
-        "//xla/backends/autotuner:backends_proto_cc",
+        "//xla/backends/core/autotuner:backends_proto_cc",
+        "//xla/backends/gpu/hlo/transforms:block_scaling_rewriter",
+        "//xla/backends/gpu/hlo/transforms:composite_rewriter",
+        "//xla/backends/gpu/hlo/transforms:cudnn_custom_call_compiler",
+        "//xla/backends/gpu/hlo/transforms:cudnn_fusion_compiler",
+        "//xla/backends/gpu/hlo/transforms:scaled_dot_rewriter",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
-        "//xla/backends/gpu/transforms:block_scaling_rewriter",
-        "//xla/backends/gpu/transforms:composite_rewriter",
-        "//xla/backends/gpu/transforms:cudnn_custom_call_compiler",
-        "//xla/backends/gpu/transforms:cudnn_fusion_compiler",
-        "//xla/backends/gpu/transforms:scaled_dot_rewriter",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:verified_hlo_module",
@@ -189,7 +194,7 @@ cc_library(
     visibility = [
         "//xla/backends/gpu/codegen:__subpackages__",
         "//xla/backends/gpu/cost_model:__subpackages__",
-        "//xla/backends/gpu/transforms:__subpackages__",
+        "//xla/backends/gpu/hlo/transforms:__subpackages__",
         "//xla/service/gpu:__subpackages__",
     ],
     deps = [
@@ -244,7 +249,7 @@ cc_library(
     visibility = [
         "//xla/backends/gpu/codegen:__subpackages__",
         "//xla/backends/gpu/cost_model:__subpackages__",
-        "//xla/backends/gpu/transforms:__subpackages__",
+        "//xla/backends/gpu/hlo/transforms:__subpackages__",
         "//xla/service/gpu:__subpackages__",
     ],
     deps = [
@@ -303,6 +308,7 @@ cc_library(
         "//xla/backends/gpu/codegen/triton:triton_kernel_source",
         "//xla/backends/gpu/codegen/triton:xtile_compiler",
         "//xla/backends/gpu/runtime:custom_kernel_thunk",
+        "//xla/backends/gpu/runtime:gpu_constants",
         "//xla/backends/gpu/runtime:thunk",
         "//xla/codegen:llvm_kernel_source",
         "//xla/codegen:mlir_kernel_source",
@@ -316,7 +322,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:buffer_assignment",
-        "//xla/service/gpu:gpu_constants",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:ir_emitter_context",
@@ -357,7 +362,7 @@ cc_library(
 xla_test(
     name = "thread_block_specialized_test",
     srcs = ["thread_block_specialized_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":thread_block_specialized",
@@ -420,6 +425,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/codegen/emitters:mlir_kernel_emitter",
+        "//xla/backends/gpu/runtime:gpu_constants",
         "//xla/backends/gpu/runtime:thunk",
         "//xla/codegen:mlir_kernel_source",
         "//xla/codegen/emitters:kernel_api_builder",
@@ -427,7 +433,6 @@ cc_library(
         "//xla/codegen/emitters/ir:xla",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
-        "//xla/service/gpu:gpu_constants",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:ir_emitter_context",
         "//xla/service/gpu:launch_dimensions",
@@ -450,7 +455,7 @@ cc_library(
 xla_test(
     name = "pad_to_static_test",
     srcs = ["pad_to_static_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":pad_to_static",
         "//xla:literal",
@@ -488,6 +493,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/codegen/emitters:mlir_kernel_emitter",
+        "//xla/backends/gpu/runtime:gpu_constants",
         "//xla/backends/gpu/runtime:thunk",
         "//xla/codegen:mlir_kernel_source",
         "//xla/codegen/emitters:kernel_api_builder",
@@ -495,7 +501,6 @@ cc_library(
         "//xla/codegen/emitters/ir:xla",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
-        "//xla/service/gpu:gpu_constants",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:ir_emitter_context",
         "//xla/service/gpu:launch_dimensions",
@@ -515,7 +520,7 @@ cc_library(
 xla_test(
     name = "rng_get_and_update_state_test",
     srcs = ["rng_get_and_update_state_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":rng_get_and_update_state",
         "//xla:literal",
@@ -551,6 +556,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/codegen/emitters:mlir_kernel_emitter",
+        "//xla/backends/gpu/runtime:gpu_constants",
         "//xla/backends/gpu/runtime:thunk",
         "//xla/codegen:mlir_kernel_source",
         "//xla/codegen/emitters:kernel_api_builder",
@@ -558,7 +564,6 @@ cc_library(
         "//xla/codegen/emitters/ir:xla",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
-        "//xla/service/gpu:gpu_constants",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:ir_emitter_context",
         "//xla/service/gpu:launch_dimensions",
@@ -581,7 +586,7 @@ cc_library(
 xla_test(
     name = "slice_to_dynamic_test",
     srcs = ["slice_to_dynamic_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":slice_to_dynamic",
         "//xla:literal",
@@ -625,6 +630,7 @@ cc_library(
         "//xla/backends/gpu/codegen/kernels:ptx_custom_kernel",
         "//xla/backends/gpu/runtime:custom_kernel_thunk",
         "//xla/backends/gpu/runtime:device_to_device_copy_thunk",
+        "//xla/backends/gpu/runtime:gpu_constants",
         "//xla/backends/gpu/runtime:thunk",
         "//xla/codegen:mlir_kernel_source",
         "//xla/codegen/emitters:computation_fingerprint",
@@ -638,7 +644,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
         "//xla/service:shaped_slice",
-        "//xla/service/gpu:gpu_constants",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:ir_emitter_context",
         "//xla/service/gpu:kernel_reuse_cache",

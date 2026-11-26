@@ -34,9 +34,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "tsl/platform/path.h"
-#include "xla/backends/autotuner/backends.pb.h"
+#include "xla/backends/core/autotuner/backends.pb.h"
+#include "xla/backends/gpu/hlo/transforms/cudnn_fusion_compiler.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
-#include "xla/backends/gpu/transforms/cudnn_fusion_compiler.h"
 #include "xla/comparison_util.h"
 #include "xla/debug_options_flags.h"
 #include "xla/error_spec.h"
@@ -1174,6 +1174,26 @@ ENTRY e {
     backend_config={"fusion_backend_config": {kind: "__cudnn$fusion"}}
 })",
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
+TEST_F(CuDnnFusionExecutionTest, TwoBatchDimensionsExecuteCorrectly) {
+  // Both batch dimensions have to be passed to cuDNN, not only the first one.
+  EXPECT_TRUE(RunAndCompare(R"(
+fusion1 {
+  p0 = bf16[32,2,1024,128] parameter(0)
+  p1 = bf16[32,2,2,128] parameter(1)
+  ROOT d = bf16[32,2,1024,2] dot(p0, p1),
+    lhs_batch_dims={0,1}, lhs_contracting_dims={3},
+    rhs_batch_dims={0,1}, rhs_contracting_dims={3}
+}
+
+ENTRY e {
+  p0 = bf16[32,2,1024,128] parameter(0)
+  p1 = bf16[32,2,2,128] parameter(1)
+  ROOT _ = bf16[32,2,1024,2] fusion(p0, p1), kind=kCustom, calls=fusion1,
+    backend_config={"fusion_backend_config": {kind: "__cudnn$fusion"}}
+})",
+                            ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-2}));
 }
 
 TEST_F(CuDnnFusionExecutionTest, SlicingExecutesCorrectly) {

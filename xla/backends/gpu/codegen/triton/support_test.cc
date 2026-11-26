@@ -383,9 +383,9 @@ INSTANTIATE_TEST_SUITE_P(PadTestSuite, PadTest,
                          AllTestCombinationsForOpcodes(kTestedOpsPad),
                          SupportTestTypeAndOpcodeAndDeviceToString);
 
-TEST_F(HloHardwareIndependentTestBase, PadOutsideGemmFusionIsRejected) {
+TEST_F(HloHardwareIndependentTestBase, PadOutsideFusionIsAllowed) {
   const std::string kHlo = R"(
-HloModule PadOutsideGemmFusion
+HloModule PadOutsideFusion
 
 ENTRY main {
   p0 = f32[4, 4] parameter(0)
@@ -397,13 +397,10 @@ ENTRY main {
   const HloInstruction* pad = module->entry_computation()->root_instruction();
   auto decision = IsTritonSupportedInstruction(
       *pad, se::GpuComputeCapability(se::CudaComputeCapability::Ampere()));
-  EXPECT_FALSE(decision);
-  EXPECT_THAT(
-      decision.Explain(),
-      ::testing::HasSubstr("Pads are only supported within GEMM fusions"));
+  EXPECT_TRUE(decision) << decision.Explain();
 }
 
-TEST_F(HloHardwareIndependentTestBase, PadInsideGenericTritonFusionIsRejected) {
+TEST_F(HloHardwareIndependentTestBase, PadInsideGenericTritonFusionIsAllowed) {
   const std::string kHlo = R"(
 HloModule PadInsideGenericTritonFusion
 
@@ -428,10 +425,7 @@ ENTRY main {
   const HloInstruction* pad = comp->root_instruction();
   auto decision = IsTritonSupportedInstruction(
       *pad, se::GpuComputeCapability(se::CudaComputeCapability::Ampere()));
-  EXPECT_FALSE(decision);
-  EXPECT_THAT(
-      decision.Explain(),
-      ::testing::HasSubstr("Pads are only supported within GEMM fusions"));
+  EXPECT_TRUE(decision) << decision.Explain();
 }
 
 TEST_F(HloHardwareIndependentTestBase, PadInsideGemmFusionIsAllowed) {
@@ -663,14 +657,6 @@ ENTRY triton_computation {
          data_type == PrimitiveType::F8E4M3FN)) {
       fail_mode = ExpectedFailMode::kCrash;
     }
-  } else {
-    if (((opcode == HloOpcode::kMaximum || opcode == HloOpcode::kMinimum) &&
-         (data_type == PrimitiveType::F8E5M2 ||
-          data_type == PrimitiveType::F8E4M3FN ||
-          data_type == PrimitiveType::F8E5M2FNUZ ||
-          data_type == PrimitiveType::F8E4M3FNUZ))) {
-      fail_mode = ExpectedFailMode::kCrash;
-    }
   }
 
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 32}, cc, fail_mode);
@@ -704,14 +690,6 @@ ENTRY triton_computation {
         (data_type == PrimitiveType::BF16 || data_type == PrimitiveType::F16 ||
          data_type == PrimitiveType::F8E5M2 ||
          data_type == PrimitiveType::F8E4M3FN)) {
-      fail_mode = ExpectedFailMode::kCrash;
-    }
-  } else {
-    if (((opcode == HloOpcode::kMaximum || opcode == HloOpcode::kMinimum) &&
-         (data_type == PrimitiveType::F8E5M2 ||
-          data_type == PrimitiveType::F8E4M3FN ||
-          data_type == PrimitiveType::F8E5M2FNUZ ||
-          data_type == PrimitiveType::F8E4M3FNUZ))) {
       fail_mode = ExpectedFailMode::kCrash;
     }
   }
@@ -767,19 +745,7 @@ ENTRY triton_computation {
   ASSERT_OK_AND_ASSIGN(TestedInstruction ti, ParseTemplateAndGetInstruction(
                                                  hlo_text, data_type, opcode));
 
-  bool skip_failure_branch_to_avoid_crash = false;
-  if (cc.IsRocm()) {
-    skip_failure_branch_to_avoid_crash =
-        (opcode == HloOpcode::kClamp || opcode == HloOpcode::kSelect) &&
-        (data_type == PrimitiveType::F8E5M2 ||
-         data_type == PrimitiveType::F8E4M3FN ||
-         data_type == PrimitiveType::F8E5M2FNUZ ||
-         data_type == PrimitiveType::F8E4M3FNUZ);
-  }
-
-  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 32}, cc,
-                 skip_failure_branch_to_avoid_crash ? ExpectedFailMode::kCrash
-                                                    : ExpectedFailMode::kFail);
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 32}, cc);
 }
 
 constexpr std::array kTestedOpsTernaryElementwise = {
@@ -821,15 +787,7 @@ ENTRY triton_computation {
   ASSERT_OK_AND_ASSIGN(
       TestedInstruction ti,
       ParseTemplateAndGetInstruction(kHloTestTemplate, data_type, opcode));
-  bool crashes_on_failure = data_type == PrimitiveType::F8E4M3FN ||
-                            data_type == PrimitiveType::F8E5M2;
-  if (cc.IsRocm()) {
-    crashes_on_failure |= data_type == PrimitiveType::F8E5M2FNUZ ||
-                          data_type == PrimitiveType::F8E4M3FNUZ;
-  }
-  RunSupportTest(
-      std::move(ti), /*output_tile_sizes=*/{1}, cc,
-      crashes_on_failure ? ExpectedFailMode::kCrash : ExpectedFailMode::kFail);
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc);
 }
 
 TEST_P(ReduceTest, IsTritonSupportedReductionWithMultidimensionalTile) {
@@ -897,15 +855,7 @@ ENTRY triton_computation {
       TestedInstruction ti,
       ParseTemplateAndGetInstruction(kHloTestTemplate, data_type, opcode));
 
-  bool crashes_on_failure = data_type == PrimitiveType::F8E4M3FN ||
-                            data_type == PrimitiveType::F8E5M2;
-  if (cc.IsRocm()) {
-    crashes_on_failure |= data_type == PrimitiveType::F8E5M2FNUZ ||
-                          data_type == PrimitiveType::F8E4M3FNUZ;
-  }
-  RunSupportTest(
-      std::move(ti), /*output_tile_sizes=*/{1}, cc,
-      crashes_on_failure ? ExpectedFailMode::kCrash : ExpectedFailMode::kFail);
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc);
 }
 
 TEST_P(ReduceTest,
@@ -1179,15 +1129,29 @@ TEST_F(ScanSupportTest, ScanMustReturnTuple) {
   })");
 }
 
-TEST_F(ScanSupportTest, ReverseScanNotSupported) {
-  ExpectScanNotSupported("Reverse scan is not supported in Triton.", R"(
-  ENTRY main {
+TEST_F(ScanSupportTest, ReverseScanSupported) {
+  constexpr absl::string_view kHloText = R"(
+  add {
+    Arg_0 = f32[] parameter(0)
+    Arg_1 = f32[] parameter(1)
+    add = f32[] add(Arg_0, Arg_1)
+    ROOT t = (f32[], f32[]) tuple(add, add)
+  }
+
+  ENTRY triton_computation {
     param = f32[10] parameter(0)
     init = f32[] constant(0)
     scan = (f32[10], f32[]) scan(param, init), dimensions={0}, to_apply=add,
       num_carries=1, is_associative=true, is_reverse=true
     ROOT gte = f32[10] get-tuple-element(scan), index=0
-  })");
+  })";
+  ASSERT_OK_AND_ASSIGN(TestedInstruction ti,
+                       ParseTemplateAndGetInstruction(
+                           kHloText, PRIMITIVE_TYPE_INVALID, HloOpcode::kScan));
+  EXPECT_TRUE(IsTritonSupportedInstruction(
+      ti.Instruction(), se::CudaComputeCapability::Hopper()));
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{},
+                 se::CudaComputeCapability::Hopper());
 }
 
 TEST_F(ScanSupportTest, MultiInputScanNotSupported) {
@@ -1246,23 +1210,29 @@ TEST_F(ScanSupportTest, NonAssociativeScanNotSupported) {
   })");
 }
 
-TEST_F(ScanSupportTest, ScanOverNonLastDimensionNotSupported) {
-  ExpectScanNotSupported(
-      "Only scans over the last dimension are supported in Triton.", R"(
-  ENTRY main {
-    param = f32[16,8] parameter(0)
-    init = f32[8] parameter(1)
-    scan = (f32[16,8], f32[8]) scan(param, init), dimensions={0}, to_apply=add,
-      num_carries=1, is_associative=true
-    ROOT gte = f32[16,8] get-tuple-element(scan), index=0
-  })",
-      R"(
+TEST_F(ScanSupportTest, ScanOverNonLastDimensionSupported) {
+  constexpr absl::string_view kHloText = R"(
   add {
     Arg_0 = f32[8] parameter(0)
     Arg_1 = f32[8] parameter(1)
     add = f32[8] add(Arg_0, Arg_1)
     ROOT t = (f32[8], f32[8]) tuple(add, add)
-  })");
+  }
+
+  ENTRY triton_computation {
+    param = f32[16,8] parameter(0)
+    init = f32[8] parameter(1)
+    scan = (f32[16,8], f32[8]) scan(param, init), dimensions={0}, to_apply=add,
+      num_carries=1, is_associative=true
+    ROOT gte = f32[16,8] get-tuple-element(scan), index=0
+  })";
+  ASSERT_OK_AND_ASSIGN(TestedInstruction ti,
+                       ParseTemplateAndGetInstruction(
+                           kHloText, PRIMITIVE_TYPE_INVALID, HloOpcode::kScan));
+  EXPECT_TRUE(IsTritonSupportedInstruction(
+      ti.Instruction(), se::CudaComputeCapability::Hopper()));
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{8},
+                 se::CudaComputeCapability::Hopper());
 }
 
 TEST_F(ScanSupportTest, FloatNormalizedAdditiveScanSupported) {

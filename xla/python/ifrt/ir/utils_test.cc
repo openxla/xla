@@ -74,6 +74,7 @@ namespace {
 
 using ::absl_testing::IsOkAndHolds;
 using ::absl_testing::StatusIs;
+using ::testing::AllOf;
 using ::testing::ElementsAre;
 using ::testing::HasSubstr;
 using ::testing::NiceMock;
@@ -262,17 +263,14 @@ TEST(UtilsTest, ArrayTypeLocalShapeAndHasSameLayout) {
 !arr_user_layout = !ifrt.array<tensor<4x6xf32>,
                                #ifrt.sharding_param<2x1 to [0] on 2>,
                                [0, 1], layout = "{0,1}">
-!arr_same_user_layout = !ifrt.array<tensor<4x6xf32>,
-                                    #ifrt.sharding_param<2x1 to [0] on 2>,
-                                    [0, 1], layout = "{0, 1}">
 !arr_other_user_layout = !ifrt.array<tensor<4x6xf32>,
                                      #ifrt.sharding_param<2x1 to [0] on 2>,
                                      [0, 1], layout = "{1,0}">
 !arr_unspec = !ifrt.array<tensor<4x6xf32>, #ifrt.sharding_unspecified, [0, 1]>
 module {
   func.func @main(%a: !arr_default, %b: !arr_explicit_default,
-                  %c: !arr_user_layout, %d: !arr_same_user_layout,
-                  %e: !arr_other_user_layout, %f: !arr_unspec)
+                  %c: !arr_user_layout, %d: !arr_other_user_layout,
+                  %e: !arr_unspec)
       attributes {ifrt.function} {
     return
   }
@@ -284,9 +282,8 @@ module {
   IfrtArrayType arr_default = GetArrayType(main_func.getArgument(0));
   IfrtArrayType arr_explicit_default = GetArrayType(main_func.getArgument(1));
   IfrtArrayType arr_user_layout = GetArrayType(main_func.getArgument(2));
-  IfrtArrayType arr_same_user_layout = GetArrayType(main_func.getArgument(3));
-  IfrtArrayType arr_other_user_layout = GetArrayType(main_func.getArgument(4));
-  IfrtArrayType arr_unspec = GetArrayType(main_func.getArgument(5));
+  IfrtArrayType arr_other_user_layout = GetArrayType(main_func.getArgument(3));
+  IfrtArrayType arr_unspec = GetArrayType(main_func.getArgument(4));
 
   EXPECT_THAT(arr_default.LocalShape(), IsOkAndHolds(ElementsAre(2, 6)));
   EXPECT_THAT(arr_unspec.LocalShape(), IsOkAndHolds(ElementsAre(4, 6)));
@@ -294,7 +291,6 @@ module {
   EXPECT_TRUE(arr_default.HasSameLayout(arr_explicit_default));
   EXPECT_FALSE(arr_default.HasSameLayout(arr_user_layout));
   EXPECT_TRUE(arr_user_layout.HasSameLayout(arr_user_layout));
-  EXPECT_TRUE(arr_user_layout.HasSameLayout(arr_same_user_layout));
   EXPECT_FALSE(arr_user_layout.HasSameLayout(arr_other_user_layout));
 }
 
@@ -312,6 +308,9 @@ module @root {
     func.func @main(%a: tensor<2x2xi32>) -> tensor<2x2xi32> {
       return %a : tensor<2x2xi32>
     }
+    func.func @other(%a: tensor<2x2xi32>) -> tensor<2x2xi32> {
+      return %a : tensor<2x2xi32>
+    }
   }
   module @outer_mod <sym_visibility = "private"> {
     module @inner_mod {
@@ -324,7 +323,7 @@ module @root {
     %0, %c0 = ifrt.Call @flat_callee(%x) on devices [0, 1] : (!arr) -> !arr
     %1, %c1 = ifrt.Call @outlined_mod::@main(%x) on devices [0, 1]
         : (!arr) -> !arr
-    %2, %c2 = ifrt.Call @outer_mod::@inner_mod::@main(%x) on devices [0, 1]
+    %2, %c2 = ifrt.Call @outlined_mod::@other(%x) on devices [0, 1]
         : (!arr) -> !arr
     return
   }
@@ -365,7 +364,8 @@ module @root {
         mlir::failed(GetOutlinedAtomProgramModule(calls[0], symbol_table)));
     EXPECT_THAT(diag.ConsumeStatus(),
                 StatusIs(absl::StatusCode::kUnknown,
-                         HasSubstr("requires callee outlined")));
+                         AllOf(HasSubstr("requires callee outlined"),
+                               HasSubstr("in enclosing ModuleOp"))));
   }
   {
     mlir::BaseScopedDiagnosticHandler diag(&context);
@@ -373,7 +373,8 @@ module @root {
         mlir::failed(GetOutlinedAtomProgramModule(calls[2], symbol_table)));
     EXPECT_THAT(diag.ConsumeStatus(),
                 StatusIs(absl::StatusCode::kUnknown,
-                         HasSubstr("requires callee outlined")));
+                         AllOf(HasSubstr("requires callee outlined"),
+                               HasSubstr("in child ModuleOp"))));
   }
 
   mlir::FailureOr<mlir::ModuleOp> resolved_mod =

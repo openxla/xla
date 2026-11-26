@@ -13,7 +13,12 @@
 # limitations under the License.
 # ==============================================================================
 
-load("//xla/tests:build_defs.bzl", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "GPU_BACKENDS",
+    "GPU_DEFAULT_BACKENDS",
+    "xla_test",
+)
 load(
     "//xla/tsl:tsl.bzl",
     "if_google",
@@ -39,6 +44,7 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_status_utils",
         "//xla/pjrt/c:pjrt_c_api_wrapper_impl",
         "//xla/runtime:device_id",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -52,18 +58,15 @@ cc_library(
 xla_test(
     name = "pjrt_c_api_cross_host_transfers_extension_gpu_test",
     srcs = ["pjrt_c_api_cross_host_transfers_extension_gpu_test.cc"],
-    backend_tags = {
-        "h100": [
-            "full",
-            "multi_gpu",
-            "no_oss",
-        ],
-        "gpu": [
-            "multi_gpu",
-            "no_oss",
-        ],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: [
+        "multi_gpu",
+        "no_oss",
+    ] for gpu in GPU_BACKENDS} | {"h100": [
+        "full",
+        "multi_gpu",
+        "no_oss",
+    ]},
+    backends = GPU_DEFAULT_BACKENDS,
     tags = if_google([
         "config-cuda-only",
     ]),

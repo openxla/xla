@@ -36,7 +36,9 @@ as the callee, clones the callee into the ModuleOp, and redirects all the
 CallOps calling it to the new callee.
 
 This pass must be run if the compiler (e.g., the XLA compiler) expects each atom
-program to be outlined in a ModuleOp with a @main FuncOp.
+program to be outlined in a ModuleOp with a @main FuncOp. Callees already
+outlined as `@main` in a child `ModuleOp` are left unchanged; already-outlined
+callees with a different name fail the pass.
 
 For example, the following code
 
@@ -169,10 +171,10 @@ in a direct child `ModuleOp` and:
   2. adds `ifrt.num_devices` to the callee's parent `ModuleOp`, and copies
      `ifrt.compile_options_key` and `ifrt.local_view` if present on the
      `ifrt.Call`
-  3. attaches `ifrt.sharding` (plus `ifrt.memory_kind` if present, and
-     `ifrt.devices` as a permutation relative to the `ifrt.Call`'s device list
-     only when an array's devices differ from the call's devices) to the inputs
-     and outputs of the callee's `main` `FuncOp`
+  3. attaches `ifrt.sharding` (plus `ifrt.memory_kind` for non-default memory
+     kinds, and `ifrt.devices` as a permutation relative to the `ifrt.Call`'s
+     device list only when an array's devices differ from the call's devices) to
+     the inputs and outputs of the callee's `main` `FuncOp`
   4. attaches `tf.aliasing_output` to the callee `main` `FuncOp`'s inputs
      according to `io_aliases`
   5. attaches `jax.buffer_donor` to the callee `main` `FuncOp`'s inputs
@@ -202,7 +204,7 @@ a private copy instead)
 %0, %ctrl_0 = ifrt.Call @callee::@main(%arg0, %arg1) on devices [0, 1]
     <io_aliases = [array<i32: 1, 0>], donated_input_indices = [0]>
     : (!ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
-                   [0, 1], memory_kind = "device">,
+                   [0, 1], memory_kind = "pinned_host">,
        !ifrt.array<tensor<4x4xi32>, #ifrt.sharding_param<1x2 to [0] on 2>,
                    [1, 0]>)
     -> !ifrt.array<tensor<4x4xi32>, #ifrt.sharding_param<1x2 to [0] on 2>,
@@ -222,7 +224,7 @@ will be replaced by
 %0, %ctrl_0 = ifrt.Call @callee::@main(%arg0, %arg1) on devices [0, 1]
     <io_aliases = [array<i32: 1, 0>], donated_input_indices = [0]>
     : (!ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
-                   [0, 1], memory_kind = "device">,
+                   [0, 1], memory_kind = "pinned_host">,
        !ifrt.array<tensor<4x4xi32>, #ifrt.sharding_param<1x2 to [0] on 2>,
                    [1, 0]>)
     -> !ifrt.array<tensor<4x4xi32>, #ifrt.sharding_param<1x2 to [0] on 2>,
@@ -232,7 +234,7 @@ module @callee <sym_visibility = "private">
     attributes {ifrt.num_devices = 2 : i32} {
   func.func @main(
       %arg0: tensor<2x2xi32> {
-        ifrt.memory_kind = "device",
+        ifrt.memory_kind = "pinned_host",
         ifrt.sharding = #ifrt.sharding_param<2x1 to [0] on 2>,
         jax.buffer_donor = true},
       %arg1: tensor<4x4xi32> {
@@ -344,11 +346,8 @@ unmutated body is split into a private helper so internal callers are
 unaffected.
 
 The pass fails with an op error if root-scope symbol uses cannot be determined
-(e.g., an unregistered region-bearing op in the root module), if any
-non-`ifrt.local_view` `ifrt.Call` in a single-block IFRT function cannot
-resolve a defined callee nested at most one `ModuleOp` deep (including external
-declarations), or if internal symbol uses cannot be determined inside a mutated
-outlined `ModuleOp`.
+(e.g., an unregistered region-bearing op in the root module), or if internal
+symbol uses cannot be determined inside a mutated outlined `ModuleOp`.
 
 Note: this pass does not clean up dead arguments, results, or transfers left
 behind after copying constants.
@@ -383,10 +382,8 @@ redirected to specialized clones are erased (transitively) at pass exit. Dead
 arguments and results are left to be erased by `IfrtDcePass`.
 
 The pass fails with an op error if root-scope symbol uses cannot be determined
-(e.g., an unregistered region-bearing op in the root module), or if a callee
-with used duplicate arguments cannot be prepared for mutation (e.g., nested
-more than one `ModuleOp` deep or inside an outlined `ModuleOp` with an
-unregistered region-bearing op).
+(e.g., an unregistered region-bearing op in the root module), or if internal
+symbol uses cannot be determined inside a mutated outlined `ModuleOp`.
   }];
 }
 
@@ -419,10 +416,8 @@ order to:
    a call is erased or redirected.
 
 The pass fails with an op error if root-scope symbol uses cannot be determined
-(e.g., an unregistered region-bearing op in the root module), if any `ifrt.Call`
-in an IFRT function cannot resolve a defined callee nested at most one
-`ModuleOp` deep (including external declarations), or if internal symbol uses
-cannot be determined inside a mutated outlined `ModuleOp`.
+(e.g., an unregistered region-bearing op in the root module), or if internal
+symbol uses cannot be determined inside a mutated outlined `ModuleOp`.
   }];
 }
 

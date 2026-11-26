@@ -318,7 +318,6 @@ def lit_device_test(
         [],  # disabled_backends
         backend_tags,
         backend_args,
-        tags,
     )
     backends = [
         backend
@@ -432,7 +431,6 @@ def lit_test(
         lib_dir = lib_dir,
         deps = if_cuda_is_configured([
             "//xla/stream_executor/cuda:all_runtime",
-            "//xla/tsl/cuda:nvshmem_stub",
         ]),
         visibility = ["//visibility:private"],
         **kwargs

@@ -90,7 +90,6 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/triton_kernel_source.h"
 #include "xla/backends/gpu/codegen/triton/triton_wrapper_result.h"
 #include "xla/backends/gpu/cost_model/triton_emitter_constraints.h"
-#include "xla/backends/gpu/target_lowering/nvptx_libdevice_path.h"
 #include "xla/codegen/emitters/ir/xla_dialect.h"
 #include "xla/codegen/emitters/transforms/passes.h"
 #include "xla/codegen/ir_printing.h"
@@ -123,6 +122,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/launch_dim.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
 #include "xla/tsl/platform/logging.h"
@@ -223,6 +223,31 @@ absl::Status ValidateComplexUseInTritonFusion(
   return absl::OkStatus();
 }
 
+// ROCm targets without native bf16 FMA instructions
+// (all except gfx1250) lower a bf16 fma by rounding twice. If this check is
+// removed, the backend produces a working kernel that double-rounds, which does
+// not match the expected numerics of a single-rounded bf16 fma.
+absl::Status ValidateFmaUseInTritonFusion(
+    const HloComputation& computation, const se::GpuComputeCapability& gpu_cc) {
+  const se::RocmComputeCapability* rocm_cc = gpu_cc.rocm_compute_capability();
+  if (rocm_cc == nullptr || rocm_cc->gfx1250()) {
+    return absl::OkStatus();
+  }
+  for (const HloInstruction* instruction : computation.instructions()) {
+    if (instruction->opcode() == HloOpcode::kFma &&
+        instruction->shape().element_type() == BF16) {
+      return absl::UnimplementedError(absl::StrCat(
+          "bf16 fma is only supported in Triton codegen on ROCm gfx1250, "
+          "because other ROCm targets would round twice: ",
+          instruction->ToString(HloPrintOptions::ShortParsable())));
+    }
+    for (const HloComputation* called : instruction->called_computations()) {
+      ABSL_RETURN_IF_ERROR(ValidateFmaUseInTritonFusion(*called, gpu_cc));
+    }
+  }
+  return absl::OkStatus();
+}
+
 }  // namespace
 
 namespace ttir = ::mlir::triton;
@@ -249,8 +274,7 @@ void LoadMlirDialectsForTriton(mlir::MLIRContext& mlir_context) {
   mlir_context.appendDialectRegistry(registry);
 }
 
-// Simplified copy of translateLLVMToLLVMIR which in addition takes
-// path to libdevice directly as an argument.
+// Translates an MLIR LLVM dialect module to an LLVM IR module.
 absl::StatusOr<std::unique_ptr<llvm::Module>> TranslateLLVMToLLVMIR(
     llvm::LLVMContext* llvmContext, mlir::ModuleOp module) {
   mlir::DialectRegistry registry;
@@ -382,6 +406,8 @@ absl::StatusOr<TritonKernelSource> CreateTritonModule(
 
   ABSL_RETURN_IF_ERROR(ValidateComplexUseInTritonFusion(*hlo_computation));
   ABSL_RETURN_IF_ERROR(ValidateF4UseInTritonFusion(*hlo_computation));
+  ABSL_RETURN_IF_ERROR(ValidateFmaUseInTritonFusion(
+      *hlo_computation, device_info.gpu_compute_capability()));
   ABSL_ASSIGN_OR_RETURN(
       auto triton_module,
       TileAndEmitXTileModule(
@@ -566,13 +592,16 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
                                block_level_parameters, std::move(triton_source),
                                mlir_context, is_xla_fusion));
 
-  const int shared_mem_bytes =
-      triton_source.module()
-          ->getAttrOfType<mlir::IntegerAttr>("ttg.shared")
-          .getInt();
-
   auto llvm_context = std::make_unique<llvm::LLVMContext>();
   const se::GpuComputeCapability& gpu_cc = device_info.gpu_compute_capability();
+  // On ROCm, Triton allocates all shared memory (LDS) statically via an
+  // internal `global_smem` array in addrspace(3), so dynamic shared memory at
+  // kernel launch must be 0 to avoid double-allocating LDS.
+  const int64_t shared_mem_bytes =
+      gpu_cc.IsRocm() ? 0
+                      : triton_source.module()
+                            ->getAttrOfType<mlir::IntegerAttr>("ttg.shared")
+                            .getInt();
   const HloModuleConfig& hlo_config = hlo_module.config();
 
   bool should_verify =
@@ -656,15 +685,6 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   return result;
 }
 
-std::string GetLibdevicePath(const HloModuleConfig& hlo_config,
-                             const se::DeviceDescription& device_info) {
-  if (device_info.gpu_compute_capability().IsCuda()) {
-    return nvptx::LibDevicePath(
-        hlo_config.debug_options().xla_gpu_cuda_data_dir());
-  }
-  return "";
-}
-
 namespace ir_emitter_triton_internal {
 absl::Status LowerXTileToTriton(
     mlir::ModuleOp xtile_dialect_module, mlir::MLIRContext& mlir_context,
@@ -695,13 +715,10 @@ absl::Status LowerXTileToTriton(
     pm.addPass(
         mlir::triton::xla::createTritonXLAFoldReshapeAroundForLoopPass());
 
-    std::string libdevice_path =
-        GetLibdevicePath(fusion.GetModule()->config(), device_info);
     absl::string_view triple = device_info.gpu_compute_capability().IsRocm()
                                    ? "amdgcn-unknown-unknown"
                                    : "nvptx64-unknown-unknown";
     mlir::triton::xla::TritonXLAMathToLibdevicePassOptions math_options;
-    math_options.libdevice_path_ = libdevice_path;
     math_options.triple_string_ = std::string(triple);
     pm.addPass(
         mlir::triton::xla::createTritonXLAMathToLibdevicePass(math_options));

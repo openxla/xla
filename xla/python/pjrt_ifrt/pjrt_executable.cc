@@ -1157,7 +1157,8 @@ absl::StatusOr<tsl::RCReference<Array>> ReconstituteRecoveredArray(
     PjRtClient* client, const ArrayRef& orig_array,
     PjRtArray::PjRtBuffers buffers) {
   auto* orig_pjrt_array = cast<PjRtArray>(orig_array.get());
-  auto layout = orig_pjrt_array->pjrt_layout().value_or(nullptr);
+  std::shared_ptr<const xla::PjRtLayout> layout =
+      orig_pjrt_array->pjrt_layout();
   UserContextScope user_context_scope(orig_pjrt_array->user_context());
   if (orig_pjrt_array->has_dynamic_shape()) {
     return PjRtArray::Create(client, orig_pjrt_array->dtype(),
@@ -1449,6 +1450,14 @@ PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
                                                        returned_pjrt_futures));
 
     status = JoinFutures(absl::MakeSpan(*returned_pjrt_futures));
+  }
+
+  for (const int idx : common_metadata_.donatable_input_indices) {
+    CHECK_GE(idx, 0);
+    CHECK_LT(idx, args.size());
+    if (!options.non_donatable_input_indices.contains(idx)) {
+      args[idx]->Delete();
+    }
   }
 
   if (!all_loaded_host_callbacks_->empty()) {

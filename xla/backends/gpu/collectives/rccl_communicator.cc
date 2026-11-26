@@ -73,6 +73,19 @@ se::Stream* ToStream(const Communicator::Executor& executor) {
   return absl::down_cast<const GpuCollectives::Executor&>(executor).stream();
 }
 
+// Releases a communicator that Create has not published yet. ncclCommAbort
+// stays blocking and completes before it returns. `poll_status` is the
+// caller's poll error, logged if abort fails.
+void AbortUnownedCommunicator(ncclComm_t comm,
+                              const absl::Status& poll_status) {
+  ncclResult_t abort = ncclCommAbort(comm);
+  if (abort != ncclSuccess) {
+    LOG(ERROR) << "Failed to abort RCCL communicator " << comm
+               << " after initialization poll failed: "
+               << ncclGetErrorString(abort) << "; poll status: " << poll_status;
+  }
+}
+
 }  // namespace
 
 //==-----------------------------------------------------------------------===//
@@ -82,13 +95,17 @@ se::Stream* ToStream(const Communicator::Executor& executor) {
 absl::StatusOr<std::unique_ptr<RcclCommunicator>> RcclCommunicator::Create(
     absl::AnyInvocable<absl::StatusOr<ncclComm_t>()> make_comm,
     std::shared_ptr<CancellationToken> cancel, bool is_async, tsl::Env& env) {
+  if (cancel == nullptr) {
+    cancel = std::make_shared<CancellationToken>();
+  }
   auto f = [cancel, &make_comm]() -> absl::StatusOr<ncclComm_t> {
     ABSL_ASSIGN_OR_RETURN(ncclComm_t comm, make_comm());
-    if (cancel) {
-      ABSL_RETURN_IF_ERROR(::xla::gpu::PollUntilDone(comm, *cancel));
-    } else {
-      CancellationToken never_cancelled;
-      ABSL_RETURN_IF_ERROR(::xla::gpu::PollUntilDone(comm, never_cancelled));
+    // No RcclCommunicator owns this comm yet, so a failed poll must abort it
+    // here. ncclCommDestroy can hang while the comm is still ncclInProgress.
+    absl::Status ready = ::xla::gpu::PollUntilDone(comm, *cancel);
+    if (!ready.ok()) {
+      AbortUnownedCommunicator(comm, ready);
+      return ready;
     }
     return comm;
   };
@@ -344,6 +361,39 @@ absl::Status RcclCommunicator::LaunchBroadcast(
   ABSL_RETURN_IF_ERROR(XLA_RCCL_STATUS(ncclBroadcast(
       send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
       nccl_dtype, root.value(), comm_, AsHipStream(stream))));
+  if (!IsInsideRcclGroupLaunch()) {
+    ABSL_RETURN_IF_ERROR(PollUntilDone());
+  }
+  return absl::OkStatus();
+}
+
+absl::Status RcclCommunicator::LaunchReduce(
+    se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
+    PrimitiveType dtype, size_t count, ReductionKind reduction_kind,
+    RankId root, const Executor& executor, bool is_rma) {
+  if (cancel_->IsCancelled()) {
+    return absl::FailedPreconditionError("RcclCommunicator aborted");
+  }
+  se::Stream* stream = ToStream(executor);
+
+  VLOG(3) << absl::StreamFormat(
+      "[%d] Launch RCCL Reduce operation; send_buffer=%p; "
+      "recv_buffer=%p; dtype=%s; count=%d; reduction_kind=%v; root=%d; "
+      "comm=%p; stream=%p",
+      stream->parent()->device_ordinal(), send_buffer.opaque(),
+      recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
+      count, reduction_kind, root.value(), comm_, stream);
+
+  ABSL_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, /*is_reduction_op=*/true,
+          stream->parent()->GetDeviceDescription().rocm_compute_capability()));
+
+  ABSL_RETURN_IF_ERROR(XLA_RCCL_STATUS(ncclReduce(
+      send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
+      nccl_dtype, ToNcclReduction(reduction_kind), root.value(), comm_,
+      AsHipStream(stream))));
   if (!IsInsideRcclGroupLaunch()) {
     ABSL_RETURN_IF_ERROR(PollUntilDone());
   }

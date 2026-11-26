@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/python/ifrt/ir/ifrt_ops.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <tuple>
 #include <utility>
@@ -32,6 +33,7 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Operation.h"
@@ -196,10 +198,7 @@ llvm::SmallVector<IfrtArrayType, 4> CollectArrayTypes(mlir::ValueRange values) {
 
 bool IsAutoLayout(mlir::Type type) {
   auto array = llvm::cast_or_null<IfrtArrayType>(type);
-  if (array != nullptr && array.getLayoutAttr() != nullptr) {
-    return array.getLayoutAttr().str() == "auto";
-  }
-  return false;
+  return array != nullptr && array.getLayoutAttr().getValue() == "auto";
 }
 
 // Verifies that `in_array` (described by `in_desc`) and `out_array` (described
@@ -225,7 +224,7 @@ mlir::LogicalResult VerifySameShardArrayMetadata(mlir::Operation* op,
                              << in_array.getShape().getElementType() << " vs. "
                              << out_array.getShape().getElementType();
   }
-  if (in_array.MemoryKind() != out_array.MemoryKind()) {
+  if (!in_array.HasSameMemoryKind(out_array)) {
     return op->emitOpError()
            << "requires " << in_desc << " and " << out_desc
            << " to have the same memory kind: " << in_array.getMemoryKindAttr()
@@ -347,10 +346,17 @@ mlir::LogicalResult CopyArraysOp::verify() {
   }
   IfrtArrayType first_input = GetArrayType(getInputs().front());
   IfrtDevicesAttr src_devices = first_input.getDevicesAttr();
-  MemoryKind src_memory_kind = first_input.MemoryKind();
+  mlir::StringAttr src_memory_kind = first_input.getMemoryKindAttr();
   IfrtArrayType first_output = GetArrayType(getOutputs().front());
   IfrtDevicesAttr dst_devices = first_output.getDevicesAttr();
-  MemoryKind dst_memory_kind = first_output.MemoryKind();
+  mlir::StringAttr dst_memory_kind = first_output.getMemoryKindAttr();
+  if (src_devices.getIds().size() != dst_devices.getIds().size()) {
+    return emitOpError()
+           << "requires input and output arrays to have the same number of "
+              "devices, got "
+           << src_devices.getIds().size() << " vs. "
+           << dst_devices.getIds().size();
+  }
   for (const auto [idx, pair] :
        llvm::enumerate(llvm::zip(getInputs(), getOutputs()))) {
     const IfrtArrayType input_array = GetArrayType(std::get<0>(pair));
@@ -359,7 +365,7 @@ mlir::LogicalResult CopyArraysOp::verify() {
                               "devices, but input #"
                            << idx << " has different devices";
     }
-    if (src_memory_kind != input_array.MemoryKind()) {
+    if (src_memory_kind != input_array.getMemoryKindAttr()) {
       return emitOpError() << "requires all input arrays to have the same "
                               "memory kind, but input #"
                            << idx << " has a different memory kind";
@@ -373,7 +379,7 @@ mlir::LogicalResult CopyArraysOp::verify() {
                               "devices, but output #"
                            << idx << " has different devices";
     }
-    if (dst_memory_kind != output_array.MemoryKind()) {
+    if (dst_memory_kind != output_array.getMemoryKindAttr()) {
       return emitOpError() << "requires all output arrays to have the same "
                               "memory kind, but output #"
                            << idx << " has a different memory kind";
@@ -548,7 +554,7 @@ mlir::LogicalResult BitcastArraysOp::verify() {
                            << in_array_type.getDevicesAttr() << " vs. "
                            << out_array_type.getDevicesAttr();
     }
-    if (in_array_type.MemoryKind() != out_array_type.MemoryKind()) {
+    if (!in_array_type.HasSameMemoryKind(out_array_type)) {
       return emitOpError() << "requires input array #" << idx
                            << " and output array #" << idx
                            << " to have the same memory kind: "
@@ -581,8 +587,40 @@ mlir::MutableOperandRange CallOp::getArgOperandsMutable() {
 
 mlir::LogicalResult CallOp::verifySymbolUses(
     mlir::SymbolTableCollection& symbolTable) {
-  mlir::func::FuncOp callee = getCalleeOp(symbolTable);
-  mlir::FunctionType callee_type = callee.getFunctionType();
+  auto emit_nesting_error = [&]() {
+    return emitOpError()
+           << "requires '" << getCallee()
+           << "' to reference a `func.func` directly in the enclosing "
+              "`builtin.module` or in a named direct child `builtin.module`";
+  };
+  mlir::ModuleOp call_parent_module =
+      (*this)->getParentOfType<mlir::ModuleOp>();
+  const size_t nesting_depth = getCallee().getNestedReferences().size();
+  if (call_parent_module == nullptr || nesting_depth > 1) {
+    return emit_nesting_error();
+  }
+  mlir::FailureOr<mlir::func::FuncOp> callee = verifyCalleeSymbol(symbolTable);
+  if (mlir::failed(callee)) {
+    return mlir::failure();
+  }
+  mlir::Operation* callee_parent = (*callee)->getParentOp();
+  mlir::ModuleOp callee_module =
+      llvm::dyn_cast_or_null<mlir::ModuleOp>(callee_parent);
+  const bool is_flat_callee =
+      nesting_depth == 0 && callee_parent == call_parent_module.getOperation();
+  const bool is_outlined_callee =
+      nesting_depth == 1 && callee_module != nullptr &&
+      callee_module.getSymNameAttr() != nullptr &&
+      callee_module->getParentOp() == call_parent_module.getOperation();
+  if (!is_flat_callee && !is_outlined_callee) {
+    return emit_nesting_error();
+  }
+  if (callee->isExternal()) {
+    return emitOpError()
+           << "requires '" << getCallee()
+           << "' to reference a defined (non-external) `func.func`";
+  }
+  mlir::FunctionType callee_type = callee->getFunctionType();
   const bool is_local_view = (*this)->hasAttr(kIfrtLocalViewAttrName);
   // Verify inputs.
   if (callee_type.getNumInputs() != getInputs().size()) {
@@ -664,6 +702,20 @@ mlir::MutableOperandRange CallLoadedExecutableOp::getArgOperandsMutable() {
 
 mlir::LogicalResult CallLoadedExecutableOp::verifySymbolUses(
     mlir::SymbolTableCollection& symbolTable) {
+  if (!getCallee().getNestedReferences().empty()) {
+    return emitOpError()
+           << "requires '" << getCallee()
+           << "' to reference an `ifrt.LoadedExecutable` directly in the "
+              "enclosing `builtin.module`";
+  }
+  // Because `getCallee()` is flat, `verifyCalleeSymbol` resolves it only in the
+  // nearest enclosing `SymbolTable`, and `LoadedExecutableOp` has
+  // `HasParent<"::mlir::ModuleOp">`, so any resolved callee is guaranteed to be
+  // a direct child of the enclosing `builtin.module`.
+  mlir::FailureOr<LoadedExecutableOp> callee = verifyCalleeSymbol(symbolTable);
+  if (mlir::failed(callee)) {
+    return mlir::failure();
+  }
   llvm::SmallVector<mlir::Type, 4> input_types;
   input_types.reserve(getInputs().size());
   for (const mlir::Value input : getInputs()) {
@@ -676,10 +728,9 @@ mlir::LogicalResult CallLoadedExecutableOp::verifySymbolUses(
   }
   auto func_type =
       mlir::FunctionType::get(getContext(), input_types, output_types);
-  LoadedExecutableOp callee = getCalleeOp(symbolTable);
-  if (callee.getFunctionType() != func_type) {
+  if (callee->getFunctionType() != func_type) {
     return emitOpError() << "requires callee signature matching " << func_type
-                         << ". Actual " << callee.getFunctionType();
+                         << ". Actual " << callee->getFunctionType();
   }
   return mlir::success();
 }

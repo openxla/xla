@@ -18,7 +18,7 @@ syntax = "proto3";
 package xla;
 
 import "google/protobuf/any.proto";
-import "xla/backends/autotuner/backends.proto";
+import "xla/backends/core/autotuner/backends.proto";
 import "xla/service/hlo.proto";
 import "xla/xla_data.proto";
 
@@ -1155,10 +1155,6 @@ message DebugOptions {
   // the heuristic.
   optional int32 xla_gpu_experimental_force_split_k = 472;
 
-  // Enable GEMM fusion v2 pass for building Triton fusions.
-  // TODO(b/487920266): Remove this flag entirely.
-  optional bool xla_gpu_experimental_gemm_fusion_v2 = 475 [deprecated = true];
-
   // Controls max unroll factor on Blackwell architectures. This is also
   // guarded with a heuristic, but the heuristic is not perfect, so changing
   // this flag can cause both performance improvements and performance
@@ -1168,6 +1164,11 @@ message DebugOptions {
   // Register NCCL windows with NCCL_WIN_COLL_SYMMETRIC instead of
   // NCCL_WIN_DEFAULT.
   optional bool xla_gpu_experimental_nccl_window_symmetric = 561;
+
+  // Cache NCCL symmetric windows on the GPU communicator, registered once for
+  // the whole underlying device allocation, instead of per executable and per
+  // buffer.
+  optional bool xla_gpu_experimental_cache_nccl_window_in_communicator = 590;
 
   // For sub-byte dot operands, layout them along contracting dimensions.
   optional bool xla_gpu_experimental_pack_dot_operands_along_k_dimension = 362;
@@ -2005,8 +2006,8 @@ message DebugOptions {
   // If true, the block-level (Triton) tiling search also enumerates tile sizes
   // for reduction dimensions, i.e. reductions may be emitted as a loop over
   // tiles.
-  // TODO(b/534676634): Only fusions with a single reduce over a single
-  // dimension are tiled for now; extend to the other cases.
+  // TODO(b/534676634): Only reductions over a single dimension are tiled for
+  // now.
   optional bool xla_gpu_experimental_enable_reduction_dimension_tiling = 558;
 
   // When true, autotune cache lookup requires the entire codegen environment
@@ -2107,7 +2108,10 @@ message DebugOptions {
 
   optional string xla_gpu_compileiq_db_path = 588;
 
-  // Next id: 590
+  // Non-temporal cache hints for MLIR kernels on gfx942 (MI300). Default false.
+  optional bool xla_gpu_enable_nontemporal_hints = 591;
+
+  // Next id: 592
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
@@ -2247,6 +2251,7 @@ message DebugOptions {
   reserved "xla_gpu_gemm_autotuner_override_file";
   reserved "xla_gpu_override_gemm_autotuner";
   reserved "xla_gpu_experimental_enable_fusion_block_level_rewriter";
+  reserved "xla_gpu_experimental_gemm_fusion_v2";
 
   reserved 5, 63, 80, 93, 94, 98, 117, 130, 133, 134, 139, 141, 143, 152, 156,
       158, 160, 161, 162, 165, 167, 168, 169, 171, 172, 173, 176, 177, 178, 179,
@@ -2256,7 +2261,7 @@ message DebugOptions {
       278, 279, 281, 282, 286, 292, 295, 298, 299, 300, 302, 303, 309, 313, 314,
       316, 319, 320, 325, 326, 332, 334, 346, 352, 354, 355, 358, 361, 367, 369,
       371, 376, 385, 388, 389, 394, 396, 398, 402, 413, 420, 423, 430, 434, 435,
-      442, 443, 445, 446, 450, 456, 458, 464, 477, 480;
+      442, 443, 445, 446, 450, 456, 458, 464, 475, 477, 480;
 }
 
 // Contains flags which affects the GPU compilation result.

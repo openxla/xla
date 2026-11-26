@@ -23,6 +23,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -368,6 +369,7 @@ absl::StatusOr<ArrayRef> BasicStringArray::Copy(
   auto [buffers_promise, buffers_future] = tsl::MakePromise<Buffers>();
 
   auto copier = [string_store = std::move(string_store),
+                 src_on_done = on_done_with_buffer_,
                  buffers_promise = std::move(buffers_promise)](
                     absl::StatusOr<Buffers> input_buffers) mutable {
     if (!input_buffers.ok()) {
@@ -417,6 +419,7 @@ absl::StatusOr<ArrayRef> BasicStringArray::FullyReplicatedShard(
   auto [buffers_promise, buffers_future] = tsl::MakePromise<Buffers>();
 
   auto copier = [string_store = std::move(string_store),
+                 src_on_done = on_done_with_buffer_,
                  buffers_promise = std::move(buffers_promise)](
                     absl::StatusOr<Buffers> input_buffers) mutable {
     if (!input_buffers.ok()) {
@@ -443,9 +446,9 @@ absl::StatusOr<ArrayRef> BasicStringArray::FullyReplicatedShard(
       std::move(buffers_future), std::move(on_done_with_buffer));
 }
 
-absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>>
+absl_nullable std::shared_ptr<const xla::PjRtLayout>
 BasicStringArray::pjrt_layout() const {
-  return absl::UnimplementedError("String arrays do not support PjRtLayout");
+  return nullptr;
 }
 
 LayoutRef BasicStringArray::layout() const { return nullptr; }

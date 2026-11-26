@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
@@ -384,20 +385,9 @@ CodegenDecision CanTritonHandleScan(
   if (!scan.shape().IsTuple()) {
     return CodegenDecision::Forbid("Scan must return a tuple.");
   }
-  if (scan.is_reverse()) {
-    return CodegenDecision::Forbid("Reverse scan is not supported in Triton.");
-  }
   if (scan.inputs().size() != 1 || scan.num_carries() != 1) {
     return CodegenDecision::Forbid(
         "Only single-input, single-carry scans are supported in Triton.");
-  }
-
-  int64_t rank = scan.inputs().front()->shape().dimensions().size();
-  if (scan.scan_dimension() != rank - 1) {
-    // TODO(b/469020791): Support scans over other dimensions. The tiled Triton
-    // scan computes wrong results for them.
-    return CodegenDecision::Forbid(
-        "Only scans over the last dimension are supported in Triton.");
   }
 
   if (!IsTritonSupportedComputation(*scan.to_apply(), gpu_version)) {
@@ -580,11 +570,7 @@ CodegenDecision IsSupportedDotAlgorithm(
     case PrecisionConfig::ALG_DOT_TF32_TF32_F32:
     case PrecisionConfig::ALG_DOT_TF32_TF32_F32_X3:
     case PrecisionConfig::ALG_DOT_BF16_BF16_F32_X9:
-      return CodegenDecision::Allow();
     case PrecisionConfig::ALG_DOT_F64_F64_F64:
-      if (gpu_version.IsRocm()) {
-        break;
-      }
       return CodegenDecision::Allow();
     case PrecisionConfig::ALG_DOT_BF16_BF16_BF16:
       if (gpu_version.IsRocm()) {
@@ -618,15 +604,11 @@ CodegenDecision AreTypesSupportedByAlgUnsetDot(
     }
   }
 
-  std::vector<PrimitiveType> supported_float_types = {BF16, F16, F32, F8E4M3FN,
-                                                      F8E5M2};
+  std::vector<PrimitiveType> supported_float_types = {BF16, F16,      F32,
+                                                      F64,  F8E4M3FN, F8E5M2};
   if (gpu_version.IsRocm()) {
-    // The F64 type for dot operations in Triton is not currently supported
-    // on ROCm so it is excluded.
     supported_float_types.insert(supported_float_types.end(),
                                  {F8E4M3FNUZ, F8E5M2FNUZ});
-  } else {
-    supported_float_types.push_back(F64);
   }
 
   if (absl::c_linear_search(supported_float_types, input_type)) {
@@ -910,19 +892,6 @@ CodegenDecision IsTritonSupportedConcatenate(
   return CodegenDecision::Allow();
 }
 
-bool IsWithinGemmFusion(const HloInstruction& instr) {
-  const HloComputation* computation = instr.parent();
-  if (computation == nullptr || !computation->IsFusionComputation()) {
-    return false;
-  }
-  const HloInstruction* fusion = computation->FusionInstruction();
-  if (fusion == nullptr) {
-    return false;
-  }
-  return IsGpuFusionKind(*fusion, kTritonGemmFusionKind) ||
-         IsGpuFusionKind(*fusion, kTritonNestedGemmFusionKind);
-}
-
 CodegenDecision IsTritonSupportedDynamicSlice(
     const HloDynamicSliceInstruction& instr) {
   for (const HloInstruction* index_operand : instr.index_operands()) {
@@ -999,14 +968,8 @@ CodegenDecision IsTritonSupportedInstructionImpl(
   }
 
   // Special handling for the kPad instruction. Right now we only support "high"
-  // padding within GEMM fusions. "Interior" and "low" padding are not
-  // supported.
+  // padding. "Interior" and "low" padding are not supported.
   if (instr.opcode() == HloOpcode::kPad) {
-    // TODO(b/568080363): Support pads outside of GEMM fusions.
-    if (!IsWithinGemmFusion(instr)) {
-      return CodegenDecision::Forbid(
-          "Pads are only supported within GEMM fusions.");
-    }
     auto pad = Cast<HloPadInstruction>(&instr);
     bool no_op = true;
     for (const auto& dim_config : pad->padding_config().dimensions()) {

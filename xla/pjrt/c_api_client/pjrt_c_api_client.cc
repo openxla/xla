@@ -27,6 +27,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/attributes.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
@@ -118,6 +119,70 @@ limitations under the License.
 
 namespace xla {
 
+namespace {
+
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI void DeleteSerializedLayout(
+    void (*deleter)(PJRT_Layouts_SerializedLayout*),
+    PJRT_Layouts_SerializedLayout* layout) {
+  deleter(layout);
+}
+
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI void DestroySerializedMetadata(
+    const PJRT_ExecutableMetadata_Extension* extension,
+    PJRT_ExecutableMetadata_DestroySerializedMetadata_Args* args) {
+  extension->destroy_serialized_metadata(args);
+}
+
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI void DeleteSerializedExecutable(
+    void (*deleter)(PJRT_SerializedExecutable*),
+    PJRT_SerializedExecutable* executable) {
+  deleter(executable);
+}
+
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI void DeleteSerializedCompileOptions(
+    void (*deleter)(PJRT_SerializedCompileOptions*),
+    PJRT_SerializedCompileOptions* compile_options) {
+  deleter(compile_options);
+}
+
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI void DeleteSerializedDeviceAssignment(
+    void (*deleter)(PJRT_DeviceAssignmentSerialized*),
+    PJRT_DeviceAssignmentSerialized* device_assignment) {
+  deleter(device_assignment);
+}
+
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI PJRT_Error* InvokePjrtCallbackError(
+    PJRT_CallbackError* callback_error, PJRT_Error_Code code,
+    const char* message, size_t message_size) {
+  return (*callback_error)(code, message, message_size);
+}
+
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI PJRT_Error* AddFfiUserData(
+    const PJRT_FFI_Extension* extension, PJRT_FFI_UserData_Add_Args* args) {
+  return extension->user_data_add(args);
+}
+
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI PJRT_Error* DestroyExecuteContext(
+    const PJRT_Api* api, PJRT_ExecuteContext_Destroy_Args* args) {
+  return api->PJRT_ExecuteContext_Destroy(args);
+}
+
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI PJRT_Error* SetPjrtEvent(
+    const PJRT_Api* api, PJRT_Event_Set_Args* args) {
+  return api->PJRT_Event_Set(args);
+}
+
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI void DeleteSerializedShape(
+    void (*deleter)(const char*), const char* shape) {
+  deleter(shape);
+}
+
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI void DeleteSerializedProto(
+    void (*deleter)(PJRT_SerializedProto*), PJRT_SerializedProto* holder) {
+  deleter(holder);
+}
+
+}  // namespace
 constexpr int kMaxDims = 4;
 const char PjRtCApiClient::kPjRtCApiMemorySpaceKey = 0;
 
@@ -190,6 +255,7 @@ PjRtCApiClient::PjRtCApiClient(
 
 bool PjRtCApiClient::IsCApi() const { return true; }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 void PjRtCApiClient::InitDevicesAndMemorySpaces() {
   // Initialize devices.
   PJRT_Client_Devices_Args devices_args;
@@ -317,6 +383,7 @@ void PjRtCApiClient::InitDevicesAndMemorySpaces() {
   }
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 void PjRtCApiClient::InitAttributes() {
   PJRT_Plugin_Attributes_Args args;
   args.struct_size = PJRT_Plugin_Attributes_Args_STRUCT_SIZE;
@@ -342,6 +409,7 @@ PJRT_Extension_Base* PjRtCApiClient::FindExtensionImpl(
   return it->second;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::Status PjRtCApiClient::RegisterCallbackImpl(
     PJRT_Callback_Type callback_type, std::function<void(void*)> callback) {
   if (callback == nullptr) {
@@ -378,6 +446,7 @@ absl::Status PjRtCApiClient::RegisterCallbackImpl(
   return absl::OkStatus();
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::Status PjRtCApiClient::InvokeCallbacks(PJRT_Callback_Type callback_type,
                                              void* callback_args) {
   const PJRT_Callback_Extension* callbacks_ext =
@@ -411,6 +480,7 @@ absl::Span<PjRtDevice* const> PjRtCApiClient::addressable_devices() const {
   return addressable_devices_;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 int PjRtCApiClient::process_index() const {
   PJRT_Client_ProcessIndex_Args process_index_args;
   process_index_args.struct_size = PJRT_Client_ProcessIndex_Args_STRUCT_SIZE;
@@ -426,6 +496,7 @@ absl::string_view PjRtCApiClient::platform_version() const {
   return platform_version_;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtRuntimeAbiVersion>>
 PjRtCApiClient::RuntimeAbiVersion() const {
   PJRT_AbiVersion_Extension* extension =
@@ -463,6 +534,7 @@ static DeviceAssignment CalculateDefaultAssignment(
   return cpp_device_assignment;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<DeviceAssignment> PjRtCApiClient::GetDefaultDeviceAssignment(
     int num_replicas, int num_partitions) const {
   PJRT_Client_DefaultDeviceAssignment_Args args;
@@ -482,6 +554,7 @@ absl::StatusOr<DeviceAssignment> PjRtCApiClient::GetDefaultDeviceAssignment(
                                     param);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<PjRtDevice*> PjRtCApiClient::LookupDevice(
     GlobalDeviceId global_device_id) const {
   PJRT_Client_LookupDevice_Args args;
@@ -493,6 +566,7 @@ absl::StatusOr<PjRtDevice*> PjRtCApiClient::LookupDevice(
   return GetCppDevice(args.device);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<PjRtDevice*> PjRtCApiClient::LookupAddressableDevice(
     LocalDeviceId local_device_id) const {
   PJRT_Client_LookupAddressableDevice_Args args;
@@ -505,6 +579,7 @@ absl::StatusOr<PjRtDevice*> PjRtCApiClient::LookupAddressableDevice(
   return GetCppDevice(args.addressable_device);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 void PjRtCApiClient::UpdateGlobalProcessInfo(
     absl::Span<xla::coordination::TaskInfo> infos) {
   std::vector<PJRT_ProcessInfo> process_infos;
@@ -539,6 +614,7 @@ absl::Span<PjRtMemorySpace* const> PjRtCApiClient::memory_spaces() const {
 
 namespace {
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 std::optional<absl::flat_hash_map<std::string, xla::PjRtValueType>>
 GetPluginAttributesMap(const PJRT_Api* c_api, const PjRtClient* client) {
   if (client != nullptr) {
@@ -636,6 +712,7 @@ absl::StatusOr<std::pair<std::string, std::string>> SerializeProgram(
 
 // Initializes `PJRT_Client_Compile_Args`, which will be used to call
 // API PJRT_Client_Compile().
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 static absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 InitializeArgsAndCompile(PjRtCApiClient* api_client, const PJRT_Api* c_api,
                          PJRT_Client* client, ProgramVariant module,
@@ -693,6 +770,7 @@ namespace {
 
 // Initializes `PJRT_Compile_Args`, which will be used to call
 // API PJRT_Compile().
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 static absl::StatusOr<std::unique_ptr<PjRtExecutable>>
 InitializeArgsAndCompileAot(const PJRT_Api* c_api, PjRtClient* client,
                             ProgramVariant module,
@@ -778,6 +856,7 @@ PjRtCApiClient::CompileAndLoad(MaybeOwningMlirModule module,
                                   std::move(module), options);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtCApiClient::LoadSerializedExecutable(absl::string_view serialized,
                                          std::optional<CompileOptions> options,
@@ -828,6 +907,7 @@ PjRtCApiClient::LoadSerializedExecutable(absl::string_view serialized,
       std::make_unique<PjRtCApiLoadedExecutable>(this, c_exec));
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> PjRtCApiClient::Load(
     std::shared_ptr<PjRtExecutable> executable,
     const LoadOptions& load_options) {
@@ -863,6 +943,7 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> PjRtCApiClient::Load(
       std::make_unique<PjRtCApiLoadedExecutable>(this, loaded_c_exec));
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 PjRtCApiClient::CreateUninitializedBuffer(const Shape& shape,
                                           PjRtMemorySpace* memory_space) {
@@ -903,6 +984,7 @@ PjRtCApiClient::CreateUninitializedBuffer(const Shape& shape,
   return buffer;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiClient::CreateErrorBuffer(
     absl::Status error, const Shape& shape, PjRtMemorySpace* memory,
     const Layout* layout) {
@@ -972,6 +1054,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiClient::CreateErrorBuffer(
   return buffer;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::Status FulfillAliasBuffer(
     const PJRT_Api* pjrt_c_api, absl::StatusOr<PjRtBuffer*> real_buffer_or,
     PJRT_FulfillAliasBufferCallback* fulfill_alias_buffer_cb) {
@@ -1012,6 +1095,7 @@ absl::Status FulfillAliasBuffer(
   return absl::OkStatus();
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<
     std::pair<std::unique_ptr<PjRtBuffer>, PjRtFulfillAliasBufferCallback>>
 PjRtCApiClient::CreateAliasBuffer(const Shape& shape,
@@ -1073,6 +1157,7 @@ HostMemoryAllocator* PjRtCApiClient::GetHostMemoryAllocator() const {
   return host_memory_allocator_.get();
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::uintptr_t> PjRtCApiClient::UnsafeBufferPointer(
     PjRtBuffer* buffer) {
   // Validate that the buffer's client matches the function call's client, since
@@ -1098,6 +1183,7 @@ absl::StatusOr<std::uintptr_t> PjRtCApiClient::UnsafeBufferPointer(
   return args.buffer_pointer;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 PjRtCApiClient::BufferFromHostBufferInternalImpl(
     const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
@@ -1221,11 +1307,19 @@ PjRtCApiClient::BufferFromHostLiteral(const LiteralSlice& literal,
       /*on_done_with_host_buffer=*/nullptr, memory_space, device_layout);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 PjRtCApiClient::CreateViewOfDeviceBuffer(
     void* device_ptr, const Shape& shape, PjRtMemorySpace* memory_space,
     std::function<void()> on_delete_callback,
-    std::optional<std::intptr_t> stream) {
+    std::optional<std::intptr_t> stream, bool is_mutable) {
+  const PJRT_Api* c_api = pjrt_c_api();
+  if (is_mutable && c_api->pjrt_api_version.major_version == 0 &&
+      c_api->pjrt_api_version.minor_version < 119) {
+    return absl::UnimplementedError(
+        "PJRT_Client_CreateViewOfDeviceBuffer with is_mutable=true requires "
+        "PJRT C API version 0.119 or higher.");
+  }
   PJRT_Client_CreateViewOfDeviceBuffer_Args args;
   args.struct_size = PJRT_Client_CreateViewOfDeviceBuffer_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
@@ -1256,12 +1350,12 @@ PjRtCApiClient::CreateViewOfDeviceBuffer(
   }
   args.device = nullptr;
   args.memory = absl::down_cast<PjRtCApiMemorySpace*>(memory_space)->c_memory();
+  args.is_mutable = is_mutable;
   if (stream.has_value()) {
     args.stream = *stream;
   } else {
     args.stream = reinterpret_cast<intptr_t>(nullptr);
   }
-  const PJRT_Api* c_api = pjrt_c_api();
 
   RETURN_STATUS_IF_PJRT_ERROR(
       c_api->PJRT_Client_CreateViewOfDeviceBuffer(&args), c_api);
@@ -1270,6 +1364,7 @@ PjRtCApiClient::CreateViewOfDeviceBuffer(
       std::make_unique<PjRtCApiBuffer>(this, args.buffer));
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<Layout> PjRtCApiClient::GetDefaultLayout(
     PrimitiveType element_type, absl::Span<const int64_t> dims) {
   const PJRT_Api* c_api = pjrt_c_api();
@@ -1306,7 +1401,8 @@ absl::StatusOr<Layout> PjRtCApiClient::GetDefaultLayout(
 
   // Clean up `PJRT_Layouts_SerializedLayout`.
   absl::Cleanup cleanup = [&serialize_args] {
-    serialize_args.serialized_layout_deleter(serialize_args.serialized_layout);
+    DeleteSerializedLayout(serialize_args.serialized_layout_deleter,
+                           serialize_args.serialized_layout);
   };
 
   std::string serialized_layout(serialize_args.serialized_bytes,
@@ -1317,6 +1413,7 @@ absl::StatusOr<Layout> PjRtCApiClient::GetDefaultLayout(
   return pjrt_layout->xla_layout();
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::Status PjRtCApiClient::DmaMap(void* data, size_t size) {
   const PJRT_Api* c_api = pjrt_c_api();
   PJRT_Client_DmaMap_Args args;
@@ -1329,6 +1426,7 @@ absl::Status PjRtCApiClient::DmaMap(void* data, size_t size) {
   return absl::OkStatus();
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::Status PjRtCApiClient::DmaUnmap(void* data) {
   const PJRT_Api* c_api = pjrt_c_api();
   PJRT_Client_DmaUnmap_Args args;
@@ -1400,6 +1498,7 @@ std::vector<std::unique_ptr<PjRtBuffer>> MakePjRtBuffersFromPJRT_Buffers(
   return buffers;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtCApiClient::MakeCrossHostReceiveBuffers(
     absl::Span<const Shape> shapes, PjRtDevice* device,
@@ -1448,6 +1547,7 @@ PjRtCApiClient::MakeCrossHostReceiveBuffers(
                                          temp_buffers.size());
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::vector<Future<>>> PjRtCApiClient::CrossHostSendBuffers(
     absl::Span<PjRtBuffer* const> buffers,
     absl::Span<const GlobalDeviceId> dst_global_device_ids,
@@ -1510,6 +1610,7 @@ absl::StatusOr<std::vector<Future<>>> PjRtCApiClient::CrossHostSendBuffers(
   return send_futures;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtCApiClient::CrossHostReceiveBuffers(
     xla::PjRtDevice* device, absl::Span<const xla::Shape> shapes,
@@ -1579,6 +1680,7 @@ PjRtCApiClient::CrossHostReceiveBuffers(
 class PjRtCApiAsyncHostToDeviceTransferManager
     : public PjRtClient::AsyncHostToDeviceTransferManager {
  public:
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI
   PjRtCApiAsyncHostToDeviceTransferManager(
       PjRtCApiClient* client,
       PJRT_AsyncHostToDeviceTransferManager* c_transfer_manager)
@@ -1599,6 +1701,7 @@ class PjRtCApiAsyncHostToDeviceTransferManager
     return args.buffer_count;
   }
 
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI
   PjRtDevice* device() const override {
     PJRT_AsyncHostToDeviceTransferManager_Device_Args args;
     args.struct_size =
@@ -1611,6 +1714,7 @@ class PjRtCApiAsyncHostToDeviceTransferManager
     return c_client_->GetCppDevice(args.device_out);
   }
 
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI
   std::unique_ptr<PjRtBuffer> RetrieveBuffer(int buffer_index) override {
     PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer_Args args;
     args.struct_size =
@@ -1624,6 +1728,7 @@ class PjRtCApiAsyncHostToDeviceTransferManager
     return std::make_unique<PjRtCApiBuffer>(c_client_, args.buffer_out);
   }
 
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI
   absl::Status TransferLiteralToBuffer(
       int buffer_index, const LiteralSlice& literal,
       absl::AnyInvocable<void() &&> on_done) override {
@@ -1676,6 +1781,7 @@ class PjRtCApiAsyncHostToDeviceTransferManager
     return absl::OkStatus();
   }
 
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI
   size_t buffer_size(int buffer_index) const override {
     PJRT_AsyncHostToDeviceTransferManager_BufferSize_Args args;
     args.struct_size =
@@ -1697,6 +1803,7 @@ class PjRtCApiAsyncHostToDeviceTransferManager
                                       std::move(on_done));
   }
 
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI
   absl::Status TransferRawDataToSubBuffer(
       int buffer_index, const void* data, int64_t offset, int64_t transfer_size,
       bool is_last_transfer, absl::AnyInvocable<void() &&> on_done) override {
@@ -1721,6 +1828,7 @@ class PjRtCApiAsyncHostToDeviceTransferManager
     return absl::OkStatus();
   }
 
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI
   void SetBufferError(int buffer_index, absl::Status error) override {
     PJRT_AsyncHostToDeviceTransferManager_SetBufferError_Args args;
     args.struct_size =
@@ -1737,6 +1845,7 @@ class PjRtCApiAsyncHostToDeviceTransferManager
   }
 
   using TransferMetadata = absl::flat_hash_map<std::string, std::string>;
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI
   void AddTransferMetadata(const TransferMetadata& metadata) override {
     PJRT_AsyncHostToDeviceTransferManager_AddMetadata_Args args;
     args.struct_size =
@@ -1765,6 +1874,7 @@ class PjRtCApiAsyncHostToDeviceTransferManager
       c_transfer_manager_;
 };
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
 PjRtCApiClient::CreateBuffersForAsyncHostToDevice(
     absl::Span<const ShapeSpec> shape_specs,
@@ -1825,6 +1935,7 @@ PjRtCApiDeviceDescription::PjRtCApiDeviceDescription(
   InitAttributes();
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 int PjRtCApiDeviceDescription::id() const {
   PJRT_DeviceDescription_Id_Args args;
   args.struct_size = PJRT_DeviceDescription_Id_Args_STRUCT_SIZE;
@@ -1834,6 +1945,7 @@ int PjRtCApiDeviceDescription::id() const {
   return args.id;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 int PjRtCApiDeviceDescription::process_index() const {
   PJRT_DeviceDescription_ProcessIndex_Args args;
   args.struct_size = PJRT_DeviceDescription_ProcessIndex_Args_STRUCT_SIZE;
@@ -1883,6 +1995,7 @@ DeviceAttributesFromPjRtValues(
   return attributes;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 void PjRtCApiDeviceDescription::InitAttributes() {
   attributes_ = {};
   PJRT_DeviceDescription_Attributes_Args args;
@@ -1901,6 +2014,7 @@ PjRtCApiDeviceDescription::Attributes() const {
   return attributes_;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::string_view PjRtCApiDeviceDescription::device_kind() const {
   PJRT_DeviceDescription_Kind_Args args;
   args.struct_size = PJRT_DeviceDescription_Kind_Args_STRUCT_SIZE;
@@ -1913,6 +2027,7 @@ absl::string_view PjRtCApiDeviceDescription::device_kind() const {
   return device_kind;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::string_view PjRtCApiDeviceDescription::DebugString() const {
   PJRT_DeviceDescription_DebugString_Args args;
   args.struct_size = PJRT_DeviceDescription_DebugString_Args_STRUCT_SIZE;
@@ -1924,6 +2039,7 @@ absl::string_view PjRtCApiDeviceDescription::DebugString() const {
   return debug_string;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::string_view PjRtCApiDeviceDescription::ToString() const {
   PJRT_DeviceDescription_ToString_Args args;
   args.struct_size = PJRT_DeviceDescription_ToString_Args_STRUCT_SIZE;
@@ -1984,6 +2100,7 @@ PjRtCApiDevice::PjRtCApiDevice(PJRT_Device* device, PjRtCApiClient* client)
 
 PjRtClient* PjRtCApiDevice::client() const { return client_; }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 bool PjRtCApiDevice::IsAddressable() const {
   PJRT_Device_IsAddressable_Args args;
   args.struct_size = PJRT_Device_IsAddressable_Args_STRUCT_SIZE;
@@ -1994,6 +2111,7 @@ bool PjRtCApiDevice::IsAddressable() const {
   return args.is_addressable;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 LocalChipId PjRtCApiDevice::local_hardware_id() const {
   PJRT_Device_LocalHardwareId_Args args;
   args.struct_size = PJRT_Device_LocalHardwareId_Args_STRUCT_SIZE;
@@ -2004,6 +2122,7 @@ LocalChipId PjRtCApiDevice::local_hardware_id() const {
   return LocalChipId(args.local_hardware_id);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<PjRtMemorySpace*> PjRtCApiDevice::default_memory_space() const {
   PJRT_Device_DefaultMemory_Args args;
   args.struct_size = PJRT_Device_DefaultMemory_Args_STRUCT_SIZE;
@@ -2026,6 +2145,7 @@ absl::StatusOr<PjRtMemorySpace*> PjRtCApiDevice::memory_space_by_kind(
       absl::StrCat("No memory space found (kind: ", kind, ")"));
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<tsl::AllocatorStats> PjRtCApiDevice::GetAllocatorStats() const {
   PJRT_Device_MemoryStats_Args args{};
   args.struct_size = PJRT_Device_MemoryStats_Args_STRUCT_SIZE;
@@ -2036,6 +2156,7 @@ absl::StatusOr<tsl::AllocatorStats> PjRtCApiDevice::GetAllocatorStats() const {
   return pjrt::ConvertFromPjRtDeviceMemoryStats(args);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::Status PjRtCApiDevice::ClearMemoryStats() {
   const PJRT_Api* api = client_->pjrt_c_api();
   if (api == nullptr) {
@@ -2054,6 +2175,7 @@ absl::Status PjRtCApiDevice::ClearMemoryStats() {
   return absl::OkStatus();
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::intptr_t> PjRtCApiDevice::GetStreamForExternalReadyEvents()
     const {
   const PJRT_Api* c_api = client_->pjrt_c_api();
@@ -2071,6 +2193,7 @@ absl::StatusOr<std::intptr_t> PjRtCApiDevice::GetStreamForExternalReadyEvents()
   return args.stream;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 void PjRtCApiDevice::InitAttributes() {
   PJRT_Device_GetAttributes_Args args;
   args.struct_size = PJRT_Device_GetAttributes_Args_STRUCT_SIZE;
@@ -2091,6 +2214,7 @@ void PjRtCApiDevice::InitAttributes() {
   args.attributes_deleter(args.device_attributes);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<bool> PjRtCApiDevice::PoisonExecution(int32_t launch_id,
                                                      absl::Status error) {
   if (client_->pjrt_c_api()->pjrt_api_version.major_version == 0 &&
@@ -2122,6 +2246,7 @@ absl::StatusOr<bool> PjRtCApiDevice::PoisonExecution(int32_t launch_id,
   return args.poisoned;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 std::unique_ptr<ScopedAsyncTrackingEvent>
 PjRtCApiDevice::CreateAsyncTrackingEvent(absl::string_view description) const {
   if (client_->pjrt_c_api()->pjrt_api_version.major_version == 0 &&
@@ -2146,6 +2271,7 @@ PjRtCApiDevice::CreateAsyncTrackingEvent(absl::string_view description) const {
   return std::make_unique<PjRtCApiAsyncTrackingEvent>(api, args.event);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 PjRtCApiAsyncTrackingEvent::PjRtCApiAsyncTrackingEvent(
     const PJRT_Api* c_api, PJRT_AsyncTrackingEvent* event)
     : c_api_(c_api), event_(event) {}
@@ -2172,6 +2298,7 @@ const PJRT_Api* PjRtCApiMemorySpace::pjrt_c_api() const {
 
 PjRtClient* PjRtCApiMemorySpace::client() const { return client_; }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 int PjRtCApiMemorySpace::id() const {
   PJRT_Memory_Id_Args args;
   args.struct_size = PJRT_Memory_Id_Args_STRUCT_SIZE;
@@ -2181,6 +2308,7 @@ int PjRtCApiMemorySpace::id() const {
   return args.id;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::string_view PjRtCApiMemorySpace::kind() const {
   PJRT_Memory_Kind_Args args;
   args.struct_size = PJRT_Memory_Kind_Args_STRUCT_SIZE;
@@ -2193,6 +2321,7 @@ absl::string_view PjRtCApiMemorySpace::kind() const {
   return absl::string_view(args.kind, args.kind_size);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 int PjRtCApiMemorySpace::kind_id() const {
   PJRT_Memory_Kind_Id_Args args;
   args.struct_size = PJRT_Memory_Kind_Id_Args_STRUCT_SIZE;
@@ -2208,6 +2337,7 @@ int PjRtCApiMemorySpace::kind_id() const {
   return tsl::Fingerprint32(kind());
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::string_view PjRtCApiMemorySpace::DebugString() const {
   PJRT_Memory_DebugString_Args args;
   args.struct_size = PJRT_Memory_DebugString_Args_STRUCT_SIZE;
@@ -2218,6 +2348,7 @@ absl::string_view PjRtCApiMemorySpace::DebugString() const {
   return absl::string_view(args.debug_string, args.debug_string_size);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::string_view PjRtCApiMemorySpace::ToString() const {
   PJRT_Memory_ToString_Args args;
   args.struct_size = PJRT_Memory_ToString_Args_STRUCT_SIZE;
@@ -2230,6 +2361,7 @@ absl::string_view PjRtCApiMemorySpace::ToString() const {
 
 // ------------------------------- Executables ---------------------------------
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 PjRtCApiExecutable::PjRtCApiExecutable(const PJRT_Api* c_api,
                                        PJRT_Executable* executable)
     : c_api_(c_api),
@@ -2247,6 +2379,7 @@ absl::string_view PjRtCApiExecutable::name() const {
   return absl::string_view(args.executable_name, args.executable_name_size);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 int PjRtCApiExecutable::num_replicas() const {
   auto* c_api = pjrt_c_api();
   auto* executable = c_executable();
@@ -2259,6 +2392,7 @@ int PjRtCApiExecutable::num_replicas() const {
   return args.num_replicas;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 int PjRtCApiExecutable::num_partitions() const {
   auto* c_api = pjrt_c_api();
   auto* executable = c_executable();
@@ -2271,6 +2405,7 @@ int PjRtCApiExecutable::num_partitions() const {
   return args.num_partitions;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 int64_t PjRtCApiExecutable::SizeOfGeneratedCodeInBytes() const {
   auto* c_api = pjrt_c_api();
   auto* executable = c_executable();
@@ -2285,6 +2420,7 @@ int64_t PjRtCApiExecutable::SizeOfGeneratedCodeInBytes() const {
   return args.size_in_bytes;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<absl::flat_hash_map<std::string, PjRtValueType>>
 PjRtCApiExecutable::GetCostAnalysis() const {
   // Initialize function call args
@@ -2303,6 +2439,7 @@ PjRtCApiExecutable::GetCostAnalysis() const {
                                              args.num_properties);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::vector<std::vector<PrimitiveType>>>
 PjRtCApiExecutable::GetOutputElementTypes() const {
   PJRT_Executable_OutputElementTypes_Args args;
@@ -2347,6 +2484,7 @@ static absl::StatusOr<Shape> GetOutputShapeHelper(
   return ShapeUtil::MakeTupleShape(shapes);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 std::optional<std::vector<OpSharding>>
 PjRtCApiExecutable::GetParameterShardings() const {
   const PJRT_Api* api = pjrt_c_api();
@@ -2417,6 +2555,7 @@ absl::StatusOr<std::vector<Shape>> PjRtCApiExecutable::GetOutputShapes() const {
   return std::vector<Shape>{shape};
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::string>
 PjRtCApiExecutable::GetSerializedExecutableMetadata() const {
   auto executable_metadata_extension =
@@ -2436,7 +2575,7 @@ PjRtCApiExecutable::GetSerializedExecutableMetadata() const {
     if (args.metadata != nullptr) {
       PJRT_ExecutableMetadata_DestroySerializedMetadata_Args free_args;
       free_args.metadata = args.metadata;
-      executable_metadata_extension->destroy_serialized_metadata(&free_args);
+      DestroySerializedMetadata(executable_metadata_extension, &free_args);
     }
   };
   if (args.metadata == nullptr) {
@@ -2447,6 +2586,7 @@ PjRtCApiExecutable::GetSerializedExecutableMetadata() const {
                      args.metadata->serialized_metadata_size);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::vector<std::vector<DimensionVector>>>
 PjRtCApiExecutable::GetOutputDimensions() const {
   PJRT_Executable_OutputDimensions_Args args;
@@ -2473,6 +2613,7 @@ PjRtCApiExecutable::GetOutputDimensions() const {
   return std::vector<std::vector<DimensionVector>>{std::move(out)};
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 std::optional<std::vector<OpSharding>> PjRtCApiExecutable::GetOutputShardings()
     const {
   const PJRT_Api* api = pjrt_c_api();
@@ -2523,6 +2664,7 @@ std::optional<std::vector<OpSharding>> PjRtCApiExecutable::GetOutputShardings()
   }
   return shardings;
 }
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
 PjRtCApiExecutable::GetParameterLayouts() const {
   const PJRT_Api* c_api = pjrt_c_api();
@@ -2567,8 +2709,8 @@ PjRtCApiExecutable::GetParameterLayouts() const {
 
     // Clean up `PJRT_Layouts_SerializedLayout`.
     absl::Cleanup cleanup = [&serialize_args] {
-      serialize_args.serialized_layout_deleter(
-          serialize_args.serialized_layout);
+      DeleteSerializedLayout(serialize_args.serialized_layout_deleter,
+                             serialize_args.serialized_layout);
     };
 
     std::string serialized_layout(serialize_args.serialized_bytes,
@@ -2580,6 +2722,7 @@ PjRtCApiExecutable::GetParameterLayouts() const {
   return layouts;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::vector<std::vector<absl::string_view>>>
 PjRtCApiExecutable::GetParameterMemoryKinds() const {
   const PJRT_Api* c_api = pjrt_c_api();
@@ -2608,6 +2751,7 @@ PjRtCApiExecutable::GetParameterMemoryKinds() const {
   return std::vector<std::vector<absl::string_view>>{std::move(out)};
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
 PjRtCApiExecutable::GetOutputLayouts() const {
   const PJRT_Api* c_api = pjrt_c_api();
@@ -2651,8 +2795,8 @@ PjRtCApiExecutable::GetOutputLayouts() const {
 
     // Clean up `PJRT_Layouts_SerializedLayout`.
     absl::Cleanup cleanup = [&serialize_args] {
-      serialize_args.serialized_layout_deleter(
-          serialize_args.serialized_layout);
+      DeleteSerializedLayout(serialize_args.serialized_layout_deleter,
+                             serialize_args.serialized_layout);
     };
 
     std::string serialized_layout(serialize_args.serialized_bytes,
@@ -2664,6 +2808,7 @@ PjRtCApiExecutable::GetOutputLayouts() const {
   return layouts;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::vector<std::vector<absl::string_view>>>
 PjRtCApiExecutable::GetOutputMemoryKinds() const {
   PJRT_Executable_OutputMemoryKinds_Args args;
@@ -2684,6 +2829,7 @@ PjRtCApiExecutable::GetOutputMemoryKinds() const {
   return std::vector<std::vector<absl::string_view>>{std::move(out)};
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::shared_ptr<HloModule>> PjRtCApiExecutable::GetHloModule()
     const {
   auto* c_api = pjrt_c_api();
@@ -2719,9 +2865,8 @@ absl::StatusOr<std::shared_ptr<HloModule>> PjRtCApiExecutable::GetHloModule()
 
   if (program_format == ::pjrt::kMlirFormat) {
     mlir::MLIRContext ctx;
-    ABSL_ASSIGN_OR_RETURN(  // NOLINT(clang-diagnostic-pre-c++20-compat)
-        mlir::OwningOpRef<mlir::ModuleOp> module,
-        ParseMlirModuleString(code, ctx));
+    ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                          ParseMlirModuleString(code, ctx));
     mlir::PassManager pm(&ctx);
     pm.addPass(mlir::mhlo::createStablehloLegalizeToHloPass());
     if (mlir::failed(pm.run(module.get())))
@@ -2741,6 +2886,7 @@ absl::StatusOr<std::shared_ptr<HloModule>> PjRtCApiExecutable::GetHloModule()
                                               /*prohibit_empty_literal=*/false);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::string> PjRtCApiExecutable::SerializeExecutable() const {
   auto* c_api = pjrt_c_api();
   auto* executable = c_executable();
@@ -2753,11 +2899,13 @@ absl::StatusOr<std::string> PjRtCApiExecutable::SerializeExecutable() const {
   RETURN_STATUS_IF_PJRT_ERROR(c_api->PJRT_Executable_Serialize(&ser_args),
                               c_api);
   absl::Cleanup cleanup = [&ser_args] {
-    ser_args.serialized_executable_deleter(ser_args.serialized_executable);
+    DeleteSerializedExecutable(ser_args.serialized_executable_deleter,
+                               ser_args.serialized_executable);
   };
   return std::string(ser_args.serialized_bytes, ser_args.serialized_bytes_size);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::string> PjRtCApiExecutable::FingerprintExecutable() const {
   const PJRT_Api* c_api_ = pjrt_c_api();
   PJRT_Executable_Fingerprint_Args args;
@@ -2770,6 +2918,7 @@ absl::StatusOr<std::string> PjRtCApiExecutable::FingerprintExecutable() const {
                      args.executable_fingerprint_size);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtExecutableAbiVersion>>
 PjRtCApiExecutable::GetAbiVersion() const {
   PJRT_AbiVersion_Extension* extension =
@@ -2788,6 +2937,7 @@ PjRtCApiExecutable::GetAbiVersion() const {
                                                         c_api_, extension);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<CompileOptions> PjRtCApiExecutable::GetCompileOptions() const {
   if (c_api_->pjrt_api_version.major_version == 0 &&
       c_api_->pjrt_api_version.minor_version < 87) {
@@ -2802,7 +2952,8 @@ absl::StatusOr<CompileOptions> PjRtCApiExecutable::GetCompileOptions() const {
   RETURN_STATUS_IF_PJRT_ERROR(c_api_->PJRT_Executable_GetCompileOptions(&args),
                               c_api_);
   absl::Cleanup cleanup = [&args] {
-    args.serialized_compile_options_deleter(args.serialized_compile_options);
+    DeleteSerializedCompileOptions(args.serialized_compile_options_deleter,
+                                   args.serialized_compile_options);
   };
   CompileOptionsProto proto;
   if (!proto.ParseFromString(
@@ -2816,6 +2967,7 @@ absl::StatusOr<CompileOptions> PjRtCApiExecutable::GetCompileOptions() const {
 
 // ------------------------ Loaded Executables ---------------------------------
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 PjRtCApiLoadedExecutable::PjRtCApiLoadedExecutable(
     PjRtCApiClient* client, PJRT_LoadedExecutable* executable)
     : client_(client),
@@ -2834,6 +2986,7 @@ PjRtCApiLoadedExecutable::PjRtCApiLoadedExecutable(
   InitDeviceAssignment();
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 void PjRtCApiLoadedExecutable::InitDevices() {
   PJRT_LoadedExecutable_AddressableDevices_Args args;
   args.struct_size = PJRT_LoadedExecutable_AddressableDevices_Args_STRUCT_SIZE;
@@ -2856,6 +3009,7 @@ void PjRtCApiLoadedExecutable::InitDevices() {
   }
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 void PjRtCApiLoadedExecutable::InitDeviceAssignment() {
   if (pjrt_c_api()->pjrt_api_version.major_version == 0 &&
       pjrt_c_api()->pjrt_api_version.minor_version < 79) {
@@ -2873,8 +3027,8 @@ void PjRtCApiLoadedExecutable::InitDeviceAssignment() {
       api->PJRT_LoadedExecutable_GetDeviceAssignment(&args), api);
 
   absl::Cleanup cleanup = [&args] {
-    args.serialized_device_assignment_deleter(
-        args.serialized_device_assignment);
+    DeleteSerializedDeviceAssignment(args.serialized_device_assignment_deleter,
+                                     args.serialized_device_assignment);
   };
 
   // If `serialized_bytes_size` is 0, this executable is portable and has no
@@ -2949,8 +3103,9 @@ PJRT_SendCallbackInfo CppSendCallbackToC(
                                         total_size_in_bytes, done);
     if (!status.ok()) {
       absl::string_view message = status.message();
-      return (*callback_error)(pjrt::StatusCodeToPjrtErrorCode(status.code()),
-                               message.data(), message.size());
+      return InvokePjrtCallbackError(
+          callback_error, pjrt::StatusCodeToPjrtErrorCode(status.code()),
+          message.data(), message.size());
     }
     return nullptr;
   };
@@ -3047,6 +3202,7 @@ PJRT_HloOutputCallbackInfo CppHloOutputCallbackToC(
       /*num_operands=*/num_operands};
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 CApiCopyToDeviceStream::CApiCopyToDeviceStream(
     PJRT_CopyToDeviceStream* c_stream, const PJRT_Api* c_api)
     : CopyToDeviceStream(/*total_bytes=*/0, /*granule_bytes=*/0),
@@ -3071,6 +3227,7 @@ CApiCopyToDeviceStream::CApiCopyToDeviceStream(
   granule_bytes_ = granule_size_args.granule_size_in_bytes;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 CApiCopyToDeviceStream::~CApiCopyToDeviceStream() {
   PJRT_CopyToDeviceStream_Destroy_Args destroy_args;
   destroy_args.struct_size = PJRT_CopyToDeviceStream_Destroy_Args_STRUCT_SIZE;
@@ -3080,6 +3237,7 @@ CApiCopyToDeviceStream::~CApiCopyToDeviceStream() {
       c_api_->PJRT_CopyToDeviceStream_Destroy(&destroy_args), c_api_);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 Future<> CApiCopyToDeviceStream::AddChunk(PjRtChunk chunk) {
   PJRT_Chunk c_chunk = ::pjrt::ConvertFromCppChunk(std::move(chunk));
 
@@ -3214,6 +3372,7 @@ void CppHloOutputCallbacksToC(
   }
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<size_t> PjRtCApiLoadedExecutable::GetNumOutputs() const {
   PJRT_Executable_NumOutputs_Args args;
   args.struct_size = PJRT_Executable_NumOutputs_Args_STRUCT_SIZE;
@@ -3355,6 +3514,7 @@ PjRtCApiLoadedExecutable::GetCommonExecuteArgs(
   return args;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 static absl::StatusOr<PJRT_ExecuteContext*> ForwardExecuteContext(
     const PjRtCApiClient* client, const ExecuteContext* context) {
   const PJRT_Api* c_api = client->pjrt_c_api();
@@ -3382,7 +3542,8 @@ static absl::StatusOr<PJRT_ExecuteContext*> ForwardExecuteContext(
         create_args.context,
         PJRT_FFI_UserData{type_id.value(), data},
     };
-    RETURN_STATUS_IF_PJRT_ERROR(ffi_extension->user_data_add(&add_args), c_api);
+    RETURN_STATUS_IF_PJRT_ERROR(AddFfiUserData(ffi_extension, &add_args),
+                                c_api);
     return absl::OkStatus();
   };
 
@@ -3392,6 +3553,7 @@ static absl::StatusOr<PJRT_ExecuteContext*> ForwardExecuteContext(
   return create_args.context;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>>
 PjRtCApiLoadedExecutable::Execute(
     absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
@@ -3424,8 +3586,7 @@ PjRtCApiLoadedExecutable::Execute(
           PJRT_ExecuteContext_Destroy_Args_STRUCT_SIZE, nullptr,
           c_options.context};
       pjrt::LogFatalIfPjrtError(
-          pjrt_c_api()->PJRT_ExecuteContext_Destroy(&destroy_args),
-          pjrt_c_api());
+          DestroyExecuteContext(pjrt_c_api(), &destroy_args), pjrt_c_api());
     }
   });
 
@@ -3484,6 +3645,7 @@ PjRtCApiLoadedExecutable::Execute(
                                        inner_size, client_);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtCApiLoadedExecutable::ExecuteWithSingleDevice(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
@@ -3578,6 +3740,7 @@ PjRtCApiLoadedExecutable::ExecutePortable(
                                  returned_future, fill_future);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 void PjRtCApiLoadedExecutable::Delete() {
   PJRT_LoadedExecutable_Delete_Args args;
   args.struct_size = PJRT_LoadedExecutable_Delete_Args_STRUCT_SIZE;
@@ -3587,6 +3750,7 @@ void PjRtCApiLoadedExecutable::Delete() {
   pjrt::LogFatalIfPjrtError(c_api->PJRT_LoadedExecutable_Delete(&args), c_api);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 bool PjRtCApiLoadedExecutable::IsDeleted() const {
   PJRT_LoadedExecutable_IsDeleted_Args args;
   args.struct_size = PJRT_LoadedExecutable_IsDeleted_Args_STRUCT_SIZE;
@@ -3601,6 +3765,7 @@ bool PjRtCApiLoadedExecutable::IsDeleted() const {
 
 // ---------------------------------- Buffers ----------------------------------
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 PjRtCApiBuffer::PjRtCApiBuffer(PjRtCApiClient* client, PJRT_Buffer* buffer)
     : client_(client),
       buffer_(buffer, ::pjrt::MakeBufferDeleter(client->pjrt_c_api())),
@@ -3617,6 +3782,7 @@ PrimitiveType PjRtCApiBuffer::element_type() const {
   return pjrt::ConvertFromPjRtBufferType(args.type);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::Span<const int64_t> PjRtCApiBuffer::dimensions() const {
   PJRT_Buffer_Dimensions_Args args;
   args.struct_size = PJRT_Buffer_Dimensions_Args_STRUCT_SIZE;
@@ -3627,6 +3793,7 @@ absl::Span<const int64_t> PjRtCApiBuffer::dimensions() const {
   return absl::Span<const int64_t>(args.dims, args.num_dims);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 std::shared_ptr<const PjRtLayout> PjRtCApiBuffer::layout() const {
   {
     absl::MutexLock lock(mu_);
@@ -3656,8 +3823,8 @@ std::shared_ptr<const PjRtLayout> PjRtCApiBuffer::layout() const {
 
         // Clean up `PJRT_Layouts_SerializedLayout`.
         absl::Cleanup cleanup = [&serialize_args] {
-          serialize_args.serialized_layout_deleter(
-              serialize_args.serialized_layout);
+          DeleteSerializedLayout(serialize_args.serialized_layout_deleter,
+                                 serialize_args.serialized_layout);
         };
 
         std::string serialized_layout(serialize_args.serialized_bytes,
@@ -3699,6 +3866,7 @@ absl::StatusOr<Shape> PjRtCApiBuffer::logical_on_device_shape() {
   return result;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 bool PjRtCApiBuffer::has_dynamic_dimensions() const {
   PJRT_Buffer_DynamicDimensionIndices_Args args;
   args.struct_size = PJRT_Buffer_DynamicDimensionIndices_Args_STRUCT_SIZE;
@@ -3717,6 +3885,7 @@ bool PjRtCApiBuffer::has_dynamic_dimensions() const {
   return args.num_dynamic_dims > 0;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::Span<const bool> PjRtCApiBuffer::is_dynamic_dimension() const {
   {
     absl::MutexLock lock(mu_);
@@ -3745,6 +3914,7 @@ absl::Span<const bool> PjRtCApiBuffer::is_dynamic_dimension() const {
   return *is_dynamic_dimension_;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::vector<int64_t>> PjRtCApiBuffer::logical_dimensions() {
   PJRT_Buffer_UnpaddedDimensions_Args args;
   args.struct_size = PJRT_Buffer_UnpaddedDimensions_Args_STRUCT_SIZE;
@@ -3766,6 +3936,7 @@ Future<> PjRtCApiBuffer::LazyToLiteral(
   return ToLiteral(literal.value());
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 Future<> PjRtCApiBuffer::ToLiteral(MutableLiteralBase* literal) {
   PJRT_Buffer_ToHostBuffer_Args args;
   args.struct_size = PJRT_Buffer_ToHostBuffer_Args_STRUCT_SIZE;
@@ -3817,6 +3988,7 @@ Future<> PjRtCApiBuffer::ToLiteral(MutableLiteralBase* literal) {
   return pjrt::ConvertCEventToCppFuture(args.event, api);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<size_t> PjRtCApiBuffer::GetOnDeviceSizeInBytes() const {
   PJRT_Buffer_OnDeviceSizeInBytes_Args args;
   args.struct_size = PJRT_Buffer_OnDeviceSizeInBytes_Args_STRUCT_SIZE;
@@ -3829,6 +4001,7 @@ absl::StatusOr<size_t> PjRtCApiBuffer::GetOnDeviceSizeInBytes() const {
   return args.on_device_size_in_bytes;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 PjRtMemorySpace* PjRtCApiBuffer::memory_space() const {
   PJRT_Buffer_Memory_Args args;
   args.struct_size = PJRT_Buffer_Memory_Args_STRUCT_SIZE;
@@ -3846,6 +4019,7 @@ PjRtMemorySpace* PjRtCApiBuffer::memory_space() const {
   return nullptr;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 PjRtDevice* PjRtCApiBuffer::device() const {
   PJRT_Buffer_Device_Args args;
   args.struct_size = PJRT_Buffer_Device_Args_STRUCT_SIZE;
@@ -3856,6 +4030,7 @@ PjRtDevice* PjRtCApiBuffer::device() const {
   return client_->GetCppDevice(args.device);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 void PjRtCApiBuffer::Delete() {
   PJRT_Buffer_Delete_Args args;
   args.struct_size = PJRT_Buffer_Delete_Args_STRUCT_SIZE;
@@ -3865,6 +4040,7 @@ void PjRtCApiBuffer::Delete() {
   pjrt::LogFatalIfPjrtError(api->PJRT_Buffer_Delete(&args), api);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 bool PjRtCApiBuffer::IsDeleted() const {
   PJRT_Buffer_IsDeleted_Args args;
   args.struct_size = PJRT_Buffer_IsDeleted_Args_STRUCT_SIZE;
@@ -3875,6 +4051,7 @@ bool PjRtCApiBuffer::IsDeleted() const {
   return args.is_deleted;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 Future<> PjRtCApiBuffer::CopyRawToHost(void* dst, int64_t offset,
                                        int64_t transfer_size) {
   PJRT_Buffer_CopyRawToHost_Args args;
@@ -3890,6 +4067,7 @@ Future<> PjRtCApiBuffer::CopyRawToHost(void* dst, int64_t offset,
   return pjrt::ConvertCEventToCppFuture(args.event, api);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 Future<> PjRtCApiBuffer::CopyRawToHostFuture(Future<void*> dst, int64_t offset,
                                              int64_t transfer_size) {
   if (pjrt_c_api()->pjrt_api_version.major_version == 0 &&
@@ -3932,6 +4110,7 @@ Future<> PjRtCApiBuffer::CopyRawToHostFuture(Future<void*> dst, int64_t offset,
   return pjrt::ConvertCEventToCppFuture(args.event, api);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiBuffer::CopyToMemorySpace(
     PjRtMemorySpace* dst_memory) {
   const PJRT_Api* api = pjrt_c_api();
@@ -3966,6 +4145,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiBuffer::CopyToMemorySpace(
   }
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 bool PjRtCApiBuffer::IsOnCpu() const {
   PJRT_Buffer_IsOnCpu_Args args;
   args.struct_size = PJRT_Buffer_IsOnCpu_Args_STRUCT_SIZE;
@@ -3976,6 +4156,7 @@ bool PjRtCApiBuffer::IsOnCpu() const {
   return args.is_on_cpu;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 PJRT_Event* PjRtCApiBuffer::GetReadyEvent() {
   if (readiness_event_ == nullptr) {
     const PJRT_Api* api = pjrt_c_api();
@@ -3989,6 +4170,7 @@ PJRT_Event* PjRtCApiBuffer::GetReadyEvent() {
   return readiness_event_.get();
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 void PjRtCApiBuffer::MakePromiseTrackEvent() {
   CHECK(readiness_promise_ != nullptr);
   const PJRT_Api* api = pjrt_c_api();
@@ -4058,6 +4240,7 @@ Future<> PjRtCApiBuffer::GetReadyFuture() {
   return readiness_future_;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtBuffer::ExternalReference>>
 PjRtCApiBuffer::AcquireExternalReference() {
   PJRT_Buffer_IncreaseExternalReferenceCount_Args increase_reference_count_args;
@@ -4087,6 +4270,7 @@ PjRtCApiBuffer::AcquireExternalReference() {
                                                      device_memory_ptr);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 PjRtCApiBuffer::DonateWithControlDependency(Future<> dependency) {
   if (client_->pjrt_c_api()->pjrt_api_version.major_version == 0 &&
@@ -4124,6 +4308,7 @@ PjRtCApiBuffer::DonateWithControlDependency(Future<> dependency) {
       std::make_unique<PjRtCApiBuffer>(client_, args.out_buffer));
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 void PjRtCApiBuffer::CopyToRemoteDevice(
     Future<std::string> serialized_descriptor, RemoteSendCallback on_done) {
   PJRT_CrossHostTransfers_Extension* extension =
@@ -4214,12 +4399,13 @@ void PjRtCApiBuffer::CopyToRemoteDevice(
           pjrt::StatusCodeToPjrtErrorCode(descriptor.status().code());
       event_set_args.error_message = descriptor.status().message().data();
       event_set_args.error_message_size = descriptor.status().message().size();
-      pjrt::LogFatalIfPjrtError(c_api->PJRT_Event_Set(&event_set_args), c_api);
+      pjrt::LogFatalIfPjrtError(SetPjrtEvent(c_api, &event_set_args), c_api);
     });
   }
 #endif
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiBuffer::Bitcast(
     PrimitiveType element_type, absl::Span<const int64_t> dims,
     const Layout* device_layout) {
@@ -4254,6 +4440,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiBuffer::Bitcast(
       std::make_unique<PjRtCApiBuffer>(client_, args.out_buffer));
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 PjRtCApiExternalReference::~PjRtCApiExternalReference() {
   PJRT_Buffer_DecreaseExternalReferenceCount_Args args;
   args.struct_size =
@@ -4265,6 +4452,7 @@ PjRtCApiExternalReference::~PjRtCApiExternalReference() {
       client_->pjrt_c_api());
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::Status PjRtCApiExternalReference::WaitUntilBufferReadyOnStream(
     std::intptr_t stream) {
   const PJRT_Api* c_api = buffer_->pjrt_c_api();
@@ -4307,6 +4495,7 @@ absl::string_view PjRtCApiTopologyDescription::platform_version() const {
   return platform_version_;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 std::vector<std::unique_ptr<const PjRtDeviceDescription>>
 PjRtCApiTopologyDescription::DeviceDescriptions() const {
   PJRT_TopologyDescription_GetDeviceDescriptions_Args args;
@@ -4327,6 +4516,7 @@ PjRtCApiTopologyDescription::DeviceDescriptions() const {
   return out;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::string> PjRtCApiTopologyDescription::Serialize() const {
   PJRT_TopologyDescription_Serialize_Args args;
   args.struct_size = PJRT_TopologyDescription_Serialize_Args_STRUCT_SIZE;
@@ -4339,6 +4529,7 @@ absl::StatusOr<std::string> PjRtCApiTopologyDescription::Serialize() const {
   return out;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<uint64_t> PjRtCApiTopologyDescription::Fingerprint() const {
   if (c_api_->pjrt_api_version.major_version == 0 &&
       c_api_->pjrt_api_version.minor_version < 101) {
@@ -4354,6 +4545,7 @@ absl::StatusOr<uint64_t> PjRtCApiTopologyDescription::Fingerprint() const {
   return args.fingerprint;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<Layout> PjRtCApiTopologyDescription::GetDefaultLayout(
     PrimitiveType element_type, absl::Span<const int64_t> dims) const {
   const PJRT_Api* c_api = c_api_;
@@ -4399,8 +4591,8 @@ absl::StatusOr<Layout> PjRtCApiTopologyDescription::GetDefaultLayout(
   // Clean up `PJRT_Layouts_SerializedLayout`.
   absl::Cleanup cleanup = [&serialize_args] {
     if (serialize_args.serialized_layout_deleter) {
-      serialize_args.serialized_layout_deleter(
-          serialize_args.serialized_layout);
+      DeleteSerializedLayout(serialize_args.serialized_layout_deleter,
+                             serialize_args.serialized_layout);
     }
   };
 
@@ -4412,6 +4604,7 @@ absl::StatusOr<Layout> PjRtCApiTopologyDescription::GetDefaultLayout(
   return pjrt_layout->xla_layout();
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<xla::Shape>
 PjRtCApiTopologyDescription::MakeCanonicalShapeForMemorySpace(
     int memory_space_kind_id, xla::Shape shape,
@@ -4459,7 +4652,8 @@ PjRtCApiTopologyDescription::MakeCanonicalShapeForMemorySpace(
 
   absl::Cleanup cleanup = [&args] {
     if (args.serialized_shape_deleter) {
-      args.serialized_shape_deleter(args.serialized_shape);
+      DeleteSerializedShape(args.serialized_shape_deleter,
+                            args.serialized_shape);
     }
   };
 
@@ -4472,6 +4666,7 @@ PjRtCApiTopologyDescription::MakeCanonicalShapeForMemorySpace(
   return xla::Shape::FromProto(shape_proto);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::Span<const int> PjRtCApiTopologyDescription::GetMemorySpaceKindIds()
     const {
   if (c_api_->pjrt_api_version.minor_version < 110 ||
@@ -4502,6 +4697,7 @@ absl::Span<const int> PjRtCApiTopologyDescription::GetMemorySpaceKindIds()
                              args.num_memory_space_kind_ids);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 void PjRtCApiTopologyDescription::InitAttributes() {
   PJRT_TopologyDescription_Attributes_Args args;
   args.struct_size = PJRT_TopologyDescription_Attributes_Args_STRUCT_SIZE;
@@ -4513,6 +4709,7 @@ void PjRtCApiTopologyDescription::InitAttributes() {
       pjrt::ConvertFromPjRtNamedValueList(args.attributes, args.num_attributes);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtTopologyDescription>>
 PjRtCApiTopologyDescription::Subslice(
     const PjRtDeviceDimensions& chips_per_host_bounds,
@@ -4576,6 +4773,7 @@ PjRtCApiTopologyDescription::Subslice(
   return Subslice(subslice_chips_per_host_bounds, subslice_host_bounds);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<PjRtSubsliceBounds>
 PjRtCApiTopologyDescription::ComputeSubsliceForDevices(
     absl::Span<const int> device_ids) const {
@@ -4619,6 +4817,7 @@ PjRtCApiTopologyDescription::ComputeSubsliceForDevices(
   return bounds;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 bool PjRtCApiTopologyDescription::is_subslice_topology() const {
   CHECK(tpu_topology_extension_ != nullptr)
       << "Subslice is not supported by the PJRT C API.";
@@ -4640,6 +4839,7 @@ PjRtCApiTopologyDescription::ToProto() const {
   return proto;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<int> PjRtCApiTopologyDescription::ProcessCount() const {
   if (tpu_topology_extension_ == nullptr) {
     return Unimplemented("ProcessCount is not supported by the PJRT C API.");
@@ -4652,6 +4852,7 @@ absl::StatusOr<int> PjRtCApiTopologyDescription::ProcessCount() const {
   return args.process_count;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<int> PjRtCApiTopologyDescription::ChipsPerProcess() const {
   if (tpu_topology_extension_ == nullptr) {
     return Unimplemented("ChipsPerProcess is not supported by the PJRT C API.");
@@ -4664,6 +4865,7 @@ absl::StatusOr<int> PjRtCApiTopologyDescription::ChipsPerProcess() const {
   return args.chips_per_process;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<int> PjRtCApiTopologyDescription::CoreCountOfDefaultTypePerChip()
     const {
   if (tpu_topology_extension_ == nullptr) {
@@ -4678,6 +4880,7 @@ absl::StatusOr<int> PjRtCApiTopologyDescription::CoreCountOfDefaultTypePerChip()
   return args.core_count_of_default_type_per_chip;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<int> PjRtCApiTopologyDescription::ChipCount() const {
   if (tpu_topology_extension_ == nullptr) {
     return Unimplemented("ChipCount is not supported by the PJRT C API.");
@@ -4690,6 +4893,7 @@ absl::StatusOr<int> PjRtCApiTopologyDescription::ChipCount() const {
   return args.chip_count;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<int> PjRtCApiTopologyDescription::CoreCountOfDefaultType()
     const {
   if (tpu_topology_extension_ == nullptr) {
@@ -4705,6 +4909,7 @@ absl::StatusOr<int> PjRtCApiTopologyDescription::CoreCountOfDefaultType()
   return args.core_count_of_default_type;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<int>
 PjRtCApiTopologyDescription::LogicalDeviceCountOfDefaultTypePerProcess() const {
   if (tpu_topology_extension_ == nullptr) {
@@ -4721,6 +4926,7 @@ PjRtCApiTopologyDescription::LogicalDeviceCountOfDefaultTypePerProcess() const {
   return args.logical_device_count_of_default_type_per_process;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<int>
 PjRtCApiTopologyDescription::LogicalDeviceCountOfDefaultType() const {
   if (tpu_topology_extension_ == nullptr) {
@@ -4735,6 +4941,7 @@ PjRtCApiTopologyDescription::LogicalDeviceCountOfDefaultType() const {
   return args.logical_device_count_of_default_type;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<int>
 PjRtCApiTopologyDescription::LogicalDeviceCountOfDefaultTypePerChip() const {
   if (tpu_topology_extension_ == nullptr) {
@@ -4750,6 +4957,7 @@ PjRtCApiTopologyDescription::LogicalDeviceCountOfDefaultTypePerChip() const {
   return args.logical_device_count_of_default_type_per_chip;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<int>
 PjRtCApiTopologyDescription::CoreCountOfDefaultTypePerProcess() const {
   if (tpu_topology_extension_ == nullptr) {
@@ -4764,6 +4972,7 @@ PjRtCApiTopologyDescription::CoreCountOfDefaultTypePerProcess() const {
   return args.core_count_of_default_type_per_process;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<PjRtIdContainer<ProcessId>>
 PjRtCApiTopologyDescription::ProcessIds() const {
   if (tpu_topology_extension_ == nullptr) {
@@ -4786,6 +4995,7 @@ PjRtCApiTopologyDescription::ProcessIds() const {
   return ids;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<PjRtIdContainer<GlobalDeviceId>>
 PjRtCApiTopologyDescription::LogicalDeviceOfDefaultTypeIdsOnProcess(
     ProcessId process_id) const {
@@ -4813,6 +5023,7 @@ PjRtCApiTopologyDescription::LogicalDeviceOfDefaultTypeIdsOnProcess(
   return ids;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::pair<ProcessId, int>>
 PjRtCApiTopologyDescription::ProcessIdAndIndexOnProcessForChip(
     GlobalChipId chip_id) const {
@@ -4831,6 +5042,7 @@ PjRtCApiTopologyDescription::ProcessIdAndIndexOnProcessForChip(
   return std::make_pair(ProcessId(args.process_id), args.index_on_process);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::pair<ProcessId, int>> PjRtCApiTopologyDescription::
     ProcessIdAndIndexOnProcessForLogicalDeviceOfDefaultType(
         xla::GlobalDeviceId device_id) const {
@@ -4850,6 +5062,7 @@ absl::StatusOr<std::pair<ProcessId, int>> PjRtCApiTopologyDescription::
   return std::make_pair(ProcessId(args.process_id), args.index_on_process);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<PjRtDeviceDimensions>
 PjRtCApiTopologyDescription::ProcessCoordFromId(ProcessId process_id) const {
   if (tpu_topology_extension_ == nullptr) {
@@ -4869,6 +5082,7 @@ PjRtCApiTopologyDescription::ProcessCoordFromId(ProcessId process_id) const {
       absl::MakeSpan(coords.data(), args.coords_num_dims));
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<GlobalChipId> PjRtCApiTopologyDescription::ChipIdFromCoord(
     const PjRtDeviceDimensions& chip) const {
   if (tpu_topology_extension_ == nullptr) {
@@ -4884,6 +5098,7 @@ absl::StatusOr<GlobalChipId> PjRtCApiTopologyDescription::ChipIdFromCoord(
   return GlobalChipId(args.chip_id);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<xla::GlobalDeviceId> PjRtCApiTopologyDescription::
     LogicalDeviceOfDefaultTypeIdFromChipCoordAndCoreIndex(
         const PjRtDeviceDimensions& chip, int core_index) const {
@@ -4909,6 +5124,7 @@ absl::StatusOr<xla::GlobalDeviceId> PjRtCApiTopologyDescription::
   return GlobalDeviceId(args.logical_device_of_default_type_id);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::pair<PjRtDeviceDimensions, int32_t>>
 PjRtCApiTopologyDescription::ChipCoordAndCoreIndexForLogicalDeviceOfDefaultType(
     xla::GlobalDeviceId device_id) const {
@@ -4934,6 +5150,7 @@ PjRtCApiTopologyDescription::ChipCoordAndCoreIndexForLogicalDeviceOfDefaultType(
       args.device_index_on_chip);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<PjRtDeviceDimensions>
 PjRtCApiTopologyDescription::ChipsPerProcessBounds() const {
   if (tpu_topology_extension_ == nullptr) {
@@ -4952,6 +5169,7 @@ PjRtCApiTopologyDescription::ChipsPerProcessBounds() const {
       absl::MakeSpan(bounds.data(), args.chip_per_process_bounds_num_dims));
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<PjRtDeviceDimensions> PjRtCApiTopologyDescription::ChipBounds()
     const {
   if (tpu_topology_extension_ == nullptr) {
@@ -4969,6 +5187,7 @@ absl::StatusOr<PjRtDeviceDimensions> PjRtCApiTopologyDescription::ChipBounds()
       absl::MakeSpan(bounds.data(), args.chip_bounds_num_dims));
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<PjRtDeviceDimensions>
 PjRtCApiTopologyDescription::ProcessBounds() const {
   if (tpu_topology_extension_ == nullptr) {
@@ -5009,6 +5228,7 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCApiCompiler::Compile(
                                      topology);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtTopologyDescription>>
 PjRtCApiCompiler::DeserializePjRtTopologyDescription(
     const std::string& serialized_topology) {
@@ -5039,6 +5259,7 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetCApiClient(
   return WrapClientAroundCApi(c_api, create_options, kv_store);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtClient>> WrapClientAroundCApi(
     const PJRT_Api* c_api,
     const absl::flat_hash_map<std::string, PjRtValueType>& create_options,
@@ -5079,6 +5300,7 @@ absl::StatusOr<std::unique_ptr<PjRtTopologyDescription>> GetCApiTopology(
   return GetCApiTopology(c_api, topology_name, create_options);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtTopologyDescription>> GetCApiTopology(
     const PJRT_Api* c_api, absl::string_view topology_name,
     const absl::flat_hash_map<std::string, PjRtValueType>& create_options) {
@@ -5131,6 +5353,7 @@ absl::StatusOr<std::unique_ptr<PjRtCompiler>> GetCApiCompiler() {
   return true;
 }();
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<std::unique_ptr<PjRtPhaseCompiler>> GetCApiPhaseCompiler(
     absl::string_view device_type) {
   ABSL_ASSIGN_OR_RETURN(const PJRT_Api* c_api, pjrt::PjrtApi(device_type));
@@ -5187,6 +5410,7 @@ absl::StatusOr<std::unique_ptr<PjRtPhaseCompiler>> GetCApiPhaseCompiler() {
   return GetCApiPhaseCompiler(device_types[0]);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 PjRtCApiRuntimeAbiVersion::PjRtCApiRuntimeAbiVersion(
     PJRT_RuntimeAbiVersion* c_abi_version, const PJRT_Api* c_api,
     const PJRT_AbiVersion_Extension* extension)
@@ -5200,6 +5424,7 @@ PjRtCApiRuntimeAbiVersion::~PjRtCApiRuntimeAbiVersion() {
                             c_api_);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::Status PjRtCApiRuntimeAbiVersion::IsCompatibleWith(
     const PjRtRuntimeAbiVersion& runtime_abi_version) const {
   PJRT_RuntimeAbiVersion_IsCompatibleWithRuntime_Args args;
@@ -5215,6 +5440,7 @@ absl::Status PjRtCApiRuntimeAbiVersion::IsCompatibleWith(
   return absl::OkStatus();
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::Status PjRtCApiRuntimeAbiVersion::IsCompatibleWith(
     const PjRtExecutableAbiVersion& executable_abi_version) const {
   PJRT_RuntimeAbiVersion_IsCompatibleWithExecutable_Args args;
@@ -5231,6 +5457,7 @@ absl::Status PjRtCApiRuntimeAbiVersion::IsCompatibleWith(
   return absl::OkStatus();
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<PjRtRuntimeAbiVersionProto> PjRtCApiRuntimeAbiVersion::ToProto()
     const {
   PJRT_RuntimeAbiVersion_ToProto_Args args;
@@ -5239,7 +5466,8 @@ absl::StatusOr<PjRtRuntimeAbiVersionProto> PjRtCApiRuntimeAbiVersion::ToProto()
   RETURN_STATUS_IF_PJRT_ERROR(extension_->runtime_abi_version_to_proto(&args),
                               c_api_);
   absl::Cleanup cleanup = [&args] {
-    args.serialized_proto_deleter(args.serialized_proto_holder);
+    DeleteSerializedProto(args.serialized_proto_deleter,
+                          args.serialized_proto_holder);
   };
   PjRtRuntimeAbiVersionProto proto;
   if (!proto.ParseFromString(
@@ -5251,6 +5479,7 @@ absl::StatusOr<PjRtRuntimeAbiVersionProto> PjRtCApiRuntimeAbiVersion::ToProto()
   return proto;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 PjRtPlatformId PjRtCApiRuntimeAbiVersion::platform_id() const {
   PJRT_RuntimeAbiVersion_PlatformId_Args args;
   args.struct_size = PJRT_RuntimeAbiVersion_PlatformId_Args_STRUCT_SIZE;
@@ -5260,6 +5489,7 @@ PjRtPlatformId PjRtCApiRuntimeAbiVersion::platform_id() const {
   return args.platform_id;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 PjRtCApiExecutableAbiVersion::PjRtCApiExecutableAbiVersion(
     PJRT_ExecutableAbiVersion* c_abi_version, const PJRT_Api* c_api,
     const PJRT_AbiVersion_Extension* extension)
@@ -5273,6 +5503,7 @@ PjRtCApiExecutableAbiVersion::~PjRtCApiExecutableAbiVersion() {
                             c_api_);
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 absl::StatusOr<PjRtExecutableAbiVersionProto>
 PjRtCApiExecutableAbiVersion::ToProto() const {
   PJRT_ExecutableAbiVersion_ToProto_Args args;
@@ -5281,7 +5512,8 @@ PjRtCApiExecutableAbiVersion::ToProto() const {
   RETURN_STATUS_IF_PJRT_ERROR(
       extension_->executable_abi_version_to_proto(&args), c_api_);
   absl::Cleanup cleanup = [&args] {
-    args.serialized_proto_deleter(args.serialized_proto_holder);
+    DeleteSerializedProto(args.serialized_proto_deleter,
+                          args.serialized_proto_holder);
   };
   PjRtExecutableAbiVersionProto proto;
   if (!proto.ParseFromString(
@@ -5293,6 +5525,7 @@ PjRtCApiExecutableAbiVersion::ToProto() const {
   return proto;
 }
 
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI
 PjRtPlatformId PjRtCApiExecutableAbiVersion::platform_id() const {
   PJRT_ExecutableAbiVersion_PlatformId_Args args;
   args.struct_size = PJRT_ExecutableAbiVersion_PlatformId_Args_STRUCT_SIZE;

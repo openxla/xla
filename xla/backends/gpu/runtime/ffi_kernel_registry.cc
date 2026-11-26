@@ -127,6 +127,30 @@ absl::Status CheckStruct(const T* absl_nullable value, size_t min_size,
   return absl::OkStatus();
 }
 
+constexpr XLA_FFI_KernelFeatures kKnownKernelFeatures =
+    XLA_FFI_KERNEL_FEATURE_MULTIMEM;
+
+absl::Status ValidateRequiredFeatures(
+    const stream_executor::StreamExecutor* absl_nonnull executor,
+    XLA_FFI_KernelFeatures required_features) {
+  if (required_features == 0) {
+    return absl::OkStatus();
+  }
+  if (const XLA_FFI_KernelFeatures unknown =
+          required_features & ~kKnownKernelFeatures;
+      unknown != 0) {
+    return absl::UnimplementedError(absl::StrFormat(
+        "Unsupported required kernel feature bits: 0x%x", unknown));
+  }
+  if ((required_features & XLA_FFI_KERNEL_FEATURE_MULTIMEM) != 0 &&
+      !executor->is_multicast_supported()) {
+    return absl::FailedPreconditionError(
+        "System does not support multicast memory; multimem instructions "
+        "cannot be used.");
+  }
+  return absl::OkStatus();
+}
+
 stream_executor::Kernel* absl_nullable LookupPublishedKernel(
     const XLA_FFI_Kernel& kernel, int device_ordinal) {
   const XLA_FFI_Kernel::DeviceKernel* slot =
@@ -264,10 +288,11 @@ bool FfiKernelRegistry::Contains(
          LookupPublishedKernel(*kernel, device_ordinal) != nullptr;
 }
 
-absl::StatusOr<const XLA_FFI_Kernel*> FfiKernelRegistry::Register(
+absl::StatusOr<FfiKernelRegistry::RegisterResult> FfiKernelRegistry::Register(
     stream_executor::StreamExecutor* absl_nullable executor,
     absl::string_view name, const void* absl_nullable data, size_t size,
-    XLA_FFI_SourceFormat format, bool use_pdl) {
+    XLA_FFI_SourceFormat format, bool use_pdl,
+    XLA_FFI_KernelFeatures required_features) {
   if (executor == nullptr) {
     return absl::InvalidArgumentError("StreamExecutor cannot be null");
   }
@@ -283,6 +308,7 @@ absl::StatusOr<const XLA_FFI_Kernel*> FfiKernelRegistry::Register(
         "FfiKernelRegistry only supports PTX and CUBIN kernels, got format %d",
         format));
   }
+  ABSL_RETURN_IF_ERROR(ValidateRequiredFeatures(executor, required_features));
   const absl::string_view binary(static_cast<const char*>(data), size);
   const size_t binary_hash = absl::HashOf(binary);
   const Impl::KernelKey lookup_key{name, binary, binary_hash, format, use_pdl};
@@ -310,9 +336,11 @@ absl::StatusOr<const XLA_FFI_Kernel*> FfiKernelRegistry::Register(
   }
 
   const int device_ordinal = executor->device_ordinal();
+  bool loaded = false;
   ABSL_RETURN_IF_ERROR(kernel->per_device_kernel.GetOrCreateAndInitialize(
       device_ordinal,
-      [executor, kernel](XLA_FFI_Kernel::DeviceKernel* slot) -> absl::Status {
+      [executor, kernel,
+       &loaded](XLA_FFI_Kernel::DeviceKernel* slot) -> absl::Status {
         auto spec =
             kernel->format == XLA_FFI_SourceFormat_PTX
                 ? stream_executor::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
@@ -324,15 +352,17 @@ absl::StatusOr<const XLA_FFI_Kernel*> FfiKernelRegistry::Register(
                                   kernel->binary.data()),
                               kernel->binary.size()),
                           kernel->name, /*arity=*/0);
-        ABSL_ASSIGN_OR_RETURN(std::unique_ptr<stream_executor::Kernel> loaded,
-                              executor->LoadKernel(spec));
+        ABSL_ASSIGN_OR_RETURN(
+            std::unique_ptr<stream_executor::Kernel> loaded_kernel,
+            executor->LoadKernel(spec));
         // Set once before publication so concurrent launches only read it.
-        loaded->set_use_pdl(kernel->use_pdl);
-        slot->owned = std::move(loaded);
+        loaded_kernel->set_use_pdl(kernel->use_pdl);
+        slot->owned = std::move(loaded_kernel);
         slot->published.store(slot->owned.get(), std::memory_order_release);
+        loaded = true;
         return absl::OkStatus();
       }));
-  return kernel;
+  return RegisterResult{kernel, /*already_loaded=*/!loaded};
 }
 
 absl::Status KernelRegistrationExtension::RegisterImpl(
@@ -340,7 +370,11 @@ absl::Status KernelRegistrationExtension::RegisterImpl(
   ABSL_RETURN_IF_ERROR(
       CheckStruct(args, XLA_FFI_KernelRegistry_Register_Args_STRUCT_SIZE,
                   "XLA_FFI_KernelRegistry_Register_Args"));
-  args->kernel = nullptr;
+  ABSL_RETURN_IF_ERROR(CheckStruct(
+      args->result, XLA_FFI_KernelRegistry_Register_Result_STRUCT_SIZE,
+      "XLA_FFI_KernelRegistry_Register_Result"));
+  args->result->kernel = nullptr;
+  args->result->already_loaded = 0;
   // NOLINTNEXTLINE(*-reinterpret-cast): `state` points to `State`.
   const auto* state = reinterpret_cast<const State*>(args->state);
   if (state == nullptr || state->registry == nullptr ||
@@ -356,17 +390,23 @@ absl::Status KernelRegistrationExtension::RegisterImpl(
   }
   const absl::string_view name(spec->name.ptr, spec->name.len);
   const bool use_pdl = state->pdl_enabled && (args->uses_pdl != 0);
-  if (const XLA_FFI_Kernel* cached = args->cached_kernel;
+  if (const XLA_FFI_Kernel* cached = args->existing_kernel;
       cached != nullptr &&
       state->registry->Contains(state->executor->device_ordinal(), cached) &&
       cached->name == name && cached->binary.size() == spec->size &&
       cached->format == spec->format && cached->use_pdl == use_pdl) {
-    args->kernel = cached;
+    ABSL_RETURN_IF_ERROR(
+        ValidateRequiredFeatures(state->executor, args->required_features));
+    args->result->kernel = cached;
+    args->result->already_loaded = 1;
     return absl::OkStatus();
   }
-  ABSL_ASSIGN_OR_RETURN(args->kernel, state->registry->Register(
-                                          state->executor, name, spec->data,
-                                          spec->size, spec->format, use_pdl));
+  ABSL_ASSIGN_OR_RETURN(FfiKernelRegistry::RegisterResult result,
+                        state->registry->Register(
+                            state->executor, name, spec->data, spec->size,
+                            spec->format, use_pdl, args->required_features));
+  args->result->kernel = result.kernel;
+  args->result->already_loaded = static_cast<int32_t>(result.already_loaded);
   return absl::OkStatus();
 }
 

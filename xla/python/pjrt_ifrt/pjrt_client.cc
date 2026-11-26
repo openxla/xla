@@ -1315,7 +1315,7 @@ absl::StatusOr<ArrayRef> PjRtClient::AssembleArrayFromSingleDeviceArrays(
   // TODO(emilyaf): Remove the following logic once layout is plumbed through.
   std::shared_ptr<const xla::PjRtLayout> layout;
   if (!arrays.empty()) {
-    ABSL_ASSIGN_OR_RETURN(layout, arrays.front()->pjrt_layout());
+    layout = arrays.front()->pjrt_layout();
   }
   return PjRtArray::Create(this, dtype, std::move(shape), std::move(sharding),
                            std::move(buffers), std::move(layout));
@@ -1639,7 +1639,8 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
         ShardingRef new_sharding,
         arrays[i]->shared_ptr_sharding()->WithDeviceAssignment(dst_devices,
                                                                memory_kind));
-    ABSL_ASSIGN_OR_RETURN(auto new_layout, arrays[i]->pjrt_layout());
+    std::shared_ptr<const xla::PjRtLayout> new_layout =
+        arrays[i]->pjrt_layout();
     ABSL_ASSIGN_OR_RETURN(
         new_arrays.emplace_back(),
         PjRtArray::Create(this, arrays[i]->dtype(), arrays[i]->shape(),
@@ -2087,7 +2088,81 @@ absl::StatusOr<tsl::RCReference<Tuple>> PjRtClient::MakeTuple(
 
 absl::StatusOr<BundleRef> PjRtClient::Bundle(absl::Span<ValueRef> values,
                                              ArrayCopySemantics semantics) {
-  return BasicBundle::Create(values, semantics);
+  if (semantics != ArrayCopySemantics::kDonateInput || values.empty()) {
+    return BasicBundle::Create(values, semantics);
+  }
+
+  absl::flat_hash_set<Value*> seen_values;
+  seen_values.reserve(values.size());
+  for (const ValueRef& value : values) {
+    if (value->client() != this) {
+      return absl::InvalidArgumentError("Values must use the same client");
+    }
+    if (value->IsDeleted()) {
+      return absl::FailedPreconditionError(
+          "Value has already been deleted or donated.");
+    }
+    if (!seen_values.insert(value.get()).second) {
+      return absl::InvalidArgumentError(
+          "Duplicate value in Bundle with kDonateInput");
+    }
+    if (!isa<PjRtArray>(value.get()) && !isa<BasicStringArray>(value.get())) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Unsupported value type for Bundle with kDonateInput: ",
+                       value->DebugString()));
+    }
+  }
+
+  std::vector<ValueRef> bundled_values;
+  bundled_values.reserve(values.size());
+  for (ValueRef& value : values) {
+    if (auto* const pjrt_array = dyn_cast<PjRtArray>(value.get())) {
+      PjRtArray::PjRtBuffers out_buffers(pjrt_array->pjrt_buffers().begin(),
+                                         pjrt_array->pjrt_buffers().end());
+      std::shared_ptr<const xla::PjRtLayout> layout = pjrt_array->pjrt_layout();
+      tsl::RCReference<PjRtArray> new_array;
+      if (pjrt_array->has_dynamic_shape()) {
+        ABSL_ASSIGN_OR_RETURN(
+            new_array,
+            PjRtArray::Create(this, pjrt_array->dtype(),
+                              pjrt_array->dynamic_shape(),
+                              pjrt_array->shared_ptr_sharding(),
+                              std::move(out_buffers), std::move(layout)));
+      } else {
+        ABSL_ASSIGN_OR_RETURN(
+            new_array,
+            PjRtArray::Create(this, pjrt_array->dtype(), pjrt_array->shape(),
+                              pjrt_array->shared_ptr_sharding(),
+                              std::move(out_buffers), std::move(layout)));
+      }
+      bundled_values.push_back(std::move(new_array));
+    } else {
+      auto* const string_array = cast<BasicStringArray>(value.get());
+      ABSL_ASSIGN_OR_RETURN(
+          ArrayRef copied_array,
+          string_array->Copy(/*devices=*/std::nullopt,
+                             /*memory_kind=*/std::nullopt,
+                             ArrayCopySemantics::kDonateInput));
+      bundled_values.push_back(std::move(copied_array));
+    }
+  }
+
+  ABSL_ASSIGN_OR_RETURN(BundleRef bundle,
+                        BasicBundle::Create(absl::MakeSpan(bundled_values),
+                                            ArrayCopySemantics::kDonateInput));
+  for (ValueRef& value : values) {
+    if (auto* const pjrt_array = dyn_cast<PjRtArray>(value.get())) {
+      absl::StatusOr<absl::Span<std::shared_ptr<PjRtBuffer>>> in_buffers =
+          pjrt_array->mutable_pjrt_buffers();
+      if (in_buffers.ok()) {
+        for (std::shared_ptr<PjRtBuffer>& buffer : *in_buffers) {
+          buffer.reset();
+        }
+      }
+    }
+    value->Delete();
+  }
+  return bundle;
 }
 
 absl::StatusOr<BundleRef> PjRtClient::ConcatBundles(
@@ -2239,6 +2314,10 @@ PjRtClient::GetDefaultPjRtLayout(DType dtype, absl::Span<const int64_t> dims,
 
   auto layout =
       [&]() -> absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> {
+    if (dtype.kind() == DType::kString) {
+      return absl::UnimplementedError(
+          "String arrays do not support PjRtLayout");
+    }
     static MemoryKind kUnpinnedHostMemoryKind(UnpinnedHostMemorySpace::kKind);
     if (memory_kind == kUnpinnedHostMemoryKind) {
       return std::make_shared<xla::PjRtLayout>(

@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
@@ -362,7 +363,7 @@ struct CallLoadedExecutableOpState {
   std::string atom_program_name;
 
   std::vector<ArrayHandle> input_handles;
-  absl::flat_hash_set<int> donated_arg_idxs;
+  absl::flat_hash_set<int32_t> donated_arg_idxs;
   absl::flat_hash_set<ArrayHandle> dead_inputs;
 
   ExecuteOptions execute_options;
@@ -531,13 +532,11 @@ absl::StatusOr<ProgramInterpreter::OpFn> ProgramInterpreter::HandleOp(
       << "Could not find executable. " << state.pretty_print;
   state.executable = exec_it->second;
 
-  state.donated_arg_idxs.insert(call_loaded_op.getDonatedInputIndices().begin(),
-                                call_loaded_op.getDonatedInputIndices().end());
-  for (const auto& io_alias :
-       call_loaded_op.getIoAliases().getAsRange<mlir::DenseI32ArrayAttr>()) {
-    // Insert the aliased input to the set.
-    state.donated_arg_idxs.insert(io_alias.asArrayRef()[0]);
-  }
+  const llvm::SmallDenseSet<int32_t, 8> donated_arg_idxs =
+      GetDonatedOrAliasedInputIndices(call_loaded_op);
+  state.donated_arg_idxs.reserve(donated_arg_idxs.size());
+  state.donated_arg_idxs.insert(donated_arg_idxs.begin(),
+                                donated_arg_idxs.end());
   PopulateInputHandlesAndDeadInputs(call_loaded_op, liveness_,
                                     state.input_handles, state.dead_inputs);
 
@@ -988,8 +987,6 @@ absl::StatusOr<ProgramInterpreter::OpFn> ProgramInterpreter::HandleOp(
   ReturnOpState state;
   state.pretty_print = PrettyPrint(return_op);
 
-  auto func_op = return_op->getParentOfType<mlir::func::FuncOp>();
-  CHECK_EQ(func_op.getSymName().str(), "main");
   state.output_handles.reserve(return_op->getNumOperands());
   for (const auto& [idx, result] : llvm::enumerate(return_op.getOperands())) {
     state.output_handles.push_back(ToArrayHandle(result));

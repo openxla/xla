@@ -20,7 +20,12 @@ load(
     "xla_py_proto_library",
 )
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
-load("//xla/tests:build_defs.bzl", "AMD_GPU_ANY_BACKEND", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "AMD_GPU_ANY_BACKEND",
+    "GPU_DEFAULT_BACKENDS",
+    "xla_test",
+)
 load(
     "//xla/tsl:tsl.bzl",
     "if_cuda_or_rocm",
@@ -786,7 +791,7 @@ xla_test(
     srcs = ["matmul_perf_table_gen_test.cc"],
     # TODO(b/372714955): Remove once default CUDA ver is >= 13.4 (CUPTI session leak fixed in 13.4).
     args = if_google(["--heap_check="]),
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     local_defines = if_cuda(["GOOGLE_CUDA"]),
     # TODO(b/372714955): Remove once default CUDA ver is >= 13.4 (CUPTI session leak fixed in 13.4).
     tags = if_google(["noasan"]),
@@ -852,8 +857,8 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/cost_model:hlo_op_profile_proto_cc",
         "//xla/backends/gpu/cost_model:hlo_op_profiles",
+        "//xla/backends/gpu/hlo/transforms/collectives:collective_ops_utils",
         "//xla/backends/gpu/target_config",
-        "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/utils:hlo_query",
@@ -873,6 +878,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
@@ -961,13 +967,13 @@ tsl_pybind_extension(
 xla_test(
     name = "collective_perf_table_gen_test",
     srcs = ["collective_perf_table_gen_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     local_defines = if_cuda(["GOOGLE_CUDA"]),
     deps = [
         ":collective_perf_table_gen",
         "//xla/backends/gpu/cost_model:hlo_op_profile_proto_cc",
+        "//xla/backends/gpu/hlo/transforms/collectives:collective_ops_utils",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
-        "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
         "@com_google_absl//absl/log",
         "@com_google_googletest//:gtest_main",
     ],
@@ -1196,9 +1202,9 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:path",
     ] + if_cuda_is_configured([
-        "//xla/service/gpu:nvptx_compiler",
+        "//xla/backends/gpu:nvptx_compiler",
     ]) + if_rocm_is_configured([
-        "//xla/service/gpu:amdgpu_compiler",
+        "//xla/backends/gpu:amdgpu_compiler",
     ]),
 )
 
@@ -1245,9 +1251,7 @@ xla_test(
 xla_test(
     name = "xla_gpu_compile_lib_test",
     srcs = ["xla_gpu_compile_lib_test.cc"],
-    backends = [
-        "gpu",
-    ],
+    backends = GPU_DEFAULT_BACKENDS,
     data = [
         ":data/add.hlo",
         "//xla/backends/gpu/target_config:all_gpu_specs",

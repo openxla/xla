@@ -1,0 +1,136 @@
+/* Copyright 2017 The OpenXLA Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#ifndef XLA_BACKENDS_GPU_RUNTIME_BUFFER_ALLOCATIONS_H_
+#define XLA_BACKENDS_GPU_RUNTIME_BUFFER_ALLOCATIONS_H_
+
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "absl/base/call_once.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "absl/types/span.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
+
+namespace xla {
+namespace gpu {
+
+// A thread-compatible class that encapsulates the base addresses of the
+// allocated device buffers.
+class BufferAllocations {
+ public:
+  BufferAllocations(absl::Span<se::DeviceAddressBase const> buffers,
+                    int device_ordinal,
+                    se::DeviceAddressAllocator* memory_allocator)
+      : buffers_(buffers.begin(), buffers.end()),
+        device_ordinal_(device_ordinal),
+        memory_allocator_(memory_allocator) {}
+
+  BufferAllocations(BufferAllocations&& other) { *this = std::move(other); }
+  BufferAllocations& operator=(BufferAllocations&& other);
+  BufferAllocations(const BufferAllocations&) = delete;
+  BufferAllocations& operator=(const BufferAllocations&) = delete;
+
+  se::DeviceAddressAllocator* memory_allocator() const {
+    return memory_allocator_;
+  }
+  int device_ordinal() const { return device_ordinal_; }
+
+  // Returns the device address of buffer `buffer_index`. `buffer_index` must be
+  // a valid index, i.e., in [0, buffer_count). This function returns null if
+  // `buffer_index` is not assigned to a buffer address.
+  se::DeviceAddressBase GetDeviceAddress(
+      BufferAllocation::Index buffer_index) const;
+
+  // Returns a mutable value for the allocation at a given `buffer_index`.
+  // Invalidates the address index used by `FindAllocationIndex`.
+  se::DeviceAddressBase& GetMutableDeviceAddress(
+      BufferAllocation::Index buffer_index);
+
+  // Same as above, but also adjusts the returned address for the offset and
+  // size contained in the given slice.
+  se::DeviceAddressBase GetDeviceAddress(
+      const BufferAllocation::Slice& buffer_slice) const;
+
+  // Returns the index of the allocation with the closest start address at or
+  // below `addr.opaque()` (or any matching index when identical buffers appear
+  // at multiple indices), or nullopt if there is none. The result is not
+  // checked against the allocation bounds, so callers must pass an address
+  // that lies within an allocation. Non-identical overlapping allocations are
+  // treated as an error: the first call logs an error and lookups return
+  // nullopt. The first call builds a sorted index in O(n log n); later lookups
+  // are O(log n).
+  std::optional<BufferAllocation::Index> FindAllocationIndex(
+      const se::DeviceAddressBase& addr) const;
+
+  // Tears down all buffers allocated by this object that are not in
+  // `live_addresses`.
+  absl::Status TearDown(const std::set<se::DeviceAddressBase>& live_addresses,
+                        absl::Span<const BufferAllocation* const> allocations);
+
+  std::string ToString() const {
+    std::string out;
+    for (BufferAllocation::Index i = 0; i < buffers_.size(); ++i) {
+      const auto& buf = buffers_[i];
+      if (i > 0) {
+        absl::StrAppend(&out, "; ");
+      }
+      absl::StrAppendFormat(&out, "Buffer %d -> %p (%d B)", i, buf.opaque(),
+                            buf.size());
+    }
+    return out;
+  }
+
+  absl::Span<const se::DeviceAddressBase> buffers() const { return buffers_; }
+
+  size_t size() const { return buffers_.size(); }
+
+ private:
+  struct AddressIndexEntry {
+    uintptr_t begin;
+    uint64_t size;
+    BufferAllocation::Index index;
+  };
+
+  void BuildAddressIndex() const;
+  void ResetAddressIndex();
+
+  // An array of device pointers that stores the address of each buffer
+  // indexed by Index. Each element can point to a temporary buffer, an
+  // input buffer, or nullptr if no buffer is needed for that Index.
+  std::vector<se::DeviceAddressBase> buffers_;
+  int device_ordinal_;
+  se::DeviceAddressAllocator* memory_allocator_;
+
+  // Non-empty, non-overlapping allocations sorted by start address (empty if
+  // overlapping allocations are detected). Built lazily by
+  // `FindAllocationIndex`; `once_flag` is not movable, hence the optional.
+  mutable std::optional<absl::once_flag> address_index_once_{std::in_place};
+  mutable std::vector<AddressIndexEntry> address_index_;
+};
+
+}  // namespace gpu
+}  // namespace xla
+
+#endif  // XLA_BACKENDS_GPU_RUNTIME_BUFFER_ALLOCATIONS_H_

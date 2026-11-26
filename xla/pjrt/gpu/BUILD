@@ -19,7 +19,12 @@ load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/pjrt/gpu:package_groups.bzl", "xla_gpu_internal_packages")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm")
-load("//xla/tests:build_defs.bzl", "AMD_GPU_ANY_BACKEND", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "AMD_GPU_ANY_BACKEND",
+    "GPU_DEFAULT_BACKENDS",
+    "xla_test",
+)
 load("//xla/tools:source_hash.bzl", "source_hash")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_libtpu_portable", "get_compatible_with_portable")
@@ -220,6 +225,9 @@ cc_library(
         "//xla/backends/gpu/collectives:gpu_cliques",
         "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/backends/gpu/collectives:gpu_communicator",
+        "//xla/backends/gpu/runtime:buffer_allocations",
+        "//xla/backends/gpu/runtime:gpu_constants",
+        "//xla/backends/gpu/runtime:gpu_executable_run_options",
         "//xla/backends/gpu/target_config",
         "//xla/client:local_client",
         "//xla/core/collectives",
@@ -262,9 +270,6 @@ cc_library(
         "//xla/service:compiler",
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
-        "//xla/service/gpu:buffer_allocations",
-        "//xla/service/gpu:gpu_constants",
-        "//xla/service/gpu:gpu_executable_run_options",
         "//xla/service/gpu:gpu_memory_space_assignment",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
@@ -317,10 +322,10 @@ cc_library(
         "@tsl//tsl/profiler/lib:traceme",
     ] + if_cuda_or_rocm([
         # keep sorted
+        "//xla/backends/gpu:gpu_compiler",
+        "//xla/backends/gpu/runtime:gpu_executable",
+        "//xla/backends/gpu/runtime:gpu_executable_buffer_allocator",
         "//xla/backends/gpu/runtime:thunk_executor",
-        "//xla/service/gpu:gpu_compiler",
-        "//xla/service/gpu:gpu_executable",
-        "//xla/service/gpu:gpu_executable_buffer_allocator",
         "//xla/service/gpu:stream_executor_util",
     ]) + if_cuda([
         # keep sorted
@@ -329,10 +334,10 @@ cc_library(
         "@local_config_cuda//cuda:cuda_headers",
     ]) + if_sycl([
         # keep sorted
+        "//xla/backends/gpu:gpu_compiler",
+        "//xla/backends/gpu/runtime:gpu_executable",
+        "//xla/backends/gpu/runtime:gpu_executable_buffer_allocator",
         "//xla/backends/gpu/runtime:thunk_executor",
-        "//xla/service/gpu:gpu_compiler",
-        "//xla/service/gpu:gpu_executable",
-        "//xla/service/gpu:gpu_executable_buffer_allocator",
         "//xla/service/gpu:stream_executor_util",
         "@local_config_sycl//sycl:sycl_headers",
     ]),
@@ -355,6 +360,7 @@ cc_library(
         "//xla/backends/gpu/collectives:allocator_memory_registration",
         "//xla/backends/gpu/collectives:gpu_clique_key",
         "//xla/backends/gpu/collectives:gpu_cliques",
+        "//xla/backends/gpu/runtime:gpu_executable_run_options",
         "//xla/client:local_client",
         "//xla/hlo/builder:xla_computation",
         "//xla/pjrt:device_event",
@@ -374,7 +380,6 @@ cc_library(
         "//xla/runtime:device_id",
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
-        "//xla/service/gpu:gpu_executable_run_options",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:device_description",
@@ -445,7 +450,7 @@ cc_library(
 xla_test(
     name = "pjrt_client_test_gpu",
     srcs = ["pjrt_client_test_gpu.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     tags = [
         "multi_gpu",
         "no_oss",
@@ -468,7 +473,7 @@ xla_test(
     backend_tags = {
         AMD_GPU_ANY_BACKEND: ["flaky"],
     },
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     shard_count = 4,
     tags = ["nofixdeps"],
     use_legacy_runtime = True,
@@ -489,6 +494,7 @@ xla_test(
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/gpu:ffi",
+        "//xla/backends/gpu/runtime:gpu_executable_run_options",
         "//xla/ffi",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder:xla_computation",
@@ -519,7 +525,6 @@ xla_test(
         "//xla/service:gpu_topology_proto_cc",
         "//xla/service:hlo_proto_cc",
         "//xla/service:platform_util",
-        "//xla/service/gpu:gpu_executable_run_options",
         "//xla/service/gpu:gpu_memory_space_assignment",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
@@ -581,7 +586,7 @@ xla_test(
 xla_test(
     name = "se_gpu_pjrt_client_multi_gpu_test",
     srcs = ["se_gpu_pjrt_client_multi_gpu_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     shard_count = 3,
     tags = [
         "multi_gpu",
@@ -604,6 +609,7 @@ xla_test(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/runtime:gpu_executable_run_options",
         "//xla/ffi",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/parser:hlo_parser",
@@ -632,7 +638,6 @@ xla_test(
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
         "//xla/service:platform_util",
-        "//xla/service/gpu:gpu_executable_run_options",
         "//xla/service/gpu:gpu_memory_space_assignment",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_description",
@@ -677,7 +682,7 @@ xla_test(
 xla_test(
     name = "se_gpu_pjrt_client_multiprocess_test",
     srcs = ["se_gpu_pjrt_client_multiprocess_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     tags = [
         "multi_gpu",
         "no_oss",
@@ -791,7 +796,7 @@ xla_test(
     srcs = ["se_gpu_pjrt_client_benchmark_test.cc"],
     # The gemma4 execution benchmarks need more memory than a MIG partition has.
     backend_tags = {"h100": ["full"]},
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     data = [
         "//xla/tools:benchmarks/hlo/hlo_gemma4_2b_bf16.hlo",
         "//xla/tools:benchmarks/hlo/nv_maxtext_1n1g_jit_train_step_before_optimization.hlo",
@@ -908,7 +913,7 @@ cc_library(
         "//xla/stream_executor/platform:initialize",
         "@com_google_absl//absl/log:check",
     ] + if_cuda([
-        "//xla/service/gpu:nvptx_compiler",  # buildcleaner: keep
+        "//xla/backends/gpu:nvptx_compiler",  # buildcleaner: keep
     ]),
     alwayslink = 1,
 )
@@ -923,9 +928,9 @@ cc_library(
     ],
     deps = [
         ":se_gpu_pjrt_compiler_impl",
+        "//xla/backends/gpu:amdgpu_compiler",  # buildcleaner: keep
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt/se:stream_executor_platform_id_mapping",
-        "//xla/service/gpu:amdgpu_compiler",  # buildcleaner: keep
         "//xla/stream_executor/platform:initialize",
         "//xla/stream_executor/rocm:rocm_platform_id",
         "@com_google_absl//absl/log:check",
@@ -948,9 +953,9 @@ cc_library(
     ]),
     deps = [
         ":se_gpu_pjrt_compiler_impl",
+        "//xla/backends/gpu:intel_gpu_compiler",
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt/se:stream_executor_platform_id_mapping",
-        "//xla/service/gpu:intel_gpu_compiler",
         "//xla/stream_executor/platform:initialize",
         "//xla/stream_executor/sycl:sycl_platform_id",
         "@com_google_absl//absl/log:check",
@@ -1004,7 +1009,7 @@ cc_library(
 xla_test(
     name = "se_gpu_pjrt_compiler_test",
     srcs = ["se_gpu_pjrt_compiler_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":se_gpu_pjrt_client",
         ":se_gpu_pjrt_compiler",
@@ -1063,7 +1068,7 @@ xla_test(
 xla_test(
     name = "se_gpu_pjrt_compiler_aot_test",
     srcs = ["se_gpu_pjrt_compiler_aot_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":se_gpu_pjrt_client",
         ":se_gpu_pjrt_compiler",

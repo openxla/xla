@@ -35,6 +35,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
@@ -60,6 +61,7 @@ limitations under the License.
 #include "xla/python/ifrt/ir/constants.h"
 #include "xla/python/ifrt/ir/debug.h"
 #include "xla/python/ifrt/ir/ifrt_dialect.h"
+#include "xla/python/ifrt/ir/ifrt_interfaces.h"
 #include "xla/python/ifrt/ir/ifrt_ir_program.h"
 #include "xla/python/ifrt/ir/ifrt_ops.h"
 #include "xla/python/ifrt/ir/import/passes.h"
@@ -118,11 +120,6 @@ GetLayoutFromAtomExecutable(
     ifrt::CallLoadedExecutableOp call_op, AtomLayoutDirection direction,
     int index) {
   LoadedExecutableOp loaded_executable_op = call_op.getCalleeOp(symbol_table);
-  if (loaded_executable_op == nullptr) {
-    return absl::InvalidArgumentError(
-        absl::StrFormat("Could not find LoadedExecutableOp `%s`",
-                        call_op.getCallee().getRootReference().str()));
-  }
   std::string atom_program_name = loaded_executable_op.getSymName().str();
   const LoadedExecutable* loaded_atom_executable = nullptr;
   const Executable* compiled_atom_executable = nullptr;
@@ -182,14 +179,10 @@ absl::StatusOr<bool> CanPropagateLayoutAcrossCopyArrays(
     const DeviceListRef& device_list) {
   llvm::ArrayRef<int> src_device_ids = input_type.getDevices();
   llvm::ArrayRef<int> dst_device_ids = output_type.getDevices();
-  if (src_device_ids.empty() || dst_device_ids.empty()) {
-    return absl::InvalidArgumentError(
-        "CopyArraysOp array types must have non-empty device lists");
-  }
-  if (src_device_ids.front() < 0 ||
-      src_device_ids.front() >= device_list->devices().size() ||
-      dst_device_ids.front() < 0 ||
-      dst_device_ids.front() >= device_list->devices().size()) {
+  if (static_cast<size_t>(src_device_ids.front()) >=
+          device_list->devices().size() ||
+      static_cast<size_t>(dst_device_ids.front()) >=
+          device_list->devices().size()) {
     return absl::InvalidArgumentError(
         "CopyArraysOp logical device id is out of range");
   }
@@ -198,8 +191,10 @@ absl::StatusOr<bool> CanPropagateLayoutAcrossCopyArrays(
   if (src_device->PlatformName() != dst_device->PlatformName()) {
     return false;
   }
-  if (input_type.MemoryKind().value() == xla::UnpinnedHostMemorySpace::kKind ||
-      output_type.MemoryKind().value() == xla::UnpinnedHostMemorySpace::kKind) {
+  if (absl::string_view(input_type.getMemoryKindAttr().getValue()) ==
+          xla::UnpinnedHostMemorySpace::kKind ||
+      absl::string_view(output_type.getMemoryKindAttr().getValue()) ==
+          xla::UnpinnedHostMemorySpace::kKind) {
     return false;
   }
   return true;
@@ -300,7 +295,8 @@ absl::Status ValidateMainFunctionOps(
     if (allow_precompile_ops) {
       if (auto call_op = mlir::dyn_cast<CallOp>(op)) {
         for (const int logical_id : call_op.getDevices()) {
-          if (logical_id < 0 || logical_id >= device_list->devices().size()) {
+          if (static_cast<size_t>(logical_id) >=
+              device_list->devices().size()) {
             return absl::InvalidArgumentError(absl::StrFormat(
                 "Logical device id %d is out of range for device list of "
                 "size %d",
@@ -319,11 +315,6 @@ absl::Status ValidateMainFunctionOps(
     }
     if (auto call_op = mlir::dyn_cast<CallLoadedExecutableOp>(op)) {
       LoadedExecutableOp loaded_exec_op = call_op.getCalleeOp(symbol_table);
-      if (loaded_exec_op == nullptr) {
-        return absl::InvalidArgumentError(
-            absl::StrFormat("Could not find LoadedExecutableOp `%s`",
-                            call_op.getCallee().getRootReference().str()));
-      }
       absl::string_view atom_name = loaded_exec_op.getSymName();
       const bool has_bound_or_compiled =
           bound_executables.contains(atom_name) ||
@@ -344,14 +335,10 @@ absl::Status ValidateMainFunctionOps(
           BuildRemapPlan(client, device_list, remap_op).status());
       continue;
     }
-    if (auto bitcast_op = mlir::dyn_cast<BitcastArraysOp>(op)) {
-      ABSL_RETURN_IF_ERROR(validate_array_values(bitcast_op.getInputs()));
-      ABSL_RETURN_IF_ERROR(validate_array_values(bitcast_op.getOutputs()));
-      continue;
-    }
-    if (auto copy_arrays_op = mlir::dyn_cast<CopyArraysOp>(op)) {
-      ABSL_RETURN_IF_ERROR(validate_array_values(copy_arrays_op.getInputs()));
-      ABSL_RETURN_IF_ERROR(validate_array_values(copy_arrays_op.getOutputs()));
+    if (llvm::isa<BitcastArraysOp, CopyArraysOp>(op)) {
+      auto array_op = llvm::cast<IfrtArrayOpInterface>(op);
+      ABSL_RETURN_IF_ERROR(validate_array_values(array_op.getInputs()));
+      ABSL_RETURN_IF_ERROR(validate_array_values(array_op.getOutputs()));
       continue;
     }
     if (!mlir::isa<mlir::func::ReturnOp>(op)) {
@@ -469,9 +456,7 @@ FinishLoweringAndDispatchAtomCompilations(
 
   // Extract input and output specs from the modified `mlir_module`, which has
   // all array shardings specified, and validate lowered `@main` operations.
-  ABSL_ASSIGN_OR_RETURN(
-      mlir::func::FuncOp main_func,
-      ValidateMainFunctionHeader(ifrt_ir_program->mlir_module, program_name));
+  mlir::func::FuncOp main_func = GetMainFunction(ifrt_ir_program->mlir_module);
   std::vector<ArraySpec> in_specs;
   in_specs.reserve(main_func.getNumArguments());
   for (const mlir::Type arg_type : main_func.getArgumentTypes()) {
@@ -584,9 +569,7 @@ tsl::Future<LoweredIfrtIrProgramState> LowerIfrtIrProgram(
     }
   }
   {
-    ABSL_ASSIGN_OR_RETURN(
-        mlir::func::FuncOp precompile_main_func,
-        ValidateMainFunctionHeader(mlir_module, program_name));
+    mlir::func::FuncOp precompile_main_func = GetMainFunction(mlir_module);
     for (const mlir::Type arg_type : precompile_main_func.getArgumentTypes()) {
       ABSL_RETURN_IF_ERROR(
           ArraySpecFromMlirType(arg_type, client, device_list).status());

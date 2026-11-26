@@ -19,7 +19,7 @@ load(
     "xla_internal",
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility", "tsl_copts")
+load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable", "if_include_google_deps")
 load("//xla/tsl/mkl:build_defs.bzl", "if_graph_api", "if_onednn")
 load("//xla/tsl/mkl:graph.bzl", "onednn_cc_library")
@@ -144,6 +144,7 @@ cc_library(
     ],
     copts = tsl_copts(),
     deps = [
+        ":backend_config_proto_cc",
         ":conv_canonicalization",
         ":cpu_aot_compilation_result",
         ":cpu_aot_loader",
@@ -155,7 +156,9 @@ cc_library(
         ":cpu_options",
         ":dot_op_emitter",
         ":executable_proto_cc",
+        ":function_library_loader",
         ":metrics",
+        ":orc_function_library_loader",
         ":parallel_task_assignment",
         ":thunk_emitter",
         "//xla:comparison_util",
@@ -166,8 +169,10 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/cpu:alias_info",
         "//xla/backends/cpu:alignment",
         "//xla/backends/cpu:constant_allocation",
+        "//xla/backends/cpu:custom_fusion_configs",
         "//xla/backends/cpu:export_hlo",
         "//xla/backends/cpu:target_machine_options",
         "//xla/backends/cpu:ynn_support",
@@ -188,7 +193,6 @@ cc_library(
         "//xla/backends/cpu/transforms:library_rewriter",
         "//xla/backends/cpu/transforms:small_while_loop_hoisting_pass",
         "//xla/backends/cpu/transforms/collectives:all_reduce_combiner",
-        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/analysis:hlo_ordering",
         "//xla/hlo/ir:dfs_hlo_visitor_with_default",
         "//xla/hlo/ir:hlo",
@@ -199,7 +203,6 @@ cc_library(
         "//xla/hlo/transforms:control_dep_rewriter",
         "//xla/hlo/transforms:copy_insertion",
         "//xla/hlo/transforms:dynamic_padder",
-        "//xla/hlo/transforms:instruction_fusion",
         "//xla/hlo/transforms:layout_assignment",
         "//xla/hlo/transforms:literal_canonicalizer",
         "//xla/hlo/transforms:nullary_function_wrap_inliner",
@@ -357,6 +360,7 @@ cc_library(
         ":cpu_executable",
         ":executable_proto_cc",
         "//xla:util",
+        "//xla/backends/cpu:alias_info",
         "//xla/backends/cpu:buffer_allocation_info",
         "//xla/backends/cpu:buffer_allocation_info_util",
         "//xla/backends/cpu:constant_allocation",
@@ -365,7 +369,6 @@ cc_library(
         "//xla/backends/cpu/runtime:thunk",
         "//xla/backends/cpu/runtime:thunk_proto_cc",
         "//xla/backends/cpu/runtime:thunk_proto_serdes_impl",
-        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
         "//xla/service:buffer_value",
@@ -387,14 +390,6 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
     ],
-)
-
-cc_library(
-    name = "export_hlo",
-    hdrs = ["export_hlo.h"],
-    compatible_with = get_compatible_with_portable(),
-    tags = if_google(["avoid_dep"]),
-    deps = ["//xla/backends/cpu:export_hlo"],
 )
 
 cc_library(
@@ -445,17 +440,20 @@ xla_test(
     ],
     test_cpu_fast_compile = True,
     deps = [
+        ":cpu_compiler",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:buffer_assignment",
         "//xla/service:hlo_module_config",
         "//xla/tests:hlo_pjrt_test_base",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/monitoring:collected_metrics",
         "//xla/tsl/lib/monitoring:collection_registry",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1425,32 +1423,84 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "function_library_loader",
+    srcs = ["function_library_loader.cc"],
+    hdrs = ["function_library_loader.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":executable_proto_cc",
+        "//xla:util",
+        "//xla/backends/cpu/runtime:function_library",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:any_span",
+    ],
+)
+
+cc_library(
     name = "cpu_aot_loader",
     srcs = ["cpu_aot_loader.cc"],
     hdrs = ["cpu_aot_loader.h"],
     deps = [
         ":cpu_aot_compilation_result",
         ":executable_proto_cc",
+        ":function_library_loader",
         "//xla:util",
         "//xla/backends/cpu:target_machine_options",
-        "//xla/backends/cpu/codegen:builtin_definition_generator",
-        "//xla/backends/cpu/codegen:execution_engine",
-        "//xla/backends/cpu/codegen:object_loader",
         "//xla/backends/cpu/runtime:function_library",
-        "//xla/hlo/ir:hlo",
         "//xla/service:compiled_module",
-        "//xla/service:compiler",
         "//xla/service:executable",
         "//xla/service:hlo_module_config",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
+    ],
+)
+
+cc_library(
+    name = "orc_function_library_loader",
+    srcs = ["orc_function_library_loader.cc"],
+    hdrs = ["orc_function_library_loader.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":executable_proto_cc",
+        ":function_library_loader",
+        "//xla:util",
+        "//xla/backends/cpu/codegen:builtin_definition_generator",
+        "//xla/backends/cpu/codegen:execution_engine",
+        "//xla/backends/cpu/codegen:object_loader",
+        "//xla/backends/cpu/runtime:function_library",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:any_span",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:OrcJIT",
+        "@llvm-project//llvm:Support",
         "@llvm-project//llvm:ir_headers",
+    ],
+)
+
+xla_cc_test(
+    name = "cpu_aot_loader_test",
+    srcs = ["cpu_aot_loader_test.cc"],
+    deps = [
+        ":cpu_aot_loader",
+        ":executable_proto_cc",
+        ":function_library_loader",
+        "//xla/backends/cpu:target_machine_options",
+        "//xla/backends/cpu/runtime:function_library",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

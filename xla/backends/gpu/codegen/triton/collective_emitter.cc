@@ -64,18 +64,20 @@ limitations under the License.
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/backends/gpu/codegen/triton/lowering_util.h"
+#include "xla/backends/gpu/hlo/transforms/collectives/collective_ops_utils.h"
 #include "xla/backends/gpu/runtime/all_gather.h"
 #include "xla/backends/gpu/runtime/all_reduce.h"
 #include "xla/backends/gpu/runtime/all_to_all.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/gpu_constants.h"
 #include "xla/backends/gpu/runtime/reduce_scatter.h"
-#include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
-#include "xla/codegen/emitters/ir/xla_ops.h"  // IWYU pragma: keep
+#include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/codegen/xtile/codegen/emitter_helpers.h"
 #include "xla/codegen/xtile/ir/xtile_attrs.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
+#include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -88,7 +90,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/device_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu_topology.h"
@@ -1242,10 +1243,6 @@ class ReduceScatterEmitter : public ReductionEmitter {
   ReduceScatterEmitterContext& ctx_;
 };
 
-// Heuristic maximum warps per block across collective kernels.
-// Triton expects a power of 2 for num_warps.
-constexpr int64_t kMaxWarpsPerBlock = 16;
-
 BlockLevelFusionConfig CreateBlockLevelFusionConfig(
     int64_t num_warps,
     absl::Span<const llvm::SmallVector<int64_t>> output_tiles) {
@@ -1266,66 +1263,6 @@ BlockLevelFusionConfig CreateBlockLevelFusionConfig(
       num_warps, absl::MakeConstSpan(&tile_sizes, /*size=*/1));
 }
 
-// Tiles one rank's part of a collective output across `blocks_per_rank`
-// programs. `collective_dim` is first divided by `num_devices` (R).
-//
-// All-gather: output f32[16] on 2 ranks -> one rank's part is f32[8].
-//
-// Reduce-scatter: output f32[8] on 2 ranks. Each block copies one input tile
-// and writes one output tile. The input tile is R times the output tile.
-// With two blocks on rank 0:
-//   block 0: copies input 0..8 (for rank 0). Reduces and writes output 0..4.
-//   block 1: copies input 8..16 (for rank 1). Reduces and writes output 4..8.
-absl::StatusOr<llvm::SmallVector<int64_t>> GetCollectiveOutputTile(
-    const Shape& output_shape, int64_t collective_dim, int64_t num_devices,
-    int32_t blocks_per_rank) {
-  TF_RET_CHECK(output_shape.dimensions(collective_dim) % num_devices == 0)
-      << "Collective output " << output_shape.ToString()
-      << " must be divisible by " << num_devices << " along dimension "
-      << collective_dim;
-  const int64_t per_rank_size =
-      output_shape.dimensions(collective_dim) / num_devices;
-  Shape per_rank_shape = output_shape;
-  per_rank_shape.set_dimensions(collective_dim, per_rank_size);
-  llvm::SmallVector<int64_t> tile_sizes =
-      GreedyPowerOfTwoTiles(per_rank_shape, blocks_per_rank);
-  tile_sizes[collective_dim] = std::min(
-      tile_sizes[collective_dim], static_cast<int64_t>(llvm::bit_floor(
-                                      static_cast<uint64_t>(per_rank_size))));
-  return tile_sizes;
-}
-
-// Returns the output shapes of `instr` as a span (a 1-element span for
-// array-shaped instructions, or `tuple_shapes()` for tuple-shaped ones).
-absl::Span<const Shape> GetOutputShapes(const HloInstruction* instr) {
-  return instr->shape().IsTuple()
-             ? absl::MakeConstSpan(instr->shape().tuple_shapes())
-             : absl::MakeConstSpan(&instr->shape(), 1);
-}
-
-// Computes one output tile per output of an all-gather or reduce-scatter
-// `instr` (see GetCollectiveOutputTile). Each output is tiled independently
-// using `num_blocks / num_devices` programs per rank; for variadic collectives,
-// smaller outputs get padded with masked-out blocks by
-// `GetIndexWiseVariadicSchedule`.
-absl::StatusOr<std::vector<llvm::SmallVector<int64_t>>>
-GetCollectiveOutputTiles(const HloInstruction* instr, int64_t collective_dim,
-                         int64_t num_devices, int32_t num_blocks) {
-  const int32_t blocks_per_rank =
-      std::max<int32_t>(1, num_blocks / static_cast<int32_t>(num_devices));
-  const absl::Span<const Shape> output_shapes = GetOutputShapes(instr);
-  std::vector<llvm::SmallVector<int64_t>> tiles;
-  tiles.reserve(output_shapes.size());
-  for (const Shape& output_shape : output_shapes) {
-    ABSL_ASSIGN_OR_RETURN(
-        llvm::SmallVector<int64_t> tile_sizes,
-        GetCollectiveOutputTile(output_shape, collective_dim, num_devices,
-                                blocks_per_rank));
-    tiles.push_back(std::move(tile_sizes));
-  }
-  return tiles;
-}
-
 absl::StatusOr<BlockLevelFusionConfig> GetBlockLevelConfigForAllReduce(
     const GpuTopology& gpu_topology, const HloAllReduceInstruction* instr,
     const DeviceAssignment* device_assignment) {
@@ -1343,8 +1280,9 @@ absl::StatusOr<BlockLevelFusionConfig> GetBlockLevelConfigForAllReduce(
            ? all_reduce_info.num_devices
            : 1);
   const int64_t total_warps = CeilOfRatio(elements_per_rank, elements_per_warp);
-  const int64_t num_warps = std::min<int64_t>(
-      kMaxWarpsPerBlock, llvm::bit_ceil(static_cast<uint64_t>(total_warps)));
+  const int64_t num_warps =
+      std::min<int64_t>(kMaxCollectiveWarpsPerBlock,
+                        llvm::bit_ceil(static_cast<uint64_t>(total_warps)));
   const int64_t num_blocks =
       std::min(kAllReduceMaxBlocksPerGrid, CeilOfRatio(total_warps, num_warps));
 
@@ -1368,24 +1306,8 @@ absl::StatusOr<BlockLevelFusionConfig> GetBlockLevelConfigForAllGather(
   ABSL_ASSIGN_OR_RETURN(
       const AllGatherInfo all_gather_info,
       BuildAllGatherInfo(gpu_topology, instr, device_assignment));
-
-  const int64_t elements_per_warp =
-      WarpSize(gpu_topology.gpu_target_config().device_description) *
-      se::gpu::kNumElementsPerThread;
-  // Blocks are partitioned across the full output element count (all peers'
-  // slices).
-  const int64_t total_warps =
-      CeilOfRatio(all_gather_info.max_output_elements, elements_per_warp);
-  const int64_t num_warps = std::min<int64_t>(
-      kMaxWarpsPerBlock, llvm::bit_ceil(static_cast<uint64_t>(total_warps)));
-  const int64_t num_blocks =
-      std::min(kAllGatherMaxBlocksPerGrid, CeilOfRatio(total_warps, num_warps));
-
-  ABSL_ASSIGN_OR_RETURN(
-      std::vector<llvm::SmallVector<int64_t>> output_tiles,
-      GetCollectiveOutputTiles(instr, instr->all_gather_dimension(),
-                               all_gather_info.num_devices, num_blocks));
-  return CreateBlockLevelFusionConfig(num_warps, output_tiles);
+  return CreateBlockLevelFusionConfig(all_gather_info.num_warps,
+                                      all_gather_info.output_tiles);
 }
 
 absl::StatusOr<BlockLevelFusionConfig> GetBlockLevelConfigForReduceScatter(
@@ -1404,7 +1326,7 @@ absl::StatusOr<BlockLevelFusionConfig> GetBlockLevelConfigForReduceScatter(
   const int64_t warps_per_rank_tile =
       CeilOfRatio(elements_per_rank_tile, elements_per_warp);
   const int64_t num_warps = std::min<int64_t>(
-      kMaxWarpsPerBlock,
+      kMaxCollectiveWarpsPerBlock,
       llvm::bit_ceil(static_cast<uint64_t>(warps_per_rank_tile)));
   const int64_t blocks_per_rank_tile =
       CeilOfRatio(warps_per_rank_tile, num_warps);
@@ -1415,7 +1337,7 @@ absl::StatusOr<BlockLevelFusionConfig> GetBlockLevelConfigForReduceScatter(
 
   ABSL_ASSIGN_OR_RETURN(
       std::vector<llvm::SmallVector<int64_t>> output_tiles,
-      GetCollectiveOutputTiles(instr, instr->scatter_dimension(), num_devices,
+      GetCollectiveOutputTiles(*instr, instr->scatter_dimension(), num_devices,
                                num_blocks));
   return CreateBlockLevelFusionConfig(num_warps, output_tiles);
 }
@@ -1435,8 +1357,9 @@ absl::StatusOr<BlockLevelFusionConfig> GetBlockLevelConfigForAllToAll(
       CeilOfRatio(all_to_all_info.num_elements, num_devices);
   const int64_t warps_per_rank =
       CeilOfRatio(elements_per_rank, elements_per_warp);
-  const int64_t num_warps = std::min<int64_t>(
-      kMaxWarpsPerBlock, llvm::bit_ceil(static_cast<uint64_t>(warps_per_rank)));
+  const int64_t num_warps =
+      std::min<int64_t>(kMaxCollectiveWarpsPerBlock,
+                        llvm::bit_ceil(static_cast<uint64_t>(warps_per_rank)));
   const int64_t blocks_per_rank = CeilOfRatio(warps_per_rank, num_warps);
   const int64_t num_blocks =
       std::min(kAllToAllMaxBlocksPerGrid, num_devices * blocks_per_rank);
@@ -1453,7 +1376,7 @@ absl::StatusOr<BlockLevelFusionConfig> GetBlockLevelConfigForAllToAll(
   return CreateBlockLevelFusionConfig(num_warps, tile_sizes);
 }
 
-// Per-operand state of an all-gather rewrite.
+// Per-operand state of a one-shot all-gather rewrite.
 struct AllGatherOperandContext {
   xtile::ExtractTileOp input_extract;
   // Local input buffer read by `input_extract`.
@@ -1475,6 +1398,7 @@ struct AllGatherRewriteContext {
   // Number of consecutive programs that read from the same peer. See
   // EmitPeerReplicaId.
   int64_t signal_stride = 0;
+  bool is_two_shot = false;
 };
 
 // Returns the number of programs needed to cover one rank's slice of an
@@ -1537,13 +1461,6 @@ absl::StatusOr<AllGatherRewriteContext> BuildAllGatherContext(
     return absl::InvalidArgumentError(
         "AllGather op must be directly nested in the XTile entry function.");
   }
-  mlir::ValueRange remote_buffers = entry_func.getScratchBuffers();
-  if (remote_buffers.size() < op.getNumOperands() ||
-      entry_func.getInputOutputBuffers().size() <= remote_buffers.size()) {
-    return absl::InvalidArgumentError(
-        "EntryFuncOp must have parameter/output I/O buffers and one scratch "
-        "buffer per fusion parameter.");
-  }
 
   ABSL_ASSIGN_OR_RETURN(auto replica_groups,
                         xla::ConvertReplicaGroups(op.getReplicaGroups(), op));
@@ -1562,7 +1479,47 @@ absl::StatusOr<AllGatherRewriteContext> BuildAllGatherContext(
   ctx.world_size = world_size;
   ctx.gather_dim = op.getAllGatherDim();
   ctx.signal_buffers_arg = entry_func.getSignalBuffer();
+  ctx.is_two_shot =
+      xtile::GetCollectiveStrategy(op) == xtile::CollectiveStrategy::kTwoShot;
 
+  if (ctx.is_two_shot) {
+    if (!entry_func.getScratchBuffers().empty()) {
+      return absl::InvalidArgumentError(
+          "Two-shot AllGather EntryFuncOp must not have scratch buffers.");
+    }
+    if (op.getOperandTypes() != op.getResultTypes()) {
+      return absl::InvalidArgumentError(
+          "Two-shot AllGather operand types must match result types.");
+    }
+    // `fusion_emitter.cc` attaches `xla.range = [0, num_pids - 1]` to the
+    // entry function's program id argument.
+    std::optional<Interval> pid_range =
+        xla::GetRange(entry_func.getProgramId());
+    if (!pid_range.has_value() || pid_range->lower != 0 ||
+        pid_range->upper < 0 ||
+        pid_range->upper >= std::numeric_limits<int32_t>::max()) {
+      return absl::InvalidArgumentError(
+          "Two-shot AllGather EntryFuncOp program id must have a valid [0, "
+          "N-1] i32 xla.range attribute.");
+    }
+    const int64_t num_programs = pid_range->upper + 1;
+    if (num_programs % world_size != 0) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Two-shot AllGather program count (%d) must be divisible by "
+          "world_size (%d).",
+          num_programs, world_size));
+    }
+    ctx.signal_stride = num_programs / world_size;
+    return ctx;
+  }
+
+  mlir::ValueRange remote_buffers = entry_func.getScratchBuffers();
+  if (remote_buffers.size() < op.getNumOperands() ||
+      entry_func.getInputOutputBuffers().size() <= remote_buffers.size()) {
+    return absl::InvalidArgumentError(
+        "EntryFuncOp must have parameter/output I/O buffers and one scratch "
+        "buffer per fusion parameter.");
+  }
   for (int64_t i = 0; i < op.getNumOperands(); ++i) {
     ABSL_ASSIGN_OR_RETURN(
         AllGatherOperandContext operand,
@@ -2059,35 +2016,15 @@ auto FindCollectiveHero(ComputationT* computation)
   return nullptr;
 }
 
-}  // namespace
-
-llvm::SmallVector<int64_t> GreedyPowerOfTwoTiles(const Shape& output_shape,
-                                                 int32_t num_blocks) {
-  CHECK_GT(num_blocks, 0) << "num_blocks must be positive. Was " << num_blocks;
-  // Rank fits in int32_t.
-  const auto rank = static_cast<int32_t>(output_shape.dimensions().size());
-  const llvm::ArrayRef<const int64_t> minor_to_major =
-      LayoutUtil::MinorToMajor(output_shape);
-  llvm::SmallVector<int64_t, 4> tile_sizes(rank);
-  // NB: Unsigned because llvm::bit_<> functions expect unsigned.
-  uint64_t remaining_blocks = num_blocks;
-  // Iterate from most major to most minor to keep memory contiguous for each
-  // block.
-  for (int32_t i = rank - 1; i >= 0; --i) {
-    const auto dim = static_cast<int32_t>(minor_to_major[i]);
-    const uint64_t dim_size = output_shape.dimensions(dim);
-    // Largest power-of-two k <= std::min(dim_size, remaining_blocks).
-    const uint64_t k = std::max(
-        uint64_t{1}, llvm::bit_floor(std::min(remaining_blocks, dim_size)));
-    // Round up number of tiles in this dimension to power of two.
-    tile_sizes[dim] =
-        static_cast<int64_t>(llvm::bit_ceil(xla::CeilOfRatio(dim_size, k)));
-    const uint64_t blocks_used =
-        xla::CeilOfRatio(dim_size, static_cast<uint64_t>(tile_sizes[dim]));
-    remaining_blocks = xla::FloorOfRatio(remaining_blocks, blocks_used);
-  }
-  return tile_sizes;
+bool RequiresSymmetricOutputBuffers(const HloInstruction& inst) {
+  return IsTritonTwoShotAllGather(inst);
 }
+
+bool RequiresScratchDataBuffers(const HloInstruction& inst) {
+  return !IsTritonTwoShotAllGather(inst);
+}
+
+}  // namespace
 
 const HloInstruction* GetCollectiveHero(const HloComputation* computation) {
   return FindCollectiveHero(computation);
@@ -2194,12 +2131,31 @@ absl::StatusOr<emitters::KernelArguments> CreateCollectiveKernelArguments(
     emitters::KernelArguments::SliceProvider slice_provider,
     const emitters::KernelArguments::BufferAlignment& buffer_alignment,
     const HloFusionInstruction& fusion) {
+  ABSL_ASSIGN_OR_RETURN(xtile::CollectiveEntrySpec spec,
+                        BuildCollectiveEntrySpec(fusion));
   ABSL_ASSIGN_OR_RETURN(
       std::vector<emitters::KernelArgument> unmanaged_arguments,
       GetCollectiveUnmanagedKernelArguments(&fusion));
-  TF_RET_CHECK(!unmanaged_arguments.empty());
-  return emitters::KernelArguments::Create(slice_provider, buffer_alignment,
-                                           &fusion, unmanaged_arguments);
+  ABSL_ASSIGN_OR_RETURN(
+      emitters::KernelArguments kernel_args,
+      emitters::KernelArguments::Create(slice_provider, buffer_alignment,
+                                        &fusion, unmanaged_arguments));
+  if (spec.peer_table_results.empty()) {
+    return kernel_args;
+  }
+  const std::vector<ShapeUtil::IndexedShape> leaf_shapes =
+      ShapeUtil::GetLeafShapes(fusion.shape());
+  TF_RET_CHECK(spec.peer_table_results.size() == leaf_shapes.size());
+  std::vector<emitters::KernelArgument> args = kernel_args.args();
+  for (const auto& [i, leaf] : llvm::enumerate(leaf_shapes)) {
+    if (!spec.peer_table_results[i]) {
+      continue;
+    }
+    ABSL_ASSIGN_OR_RETURN(int64_t pos,
+                          kernel_args.PositionOfResult(leaf.index));
+    args[pos] = CreatePeerPointerTableArgument(spec.world_size);
+  }
+  return emitters::KernelArguments(std::move(args));
 }
 
 absl::StatusOr<emitters::KernelArguments> CreateCollectiveKernelArguments(
@@ -2222,11 +2178,13 @@ absl::StatusOr<xtile::CollectiveEntrySpec> BuildCollectiveEntrySpec(
   TF_RET_CHECK(collective != nullptr)
       << "Collective fusion requires a collective hero instruction.";
   xtile::CollectiveEntrySpec spec;
-  if (IsTritonTwoShotAllGather(*collective)) {
+  if (RequiresSymmetricOutputBuffers(*collective)) {
     spec.peer_table_results.assign(
         ShapeUtil::GetLeafShapes(fusion.shape()).size(), true);
   }
-  spec.num_scratch_buffers = hlo_computation->num_parameters();
+  spec.num_scratch_buffers = RequiresScratchDataBuffers(*collective)
+                                 ? hlo_computation->num_parameters()
+                                 : 0;
   spec.has_signal_and_rank = true;
   spec.world_size = collective->device_list()->num_devices_per_group();
   return spec;
@@ -2327,10 +2285,6 @@ absl::StatusOr<CollectiveKernelSpec> CreateCollectiveKernelSpec(
 
 mlir::LogicalResult RewriteAllGather(mlir::stablehlo::AllGatherOp op,
                                      mlir::PatternRewriter& rewriter) {
-  if (xtile::GetCollectiveStrategy(op) == xtile::CollectiveStrategy::kTwoShot) {
-    return rewriter.notifyMatchFailure(
-        op, "Two-shot AllGather lowering is not yet implemented.");
-  }
   absl::StatusOr<AllGatherRewriteContext> maybe_ctx = BuildAllGatherContext(op);
   if (!maybe_ctx.ok()) {
     return rewriter.notifyMatchFailure(op, maybe_ctx.status().message());
@@ -2349,7 +2303,31 @@ mlir::LogicalResult RewriteAllGather(mlir::stablehlo::AllGatherOp op,
   mlir::Value signal_value = EmitDeviceInvocationCount(
       builder, ctx.signal_buffers_arg, rank, block_id, ctx.world_size);
 
-  // Push-based AllGather (e.g., rank 0 paired with peer rank 2):
+  if (ctx.is_two_shot) {
+    // Entry barrier ensures the peer's symmetric output buffer is free; root
+    // `xtile.insert` ops write directly into it, followed by an exit barrier.
+    EmitBlockBarrier(builder, ctx.signal_buffers_arg, rank, signal_value,
+                     ctx.world_size, /*signal_slot=*/peer_replica_id,
+                     ctx.signal_stride, mtx::BarrierMode::kPairwiseSymmetric,
+                     /*emit_local_barrier=*/false);
+    // TODO(b/436548063): Remove this when moving to phase-based codegen.
+    // Right now there is no post-store epilogue, so placing the exit barrier
+    // before `xtile.return` waits for all peer `xtile.insert` stores. With
+    // phased codegen, emit the exit barrier between the prologue and epilogue
+    // loops instead.
+    builder.setInsertionPoint(op->getBlock()->getTerminator());
+    mlir::Value exit_signal_value = arith::AddIOp::create(
+        builder, signal_value,
+        arith::ConstantOp::create(builder, builder.getI32IntegerAttr(1)));
+    EmitBlockBarrier(builder, ctx.signal_buffers_arg, rank, exit_signal_value,
+                     ctx.world_size, /*signal_slot=*/peer_replica_id,
+                     ctx.signal_stride, mtx::BarrierMode::kPairwiseSymmetric,
+                     /*emit_local_barrier=*/true);
+    rewriter.replaceOp(op, op.getOperands());
+    return mlir::success();
+  }
+
+  // One-shot push-based AllGather (e.g., rank 0 paired with peer rank 2):
   //   1. Rank 0 writes its local tile into GPU 2's scratch buffer (at slot 0).
   //   2. Ranks 0 and 2 wait for each other's write to finish.
   //   3. Rank 0 reads GPU 2's tile from its own local scratch buffer (slot 2).
@@ -2458,7 +2436,7 @@ bool ShouldFlattenReduceScatter(
     return false;
   }
   const int64_t scatter_dim = rs->scatter_dimension();
-  for (const Shape& output_shape : GetOutputShapes(rs)) {
+  for (const Shape& output_shape : GetOutputShapes(*rs)) {
     if (scatter_dim < 0 ||
         scatter_dim >= static_cast<int64_t>(output_shape.dimensions().size()) ||
         output_shape.dimensions(scatter_dim) % num_devices != 0) {
@@ -2490,7 +2468,7 @@ absl::Status FlattenReduceScatterFusion(
   original_output_shapes.reserve(num_operands);
   param_shapes.reserve(num_operands);
   output_shapes.reserve(num_operands);
-  for (const Shape& output_shape : GetOutputShapes(rs)) {
+  for (const Shape& output_shape : GetOutputShapes(*rs)) {
     ABSL_ASSIGN_OR_RETURN(
         FlatReduceScatterShapes flat_shapes,
         GetFlatReduceScatterShapes(output_shape.element_type(), num_devices,

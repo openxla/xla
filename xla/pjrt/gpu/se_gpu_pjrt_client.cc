@@ -150,16 +150,16 @@ limitations under the License.
 
 #if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) || \
     defined(TENSORFLOW_USE_SYCL)
+#include "xla/backends/gpu/runtime/buffer_allocations.h"
+#include "xla/backends/gpu/runtime/gpu_constants.h"
+#include "xla/backends/gpu/runtime/gpu_executable.h"
+#include "xla/backends/gpu/runtime/gpu_executable_buffer_allocator.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/pjrt/gpu/gpu_metrics.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/se/stream_executor_executable.pb.h"
-#include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/gpu_constants.h"
-#include "xla/service/gpu/gpu_executable.h"
-#include "xla/service/gpu/gpu_executable_buffer_allocator.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/tsl/framework/scoped_allocation_trace.h"
 #include "xla/xla.pb.h"
@@ -172,7 +172,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
 #endif
 
-#include "xla/service/gpu/gpu_executable_run_options.h"
+#include "xla/backends/gpu/runtime/gpu_executable_run_options.h"
 #include "xla/stream_executor/device_address_vmm_allocator.h"
 #include "xla/util.h"
 
@@ -1319,22 +1319,49 @@ StreamExecutorGpuRawClient::AcquireExternalDmaAccess(
 
   tsl::AsyncValueRef<GpuExternalDmaAccess> result =
       tsl::MakeUnconstructedAsyncValueRef<GpuExternalDmaAccess>();
-  device_buffer.AndThen(
-      [cache = dma_buf_cache_, gpu_executor, device_buffer, result]() mutable {
-        if (device_buffer.IsError()) {
-          result.SetError(device_buffer.GetError());
-          return;
-        }
-        const se::DeviceAddressBase mem = device_buffer->mem();
-        absl::StatusOr<GpuDmaBufCache::ExportedDmaBuf> exported =
-            ExportDeviceBufferDmaBuf(*cache, *gpu_executor, mem);
-        if (!exported.ok()) {
-          result.SetError(exported.status());
-          return;
-        }
-        result.emplace(std::move(device_buffer), std::move(exported->dma_buf),
-                       exported->offset, mem.size());
-      });
+  device_buffer.AndThen([cache = dma_buf_cache_, gpu_executor, device_buffer,
+                         result,
+                         async_work_runner = async_work_runner()]() mutable {
+    if (device_buffer.IsError()) {
+      result.SetError(device_buffer.GetError());
+      return;
+    }
+    const se::DeviceAddressBase mem = device_buffer->mem();
+    absl::StatusOr<GpuDmaBufCache::ExportedDmaBuf> exported =
+        ExportDeviceBufferDmaBuf(*cache, *gpu_executor, mem);
+    if (!exported.ok()) {
+      result.SetError(exported.status());
+      return;
+    }
+    // The allocator can return memory that an earlier computation is still
+    // using. An external engine is not ordered against that computation, so
+    // the access becomes available only after the memory may be accessed.
+    absl::StatusOr<BufferSequencingEventRef> allocation_event =
+        device_buffer->GetDefinitionEvent(async_work_runner,
+                                          /*nullptr_if_past=*/true);
+    if (!allocation_event.ok()) {
+      result.SetError(allocation_event.status());
+      return;
+    }
+    BufferSequencingEventRef event = *std::move(allocation_event);
+    if (!event) {
+      // The sync point has already passed, so the memory may be accessed now.
+      result.emplace(std::move(device_buffer), std::move(exported->dma_buf),
+                     exported->offset, mem.size());
+      return;
+    }
+    event.AndThen([event, result = std::move(result),
+                   device_buffer = std::move(device_buffer),
+                   dma_buf = std::move(exported->dma_buf),
+                   offset = exported->offset, size = mem.size()]() mutable {
+      if (event.IsError()) {
+        result.SetError(event.GetError());
+        return;
+      }
+      result.emplace(std::move(device_buffer), std::move(dma_buf), offset,
+                     size);
+    });
+  });
   return result;
 }
 

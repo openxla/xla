@@ -90,11 +90,12 @@ cc_library(
     local_defines = [
         "CUDA_NVCC_REPO_NAME=\\\"" + get_canonical_repo_name("cuda_nvcc") + "\\\"",
         "CUDA_NVDISASM_REPO_NAME=\\\"" + get_canonical_repo_name("cuda_nvdisasm") + "\\\"",
-        "NVIDIA_NVSHMEM_REPO_NAME=\\\"" + get_canonical_repo_name("nvidia_nvshmem") + "\\\"",
         "CUDA_NVVM_REPO_NAME=\\\"" + get_canonical_repo_name("cuda_nvvm") + "\\\"",
         "CUDA_CUDART_REPO_NAME=\\\"" + get_canonical_repo_name("cuda_cudart") + "\\\"",
     ],
     tags = [
+        "cuda-only",
+        "gpu",
         "manual",
         "no_oss",
         "nobuilder",
@@ -104,10 +105,11 @@ cc_library(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:types",
         "@com_google_absl//absl/strings",
-        "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
-    ],
+    ] + if_oss([
+        "@local_config_cuda//cuda:cuda_config",
+    ]),
 )
 
 cc_library(
@@ -131,18 +133,17 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
-        "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform:load_library",
         "@tsl//tsl/platform:path",
     ] + if_oss([
         # keep sorted
+        "@local_config_cuda//cuda:cuda_config",
         "@local_config_nccl//:nccl_config",
         "@local_config_tensorrt//:tensorrt_headers",
-        "@nvshmem//:nvshmem_config",
         "@tsl//tsl/platform",
     ]) + if_rocm_is_configured([
         # keep sorted
-        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocm_config",
     ]),
 )
 
@@ -420,14 +421,16 @@ cc_library(
     hdrs = ["//xla/tsl/platform:rocm_rocdl_path.h"],
     compatible_with = [],
     tags = [
+        "gpu",
         "manual",
         "no_oss",
         "nobuilder",
+        "rocm-only",
     ],
     deps = [
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:types",
-        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocm_config",
         "@tsl//tsl/platform:path",
     ],
 )

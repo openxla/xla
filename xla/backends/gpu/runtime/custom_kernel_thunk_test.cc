@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/gpu_kernel_spec.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/codegen/kernels/ptx_custom_kernel.h"
+#include "xla/backends/gpu/runtime/buffer_allocations.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
@@ -88,7 +88,7 @@ TEST(CustomKernelThunkTest, ToStringIncludesPdlOnlyWhenEnabled) {
   EXPECT_EQ(thunk.ToString(0),
             "kernel=name, profile_annotation=test_kernel_profiler, "
             "launch dimensions=blocks: {3, 2, 1}, threads/block: {4, 5, 6}, "
-            "cluster_dim=nullopt, shmem_bytes=42");
+            "shmem_bytes=42");
 
   GpuKernelSpec clustered_kernel_spec{
       "clustered_name",
@@ -102,10 +102,12 @@ TEST(CustomKernelThunkTest, ToStringIncludesPdlOnlyWhenEnabled) {
           /*ptx=*/"", /*kernel_name=*/"clustered_name", /*arity=*/0));
   CustomKernelThunk pdl_thunk(thunk_info, clustered_kernel, kernel_arguments,
                               /*devices_in_process=*/1, /*use_pdl=*/true);
+  EXPECT_EQ(pdl_thunk.launch_dimensions().cluster_dims(),
+            se::ClusterDim(2, 2, 2));
   EXPECT_EQ(pdl_thunk.ToString(0),
             "kernel=clustered_name, profile_annotation=test_kernel_profiler, "
             "launch dimensions=blocks: {6, 4, 2}, threads/block: {8, 10, 12}, "
-            "cluster_dim=ClusterDim{2, 2, 2}, shmem_bytes=84, use_pdl=true");
+            "cluster: {2, 2, 2}, shmem_bytes=84, use_pdl=true");
 }
 
 TEST(CustomKernelThunkTest, BufferUsesReturnsCorrectBuffers) {

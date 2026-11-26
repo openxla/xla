@@ -14,7 +14,7 @@
 # ==============================================================================
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tests:build_defs.bzl", "NVIDIA_GPU_DEFAULT_BACKENDS", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google")
 load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
@@ -83,9 +83,7 @@ xla_test(
     srcs = ["kernel_name_tracer_test.cc"],
     # There is a leak in CUPTI which triggers the heap checker.
     args = if_google(["--heap_check="]),
-    backends = [
-        "gpu",
-    ],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = [
         "cuda-only",
     ],
@@ -93,6 +91,7 @@ xla_test(
         ":kernel_name_tracer",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu/runtime:buffer_allocations",
         "//xla/backends/gpu/runtime:command",
         "//xla/backends/gpu/runtime:command_buffer_thunk",
         "//xla/backends/gpu/runtime:command_executor",
@@ -103,7 +102,6 @@ xla_test(
         "//xla/service:buffer_assignment",
         "//xla/service:platform_util",
         "//xla/service:shaped_slice",
-        "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:launch_dimensions",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",

@@ -16,6 +16,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 
 #include <cstdint>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <tuple>
@@ -49,7 +50,9 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::absl_testing::IsOkAndHolds;
 using ::absl_testing::StatusIs;
+using ::testing::ElementsAre;
 using ::testing::HasSubstr;
 using ::tsl::proto_testing::EqualsProto;
 using ::tsl::proto_testing::ParseTextProtoOrDie;
@@ -220,6 +223,59 @@ TEST_F(HloShardingTest, NamedShardingTupleProtoRoundTrip) {
   EXPECT_THAT(sharding.ToProto(), EqualsProto(proto));
 }
 
+TEST_F(HloShardingTest, FromProtoFailsWithInvalidNamedSharding) {
+  // Axis index out of bounds.
+  auto proto = ParseTextProtoOrDie<OpSharding>(R"pb(
+    named_sharding {
+      mesh { axes { name: "a" size: 4 } }
+      dim_shardings { axes { mesh_axis_index: 1 } }
+    }
+  )pb");
+  EXPECT_THAT(HloSharding::FromProto(proto),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Axis index must be less than number of "
+                                 "axes")));
+
+  // Same error for a named sharding inside a tuple.
+  OpSharding tuple_proto;
+  tuple_proto.set_type(OpSharding::TUPLE);
+  *tuple_proto.add_tuple_shardings() = proto;
+  EXPECT_THAT(HloSharding::FromProto(tuple_proto),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Axis index must be less than number of "
+                                 "axes")));
+
+  // The device array would need 8 TB if it were allocated before checking the
+  // number of device ids.
+  proto = ParseTextProtoOrDie<OpSharding>(R"pb(
+    named_sharding {
+      mesh {
+        axes { name: "a" size: 1000000000000 }
+        device_ids: [ 0 ]
+      }
+    }
+  )pb");
+  EXPECT_THAT(HloSharding::FromProto(proto),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Number of device ids must match")));
+
+  // pre_size * size wraps to 0 in int64_t.
+  proto = ParseTextProtoOrDie<OpSharding>(R"pb(
+    named_sharding {
+      mesh { axes { name: "a" size: 8 } }
+      dim_shardings {
+        axes {
+          mesh_axis_index: 0
+          sub_axis_info { pre_size: 4611686018427387904 size: 4 }
+        }
+      }
+    }
+  )pb");
+  EXPECT_THAT(HloSharding::FromProto(proto),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("sub-axis pre_size * size overflows")));
+}
+
 TEST_F(HloShardingTest, FromProtoFailsWithNegativeOrOverflowingDimensions) {
   auto proto = ParseTextProtoOrDie<OpSharding>(R"pb(
     type: OTHER
@@ -264,6 +320,25 @@ TEST_F(HloShardingTest, FromProtoFailsWithMoreLastTileDimsThanTileDims) {
   )pb");
   EXPECT_THAT(HloSharding::FromProto(proto).status().message(),
               ::testing::HasSubstr("last_tile_dims has 2 entries"));
+}
+
+TEST_F(HloShardingTest, FromProtoSubgroupWithLargePrimeIotaDims) {
+  // 2^61 - 1 is prime. Sorting the subgroup types transposes the iota tile
+  // assignment, which must not require factorizing its dimensions.
+  constexpr int64_t kPrime = (int64_t{1} << 61) - 1;
+  auto proto = ParseTextProtoOrDie<OpSharding>(R"pb(
+    type: OTHER
+    tile_assignment_dimensions: [ 2305843009213693951, 2, 2 ]
+    iota_reshape_dims: [ 4, 2305843009213693951 ]
+    iota_transpose_perm: [ 1, 0 ]
+    last_tile_dims: [ UNREDUCED, MANUAL ]
+  )pb");
+  ASSERT_OK_AND_ASSIGN(HloSharding sharding, HloSharding::FromProto(proto));
+  EXPECT_TRUE(sharding.tile_assignment().iota().has_value());
+  EXPECT_EQ(sharding.tile_assignment(),
+            TileAssignment({kPrime, 2, 2}, {2, 2, kPrime}, {2, 1, 0}));
+  EXPECT_THAT(sharding.subgroup_types(),
+              ElementsAre(OpSharding::MANUAL, OpSharding::UNREDUCED));
 }
 
 using TileTest = HloShardingTest;
@@ -1844,6 +1919,247 @@ TEST_F(HloShardingTest, GetSubShardingNestedAndEmptyTuples) {
 
   const HloSharding empty_sharding = HloSharding::Tuple(empty_tuple, {});
   EXPECT_EQ(empty_sharding.GetSubSharding(empty_tuple, {}), empty_sharding);
+}
+
+TEST_F(HloShardingTest, NamedShardingExceedingInt32) {
+  constexpr int64_t kTwoTo32 = int64_t{1} << 32;
+  ASSERT_OK_AND_ASSIGN(
+      HloSharding sharding,
+      HloSharding::FromProto(ParseTextProtoOrDie<OpSharding>(R"pb(
+        named_sharding {
+          mesh {
+            axes { name: "a" size: 65536 }
+            axes { name: "b" size: 65536 }
+          }
+          dim_shardings {
+            axes { mesh_axis_index: 0 }
+            axes { mesh_axis_index: 1 }
+            is_closed: true
+          }
+        }
+      )pb")));
+  EXPECT_TRUE(sharding.IsTiled());
+  EXPECT_FALSE(sharding.IsReplicated());
+  EXPECT_EQ(sharding.dimension(0), kTwoTo32);
+  EXPECT_EQ(sharding.NumTiles(), kTwoTo32);
+  EXPECT_EQ(sharding.ReplicationFactor(), 1);
+  EXPECT_EQ(sharding.TileShape(ShapeUtil::MakeShape(F32, {int64_t{1} << 33})),
+            ShapeUtil::MakeShape(F32, {2}));
+
+  HloSharding v2 = HloSharding::V3ToV2Sharding(sharding);
+  EXPECT_TRUE(v2.IsTiled());
+  EXPECT_FALSE(v2.IsReplicated());
+  EXPECT_EQ(v2.dimension(0), kTwoTo32);
+
+  constexpr int64_t kTwoTo32PlusOne = kTwoTo32 + 1;
+  ASSERT_OK_AND_ASSIGN(
+      HloSharding sharding_plus_one,
+      HloSharding::FromProto(ParseTextProtoOrDie<OpSharding>(R"pb(
+        named_sharding {
+          mesh {
+            axes { name: "a" size: 641 }
+            axes { name: "b" size: 6700417 }
+          }
+          dim_shardings {
+            axes { mesh_axis_index: 0 }
+            axes { mesh_axis_index: 1 }
+            is_closed: true
+          }
+        }
+      )pb")));
+  EXPECT_TRUE(sharding_plus_one.IsTiled());
+  EXPECT_FALSE(sharding_plus_one.IsReplicated());
+  EXPECT_EQ(sharding_plus_one.dimension(0), kTwoTo32PlusOne);
+  EXPECT_EQ(sharding_plus_one.NumTiles(), kTwoTo32PlusOne);
+  EXPECT_EQ(sharding_plus_one.TileShape(
+                ShapeUtil::MakeShape(F32, {2 * kTwoTo32PlusOne})),
+            ShapeUtil::MakeShape(F32, {2}));
+
+  HloSharding v2_plus_one = HloSharding::V3ToV2Sharding(sharding_plus_one);
+  EXPECT_TRUE(v2_plus_one.IsTiled());
+  EXPECT_FALSE(v2_plus_one.IsReplicated());
+  EXPECT_EQ(v2_plus_one.dimension(0), kTwoTo32PlusOne);
+
+  ASSERT_OK_AND_ASSIGN(
+      HloSharding partially_replicated,
+      HloSharding::FromProto(ParseTextProtoOrDie<OpSharding>(R"pb(
+        named_sharding {
+          mesh {
+            axes { name: "a" size: 65536 }
+            axes { name: "b" size: 65536 }
+            axes { name: "c" size: 2 }
+          }
+          dim_shardings {
+            axes { mesh_axis_index: 0 }
+            axes { mesh_axis_index: 1 }
+            is_closed: true
+          }
+        }
+      )pb")));
+  EXPECT_TRUE(partially_replicated.HasPartialReplication());
+  EXPECT_EQ(partially_replicated.ReplicationFactor(), 2);
+  EXPECT_EQ(partially_replicated.NumTiles(), kTwoTo32);
+}
+
+// Iota tile assignments whose replicated or subgroup dims don't align with the
+// iota reshape dims must be materialized; `FromProto` bounds that.
+TEST_F(HloShardingTest, FromProtoRejectsHugeIotaMaterialization) {
+  for (const char* textproto : {
+           R"pb(type: OTHER
+                replicate_on_last_tile_dim: true
+                tile_assignment_dimensions: [ 3, 1073741824 ]
+                iota_reshape_dims: [ 3, 1073741824 ]
+                iota_transpose_perm: [ 1, 0 ])pb",
+           R"pb(type: OTHER
+                tile_assignment_dimensions: [ 3, 1073741824 ]
+                iota_reshape_dims: [ 3, 1073741824 ]
+                iota_transpose_perm: [ 1, 0 ]
+                last_tile_dims: [ REPLICATED ])pb",
+           R"pb(type: OTHER
+                tile_assignment_dimensions: [ 1073741824, 3 ]
+                iota_reshape_dims: [ 1073741824, 3 ]
+                iota_transpose_perm: [ 1, 0 ]
+                last_tile_dims: [ REPLICATED, MANUAL ])pb",
+           R"pb(type: OTHER
+                tile_assignment_dimensions: [ 3, 1073741824 ]
+                iota_reshape_dims: [ 3, 1073741824 ]
+                iota_transpose_perm: [ 1, 0 ]
+                last_tile_dims: [ MANUAL, REPLICATED ])pb",
+       }) {
+    EXPECT_THAT(
+        HloSharding::FromProto(ParseTextProtoOrDie<OpSharding>(textproto)),
+        StatusIs(absl::StatusCode::kInvalidArgument,
+                 HasSubstr("too large to materialize")))
+        << textproto;
+  }
+}
+
+TEST_F(HloShardingTest, FromProtoIotaMaterializationBudgetIsSharedByTuples) {
+  // Each leaf materializes 30000 elements; the 2^16 budget fits two leaves.
+  OpSharding tuple;
+  tuple.set_type(OpSharding::TUPLE);
+  const OpSharding leaf = ParseTextProtoOrDie<OpSharding>(R"pb(
+    type: OTHER
+    replicate_on_last_tile_dim: true
+    tile_assignment_dimensions: [ 3, 10000 ]
+    iota_reshape_dims: [ 3, 10000 ]
+    iota_transpose_perm: [ 1, 0 ]
+  )pb");
+  *tuple.add_tuple_shardings() = leaf;
+  *tuple.add_tuple_shardings() = leaf;
+  EXPECT_OK(HloSharding::FromProto(tuple));
+  *tuple.add_tuple_shardings() = leaf;
+  EXPECT_THAT(HloSharding::FromProto(tuple),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("too large to materialize")));
+}
+
+TEST_F(HloShardingTest, FromProtoIotaWithinMaterializationBudget) {
+  // Huge but aligned: stays iota without materialization.
+  ASSERT_OK_AND_ASSIGN(HloSharding huge,
+                       HloSharding::FromProto(ParseTextProtoOrDie<OpSharding>(
+                           R"pb(type: OTHER
+                                replicate_on_last_tile_dim: true
+                                tile_assignment_dimensions: [ 2, 1099511627776 ]
+                                iota_reshape_dims: [ 2199023255552 ]
+                                iota_transpose_perm: [ 0 ])pb")));
+  EXPECT_TRUE(huge.tile_assignment().iota().has_value());
+  // Small and non-aligned: [2,3]<=[2,3]T(1,0) is [[0,3,1],[4,2,5]].
+  EXPECT_THAT(HloSharding::FromProto(ParseTextProtoOrDie<OpSharding>(
+                  R"pb(type: OTHER
+                       replicate_on_last_tile_dim: true
+                       tile_assignment_dimensions: [ 2, 3 ]
+                       iota_reshape_dims: [ 2, 3 ]
+                       iota_transpose_perm: [ 1, 0 ])pb")),
+              IsOkAndHolds(HloSharding::PartialTile(
+                  Array<int64_t>({2, 3}, {0, 1, 3, 2, 4, 5}))));
+  // [3,2]<=[3,2]T(1,0) is [[0,2],[4,1],[3,5]]; MANUAL first is
+  // [[0,4,3],[2,1,5]], then REPLICATED groups are sorted.
+  EXPECT_THAT(HloSharding::FromProto(ParseTextProtoOrDie<OpSharding>(
+                  R"pb(type: OTHER
+                       tile_assignment_dimensions: [ 3, 2 ]
+                       iota_reshape_dims: [ 3, 2 ]
+                       iota_transpose_perm: [ 1, 0 ]
+                       last_tile_dims: [ REPLICATED, MANUAL ])pb")),
+              IsOkAndHolds(HloSharding::Subgroup(
+                  Array<int64_t>({2, 3}, {0, 3, 4, 1, 2, 5}),
+                  {OpSharding::MANUAL, OpSharding::REPLICATED})));
+  // Explicit-array merge drops the size-1 REPLICATED dim.
+  EXPECT_THAT(
+      HloSharding::TrySubgroup(Array<int64_t>({2, 1, 3}, {5, 4, 3, 2, 1, 0}),
+                               {OpSharding::REPLICATED, OpSharding::MANUAL}),
+      IsOkAndHolds(HloSharding::Subgroup(
+          Array<int64_t>({2, 3}, {5, 4, 3, 2, 1, 0}), {OpSharding::MANUAL})));
+}
+
+TEST_F(HloShardingTest, FromProtoRejectsNestedTupleShardings) {
+  EXPECT_THAT(HloSharding::FromProto(ParseTextProtoOrDie<OpSharding>(R"pb(
+                type: TUPLE
+                tuple_shardings {
+                  type: TUPLE
+                  tuple_shardings { type: REPLICATED }
+                }
+              )pb")),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Nested tuple shardings")));
+
+  EXPECT_THAT(HloSharding::FromProto(ParseTextProtoOrDie<OpSharding>(R"pb(
+                type: TUPLE
+                tuple_shardings { type: TUPLE }
+              )pb")),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Nested tuple shardings")));
+
+  // Build a deeply nested in-memory OpSharding chain and tear it down
+  // iteratively so ~OpSharding() cannot stack-overflow under sanitizers.
+  auto deep_proto = std::make_unique<OpSharding>();
+  OpSharding* cur = deep_proto.get();
+  for (int i = 0; i < 10000; ++i) {
+    cur->set_type(OpSharding::TUPLE);
+    cur = cur->add_tuple_shardings();
+  }
+  cur->set_type(OpSharding::REPLICATED);
+
+  EXPECT_THAT(HloSharding::FromProto(*deep_proto),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Nested tuple shardings")));
+
+  while (deep_proto != nullptr) {
+    std::unique_ptr<OpSharding> next;
+    if (!deep_proto->tuple_shardings().empty()) {
+      next.reset(deep_proto->mutable_tuple_shardings()->ReleaseLast());
+    }
+    deep_proto = std::move(next);
+  }
+
+  // A flat tuple containing a NamedSharding leaf and a MAXIMAL leaf succeeds
+  // and round-trips cleanly.
+  OpSharding named_leaf_proto =
+      HloSharding(NamedSharding::Replicate()).ToProto();
+  ASSERT_TRUE(named_leaf_proto.has_named_sharding());
+  OpSharding flat_v3_tuple;
+  flat_v3_tuple.set_type(OpSharding::TUPLE);
+  *flat_v3_tuple.add_tuple_shardings() = named_leaf_proto;
+  *flat_v3_tuple.add_tuple_shardings() = HloSharding::SingleDevice(0).ToProto();
+
+  ASSERT_OK_AND_ASSIGN(HloSharding flat_v3_sharding,
+                       HloSharding::FromProto(flat_v3_tuple));
+  EXPECT_TRUE(flat_v3_sharding.IsTuple());
+  ASSERT_EQ(flat_v3_sharding.tuple_elements().size(), 2);
+  EXPECT_TRUE(flat_v3_sharding.tuple_elements()[0].UseNamedShardingLeaf());
+  EXPECT_EQ(flat_v3_sharding.tuple_elements()[1], HloSharding::SingleDevice(0));
+  EXPECT_THAT(flat_v3_sharding.ToProto(), EqualsProto(flat_v3_tuple));
+}
+
+TEST_F(HloShardingTest, ValidateRejectsNestedTupleElement) {
+  HloSharding sharding = HloSharding::FlatTuple({HloSharding::Replicate()});
+  sharding.tuple_elements()[0] =
+      HloSharding::FlatTuple({HloSharding::Replicate()});
+  Shape tuple_shape =
+      ShapeUtil::MakeTupleShape({ShapeUtil::MakeShape(F32, {4})});
+  EXPECT_THAT(sharding.Validate(tuple_shape),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Nested tuple sharding")));
 }
 
 }  // namespace

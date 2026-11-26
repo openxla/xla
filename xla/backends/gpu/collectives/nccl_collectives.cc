@@ -43,7 +43,6 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "third_party/nccl/nccl.h"
-#include "tsl/platform/numbers.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -65,6 +64,7 @@ limitations under the License.
 #include "xla/runtime/device_id.h"
 #include "xla/runtime/process_id.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
@@ -327,6 +327,9 @@ static absl::StatusOr<ncclConfig_t> AsNcclConfig(
   } else if (stream_executor->GetDeviceDescription()
                  .cuda_compute_capability()
                  .IsBlackwell() &&
+             !stream_executor->GetDeviceDescription()
+                  .cuda_compute_capability()
+                  .IsRubin() &&
              nccl_version >= NCCL_VERSION(2, 28, 0)) {
     // Future NCCL versions will reduce the default max number of channels on
     // Blackwell to 16. We need to manually set it to 32 here to avoid surprise
@@ -533,9 +536,9 @@ NcclCollectives::SplitCommunicatorsWithCancel(
     ABSL_ASSIGN_OR_RETURN(ncclConfig_t comm_config,
                           AsNcclConfig(gpu_config, stream_executors[i]));
 
-    ncclComm_t split_comm;
-    XLA_NCCL_RETURN_IF_ERROR(ncclCommSplit(parent_comm, color, key.value(),
-                                           &split_comm, &comm_config));
+    const auto* parent = absl::down_cast<const NcclCommunicator*>(comms[i]);
+    ABSL_ASSIGN_OR_RETURN(ncclComm_t split_comm,
+                          parent->Split(color, key.value(), comm_config));
 
     absl::Time split_done = absl::Now();
     VLOG(1) << absl::StreamFormat(
@@ -555,6 +558,8 @@ NcclCollectives::SplitCommunicatorsWithCancel(
   std::vector<Future<std::unique_ptr<Communicator>>> futures(comms.size());
   for (size_t i = 0; i < comms.size(); ++i) {
     futures[i] = MakeFutureOn(*pool.AsExecutor(), [&, i] {
+      // Split waits for the parent to publish a valid child handle. Create
+      // must still poll that child, whose initialization may be in progress.
       absl::StatusOr<std::unique_ptr<NcclCommunicator>> comm =
           NcclCommunicator::Create(stream_executors[i], std::bind(make_comm, i),
                                    cancel, gpu_config.async_execution);

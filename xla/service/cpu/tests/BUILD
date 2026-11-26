@@ -81,6 +81,7 @@ xla_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/analysis:alias_info",
@@ -90,6 +91,7 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -594,7 +596,10 @@ onednn_graph_cc_test(
     srcs = ["onednn_fusion_test.cc"],
     deps = [
         "//xla:error_spec",
+        "//xla:literal",
+        "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:xla_proto_cc",
         "//xla/backends/cpu:onednn_support",
         "//xla/hlo/ir:hlo",
         "//xla/service:cpu_plugin",

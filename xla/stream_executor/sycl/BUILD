@@ -26,7 +26,7 @@ load(
     "//xla/stream_executor:build_defs.bzl",
     "stream_executor_friends",
 )
-load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tests:build_defs.bzl", "INTEL_GPU_DEFAULT_BACKENDS", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_oss", "internal_visibility", "tsl_copts")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla/tsl/platform:build_config_root.bzl", "if_static")
@@ -81,7 +81,7 @@ sycl_library(
 xla_test(
     name = "sycl_platform_test",
     srcs = ["sycl_platform_test.cc"],
-    backends = ["gpu"],
+    backends = INTEL_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "oneapi-only",
@@ -160,7 +160,7 @@ cc_library(
 xla_test(
     name = "oneapi_compute_capability_test",
     srcs = ["oneapi_compute_capability_test.cc"],
-    backends = ["gpu"],
+    backends = INTEL_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "oneapi-only",
@@ -211,7 +211,7 @@ sycl_library(
 xla_test(
     name = "sycl_stream_test",
     srcs = ["sycl_stream_test.cc"],
-    backends = ["gpu"],
+    backends = INTEL_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "oneapi-only",
@@ -222,11 +222,11 @@ xla_test(
         ":sycl_platform_id",
         ":sycl_stream",
         "//xla/backends/gpu/runtime:custom_kernel_thunk",
+        "//xla/backends/gpu/runtime:gpu_executable",
         "//xla/backends/gpu/runtime:thunk_executor",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/hlo/parser:hlo_parser",
         "//xla/service:compiler",
-        "//xla/service/gpu:gpu_executable",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:platform_manager",
@@ -337,7 +337,7 @@ sycl_library(
 xla_test(
     name = "sycl_executor_test",
     srcs = ["sycl_executor_test.cc"],
-    backends = ["gpu"],
+    backends = INTEL_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "oneapi-only",
@@ -346,14 +346,14 @@ xla_test(
         ":sycl_executor",
         ":sycl_platform_id",
         "//xla:debug_options_flags",
+        "//xla/backends/gpu:intel_gpu_compiler",
         "//xla/backends/gpu/runtime:custom_kernel_thunk",
+        "//xla/backends/gpu/runtime:gpu_executable",
         "//xla/backends/gpu/runtime:thunk_executor",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/hlo/parser:hlo_parser",
         "//xla/service:compiler",
         "//xla/service:executable",
-        "//xla/service/gpu:gpu_executable",
-        "//xla/service/gpu:intel_gpu_compiler",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:platform_manager",
@@ -384,7 +384,7 @@ sycl_library(
 xla_test(
     name = "sycl_event_test",
     srcs = ["sycl_event_test.cc"],
-    backends = ["gpu"],
+    backends = INTEL_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "oneapi-only",
@@ -420,7 +420,7 @@ sycl_library(
 xla_test(
     name = "sycl_timer_test",
     srcs = ["sycl_timer_test.cc"],
-    backends = ["gpu"],
+    backends = INTEL_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "oneapi-only",
@@ -430,11 +430,11 @@ xla_test(
         ":sycl_platform_id",
         ":sycl_timer",
         "//xla/backends/gpu/runtime:custom_kernel_thunk",
+        "//xla/backends/gpu/runtime:gpu_executable",
         "//xla/backends/gpu/runtime:thunk_executor",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/hlo/parser:hlo_parser",
         "//xla/service:compiler",
-        "//xla/service/gpu:gpu_executable",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:platform_manager",
@@ -469,7 +469,7 @@ sycl_library(
 xla_test(
     name = "sycl_gpu_runtime_test",
     srcs = ["sycl_gpu_runtime_test.cc"],
-    backends = ["gpu"],
+    backends = INTEL_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "oneapi-only",
@@ -504,7 +504,7 @@ sycl_library(
 xla_test(
     name = "sycl_context_test",
     srcs = ["sycl_context_test.cc"],
-    backends = ["gpu"],
+    backends = INTEL_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "oneapi-only",
@@ -547,7 +547,7 @@ sycl_library(
 xla_test(
     name = "sycl_device_description_test",
     srcs = ["sycl_device_description_test.cc"],
-    backends = ["gpu"],
+    backends = INTEL_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "oneapi-only",
@@ -613,7 +613,7 @@ sycl_library(
 xla_test(
     name = "sycl_blas_test",
     srcs = ["sycl_blas_test.cc"],
-    backends = ["gpu"],
+    backends = INTEL_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "oneapi-only",
@@ -667,7 +667,7 @@ sycl_library(
 xla_test(
     name = "onemkl_util_test",
     srcs = ["onemkl_util_test.cc"],
-    backends = ["gpu"],
+    backends = INTEL_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "oneapi-only",
@@ -791,7 +791,7 @@ sycl_library(
 xla_test(
     name = "gemm_sycl_test",
     srcs = ["gemm_sycl_test.cc"],
-    backends = ["gpu"],
+    backends = INTEL_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "oneapi-only",
@@ -895,7 +895,7 @@ sycl_library(
 xla_test(
     name = "sycl_conv_utils_test",
     srcs = ["sycl_conv_utils_test.cc"],
-    backends = ["gpu"],
+    backends = INTEL_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "oneapi-only",
@@ -919,7 +919,7 @@ xla_test(
 xla_test(
     name = "conv_sycl_test",
     srcs = ["conv_sycl_test.cc"],
-    backends = ["gpu"],
+    backends = INTEL_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "oneapi-only",

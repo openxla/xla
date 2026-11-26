@@ -70,7 +70,7 @@ cc_library(
     hdrs = ["native_custom_call_scratch_context.h"],
     visibility = internal_visibility([
         ":handler_allowlist",
-        "//xla/backends/gpu/transforms:__pkg__",
+        "//xla/backends/gpu/hlo/transforms:__pkg__",
     ]),
     deps = [
         "//xla:xla_proto_cc",
@@ -159,6 +159,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/ffi:ffi_attributes_from_backend_config",
+        "//xla/backends/gpu/runtime:gpu_constants",
         "//xla/backends/gpu/runtime:thunk",
         "//xla/backends/gpu/runtime:thunk_id",
         "//xla/backends/gpu/target_config",
@@ -173,7 +174,6 @@ cc_library(
         "//xla/service:gpu_topology",
         "//xla/service:logical_buffer",
         "//xla/service:shaped_slice",
-        "//xla/service/gpu:gpu_constants",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_description_proto_cc",
         "@com_google_absl//absl/memory",

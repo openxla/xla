@@ -9,7 +9,13 @@ load(
 load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl_is_configured")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm_is_configured")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "GPU_BACKENDS",
+    "GPU_DEFAULT_BACKENDS",
+    "NVIDIA_GPU_DEFAULT_BACKENDS",
+    "xla_test",
+)
 load("//xla/tsl:tsl.bzl", "if_google", "if_nccl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -268,12 +274,48 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "cancels_pending_clique_init_test",
+    srcs = ["cancels_pending_clique_init_test.cc"],
+    deps = [
+        ":cancellation_token",
+        ":gpu_clique",
+        ":gpu_clique_key",
+        ":gpu_cliques",
+        ":gpu_collectives",
+        ":mock_gpu_collectives",
+        ":mock_gpu_communicator",
+        "//xla:executable_run_options",
+        "//xla:future",
+        "//xla/core/collectives",
+        "//xla/core/collectives:clique_id",
+        "//xla/core/collectives:clique_key",
+        "//xla/core/collectives:communicator",
+        "//xla/core/collectives:rank_id",
+        "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
+        "//xla/runtime:device_id",
+        "//xla/stream_executor:mock_stream_executor",
+        "//xla/tsl/concurrency:executor",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
 xla_test(
     name = "abort_collectives_on_task_failure_test",
     srcs = ["abort_collectives_on_task_failure_test.cc"],
-    backends = [
-        "gpu",
-    ],
+    backends = GPU_DEFAULT_BACKENDS,
     # Non-blocking NCCL initialization is required to cancel pending cliques.
     env = {"XLA_FLAGS": "--xla_gpu_nccl_async_execution=true --xla_gpu_nccl_blocking_communicators=false"},
     deps = [
@@ -303,18 +345,18 @@ xla_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
-    ] + if_cuda_or_rocm_is_configured(["nccl_or_rccl_collectives"]),
+    ] + if_cuda_or_rocm_is_configured([
+        ":nccl_or_rccl_collectives",  # buildcleaner: keep
+    ]),
 )
 
 xla_test(
     name = "gpu_cliques_test",
     srcs = ["gpu_cliques_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":cancellation_token",
         ":gpu_clique",
@@ -425,12 +467,10 @@ cc_library(
 xla_test(
     name = "gpu_collectives_test",
     srcs = ["gpu_collectives_test.cc"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-        ],
-    },
-    backends = ["gpu"],
+    backend_tags = {gpu: [
+        "multi_gpu",
+    ] for gpu in GPU_BACKENDS},
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":allocator_memory_registration",
         ":cancellation_token",
@@ -484,7 +524,7 @@ xla_test(
             "multi_gpu",
         ],
     },
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = [
         "cuda-only",
         "multi_gpu",
@@ -690,7 +730,7 @@ cc_library(
 xla_test(
     name = "loopback_collectives_test",
     srcs = ["loopback_collectives_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":gpu_clique_key",
         ":gpu_collectives",
@@ -973,11 +1013,11 @@ cc_library(
         "//xla/runtime:device_id",
         "//xla/runtime:process_id",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/cuda:nccl",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:logging",
         "//xla:xla_proto_cc",
-        "@tsl//tsl/platform:numbers",
         "@tsl//tsl/profiler/lib:traceme",
     ],
     alwayslink = True,  # registers collectives implementation
@@ -1060,6 +1100,7 @@ cc_library(
         ":rccl_group",
         "//xla:status_macros",
         "//xla:util",
+        "//xla/backends/gpu/runtime:gpu_executable_run_options",
         "//xla/core/collectives",
         "//xla/core/collectives:clique_id",
         "//xla/core/collectives:clique_key",
@@ -1069,7 +1110,6 @@ cc_library(
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/runtime:device_id",
         "//xla/runtime:process_id",
-        "//xla/service/gpu:gpu_executable_run_options",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",

@@ -63,6 +63,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/Operation.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/UseDefLists.h"
 #include "mlir/IR/Value.h"
@@ -1080,6 +1081,9 @@ xla::XlaOp CreateTupleIfMultipleOps(
   }
   xla::XlaScopedShardingAssignment scoped_sharding(
       builder, CreateTupleSharding(shardings));
+  // Operand-packing tuple must not inherit the op's frontend attributes.
+  xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+      builder, xla::FrontendAttributes());
   return Tuple(builder, ops);
 }
 
@@ -1137,14 +1141,17 @@ class ConvertToHloModule {
   explicit ConvertToHloModule(mlir::ModuleOp module,
                               xla::XlaBuilder& module_builder,
                               MlirToHloConversionOptions options)
-      : module_(module), module_builder_(module_builder), options_(options) {}
+      : module_(module),
+        symbol_table_(module),
+        module_builder_(module_builder),
+        options_(options) {}
 
   // Perform the lowering to XLA. This function returns failure if an error was
   // encountered.
   //
   // TODO(hinsu): Check for dynamic shapes and exit instead of crashing.
   LogicalResult Run() {
-    auto main = module_.lookupSymbol<mlir::func::FuncOp>(kMain);
+    mlir::func::FuncOp main = LookUpSymbol(kMain);
     if (!main) {
       return module_.emitError(
           "conversion requires module with `main` function");
@@ -1165,7 +1172,7 @@ class ConvertToHloModule {
   LogicalResult RunOnFunction(mlir::func::FuncOp f);
 
   absl::StatusOr<::xla::HloModuleProto> ConsumeMainProto() {
-    auto main = module_.lookupSymbol<mlir::func::FuncOp>(kMain);
+    mlir::func::FuncOp main = LookUpSymbol(kMain);
     // This is an invariant check as Run returns failure if there is no main
     // function and so the main proto shouldn't be consumed in that case.
     TF_RET_CHECK(main) << "requires module to have main function";
@@ -1266,8 +1273,11 @@ class ConvertToHloModule {
 
   // Look up a symbol with the specified name, returning null if no such name
   // exists.
+  func::FuncOp LookUpSymbol(llvm::StringRef name) {
+    return symbol_table_.lookup<mlir::func::FuncOp>(name);
+  }
   func::FuncOp LookUpSymbol(FlatSymbolRefAttr symbol) {
-    return module_.lookupSymbol<mlir::func::FuncOp>(symbol);
+    return LookUpSymbol(symbol.getValue());
   }
 
   // Get Reference to lowered XLA computation for a function.
@@ -1301,8 +1311,9 @@ class ConvertToHloModule {
       llvm::ArrayRef<std::optional<xla::OpSharding>> arg_shardings,
       llvm::SmallVectorImpl<xla::Shape>* arg_shapes);
 
-  // The module being lowered.
+  // The module being lowered and its cached symbol table.
   mlir::ModuleOp module_;
+  mlir::SymbolTable symbol_table_;
 
   // The top-level XlaBuilder.
   xla::XlaBuilder& module_builder_;
@@ -1481,7 +1492,12 @@ bool SimplyReturnedOp(mlir::Operation* op) {
 void BuildGetTupleElementsForTupleResults(
     mlir::Operation* op, xla::XlaOp tuple, xla::XlaBuilder* builder,
     llvm::DenseMap<mlir::Value, xla::XlaOp>& values,
-    unsigned num_implicit_results = 0) {
+    unsigned num_implicit_results = 0,
+    const xla::FrontendAttributes& frontend_attributes = {}) {
+  // Result GTEs must not inherit the op's frontend attributes unless explicitly
+  // specified.
+  xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+      builder, frontend_attributes);
   const std::optional<xla::OpSharding>& sharding = builder->sharding();
   if (sharding.has_value()) {
     bool is_tuple_sharding = sharding->type() == xla::OpSharding::TUPLE;
@@ -1721,6 +1737,9 @@ LogicalResult ExportXlaOp(SendOp op, OpLoweringContext ctx) {
   if (operands.size() == 1) {
     operand = operands[0];
   } else {
+    // Operand-packing tuple must not inherit the op's frontend attributes.
+    xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+        ctx.builder, xla::FrontendAttributes());
     operand = Tuple(ctx.builder, operands);
   }
 
@@ -1843,6 +1862,10 @@ LogicalResult ExportXlaOp(RecvOp op, OpLoweringContext ctx) {
         Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
   }
 
+  // Result GTEs must not inherit the op's frontend attributes.
+  xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+      ctx.builder, xla::FrontendAttributes());
+
   xla::XlaOp data_tuple_element;
   {
     xla::XlaScopedShardingAssignment sharding_scope(ctx.builder, data_sharding);
@@ -1894,6 +1917,10 @@ LogicalResult ExportXlaOp(InfeedOp op, OpLoweringContext ctx) {
   xla::Shape data_shape = xla::ShapeUtil::MakeTupleShape(subshapes);
   auto xla_result = xla::InfeedWithToken(token, data_shape,
                                          std::string(op.getInfeedConfig()));
+  // Result GTEs must not inherit the op's frontend attributes.
+  xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+      ctx.builder, xla::FrontendAttributes());
+
   std::optional<xla::OpSharding> data_sharding = ctx.builder->sharding();
   ctx.builder->ClearSharding();
   std::optional<xla::OpSharding> last_sharding;
@@ -1944,6 +1971,9 @@ LogicalResult ExportXlaOp(OutfeedOp op, OpLoweringContext ctx) {
   {
     xla::XlaScopedShardingAssignment scoped_sharding(
         ctx.builder, CreateTupleSharding(GetXlaOpShardings(operands)));
+    // Operand-packing tuple must not inherit the op's frontend attributes.
+    xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+        ctx.builder, xla::FrontendAttributes());
     operand = Tuple(ctx.builder, operands);
   }
 
@@ -1981,7 +2011,14 @@ LogicalResult ExportXlaOp(OptimizationBarrierOp op, OpLoweringContext ctx) {
     value_map[op.getOperation()->getResult(0)] =
         xla::OptimizationBarrier(operands[0]);
   } else {
-    auto result = xla::OptimizationBarrier(Tuple(ctx.builder, operands));
+    xla::XlaOp tuple;
+    {
+      // Operand-packing tuple must not inherit the op's frontend attributes.
+      xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+          ctx.builder, xla::FrontendAttributes());
+      tuple = Tuple(ctx.builder, operands);
+    }
+    auto result = xla::OptimizationBarrier(tuple);
     BuildGetTupleElementsForTupleResults(op, result, ctx);
   }
 
@@ -2278,6 +2315,9 @@ LogicalResult ExportXlaOp(WhileOp op, OpLoweringContext ctx) {
 
   xla::XlaOp operand = operands[0];
   if (operands.size() > 1) {
+    // Operand-packing tuple must not inherit the op's frontend attributes.
+    xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+        ctx.builder, xla::FrontendAttributes());
     operand = Tuple(ctx.builder, operands);
   }
 
@@ -3289,15 +3329,6 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
 
   if (op->getNumResults() == 1 && !return_tuple) {
     value_map[op.getResult(0)] = custom_call;
-  } else if (op.getCallTargetName() ==
-                 xla::sdy::kGlobalToLocalShapeCallTargetName ||
-             op.getCallTargetName() ==
-                 xla::sdy::kLocalToGlobalShapeCallTargetName) {
-    // ShardyXLA has the hlo -> stablehlo -> hlo round trip. These
-    // get-tuple-elements do not need to hold the frontend attributes.
-    xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
-        ctx.builder, xla::FrontendAttributes());
-    BuildGetTupleElementsForTupleResults(op, custom_call, ctx);
   } else {
     BuildGetTupleElementsForTupleResults(op, custom_call, ctx);
   }
@@ -4146,6 +4177,9 @@ LogicalResult ExportXlaOp(mhlo::AsyncStartOp op, OpLoweringContext ctx) {
     if (operands.size() == 2) {
       operand = operands[0];
     } else {
+      // Operand-packing tuple must not inherit the op's frontend attributes.
+      xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+          ctx.builder, xla::FrontendAttributes());
       operand =
           Tuple(ctx.builder, absl::Span<const xla::XlaOp>(operands).subspan(
                                  0, operands.size() - 1));
@@ -4907,15 +4941,6 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
 
   if (op->getNumResults() == 1 && !return_tuple) {
     value_map[op.getResult(0)] = custom_call;
-  } else if (op.getCallTargetName() ==
-                 xla::sdy::kGlobalToLocalShapeCallTargetName ||
-             op.getCallTargetName() ==
-                 xla::sdy::kLocalToGlobalShapeCallTargetName) {
-    // ShardyXLA has the hlo -> stablehlo -> hlo round trip. These
-    // get-tuple-elements do not need to hold the frontend attributes.
-    xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
-        ctx.builder, xla::FrontendAttributes());
-    BuildGetTupleElementsForTupleResults(op, custom_call, ctx);
   } else {
     BuildGetTupleElementsForTupleResults(op, custom_call, ctx);
   }
@@ -5387,10 +5412,8 @@ LogicalResult ConvertToHloModule::LowerStablehloCompositeCall(
   // Use GetTupleElement for multiple outputs
   unsigned num_results = composite_op.getNumResults();
   if (num_results > 1) {
-    for (unsigned i = 0; i != num_results; ++i) {
-      value_map[composite_op.getResult(i)] =
-          xla::GetTupleElement(composite_call, i);
-    }
+    BuildGetTupleElementsForTupleResults(composite_op, composite_call, builder,
+                                         value_map);
   } else if (num_results == 1) {
     value_map[composite_op.getResult(0)] = composite_call;
   }
@@ -5453,10 +5476,8 @@ LogicalResult ConvertToHloModule::LowerCompositeCall(
   // Use GetTupleElement for multiple outputs
   unsigned num_results = composite_op.getNumResults();
   if (num_results > 1) {
-    for (unsigned i = 0; i != num_results; ++i) {
-      value_map[composite_op.getResult(i)] =
-          xla::GetTupleElement(composite_call, i);
-    }
+    BuildGetTupleElementsForTupleResults(composite_op, composite_call, builder,
+                                         value_map);
   } else if (num_results == 1) {
     value_map[composite_op.getResult(0)] = composite_call;
   }
@@ -5750,8 +5771,7 @@ LogicalResult ConvertToHloModule::LowerFunctionCall(
       builder, CreateOpShardingFromAttribute(call_op, this));
 
   auto& value_map = *value_lowering;
-  mlir::func::FuncOp callee =
-      module_.lookupSymbol<mlir::func::FuncOp>(call_op.getCallee());
+  mlir::func::FuncOp callee = LookUpSymbol(call_op.getCallee());
   if (failed(RunOnFunction(callee))) {
     return failure();
   }
@@ -5792,17 +5812,15 @@ LogicalResult ConvertToHloModule::LowerFunctionCall(
   // Use GetTupleElement for multiple outputs
   unsigned num_results = call_op.getNumResults();
   if (num_results > 1) {
-    BuildGetTupleElementsForTupleResults(call_op, call_result, builder,
-                                         value_map);
-    // Stream annotations describe the call boundary and are rejected on any
-    // other instruction.
-    for (mlir::Value result : call_op.getResults()) {
-      xla::HloInstructionProto* get_tuple_element =
-          xla::internal::XlaBuilderFriend::GetInstruction(value_map[result]);
-      auto* attrs =
-          get_tuple_element->mutable_frontend_attributes()->mutable_map();
-      attrs->erase(xla::kXlaStreamAnnotationAttr);
+    xla::FrontendAttributes gte_fe_attrs;
+    if (auto it = fe_attrs.map().find(xla::kXlaComputeTypeAttr);
+        it != fe_attrs.map().end() && it->second == xla::kXlaComputeTypeHost) {
+      (*gte_fe_attrs.mutable_map())[xla::kXlaComputeTypeAttr] =
+          xla::kXlaComputeTypeHost;
     }
+    BuildGetTupleElementsForTupleResults(call_op, call_result, builder,
+                                         value_map, /*num_implicit_results=*/0,
+                                         gte_fe_attrs);
   } else if (num_results == 1) {
     value_map[call_op.getResult(0)] = call_result;
   }
@@ -5987,6 +6005,8 @@ LogicalResult ConvertToHloModule::SetEntryTupleShardings(
     xla::OpSharding sharding;
     sharding.set_type(xla::OpSharding::TUPLE);
     for (const auto& arg_sharding : llvm::enumerate(arg_shardings)) {
+      int64_t leaf_count =
+          xla::ShapeUtil::GetLeafCount((*arg_shapes)[arg_sharding.index()]);
       if (arg_sharding.value().has_value()) {
         auto hlo_sharding = xla::HloSharding::FromProto(*arg_sharding.value());
         if (!hlo_sharding.ok()) {
@@ -6002,12 +6022,30 @@ LogicalResult ConvertToHloModule::SetEntryTupleShardings(
           return block->getParentOp()->emitError() << status.message();
         }
 
-        *sharding.add_tuple_shardings() = *arg_sharding.value();
+        if (!arg_sharding.value()->has_named_sharding() &&
+            arg_sharding.value()->type() == xla::OpSharding::TUPLE) {
+          if (leaf_count > 0) {
+            for (const xla::OpSharding& subsharding :
+                 arg_sharding.value()->tuple_shardings()) {
+              *sharding.add_tuple_shardings() = subsharding;
+            }
+          }
+        } else {
+          for (int64_t i = 0; i < leaf_count; ++i) {
+            *sharding.add_tuple_shardings() = *arg_sharding.value();
+          }
+        }
       } else {
         xla::OpSharding fallback_sharding;
         fallback_sharding.set_type(xla::OpSharding::REPLICATED);
-        *sharding.add_tuple_shardings() = fallback_sharding;
+        for (int64_t i = 0; i < leaf_count; ++i) {
+          *sharding.add_tuple_shardings() = fallback_sharding;
+        }
       }
+    }
+    if (sharding.tuple_shardings().empty()) {
+      // HloSharding::RequiredLeaves returns 1 for an empty tuple shape.
+      sharding.add_tuple_shardings()->set_type(xla::OpSharding::REPLICATED);
     }
 
     builder->SetSharding(sharding);

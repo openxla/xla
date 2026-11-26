@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -25,21 +26,24 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/bit.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
+#include "xla/backends/gpu/cost_model/triton_emitter_constraints.h"
+#include "xla/backends/gpu/hlo/transforms/collectives/collective_ops_utils.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
-#include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
+#include "xla/backends/gpu/runtime/gpu_constants.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/primitive_util.h"
 #include "xla/service/device_assignment.h"
-#include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/gpu/all_reduce_kernel.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -128,6 +132,10 @@ absl::Status IsAllGatherKernelSupported(
         primitive_util::LowercasePrimitiveTypeName(element_type)));
   }
 
+  if (num_output_elements == 0) {
+    return absl::UnimplementedError(
+        "Zero-element operands are not supported by the all-gather kernel.");
+  }
   const int64_t output_byte_size =
       num_output_elements * primitive_util::ByteWidth(element_type);
   if (output_byte_size > kMaxAllGatherSizeBytes) {
@@ -137,6 +145,41 @@ absl::Status IsAllGatherKernelSupported(
 
   return absl::OkStatus();
 }
+
+namespace {
+
+// Maximum gathered output size in bytes for one-shot Triton all-gather.
+constexpr int64_t kMaxOneShotAllGatherSizeBytes = 32 * 1024 * 1024;  // 32 MB
+
+AllGatherStrategy GetAllGatherStrategy(int64_t output_size_bytes) {
+  return output_size_bytes <= kMaxOneShotAllGatherSizeBytes
+             ? AllGatherStrategy::kOneShot
+             : AllGatherStrategy::kTwoShot;
+}
+
+struct AllGatherGridConfig {
+  int64_t num_warps;
+  int64_t num_blocks;
+};
+
+AllGatherGridConfig GetAllGatherGridConfig(
+    const se::DeviceDescription& device_info, int64_t max_output_elements) {
+  const int64_t warp_size =
+      std::max<int64_t>(1, device_info.threads_per_warp());
+  const int64_t elements_per_warp = warp_size * se::gpu::kNumElementsPerThread;
+  // Blocks are partitioned across the full output element count (all peers'
+  // slices).
+  const int64_t total_warps =
+      CeilOfRatio(max_output_elements, elements_per_warp);
+  const int64_t num_warps =
+      std::min<int64_t>(kMaxCollectiveWarpsPerBlock,
+                        llvm::bit_ceil(static_cast<uint64_t>(total_warps)));
+  const int64_t num_blocks =
+      std::min(kAllGatherMaxBlocksPerGrid, CeilOfRatio(total_warps, num_warps));
+  return AllGatherGridConfig{num_warps, num_blocks};
+}
+
+}  // namespace
 
 absl::StatusOr<AllGatherInfo> BuildAllGatherInfo(
     const GpuTopology& gpu_topology, const HloAllGatherInstruction* all_gather,
@@ -168,9 +211,12 @@ absl::StatusOr<AllGatherInfo> BuildAllGatherInfo(
       AreAllReplicasOnSameSlice(gpu_topology, *all_gather, device_assignment));
 
   int64_t max_output_elements = 0;
+  int64_t max_output_byte_size = 0;
   for (const HloInstruction* operand : all_gather->operands()) {
     const int64_t output_elements =
         ShapeUtil::ElementsIn(operand->shape()) * num_devices;
+    const int64_t output_byte_size =
+        ShapeUtil::ByteSizeOf(operand->shape()) * num_devices;
     const int64_t per_rank_gather_dim_size =
         operand->shape().dimensions(all_gather->all_gather_dimension());
     ABSL_RETURN_IF_ERROR(IsAllGatherKernelSupported(
@@ -178,10 +224,44 @@ absl::StatusOr<AllGatherInfo> BuildAllGatherInfo(
         operand->shape().element_type(), is_local,
         all_gather->replica_groups()));
     max_output_elements = std::max(max_output_elements, output_elements);
+    max_output_byte_size = std::max(max_output_byte_size, output_byte_size);
+  }
+
+  const AllGatherGridConfig grid =
+      GetAllGatherGridConfig(device_info, max_output_elements);
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<llvm::SmallVector<int64_t>> output_tiles,
+      GetCollectiveOutputTiles(*all_gather, all_gather->all_gather_dimension(),
+                               num_devices,
+                               static_cast<int32_t>(grid.num_blocks)));
+  for (const llvm::SmallVector<int64_t>& tile_sizes : output_tiles) {
+    int64_t padded_tile_elements = 1;
+    for (int64_t dim_tile : tile_sizes) {
+      const int64_t padded_dim =
+          static_cast<int64_t>(llvm::bit_ceil(static_cast<uint64_t>(dim_tile)));
+      if (padded_dim > kMaxTensorNumElements / padded_tile_elements) {
+        return absl::UnimplementedError(absl::StrFormat(
+            "All-gather padded tile exceeds Triton's %d-element limit.",
+            kMaxTensorNumElements));
+      }
+      padded_tile_elements *= padded_dim;
+    }
+  }
+
+  const AllGatherStrategy strategy =
+      IsLsaPossible(gpu_topology) ? GetAllGatherStrategy(max_output_byte_size)
+                                  : AllGatherStrategy::kOneShot;
+  if (strategy == AllGatherStrategy::kOneShot &&
+      max_output_byte_size > kMaxOneShotAllGatherSizeBytes) {
+    return absl::UnimplementedError(
+        "One-shot all-gather strategy is only supported up to 32 MB.");
   }
   return AllGatherInfo{
       /*.num_devices =*/num_devices,
       /*.max_output_elements =*/max_output_elements,
+      /*.num_warps =*/grid.num_warps,
+      /*.output_tiles =*/std::move(output_tiles),
+      /*.all_gather_strategy =*/strategy,
   };
 }
 
@@ -196,6 +276,13 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllGatherKernelSpec(
   const int64_t num_operands = instr->operand_count();
   TF_RET_CHECK(num_operands >= 1) << "all-gather requires at least one operand";
 
+  const bool is_two_shot = IsTritonTwoShotAllGather(*instr);
+  if (is_two_shot &&
+      symmetric_memory_type != SymmetricMemoryType::kLoadStoreAccessible) {
+    return absl::UnimplementedError(
+        "Two-shot all-gather requires load/store accessible symmetric memory.");
+  }
+
   const int64_t num_signal_flags = group_size * launch_dimensions.num_blocks();
   const int64_t signal_size = xla::RoundUpTo<uint64_t>(
       num_signal_flags * sizeof(int32_t), kXlaAllocatedBufferAlignBytes);
@@ -203,9 +290,10 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllGatherKernelSpec(
   CollectiveKernelSpec kernel_spec;
   CollectiveCodegenConfig& codegen_config = kernel_spec.codegen_config;
   codegen_config.copy_input_to_scratch = false;
-  codegen_config.sync_count_increment = 1u;
+  // Two-shot uses entry and exit barriers (2 signal increments per launch).
+  codegen_config.sync_count_increment = is_two_shot ? 2u : 1u;
   // Argument layout (must match the Triton entry function): inputs, outputs,
-  // one remote scratch table per operand, signal flags, rank.
+  // (for one-shot) one remote scratch table per operand, signal flags, rank.
   for (int32_t i = 0; i < num_operands; ++i) {
     codegen_config.input_buffer_specs.push_back(
         {/*requires_multimem=*/false, SymmetricMemoryType::kNone});
@@ -214,7 +302,9 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllGatherKernelSpec(
   }
   for (int32_t i = 0; i < num_operands; ++i) {
     codegen_config.output_buffer_specs.push_back(
-        {/*requires_multimem=*/false, SymmetricMemoryType::kNone});
+        {/*requires_multimem=*/false,
+         is_two_shot ? SymmetricMemoryType::kLoadStoreAccessible
+                     : SymmetricMemoryType::kNone});
     codegen_config.argument_descriptors.push_back(
         {KernelArgType::kOutputBuffer, /*index=*/i});
   }
@@ -223,20 +313,22 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllGatherKernelSpec(
                                          symmetric_memory_type,
                                          /*should_memzero=*/true,
                                          /*should_double_buffer=*/true});
-  // One symmetric scratch buffer per operand that holds all ranks' slices
-  // (= output size). Double-buffering is handled by the should_double_buffer
-  // flag.
-  for (int32_t i = 0; i < num_operands; ++i) {
-    const int64_t output_size = xla::RoundUpTo<uint64_t>(
-        ShapeUtil::ByteSizeOf(instr->operand(i)->shape()) * group_size,
-        kXlaAllocatedBufferAlignBytes);
-    codegen_config.argument_descriptors.push_back(
-        {KernelArgType::kScratchBuffer, /*index=*/1 + i});
-    kernel_spec.scratch_buffers.push_back({output_size,
-                                           /*requires_multimem=*/false,
-                                           symmetric_memory_type,
-                                           /*should_memzero=*/false,
-                                           /*should_double_buffer=*/true});
+  if (!is_two_shot) {
+    // One symmetric scratch buffer per operand that holds all ranks' slices
+    // (= output size). Double-buffering is handled by the should_double_buffer
+    // flag.
+    for (int32_t i = 0; i < num_operands; ++i) {
+      const int64_t output_size = xla::RoundUpTo<uint64_t>(
+          ShapeUtil::ByteSizeOf(instr->operand(i)->shape()) * group_size,
+          kXlaAllocatedBufferAlignBytes);
+      codegen_config.argument_descriptors.push_back(
+          {KernelArgType::kScratchBuffer, /*index=*/1 + i});
+      kernel_spec.scratch_buffers.push_back({output_size,
+                                             /*requires_multimem=*/false,
+                                             symmetric_memory_type,
+                                             /*should_memzero=*/false,
+                                             /*should_double_buffer=*/true});
+    }
   }
   codegen_config.argument_descriptors.push_back(
       {KernelArgType::kScratchBuffer, /*index=*/0});

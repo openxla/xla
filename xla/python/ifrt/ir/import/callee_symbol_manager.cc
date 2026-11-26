@@ -90,31 +90,6 @@ CalleeSymbolManager::CalleeSymbolManager(
     mlir::SymbolTableCollection* absl_nonnull symbol_table)
     : root_module_(root_module), symbol_table_(symbol_table) {}
 
-mlir::FailureOr<mlir::func::FuncOp> CalleeSymbolManager::GetCallee(
-    CallOp call_op) {
-  CHECK_NE(call_op, nullptr);
-  mlir::SymbolRefAttr callee_ref = call_op.getCalleeAttr();
-  if (!IsInRootSymbolScope(call_op)) {
-    call_op.emitOpError()
-        << "cannot resolve callee " << callee_ref
-        << " because the call is not in the root module's symbol scope";
-    return mlir::failure();
-  }
-  mlir::func::FuncOp callee = call_op.getCalleeOp(*symbol_table_);
-  if (callee == nullptr || callee.isExternal()) {
-    call_op.emitOpError() << "failed to resolve defined callee " << callee_ref;
-    return mlir::failure();
-  }
-  if (GetCalleeRootSymbolOp(callee, root_module_) == nullptr) {
-    call_op.emitOpError()
-        << "cannot resolve callee " << callee_ref
-        << " because only top-level functions and functions nested one module "
-           "deep are supported";
-    return mlir::failure();
-  }
-  return callee;
-}
-
 mlir::FailureOr<mlir::func::FuncOp>
 CalleeSymbolManager::GetOrCloneCalleeForMutation(
     absl::Span<const CallOp> calls) {
@@ -139,13 +114,8 @@ CalleeSymbolManager::GetOrCloneCalleeForMutation(
     }
   }
 
-  mlir::FailureOr<mlir::func::FuncOp> resolved_callee = GetCallee(first_call);
-  if (mlir::failed(resolved_callee)) {
-    return mlir::failure();
-  }
-  mlir::func::FuncOp callee = *resolved_callee;
+  mlir::func::FuncOp callee = first_call.getCalleeOp(*symbol_table_);
   mlir::Operation* root_sym_op = GetCalleeRootSymbolOp(callee, root_module_);
-  CHECK_NE(root_sym_op, nullptr);
   if (IsIfrtFunction(root_sym_op)) {
     first_call.emitOpError()
         << "cannot prepare callee " << callee_ref
@@ -196,10 +166,6 @@ CalleeSymbolManager::GetOrCloneCalleeForMutation(
         cloned_module != nullptr) {
       target_callee = symbol_table_->lookupSymbolIn<mlir::func::FuncOp>(
           cloned_module, callee.getSymNameAttr());
-      CHECK_NE(target_callee, nullptr)
-          << "Cloned module @" << ToStringView(new_root_name.getValue())
-          << " is missing expected callee @"
-          << ToStringView(callee.getSymNameAttr().getValue()) << ".";
       new_callee_ref =
           MakeOutlinedCalleeSymbolRef(cloned_module, target_callee);
     } else {
@@ -380,9 +346,6 @@ void CalleeSymbolManager::AdjustSymbolUses(
 bool CalleeSymbolManager::MaybeEraseUnusedRootSymbol(
     mlir::StringAttr root_sym_name,
     mlir::RewriterBase* absl_nullable rewriter) {
-  if (root_sym_name == nullptr) {
-    return false;
-  }
   mlir::SymbolTable& root_sym_table =
       symbol_table_->getSymbolTable(root_module_);
   bool erased_root = false;

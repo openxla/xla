@@ -198,6 +198,7 @@ xla_cc_test(
         "//xla/codegen/intrinsic:intrinsic_compiler_lib",
         "//xla/codegen/intrinsic:simple_jit_runner",
         "//xla/codegen/intrinsic:test_matchers",
+        "//xla/service/llvm_ir:llvm_util",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
@@ -222,6 +223,46 @@ xla_cc_test(
         "//xla/codegen/intrinsic:test_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_library(
+    name = "exp2",
+    srcs = ["exp2.cc"],
+    hdrs = ["exp2.h"],
+    copts = [
+        "-Wno-psabi",
+    ],
+    deps = [
+        ":vector_ops",
+    ],
+)
+
+cc_ir_header(
+    name = "exp2_ll",
+    src = "exp2.cc",
+    deps = [
+        ":cpp_context_provider",
+        ":exp2",
+        ":vector_ops",
+    ],
+)
+
+xla_cc_test(
+    name = "exp2_test",
+    srcs = ["exp2_test.cc"],
+    copts = [
+        "-Wno-psabi",
+    ],
+    deps = [
+        ":_cpp_gen_intrinsics",
+        ":exp2",
+        ":exp2_ll",
+        ":vector_ops",
+        "//xla/codegen/intrinsic:test_matchers",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
@@ -383,6 +424,7 @@ cc_library(
     deps = [
         ":atan_ll",
         ":custom_cpp_intrinsics_ll",
+        ":exp2_ll",
         ":expm1_ll",
         ":trig_ll",
         ":ynnpack_unary_ll",

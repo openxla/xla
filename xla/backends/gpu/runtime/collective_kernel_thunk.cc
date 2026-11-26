@@ -44,6 +44,7 @@ limitations under the License.*/
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/all_reduce.h"
 #include "xla/backends/gpu/runtime/annotation.h"
+#include "xla/backends/gpu/runtime/buffer_allocations.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_kernel_thunk.pb.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
@@ -53,6 +54,7 @@ limitations under the License.*/
 #include "xla/backends/gpu/runtime/collective_thunk.pb.h"
 #include "xla/backends/gpu/runtime/collective_types.pb.h"
 #include "xla/backends/gpu/runtime/command_state.h"
+#include "xla/backends/gpu/runtime/gpu_constants.h"
 #include "xla/backends/gpu/runtime/kernel_thunk_utils.h"
 #include "xla/backends/gpu/runtime/per_device_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -63,8 +65,6 @@ limitations under the License.*/
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/shape_util.h"
@@ -507,8 +507,7 @@ struct CollectiveKernelRecordState : public CommandState {
 
 std::string CollectiveKernelThunk::ToString(int indent) const {
   return KernelThunkToString(kernel_name_, thunk_info().profile_annotation,
-                             launch_dimensions_, /*cluster_dim=*/std::nullopt,
-                             shmem_bytes_, use_pdl_);
+                             launch_dimensions_, shmem_bytes_, use_pdl_);
 }
 
 absl::Status CollectiveKernelThunk::IsSupported(
@@ -912,8 +911,7 @@ absl::Status CollectiveKernelThunk::ExecuteOnStream(
         params.stream->Memcpy(plan.copy_dst, plan.copy_src, plan.copy_size));
   }
   return ExecuteKernelOnStream(*plan.kernel, plan.kernel_args,
-                               launch_dimensions_,
-                               /*cluster_dim=*/std::nullopt, params.stream);
+                               launch_dimensions_, params.stream);
 }
 
 absl::StatusOr<const se::CommandBuffer::Command*> CollectiveKernelThunk::Record(
@@ -964,12 +962,12 @@ absl::StatusOr<const se::CommandBuffer::Command*> CollectiveKernelThunk::Record(
                             command_buffer->CreateChildCommand(*nested, deps));
       deps = absl::MakeConstSpan(&copy_cmd, 1);
     }
-    ABSL_ASSIGN_OR_RETURN(
-        const se::CommandBuffer::Command* launch_cmd,
-        command_buffer->CreateLaunch(
-            launch_dimensions_.thread_counts_per_block(),
-            launch_dimensions_.block_counts(), /*cluster_dims=*/std::nullopt,
-            *plan.kernel, *packed_args, deps, priority()));
+    ABSL_ASSIGN_OR_RETURN(const se::CommandBuffer::Command* launch_cmd,
+                          command_buffer->CreateLaunch(
+                              launch_dimensions_.thread_counts_per_block(),
+                              launch_dimensions_.block_counts(),
+                              launch_dimensions_.cluster_dims(), *plan.kernel,
+                              *packed_args, deps, priority()));
     if (copy_cmd != nullptr) {
       state->launch_to_copy[launch_cmd] = RecordedCopy{
           copy_cmd, plan.copy_dst->opaque(), plan.copy_src.opaque()};
@@ -995,7 +993,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> CollectiveKernelThunk::Record(
     }
     ABSL_RETURN_IF_ERROR(command_buffer->UpdateLaunch(
         action.command, launch_dimensions_.thread_counts_per_block(),
-        launch_dimensions_.block_counts(), /*cluster_dims=*/std::nullopt,
+        launch_dimensions_.block_counts(), launch_dimensions_.cluster_dims(),
         *plan.kernel, *packed_args));
     return action.command;
   };

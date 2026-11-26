@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/ffi.h"
+#include "xla/backends/gpu/runtime/buffer_allocations.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_buffer_requests.h"
@@ -61,7 +62,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
@@ -1336,11 +1336,12 @@ TEST(CustomCallThunkTest, KernelRegistryInitializeExecuteAndRecord) {
   bundle.initialize = ffi::Ffi::BindInitialize().Ctx<ffi::KernelRegistry>().To(
       [&](ffi::InitializeKernelRegistry registry) -> absl::Status {
         ABSL_ASSIGN_OR_RETURN(
-            registered_kernel,
-            registry.Register("AddI32",
-                              reinterpret_cast<const char*>(fatbin.data()),
-                              fatbin.size(), ffi::SourceFormat::kCubin,
-                              /*uses_pdl=*/false));
+            ffi::RegisterResult registered,
+            registry.Register(
+                "AddI32", reinterpret_cast<const char*>(fatbin.data()),
+                fatbin.size(), ffi::SourceFormat::kCubin,
+                /*uses_pdl=*/false, ffi::RequiredFeatures::None()));
+        registered_kernel = registered.kernel;
         return absl::OkStatus();
       });
   bundle.execute =
@@ -1356,8 +1357,7 @@ TEST(CustomCallThunkTest, KernelRegistryInitializeExecuteAndRecord) {
                                              (*result).untyped_data()};
             return registry.Launch(registered_kernel,
                                    /*launch_dims=*/{{1, 1, 1}, {1, 1, 1}},
-                                   /*shared_mem_bytes=*/0, /*uses_pdl=*/false,
-                                   args);
+                                   /*shared_mem_bytes=*/0, args);
           });
   bundle.record =
       ffi::Ffi::BindRecord()
@@ -1414,11 +1414,12 @@ TEST(CustomCallThunkTest, KernelRegistryPrepareAndExecute) {
   bundle.prepare = ffi::Ffi::BindPrepare().Ctx<ffi::KernelRegistry>().To(
       [&](ffi::PrepareKernelRegistry registry) -> absl::Status {
         ABSL_ASSIGN_OR_RETURN(
-            registered_kernel,
-            registry.Register("AddI32",
-                              reinterpret_cast<const char*>(fatbin.data()),
-                              fatbin.size(), ffi::SourceFormat::kCubin,
-                              /*uses_pdl=*/false));
+            ffi::RegisterResult registered,
+            registry.Register(
+                "AddI32", reinterpret_cast<const char*>(fatbin.data()),
+                fatbin.size(), ffi::SourceFormat::kCubin,
+                /*uses_pdl=*/false, ffi::RequiredFeatures::None()));
+        registered_kernel = registered.kernel;
         return absl::OkStatus();
       });
   bundle.execute =
@@ -1434,8 +1435,7 @@ TEST(CustomCallThunkTest, KernelRegistryPrepareAndExecute) {
                                              (*result).untyped_data()};
             return registry.Launch(registered_kernel,
                                    /*launch_dims=*/{{1, 1, 1}, {1, 1, 1}},
-                                   /*shared_mem_bytes=*/0, /*uses_pdl=*/false,
-                                   args);
+                                   /*shared_mem_bytes=*/0, args);
           });
 
   ASSERT_OK_AND_ASSIGN(

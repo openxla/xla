@@ -15,14 +15,17 @@ limitations under the License.
 
 #include "xla/python/ifrt/ir/ifrt_dialect.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 
-#include "absl/base/no_destructor.h"
 #include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -36,25 +39,32 @@ limitations under the License.
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
-#include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Types.h"
 #include "mlir/Support/DebugStringHelper.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "xla/layout.h"
+#include "xla/layout_util.h"
+#include "xla/mlir/utils/type_util.h"
 #include "xla/pjrt/layout_mode.h"
+#include "xla/primitive_util.h"
 #include "xla/python/ifrt/ir/constants.h"
 #include "xla/python/ifrt/ir/ifrt_interfaces.h"
 #include "xla/python/ifrt/ir/ifrt_ops.h"
 #include "xla/python/ifrt/ir/sharding_param.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/xla_data.pb.h"
 
 // Generated definitions.
 #include "xla/python/ifrt/ir/ifrt_dialect.cc.inc"
@@ -238,6 +248,7 @@ mlir::LogicalResult VerifyNonEmptyStringAttr(mlir::Operation* op,
 // attached to `func.func` region arguments or results. Other `ifrt.*`
 // attributes are allowed, but not verified.
 mlir::LogicalResult VerifyIfrtArgOrResultAttr(mlir::Operation* op,
+                                              unsigned index,
                                               mlir::NamedAttribute attr,
                                               RegionAttrKind kind) {
   const llvm::StringRef attr_name = attr.getName().getValue();
@@ -247,15 +258,59 @@ mlir::LogicalResult VerifyIfrtArgOrResultAttr(mlir::Operation* op,
   }
   const llvm::StringRef attr_kind =
       kind == RegionAttrKind::kArg ? "arg" : "result";
-  if (!llvm::isa<mlir::func::FuncOp>(op)) {
+  mlir::func::FuncOp func_op = llvm::dyn_cast<mlir::func::FuncOp>(op);
+  if (func_op == nullptr) {
     return op->emitOpError() << "has `" << attr_name << "` " << attr_kind
                              << " attr but is not a function";
   }
   if (attr_name == kIfrtShardingAttrName) {
-    if (!mlir::isa<IfrtShardingAttrInterface>(attr.getValue())) {
+    if (!mlir::isa<IfrtShardingParamAttr, IfrtUnspecifiedShardingAttr>(
+            attr.getValue())) {
       return op->emitOpError()
              << "has `" << kIfrtShardingAttrName << "` " << attr_kind
-             << " attr that is not an `IfrtShardingAttrInterface`";
+             << " attr that is not an `IfrtShardingParamAttr` or "
+                "`IfrtUnspecifiedShardingAttr`";
+    }
+    if (auto sharding_param =
+            llvm::dyn_cast<IfrtShardingParamAttr>(attr.getValue());
+        sharding_param != nullptr) {
+      const int sharding_num_devices = sharding_param.NumDevices();
+      mlir::Attribute raw_devices_attr =
+          kind == RegionAttrKind::kArg
+              ? func_op.getArgAttr(index, kIfrtDevicesAttrName)
+              : func_op.getResultAttr(index, kIfrtDevicesAttrName);
+      if (raw_devices_attr != nullptr) {
+        if (auto devices_attr =
+                llvm::dyn_cast<IfrtDevicesAttr>(raw_devices_attr);
+            devices_attr != nullptr &&
+            static_cast<size_t>(sharding_num_devices) !=
+                devices_attr.getIds().size()) {
+          return op->emitOpError()
+                 << "has `" << kIfrtShardingAttrName << "` " << attr_kind
+                 << " attr on " << attr_kind << " #" << index << " using "
+                 << sharding_num_devices << " devices, which does not match `"
+                 << kIfrtDevicesAttrName << "` size "
+                 << devices_attr.getIds().size();
+        }
+      } else if (mlir::ModuleOp parent_module =
+                     llvm::dyn_cast_or_null<mlir::ModuleOp>(op->getParentOp());
+                 parent_module != nullptr) {
+        if (mlir::IntegerAttr num_devices_attr =
+                parent_module->getAttrOfType<mlir::IntegerAttr>(
+                    kIfrtNumDevicesAttrName);
+            num_devices_attr != nullptr &&
+            num_devices_attr.getType().isSignlessInteger(32) &&
+            num_devices_attr.getInt() > 0 &&
+            sharding_num_devices != num_devices_attr.getInt()) {
+          return op->emitOpError()
+                 << "has `" << kIfrtShardingAttrName << "` " << attr_kind
+                 << " attr on " << attr_kind << " #" << index << " using "
+                 << sharding_num_devices
+                 << " devices, which does not match enclosing module `"
+                 << kIfrtNumDevicesAttrName << "` ("
+                 << num_devices_attr.getInt() << ")";
+        }
+      }
     }
     return mlir::success();
   }
@@ -363,7 +418,7 @@ mlir::LogicalResult IfrtDialect::verifyRegionArgAttribute(
     }
     return mlir::success();
   }
-  return VerifyIfrtArgOrResultAttr(op, attr, RegionAttrKind::kArg);
+  return VerifyIfrtArgOrResultAttr(op, argIndex, attr, RegionAttrKind::kArg);
 }
 
 mlir::LogicalResult IfrtDialect::verifyRegionResultAttribute(
@@ -374,7 +429,8 @@ mlir::LogicalResult IfrtDialect::verifyRegionResultAttribute(
            << "has `" << kIfrtDonatedArgAttrName
            << "` result attr, which is only valid on arguments";
   }
-  return VerifyIfrtArgOrResultAttr(op, attr, RegionAttrKind::kResult);
+  return VerifyIfrtArgOrResultAttr(op, resultIndex, attr,
+                                   RegionAttrKind::kResult);
 }
 
 //===----------------------------------------------------------------------===//
@@ -445,6 +501,57 @@ int IfrtUnspecifiedShardingAttr::NumDevices() const { return 0; }
 // IfrtArrayType
 //===----------------------------------------------------------------------===//
 
+namespace {
+
+constexpr llvm::StringLiteral kDefaultLayoutMode = "default";
+constexpr llvm::StringLiteral kAutoLayoutMode = "auto";
+
+// Canonicalizes `memory_kind_attr` for `IfrtArrayType` construction: maps
+// `nullptr` (omitted) to the default IFRT memory kind (`"device"`), preserving
+// non-null attributes (including `""`) so `verify()` rejects invalid values.
+mlir::StringAttr CanonicalizeMemoryKindAttr(mlir::MLIRContext* context,
+                                            mlir::StringAttr memory_kind_attr) {
+  if (memory_kind_attr == nullptr) {
+    return mlir::StringAttr::get(context, xla::ifrt::MemoryKind().value());
+  }
+  return memory_kind_attr;
+}
+
+// Canonicalizes `layout_attr` for `IfrtArrayType` construction: maps `nullptr`
+// (omitted) to `"default"`, preserving non-null attributes so `verify()`
+// validates them.
+mlir::StringAttr CanonicalizeLayoutAttr(mlir::MLIRContext* context,
+                                        mlir::StringAttr layout_attr) {
+  if (layout_attr == nullptr) {
+    return mlir::StringAttr::get(context, kDefaultLayoutMode);
+  }
+  return layout_attr;
+}
+
+}  // namespace
+
+IfrtArrayType IfrtArrayType::get(mlir::MLIRContext* context,
+                                 mlir::RankedTensorType shape,
+                                 IfrtShardingAttrInterface sharding_attr,
+                                 IfrtDevicesAttr devices_attr,
+                                 mlir::StringAttr memory_kind_attr,
+                                 mlir::StringAttr layout_attr) {
+  return Base::get(context, shape, sharding_attr, devices_attr,
+                   CanonicalizeMemoryKindAttr(context, memory_kind_attr),
+                   CanonicalizeLayoutAttr(context, layout_attr));
+}
+
+IfrtArrayType IfrtArrayType::getChecked(
+    llvm::function_ref<mlir::InFlightDiagnostic()> emitError,
+    mlir::MLIRContext* context, mlir::RankedTensorType shape,
+    IfrtShardingAttrInterface sharding_attr, IfrtDevicesAttr devices_attr,
+    mlir::StringAttr memory_kind_attr, mlir::StringAttr layout_attr) {
+  return Base::getChecked(emitError, context, shape, sharding_attr,
+                          devices_attr,
+                          CanonicalizeMemoryKindAttr(context, memory_kind_attr),
+                          CanonicalizeLayoutAttr(context, layout_attr));
+}
+
 // Returns an array of logical device ids.
 llvm::ArrayRef<int> IfrtArrayType::getDevices() const {
   return getDevicesAttr().getIds();
@@ -455,8 +562,16 @@ mlir::LogicalResult IfrtArrayType::verify(
     mlir::RankedTensorType shape, IfrtShardingAttrInterface sharding_attr,
     IfrtDevicesAttr devices_attr, mlir::StringAttr memory_kind_attr,
     mlir::StringAttr layout_attr) {
-  if (shape == nullptr || sharding_attr == nullptr || devices_attr == nullptr) {
+  if (shape == nullptr || sharding_attr == nullptr || devices_attr == nullptr ||
+      memory_kind_attr == nullptr || layout_attr == nullptr) {
     return emitError() << "expected non-null IfrtArrayType parameters";
+  }
+  if (!llvm::isa<IfrtShardingParamAttr, IfrtUnspecifiedShardingAttr>(
+          sharding_attr)) {
+    return emitError()
+           << "Array sharding must be an `IfrtShardingParamAttr` or "
+              "`IfrtUnspecifiedShardingAttr`, got "
+           << sharding_attr;
   }
   if (shape.getEncoding() != nullptr) {
     return emitError() << "Unexpected tensor encoding on array shape: "
@@ -477,82 +592,168 @@ mlir::LogicalResult IfrtArrayType::verify(
              << Shape::kMaxNumElements << "): " << shape;
     }
   }
-  if (llvm::isa<IfrtTokenType>(shape.getElementType())) {
+  const mlir::Type element_type = shape.getElementType();
+  xla::PrimitiveType primitive_type = xla::PRIMITIVE_TYPE_INVALID;
+  if (llvm::isa<IfrtTokenType>(element_type)) {
     if (!shape.getShape().empty()) {
       return emitError() << "Token type cannot have non-empty shape";
     }
-  } else if (!llvm::isa<IfrtStringType>(shape.getElementType()) &&
-             shape.getElementType().getDialect().getNamespace() !=
-                 mlir::BuiltinDialect::getDialectNamespace()) {
-    return emitError() << "Unsupported array element type: "
-                       << shape.getElementType();
-  }
-  if (memory_kind_attr != nullptr && memory_kind_attr.getValue().empty()) {
-    return emitError() << "Memory kind cannot be empty";
-  }
-  if (layout_attr != nullptr) {
-    absl::StatusOr<xla::LayoutMode> layout_mode =
-        xla::LayoutMode::FromString(layout_attr.str());
-    if (!layout_mode.ok()) {
-      return emitError() << "Invalid layout mode: "
-                         << layout_mode.status().message();
+  } else if (!llvm::isa<IfrtStringType>(element_type)) {
+    primitive_type = xla::ConvertMlirTypeToPrimitiveType(element_type);
+    if (!xla::primitive_util::IsArrayType(primitive_type)) {
+      return emitError() << "Unsupported array element type: " << element_type;
     }
   }
-  return sharding_attr.CanApplyTo(emitError, shape, devices_attr.getIds());
+  if (!llvm::isa<mlir::NoneType>(memory_kind_attr.getType())) {
+    return emitError()
+           << "Memory kind must be an untyped string attribute, got "
+           << memory_kind_attr;
+  }
+  if (memory_kind_attr.getValue().empty()) {
+    return emitError() << "Memory kind cannot be empty";
+  }
+  if (mlir::failed(
+          sharding_attr.CanApplyTo(emitError, shape, devices_attr.getIds()))) {
+    return mlir::failure();
+  }
+  if (!llvm::isa<mlir::NoneType>(layout_attr.getType())) {
+    return emitError()
+           << "Layout mode must be an untyped string attribute, got "
+           << layout_attr;
+  }
+  const llvm::StringRef layout_value = layout_attr.getValue();
+  if (layout_value == kDefaultLayoutMode) {
+    return mlir::success();
+  }
+  if (llvm::isa<IfrtTokenType, IfrtStringType>(element_type)) {
+    return emitError() << "Array with element type " << element_type
+                       << " only supports default layout mode, got "
+                       << layout_attr;
+  }
+  if (layout_value == kAutoLayoutMode) {
+    return mlir::success();
+  }
+  absl::StatusOr<xla::LayoutMode> layout_mode =
+      xla::LayoutMode::FromString(layout_attr.str());
+  if (!layout_mode.ok()) {
+    return emitError() << "Invalid layout mode: "
+                       << layout_mode.status().message();
+  }
+  CHECK(layout_mode->user_layout.has_value());
+  const int64_t layout_rank =
+      static_cast<int64_t>(layout_mode->user_layout->minor_to_major().size());
+  if (layout_rank != shape.getRank()) {
+    return emitError() << "Layout minor_to_major size (" << layout_rank
+                       << ") does not match array rank (" << shape.getRank()
+                       << "): " << layout_attr;
+  }
+  // Validate against the per-shard shape when divisible so shard-local
+  // `split_configs` bounds are checked. Non-divisible shardings and
+  // `#ifrt.sharding_unspecified` validate against the global shape. This
+  // cannot falsely reject a valid layout because `ValidateLayoutForShape`
+  // checks only that `split_index < dim_size` (every other check depends
+  // only on element type, rank, or layout-internal fields), which is
+  // monotone in `dim_size`, and `local_dim <= global_dim` always holds.
+  absl::StatusOr<llvm::SmallVector<int64_t>> local_shape =
+      sharding_attr.LocalShapeFromGlobalShape(shape.getShape());
+  const llvm::ArrayRef<int64_t> validation_dims =
+      local_shape.ok() ? llvm::ArrayRef<int64_t>(*local_shape)
+                       : shape.getShape();
+  absl::StatusOr<xla::Shape> xla_shape = xla::ShapeUtil::MakeValidatedShape(
+      primitive_type,
+      absl::MakeConstSpan(validation_dims.data(), validation_dims.size()));
+  if (!xla_shape.ok()) {
+    return emitError() << "Invalid array shape for layout validation: "
+                       << xla_shape.status().message();
+  }
+  // `xla::LayoutUtil::ValidateLayoutForShape` returns OK early whenever
+  // `minor_to_major` is empty and `memory_space != 0` (to allow non-scalar AUTO
+  // layouts with a memory space), which skips all validation on rank-0 arrays.
+  // Clear `memory_space` on a copy for validation only; nothing after that
+  // early return inspects `memory_space`, and the original layout is preserved
+  // for the checks below.
+  absl::Status validation_status;
+  if (shape.getRank() == 0 && layout_mode->user_layout->memory_space() != 0) {
+    xla::Layout layout_for_validation = *layout_mode->user_layout;
+    layout_for_validation.set_memory_space(0);
+    validation_status = xla::LayoutUtil::ValidateLayoutForShape(
+        layout_for_validation, *xla_shape);
+  } else {
+    validation_status = xla::LayoutUtil::ValidateLayoutForShape(
+        *layout_mode->user_layout, *xla_shape);
+  }
+  if (!validation_status.ok()) {
+    return emitError() << "Invalid layout " << layout_attr << ": "
+                       << validation_status.message();
+  }
+  if (layout_mode->user_layout->dynamic_shape_metadata_prefix_bytes() != 0) {
+    return emitError()
+           << "Invalid layout " << layout_attr
+           << ": layout dynamic_shape_metadata_prefix_bytes must be 0, got "
+           << layout_mode->user_layout->dynamic_shape_metadata_prefix_bytes();
+  }
+  if (const std::string canonical_layout = layout_mode->user_layout->ToString();
+      layout_value != canonical_layout) {
+    return emitError() << "Non-canonical layout mode: " << layout_attr
+                       << " (expected \"" << canonical_layout << "\")";
+  }
+  return mlir::success();
 }
 
 xla::ifrt::MemoryKind IfrtArrayType::MemoryKind() const {
-  static const absl::NoDestructor<std::string> default_memory_kind(
-      absl::StrCat(xla::ifrt::MemoryKind()));
-  mlir::StringAttr memory_kind_attr = getMemoryKindAttr();
-  return memory_kind_attr == nullptr ||
-                 memory_kind_attr.getValue() == *default_memory_kind
-             ? xla::ifrt::MemoryKind()
-             : xla::ifrt::MemoryKind(memory_kind_attr.str());
-};
+  return xla::ifrt::MemoryKind(
+      absl::string_view(getMemoryKindAttr().getValue()));
+}
 
 // TODO(icgog): Migrate to xla::ifrt::Layout.
 xla::LayoutMode IfrtArrayType::LayoutMode() const {
-  if (auto layout_attr = getLayoutAttr()) {
-    auto layout_mode = xla::LayoutMode::FromString(layout_attr.str());
-    CHECK_OK(layout_mode) << "Invalid layout mode: " << layout_attr.str();
-    return *layout_mode;
+  const mlir::StringAttr layout_attr = getLayoutAttr();
+  const llvm::StringRef value = layout_attr.getValue();
+  if (value == kDefaultLayoutMode) {
+    return xla::LayoutMode(xla::LayoutMode::Mode::kDefault);
   }
-  return xla::LayoutMode(xla::LayoutMode::Mode::kDefault);
+  if (value == kAutoLayoutMode) {
+    return xla::LayoutMode(xla::LayoutMode::Mode::kAuto);
+  }
+  absl::StatusOr<xla::LayoutMode> layout_mode =
+      xla::LayoutMode::FromString(layout_attr.str());
+  CHECK_OK(layout_mode) << "Invalid layout mode: " << layout_attr.str();
+  return *std::move(layout_mode);
 }
 
 absl::StatusOr<llvm::SmallVector<int64_t>> IfrtArrayType::LocalShape() const {
   return getShardingAttr().LocalShapeFromGlobalShape(getShape().getShape());
 }
 
+bool IfrtArrayType::HasSameMemoryKind(IfrtArrayType other) const {
+  return getMemoryKindAttr() == other.getMemoryKindAttr();
+}
+
 bool IfrtArrayType::HasSameLayout(IfrtArrayType other) const {
-  if (getLayoutAttr() == other.getLayoutAttr()) {
-    return true;
-  }
-  xla::LayoutMode lhs_mode = LayoutMode();
-  xla::LayoutMode rhs_mode = other.LayoutMode();
-  if (lhs_mode.mode != rhs_mode.mode) {
-    return false;
-  }
-  if (lhs_mode.mode == xla::LayoutMode::Mode::kUserSpecified) {
-    return lhs_mode.user_layout == rhs_mode.user_layout;
-  }
-  return true;
+  return getLayoutAttr() == other.getLayoutAttr();
+}
+
+bool IfrtArrayType::HasDefaultMemoryKind() const {
+  return getMemoryKindAttr().getValue() ==
+         llvm::StringRef(xla::ifrt::MemoryKind().value());
+}
+
+bool IfrtArrayType::HasDefaultLayout() const {
+  return getLayoutAttr().getValue() == kDefaultLayoutMode;
 }
 
 void IfrtArrayType::print(mlir::AsmPrinter& odsPrinter) const {
-  mlir::Builder odsBuilder(getContext());
   odsPrinter << "<";
   odsPrinter.printStrippedAttrOrType(getShape());
   odsPrinter << ", ";
   odsPrinter.printStrippedAttrOrType(getShardingAttr());
   odsPrinter << ", ";
   odsPrinter.printStrippedAttrOrType(getDevicesAttr());
-  if (getMemoryKindAttr()) {
+  if (!HasDefaultMemoryKind()) {
     odsPrinter << ", memory_kind = ";
     odsPrinter.printStrippedAttrOrType(getMemoryKindAttr());
   }
-  if (getLayoutAttr()) {
+  if (!HasDefaultLayout()) {
     odsPrinter << ", layout = ";
     odsPrinter.printStrippedAttrOrType(getLayoutAttr());
   }

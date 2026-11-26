@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/buffer_allocations.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
@@ -40,6 +41,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk_multigpu_test_utils.h"
+#include "xla/backends/gpu/runtime/gpu_executable_run_options.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_test_utils.h"
@@ -50,8 +52,6 @@ limitations under the License.
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/device_assignment.h"
-#include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_slice.h"
@@ -69,6 +69,13 @@ namespace xla::gpu {
 namespace {
 
 static constexpr int kNumDevices = 2;
+
+// Symmetric-memory ragged all-to-all synchronizes through the cross-device
+// barrier. The barrier kernel reads peer pointers out of an NCCL symmetric
+// memory window, which has no RCCL equivalent on ROCm.
+static constexpr absl::string_view kNoCrossDeviceBarrierSkipReason =
+    "Test requires the NCCL-backed cross-device barrier, which is unavailable "
+    "on ROCm";
 static constexpr int64_t kNumUpdates = 4;
 static constexpr int64_t kNumInputRows = 4;
 static constexpr int64_t kNumRowElements = 1;
@@ -462,6 +469,9 @@ TEST(RaggedAllToAllThunkMultiGpuTest, ExecuteOnStreamWithSymmetricMemory) {
   if (!HasEnoughGpus(kNumDevices)) {
     GTEST_SKIP() << "Test requires at least " << kNumDevices << " GPUs";
   }
+  if (IsROCm(GetGpuExecutor(0))) {
+    GTEST_SKIP() << kNoCrossDeviceBarrierSkipReason;
+  }
 
   DeviceAssignment device_assignment = MakeDeviceAssignment(kNumDevices);
   std::vector<BufferAllocation> buffer_allocations =
@@ -484,6 +494,9 @@ TEST(RaggedAllToAllThunkMultiGpuTest,
   if (!HasEnoughGpus(kNumDevices)) {
     GTEST_SKIP() << "Test requires at least " << kNumDevices << " GPUs";
   }
+  if (IsROCm(GetGpuExecutor(0))) {
+    GTEST_SKIP() << kNoCrossDeviceBarrierSkipReason;
+  }
 
   DeviceAssignment device_assignment = MakeDeviceAssignment(kNumDevices);
   std::vector<BufferAllocation> buffer_allocations =
@@ -504,6 +517,9 @@ TEST(RaggedAllToAllThunkMultiGpuTest,
      RecordCommandBufferUpdateWithSymmetricMemory) {
   if (!HasEnoughGpus(kNumDevices)) {
     GTEST_SKIP() << "Test requires at least " << kNumDevices << " GPUs";
+  }
+  if (IsROCm(GetGpuExecutor(0))) {
+    GTEST_SKIP() << kNoCrossDeviceBarrierSkipReason;
   }
 
   DeviceAssignment device_assignment = MakeDeviceAssignment(kNumDevices);

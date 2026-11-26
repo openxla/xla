@@ -49,7 +49,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/text_format.h"
-#include "xla/backends/autotuner/backends.pb.h"
+#include "xla/backends/core/autotuner/backends.pb.h"
 #include "xla/debug_options_parsers.h"
 #include "xla/hlo/pass/hlo_pass_filter.h"
 #include "xla/parse_flags_from_env.h"
@@ -361,6 +361,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_memory_fraction_policy("");
   opts.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(false);
   opts.set_xla_gpu_experimental_nccl_window_symmetric(false);
+  opts.set_xla_gpu_experimental_cache_nccl_window_in_communicator(true);
   opts.set_xla_gpu_experimental_vmm_disabled(false);
   opts.set_xla_gpu_experimental_emit_collective_reduce(false);
   opts.set_xla_gpu_enable_nccl_comm_splitting(true);
@@ -412,7 +413,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_enable_same_shape_multi_output_fusion(false);
   opts.set_xla_gpu_enable_cudnn_int8x32_convolution_reordering(true);
   opts.set_xla_gpu_triton_gemm_any(true);
-  opts.set_xla_gpu_experimental_gemm_fusion_v2(true);
   opts.set_xla_gpu_verify_triton_fusion_numerics(false);
   opts.set_xla_gpu_experimental_cost_model_gemm_tiling_default(false);
   opts.set_xla_gpu_experimental_triton_ragged_dot(false);
@@ -621,7 +621,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_enable_raft_u64_radix(false);
   opts.set_xla_gpu_experimental_enable_tensor_ir(false);
   opts.set_xla_gpu_experimental_enable_triton_scan(true);
+  opts.set_xla_gpu_experimental_enable_reduction_dimension_tiling(true);
   opts.set_xla_gpu_experimental_multi_phase_fusion(false);
+  opts.set_xla_gpu_enable_nontemporal_hints(false);
   opts.set_xla_gpu_async_copy_min_bytes(-1);
 
   // Disable float checks.
@@ -2517,6 +2519,16 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         "Registers NCCL windows with NCCL_WIN_COLL_SYMMETRIC instead of "
         "NCCL_WIN_DEFAULT."));
     flag_list->push_back(tsl::Flag(
+        "xla_gpu_experimental_cache_nccl_window_in_communicator",
+        bool_setter_for(
+            &DebugOptions::
+                set_xla_gpu_experimental_cache_nccl_window_in_communicator),
+        debug_options->xla_gpu_experimental_cache_nccl_window_in_communicator(),
+        "Caches NCCL symmetric windows on the GPU communicator, registered "
+        "once for the whole underlying device allocation, instead of per "
+        "executable and per buffer. All executables in a process must use the "
+        "same value."));
+    flag_list->push_back(tsl::Flag(
         "xla_gpu_experimental_emit_collective_reduce",
         bool_setter_for(
             &DebugOptions::set_xla_gpu_experimental_emit_collective_reduce),
@@ -2835,9 +2847,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         debug_options->xla_gpu_enable_cudnn_int8x32_convolution_reordering(),
         "Enable cuDNN frontend for int8x32 convolutions with reordered "
         "filter."));
-    flag_list->push_back(tsl::Flag("xla_gpu_experimental_gemm_fusion_v2",
-                                   noop_flag_setter<bool>, true,
-                                   "Deprecated, do not use."));
     flag_list->push_back(
         tsl::Flag("xla_gpu_triton_gemm_any",
                   bool_setter_for(&DebugOptions::set_xla_gpu_triton_gemm_any),
@@ -4405,6 +4414,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         debug_options->xla_gpu_experimental_enable_horizontal_fusion(),
         "Enable experimental thread-block specialized horizontal fusion of "
         "independent small-grid GPU kernels."));
+    flag_list->push_back(tsl::Flag(
+        "xla_gpu_enable_nontemporal_hints",
+        bool_setter_for(&DebugOptions::set_xla_gpu_enable_nontemporal_hints),
+        debug_options->xla_gpu_enable_nontemporal_hints(),
+        "Non-temporal cache hints for MLIR kernels on gfx942 (MI300)."));
   }();
 }  // NOLINT(readability/fn_size)
 

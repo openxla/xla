@@ -5,7 +5,12 @@ load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm_is_configured")
 
 # Libraries for performance modeling of HLO.
-load("//xla/tests:build_defs.bzl", "AMD_GPU_ANY_BACKEND", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "AMD_GPU_ANY_BACKEND",
+    "GPU_DEFAULT_BACKENDS",
+    "xla_test",
+)
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
@@ -62,7 +67,7 @@ cc_library(
         ":matmul_interpolator",
         ":sol_gpu_cost_model",
         "//xla:util",
-        "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
+        "//xla/backends/gpu/hlo/transforms/collectives:collective_ops_utils",
         "//xla/hlo/analysis:hlo_dataflow_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/transforms/hlo_scheduling:latency_hiding_scheduler",
@@ -147,6 +152,7 @@ xla_cc_test(
         ":sol_gpu_cost_model",
         "//xla/hlo/parser:hlo_parser",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
@@ -167,12 +173,12 @@ xla_test(
     deps = [
         ":analytical_latency_estimator",
         "//xla:shape_util",
+        "//xla/backends/gpu:gpu_compiler",
         "//xla/backends/gpu/hlo/analysis:alias_info",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/transforms/hlo_scheduling:latency_hiding_scheduler",
         "//xla/service:hlo_cost_analysis",
-        "//xla/service/gpu:gpu_compiler",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:xla_internal_test_main",
@@ -526,6 +532,29 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "gpu_collective_performance_model_test",
+    srcs = ["gpu_collective_performance_model_test.cc"],
+    deps = [
+        ":gpu_collective_performance_model",
+        ":gpu_hlo_cost_analysis",
+        ":hlo_op_profiles",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:hlo_cost_analysis",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/stream_executor:device_description",
+        "//xla/tsl/platform:env",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "gpu_indexing_performance_model",
     srcs = ["gpu_indexing_performance_model.cc"],
@@ -568,6 +597,7 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/log:vlog_is_on",
+        "@com_google_absl//absl/numeric:bits",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
@@ -945,7 +975,7 @@ xla_test(
     # Disable backend optimizations (in particular reassociate and instcombine) which would optimize
     # expressions like integer add and multiply.
     args = ["--xla_backend_optimization_level=0"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     fail_if_no_test_linked = False,  # NOLINT=not based on gtest and thus doesn't support --gunit_fail_if_no_test_linked.
     fail_if_no_test_selected = False,  # NOLINT=not based on gtest and thus doesn't support --gunit_fail_if_no_test_selected.
     shuffle_tests = False,  # CANNOT_SHUFFLE_TESTS=This test is not based on gtest and thus doesn't support shuffling.
@@ -996,7 +1026,7 @@ xla_test(
     srcs = ["hlo_op_profiler_test.cc"],
     # TODO(b/372714955): Fix the memory leak!
     args = if_google(["--heap_check="]),
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":hlo_op_profiler_lib",
         "//xla:xla_data_proto_cc",
@@ -1045,7 +1075,7 @@ cc_library(
         ":interpolator",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
-        "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
+        "//xla/backends/gpu/hlo/transforms/collectives:collective_ops_utils",
         "//xla/hlo/ir:hlo",
         "//xla/service:collective_ops_utils",
         "//xla/service:hlo_module_config",
@@ -1071,7 +1101,7 @@ xla_cc_test(
         ":hlo_op_profile_proto_cc",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
-        "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
+        "//xla/backends/gpu/hlo/transforms/collectives:collective_ops_utils",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/service:hlo_proto_cc",

@@ -25,6 +25,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/check.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
@@ -77,6 +79,12 @@ class Mesh {
   explicit Mesh(TileAssignment device_assignment,
                 absl::Span<const absl::string_view> axes_names);
 
+  // Same as the constructor above, but returns an error instead of crashing if
+  // the mesh is invalid.
+  static absl::StatusOr<Mesh> TryCreate(
+      TileAssignment device_assignment,
+      absl::Span<const absl::string_view> axes_names);
+
   // Returns whether this mesh is a single-device mesh.
   //
   // A single-device mesh contains an empty axis list and a single device id.
@@ -99,7 +107,8 @@ class Mesh {
 
   MeshProto ToProto() const;
 
-  static Mesh FromProto(const MeshProto& proto);
+  // Returns an error if `proto` does not describe a valid mesh.
+  static absl::StatusOr<Mesh> FromProto(const MeshProto& proto);
 
   const TileAssignment& device_assignment() const { return device_assignment_; }
   absl::Span<const std::string> axis_names() const { return axes_names_; }
@@ -197,7 +206,9 @@ class AxisRef {
 
   AxisRefProto ToProto() const;
 
-  static AxisRef FromProto(const AxisRefProto& proto);
+  // Returns an error if `proto` has a negative mesh axis index or an invalid
+  // sub-axis. The mesh axis index is not checked against a mesh.
+  static absl::StatusOr<AxisRef> FromProto(const AxisRefProto& proto);
 
   bool CanCoexistWithoutOverlap(const AxisRef& other) const;
 
@@ -234,6 +245,10 @@ class AxisRef {
 
   // Validates that the given mesh is compatible for this axis ref.
   absl::Status Validate(const Mesh& mesh) const;
+
+  // Validates that a sub-axis has pre_size >= 1, size > 1, and that
+  // pre_size * size does not overflow int64_t.
+  static absl::Status ValidateSubAxis(int64_t pre_size, int64_t size);
 
   int64_t mesh_axis_index() const { return mesh_axis_index_; }
   std::optional<SubAxis> sub_axis_info() const { return sub_axis_info_; }

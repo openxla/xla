@@ -440,8 +440,7 @@ class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
     return array_spec_.sharding;
   }
 
-  absl::StatusOr<std::shared_ptr<const PjRtLayout>> pjrt_layout()
-      const override {
+  absl_nullable std::shared_ptr<const PjRtLayout> pjrt_layout() const override {
     return array_spec_.layout;
   }
 
@@ -717,8 +716,7 @@ class ShardedNanoArray final : public NanoValue<ShardedNanoArray, ifrt::Array> {
     return array_spec_.sharding;
   }
 
-  absl::StatusOr<std::shared_ptr<const PjRtLayout>> pjrt_layout()
-      const override {
+  absl_nullable std::shared_ptr<const PjRtLayout> pjrt_layout() const override {
     return array_spec_.layout;
   }
 

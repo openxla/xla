@@ -281,6 +281,7 @@ cc_library(
         "//xla/tsl/platform:status_to_from_proto",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
@@ -548,6 +549,9 @@ cc_library(
 cc_library(
     name = "grpc_client",
     srcs = ["grpc_client.cc"],
+    visibility = internal_visibility(default_ifrt_proxy_visibility + if_google([
+        "//xla/python/ifrt_proxy/common/google:cc_client_users",
+    ])),
     deps = [
         ":client",
         ":grpc_client_session",

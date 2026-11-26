@@ -335,22 +335,14 @@ absl::StatusOr<std::vector<xla::AxisRef>> BuildAxisRefs(
     }
     int64_t index = std::distance(axes_names.begin(), it);
 
-    xla::AxisRefProto proto;
-    proto.set_mesh_axis_index(index);
     if (auto sub = axis_ref.getSubAxisInfo()) {
-      if (sub.getPreSize() <= 0) {
-        return InvalidArgument("sub-axis pre-size must be >= 1, got %d",
-                               sub.getPreSize());
-      }
-      if (sub.getSize() <= 1) {
-        return InvalidArgument("sub-axis size must be > 1, got %d",
-                               sub.getSize());
-      }
-      auto* sub_proto = proto.mutable_sub_axis_info();
-      sub_proto->set_pre_size(sub.getPreSize());
-      sub_proto->set_size(sub.getSize());
+      ABSL_RETURN_IF_ERROR(
+          xla::AxisRef::ValidateSubAxis(sub.getPreSize(), sub.getSize()));
+      group_axes.push_back(
+          xla::AxisRef(index, {sub.getPreSize(), sub.getSize()}));
+    } else {
+      group_axes.push_back(xla::AxisRef(index));
     }
-    group_axes.push_back(xla::AxisRef::FromProto(proto));
   }
   return group_axes;
 }

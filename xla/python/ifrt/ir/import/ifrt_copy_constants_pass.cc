@@ -49,8 +49,7 @@ namespace {
 // corresponding `func.return` operand inside the producer callee.
 mlir::Operation* FindHloProducer(mlir::Value value,
                                  mlir::SymbolTableCollection& symbol_table) {
-  while (mlir::OpResult op_result =
-             llvm::dyn_cast_or_null<mlir::OpResult>(value)) {
+  while (mlir::OpResult op_result = llvm::dyn_cast<mlir::OpResult>(value)) {
     mlir::Operation* producer = op_result.getOwner();
 
     if (llvm::isa<ReshardOp, CopyArraysOp>(producer)) {
@@ -67,9 +66,9 @@ mlir::Operation* FindHloProducer(mlir::Value value,
         return nullptr;
       }
       mlir::func::FuncOp callee = call.getCalleeOp(symbol_table);
-      // Skip external declarations and multi-block CFGs (which can have
-      // multiple `func.return` terminators).
-      if (callee == nullptr || !llvm::hasSingleElement(callee.getBody())) {
+      // Skip multi-block CFGs (which can have multiple `func.return`
+      // terminators).
+      if (!llvm::hasSingleElement(callee.getBody())) {
         return nullptr;
       }
       mlir::func::ReturnOp return_op = llvm::dyn_cast<mlir::func::ReturnOp>(
@@ -114,16 +113,9 @@ class IfrtCopyConstantsPass
         if (call_op->hasAttr(kIfrtLocalViewAttrName)) {
           continue;
         }
-        // External declarations have no body blocks, whereas any defined
-        // (single or multi block) SSACFG function has a unique dominating
-        // entry block `callee.getBody().front()`.
-        mlir::FailureOr<mlir::func::FuncOp> resolved_callee =
-            symbol_manager->GetCallee(call_op);
-        if (mlir::failed(resolved_callee)) {
-          signalPassFailure();
-          return;
-        }
-        mlir::func::FuncOp callee = *resolved_callee;
+        // Any defined (single- or multi-block) SSACFG callee has a unique
+        // dominating entry block `callee.getBody().front()`.
+        mlir::func::FuncOp callee = call_op.getCalleeOp(symbol_table);
 
         // Collect used consumer entry-block arguments whose corresponding
         // `ifrt.Call` input traces back (through zero or more `ifrt.Reshard` or
@@ -143,8 +135,6 @@ class IfrtCopyConstantsPass
           mlir::Operation* hlo_producer = FindHloProducer(input, symbol_table);
           if (hlo_producer == nullptr ||
               !hlo_producer->hasTrait<mlir::OpTrait::ConstantLike>() ||
-              hlo_producer->getNumOperands() != 0 ||
-              hlo_producer->getNumResults() != 1 ||
               hlo_producer->getResult(0).getType() != consumer_arg.getType()) {
             continue;
           }

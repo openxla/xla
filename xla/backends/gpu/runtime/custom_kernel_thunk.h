@@ -28,13 +28,13 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
+#include "xla/backends/gpu/runtime/buffer_allocations.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/per_device_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -80,7 +80,8 @@ class CustomKernelThunk : public Command {
 
   LaunchDimensions launch_dimensions() const {
     return LaunchDimensions(custom_kernel_.block_dims(),
-                            custom_kernel_.thread_dims());
+                            custom_kernel_.thread_dims(),
+                            custom_kernel_.cluster_dims());
   }
 
   int64_t shmem_bytes() const { return custom_kernel_.shared_memory_bytes(); }

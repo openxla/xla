@@ -115,7 +115,7 @@ void CanonicalizeIotaDims(absl::Span<int64_t>& dims, absl::Span<int>& perm) {
     for (int i = 1, base = 0, n = dims.size(); i < n; ++i) {
       const int base_dim = perm[base];
       const int dim = perm[i];
-      if (base_dim + (i - base) == dim) {
+      if (dim - base_dim == i - base) {
         dims[base_dim] *= dims[dim];
         dims[dim] = 1;
         changed = true;
@@ -153,58 +153,6 @@ TransposeKind GetTransposeKind(absl::Span<const int64_t> dims,
     prev_non_one_dim = d;
   }
   return kind;
-}
-
-struct DecanonicalizationInfo {
-  absl::InlinedVector<int64_t, 6> new_reshape_dims;
-  absl::InlinedVector<int, 6> new_transpose_perm;
-  absl::InlinedVector<int, 6> new_transpose_perm_idx_to_original_reshape_dim;
-  absl::InlinedVector<absl::InlinedVector<int, 6>, 6>
-      original_reshape_dim_to_new_transpose_perm_indices;
-};
-
-// Fully decanonicalizes reshape_dims into prime factors and return the new
-// reshape_dims and transpose_perm.
-DecanonicalizationInfo FullyDecanonicalize(
-    absl::Span<const int64_t> reshape_dims,
-    absl::Span<const int> transpose_perm) {
-  DecanonicalizationInfo info;
-  absl::InlinedVector<int, 6> old_to_new_dims(reshape_dims.size() + 1);
-  for (int i = 0, n = reshape_dims.size(); i < n; ++i) {
-    int64_t dim_size = reshape_dims[i];
-    while (dim_size % 2 == 0) {
-      info.new_reshape_dims.push_back(2);
-      dim_size /= 2;
-    }
-    for (int i = 3; i * i <= dim_size; i += 2) {
-      while (dim_size % i == 0) {
-        info.new_reshape_dims.push_back(i);
-        dim_size /= i;
-      }
-    }
-    if (dim_size > 1) {
-      CHECK_GT(dim_size, 2);
-      info.new_reshape_dims.push_back(dim_size);
-    }
-    old_to_new_dims[i + 1] = info.new_reshape_dims.size();
-  }
-  info.new_transpose_perm.reserve(info.new_reshape_dims.size());
-
-  info.new_transpose_perm_idx_to_original_reshape_dim.reserve(
-      info.new_transpose_perm.size());
-  info.original_reshape_dim_to_new_transpose_perm_indices.resize(
-      transpose_perm.size());
-  for (int i = 0; i < transpose_perm.size(); ++i) {
-    const int old_dim = transpose_perm[i];
-    for (int j = old_to_new_dims[old_dim], n = old_to_new_dims[old_dim + 1];
-         j < n; ++j) {
-      info.new_transpose_perm.push_back(j);
-      info.new_transpose_perm_idx_to_original_reshape_dim.push_back(old_dim);
-      info.original_reshape_dim_to_new_transpose_perm_indices[old_dim]
-          .push_back(info.new_transpose_perm.size() - 1);
-    }
-  }
-  return info;
 }
 
 std::optional<IotaTileAssignment> TryToConvertV1ToV2(const TileAssignment& T) {
@@ -277,10 +225,14 @@ std::optional<IotaTileAssignment> TryToConvertV1ToV2(const TileAssignment& T) {
 }
 
 absl::StatusOr<int64_t> ValidateIotaDims(absl::Span<const int64_t> dims) {
-  if (dims.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+  constexpr size_t kMaxIotaRank =
+      std::min<size_t>(std::numeric_limits<int>::max(),
+                       std::numeric_limits<std::ptrdiff_t>::max() /
+                           (2 * sizeof(int64_t) + sizeof(int)));
+  if (dims.size() > kMaxIotaRank) {
     return absl::InvalidArgumentError(
         absl::StrFormat("Iota dimensions rank (%d) exceeds maximum (%d)",
-                        dims.size(), std::numeric_limits<int>::max()));
+                        dims.size(), kMaxIotaRank));
   }
   bool has_zero = false;
   int64_t nonzero_product = 1;
@@ -361,6 +313,11 @@ absl::Status ValidateIotaReshapeAndTranspose(
                         ValidateIotaDims(dims));
   ABSL_RETURN_IF_ERROR(ValidateIotaReshapeAndTranspose(
       reshape_dims, transpose_perm, expected_elements));
+  if (expected_elements == 0) {
+    // All tile assignments without elements are equivalent, canonicalize them
+    // the same way as the single-argument `TryCreate`.
+    return IotaTileAssignment(dims, {int64_t{0}}, {0});
+  }
   absl::InlinedVector<int64_t, 6> canonicalized_dims(reshape_dims.begin(),
                                                      reshape_dims.end());
   absl::InlinedVector<int, 6> canonicalized_perm(transpose_perm.begin(),
@@ -386,13 +343,35 @@ absl::Status ValidateIotaReshapeAndTranspose(
   return *std::move(iota);
 }
 
-/*static*/ IotaTileAssignment IotaTileAssignment::Create(
+/*static*/ absl::StatusOr<IotaTileAssignment> IotaTileAssignment::TryCreate(
     absl::Span<const int64_t> dims, const MeshProto::IotaTransform& transform) {
+  // Range-check the int64_t permutation entries before narrowing them to int.
   // This is an extra copy, but the array will typically be quite small since
   // it scales with the number of dimensions.
-  absl::InlinedVector<int, 6> int_perm(transform.transpose_perm().begin(),
-                                       transform.transpose_perm().end());
-  return Create(dims, transform.reshape_dims(), absl::MakeSpan(int_perm));
+  const int64_t perm_size = transform.transpose_perm().size();
+  if (transform.reshape_dims_size() != perm_size) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Iota reshape_dims size (%d) must match transpose_perm size (%d)",
+        transform.reshape_dims_size(), perm_size));
+  }
+  absl::InlinedVector<int, 6> int_perm;
+  int_perm.reserve(perm_size);
+  for (int64_t perm_dim : transform.transpose_perm()) {
+    if (perm_dim < 0 || perm_dim >= perm_size) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Iota transpose_perm entry %d out of range [0, %d)",
+                          perm_dim, perm_size));
+    }
+    int_perm.push_back(static_cast<int>(perm_dim));
+  }
+  return TryCreate(dims, transform.reshape_dims(), int_perm);
+}
+
+/*static*/ IotaTileAssignment IotaTileAssignment::Create(
+    absl::Span<const int64_t> dims, const MeshProto::IotaTransform& transform) {
+  absl::StatusOr<IotaTileAssignment> iota = TryCreate(dims, transform);
+  CHECK_OK(iota);
+  return *std::move(iota);
 }
 
 // Materializes array representation of IotaTileAssignment.
@@ -412,18 +391,26 @@ Array<int64_t> IotaTileAssignment::ToArray() const {
 
 IotaTileAssignment::IotaTileAssignment(const IotaTileAssignment& other)
     : IotaTileAssignment(other.ndims_, other.reshape_ndims_) {
-  std::memcpy(storage_.get(), other.storage_.get(), size_bytes());
+  const size_t size = size_bytes();
+  if (size > 0) {
+    std::memcpy(storage_.get(), other.storage_.get(), size);
+  }
 }
 
 IotaTileAssignment& IotaTileAssignment::operator=(
     const IotaTileAssignment& other) {
-  const int new_size = other.size_bytes();
+  if (this == &other) {
+    return *this;
+  }
+  const size_t new_size = other.size_bytes();
   if (size_bytes() != new_size) {
-    storage_.reset(new char[new_size]);
+    storage_.reset(new_size > 0 ? new char[new_size] : nullptr);
   }
   ndims_ = other.ndims_;
   reshape_ndims_ = other.reshape_ndims_;
-  std::memcpy(storage_.get(), other.storage_.get(), new_size);
+  if (new_size > 0) {
+    std::memcpy(storage_.get(), other.storage_.get(), new_size);
+  }
   return *this;
 }
 
@@ -433,19 +420,25 @@ IotaTileAssignment::IotaTileAssignment(absl::Span<const int64_t> dims,
     : IotaTileAssignment(dims.size(), reshape_dims.size()) {
   DCHECK_EQ(reshape_dims.size(), transpose_perm.size());
   if (ndims_ > 0) {
-    std::memcpy(dims_ptr(), dims.data(), ndims_ * sizeof(int64_t));
+    std::memcpy(dims_ptr(), dims.data(),
+                static_cast<size_t>(ndims_) * sizeof(int64_t));
   }
   DCHECK_EQ(num_elements(), Product(reshape_dims));
-  std::memcpy(reshape_dims_ptr(), reshape_dims.data(),
-              reshape_ndims_ * sizeof(int64_t));
-  std::memcpy(transpose_perm_ptr(), transpose_perm.data(),
-              reshape_ndims_ * sizeof(int));
+  if (reshape_ndims_ > 0) {
+    std::memcpy(reshape_dims_ptr(), reshape_dims.data(),
+                static_cast<size_t>(reshape_ndims_) * sizeof(int64_t));
+    std::memcpy(transpose_perm_ptr(), transpose_perm.data(),
+                static_cast<size_t>(reshape_ndims_) * sizeof(int));
+  }
 }
 
 IotaTileAssignment::IotaTileAssignment(int ndims, int reshape_ndims)
     : ndims_(ndims),
       reshape_ndims_(reshape_ndims),
-      storage_(new char[size_bytes()]) {}
+      storage_(size_bytes() > 0 ? new char[size_bytes()] : nullptr) {
+  DCHECK_GE(ndims_, 0);
+  DCHECK_GE(reshape_ndims_, 0);
+}
 
 std::optional<IotaTileAssignment> IotaTileAssignment::Transpose(
     absl::Span<const int> perm) const {
@@ -458,6 +451,10 @@ std::optional<IotaTileAssignment> IotaTileAssignment::Transpose(
   absl::InlinedVector<int64_t, 6> new_dims(ndims_);
   for (int64_t i = 0; i < ndims_; ++i) {
     new_dims[i] = dims[perm[i]];
+  }
+  if (absl::c_linear_search(dims, 0)) {
+    // All tile assignments without elements are equivalent.
+    return IotaTileAssignment::Create(new_dims);
   }
   if (kind == TransposeKind::kReshape) {
     return IotaTileAssignment::Create(new_dims, reshape_dims(),
@@ -499,123 +496,49 @@ std::optional<IotaTileAssignment> IotaTileAssignment::Transpose(
     return IotaTileAssignment::Create(new_dims, reshape_dims, new_perm);
   }
 
-  DecanonicalizationInfo decanonicalization_info =
-      FullyDecanonicalize(reshape_dims, transpose_perm);
-  auto& decanonicalized_reshape_dims = decanonicalization_info.new_reshape_dims;
-  const auto& decanonicalized_transpose_perm =
-      decanonicalization_info.new_transpose_perm;
-  const auto& new_transpose_perm_idx_to_original_reshape_dim =
-      decanonicalization_info.new_transpose_perm_idx_to_original_reshape_dim;
-  const auto& original_reshape_dim_to_new_transpose_perm_indices =
-      decanonicalization_info
-          .original_reshape_dim_to_new_transpose_perm_indices;
-  CHECK_LE(non_one_dims.size(), decanonicalized_reshape_dims.size());
-  // Try grouping decanonicalized reshape dimensions together to see if they
-  // form the identical tile dimensions, then transpose them in groups.
-  // The basic approach to grouping decanonicalized reshape dims to match the
-  // non_one_dims would be to iterate over the decanonicalized reshape dims and
-  // non_one_dims in major to minor order and form groups {x,y,z...} such that
-  // x*y*z... = non_one_dims[i]. However this sometimes does not work when
-  // decanonicalization of the original reshape dim is not in a order that is
-  // compatible with the non_one_dims.
-  //
-  // Consider the following example:
-  // Non_one_dims: [4,5,24]
-  // Original reshape dims: [15,4,8]
-  // Original transpose perm: [1,0,2]
-  // Reshape dims after decanonicalization: [3,5,2,2,2,2,2]
-  // Transpose perm after decanonicalization: [2,3,0,1,4,5,6]
-  //
-  // The basic approach would map non_one_dims[0] = 4 to reshape dimensions
-  // [2,3] but would fail to map 5 to reshape dimensions as the divisor of 5
-  // appears after 3.
-  //
-  // Decanonicalizations are not unique and some decanonicalizations generated
-  // will better match the non_one_dims than others. In this case, an equivalent
-  // decanonicalization with reshape dims: [5,3,2,2,2,2,2] and transpose perm:
-  // [2,3,0,1,4,5,6] would have better matched the non_one_dims.
-  //
-  // To avoid generating multiple decanonicalizations and retrying grouping
-  // reshape dims each time, if we are unable to find a divisor for the
-  // non_one_dim[i] when iterating through decanonicalized reshape dims in the
-  // major to minor direction, we look ahead in the decanonicalized reshape dims
-  // to see if any future dimensions that belong to the same original reshape
-  // dimension could be used as a divisor. If this is possible, we swap the
-  // future dimension with the current dimension and return the position of the
-  // current dimension.
-  absl::InlinedVector<absl::InlinedVector<int, 2>, 6> grouped_reshape_dims(
-      non_one_dims.size());
-  const auto generate_candidate =
-      [&](int64_t target, int64_t transpose_perm_idx) -> std::optional<int> {
-    const int reshape_dim_idx =
-        decanonicalized_transpose_perm[transpose_perm_idx];
-    const int64_t cand = decanonicalized_reshape_dims[reshape_dim_idx];
-    if (target % cand == 0) {
-      return reshape_dim_idx;
-    }
-    // If current dimension in decanonicalized reshape dims does not divide the
-    // target dim (non_one_dim[i]), we look ahead in the decanonicalized reshape
-    // dims to see if any future dimensions that belong to the same original
-    // reshape dimension could be used as a divisor.
-    const int64_t original_reshape_dim =
-        new_transpose_perm_idx_to_original_reshape_dim[transpose_perm_idx];
-    for (int64_t candidate_transpose_perm_idx :
-         original_reshape_dim_to_new_transpose_perm_indices
-             [original_reshape_dim]) {
-      if (candidate_transpose_perm_idx > transpose_perm_idx) {
-        const int new_reshape_dim_idx =
-            decanonicalized_transpose_perm[candidate_transpose_perm_idx];
-        const int64_t new_cand =
-            decanonicalized_reshape_dims[new_reshape_dim_idx];
-        if (target % new_cand == 0) {
-          std::swap(decanonicalized_reshape_dims[reshape_dim_idx],
-                    decanonicalized_reshape_dims[new_reshape_dim_idx]);
-          return reshape_dim_idx;
-        }
-      }
-    }
+  // Find the shortest common refinement of `non_one_dims` and the reshape dims
+  // permuted by `transpose_perm`. Each resulting sub-dimension belongs to
+  // exactly one reshape dimension and one tile dimension, so the transposed
+  // tile assignment can be expressed by permuting the groups of sub-dimensions
+  // that make up each tile dimension. This only needs divisibility checks
+  // between dimension sizes, so it runs in time linear in the rank and cannot
+  // overflow.
+  absl::StatusOr<std::vector<SubDimInfo>> ordered_sub_dims =
+      GetOrderedSubDims(dims, reshape_dims, transpose_perm);
+  if (!ordered_sub_dims.ok()) {
+    // TODO(b/341371396): Handle remaining patterns and remove nullopt path.
+    // It seems this cannot happen under the valid condition that we generate
+    // code with predefined mesh axises, but the C++ API does not restrict
+    // people from constructing sharding like `[2,3]<=[2,3]T(1,0]` which
+    // breaks the axises and transposing it will result in V1 sharding.
     return std::nullopt;
-  };
-  int transpose_perm_idx = 0;
-  for (int i = 0, n = non_one_dims.size(),
-           dn = decanonicalized_reshape_dims.size();
-       i < n && transpose_perm_idx < dn; ++i) {
-    int64_t target = non_one_dims[i];
-    std::optional<int> reshape_dim_idx =
-        generate_candidate(target, transpose_perm_idx);
-    while (reshape_dim_idx.has_value()) {
-      const int64_t cand = decanonicalized_reshape_dims[*reshape_dim_idx];
-      target /= cand;
-      grouped_reshape_dims[i].push_back(*reshape_dim_idx);
-      if (++transpose_perm_idx >= dn) {
-        break;
-      }
-      reshape_dim_idx = generate_candidate(target, transpose_perm_idx);
-    }
-    if (target != 1) {
-      // TODO(b/341371396): Handle remaining patterns and remove nullopt path.
-      // It seems this cannot happen under the valid condition that we generate
-      // code with predefined mesh axises, but the C++ API does not restrict
-      // people from constructing sharding like `[2,3]<=[2,3]T(1,0]` which
-      // breaks the axises and transposing it will result in V1 sharding.
-      return std::nullopt;
-    }
   }
-  absl::InlinedVector<int, 6> flattened_transpose_perm;
-  flattened_transpose_perm.reserve(reshape_ndims_);
-  for (int i = 0; i < perm.size(); ++i) {
-    const int dim = perm[i];
-    if (one_to_non_one[dim] < 0) {
-      continue;
-    }
-    auto& group = grouped_reshape_dims[one_to_non_one[dim]];
-    flattened_transpose_perm.insert(flattened_transpose_perm.end(),
-                                    group.begin(), group.end());
+  const std::vector<SubDimInfo>& sub_dims = *ordered_sub_dims;
+  // `sub_dims` is sorted by (reshape_dim_index, tile_dim_index), which is the
+  // major-to-minor order of the refined reshape dimensions.
+  absl::InlinedVector<int64_t, 6> new_reshape_dims;
+  new_reshape_dims.reserve(sub_dims.size());
+  absl::InlinedVector<absl::InlinedVector<int, 2>, 6> grouped_reshape_dims(
+      ndims_);
+  for (int i = 0; i < sub_dims.size(); ++i) {
+    const SubDimInfo& sub_dim = sub_dims[i];
+    new_reshape_dims.push_back(sub_dim.size);
+    grouped_reshape_dims[sub_dim.tile_dim_index].push_back(i);
   }
-  CHECK_EQ(flattened_transpose_perm.size(),
-           decanonicalized_transpose_perm.size());
-  return IotaTileAssignment::Create(new_dims, decanonicalized_reshape_dims,
-                                    flattened_transpose_perm);
+  absl::InlinedVector<int, 6> new_transpose_perm;
+  new_transpose_perm.reserve(sub_dims.size());
+  for (int i = 0; i < ndims_; ++i) {
+    auto& group = grouped_reshape_dims[perm[i]];
+    // Order the sub-dimensions of each tile dimension from major to minor.
+    absl::c_sort(group, [&](int a, int b) {
+      return sub_dims[a].tile_sub_dim_index > sub_dims[b].tile_sub_dim_index;
+    });
+    new_transpose_perm.insert(new_transpose_perm.end(), group.begin(),
+                              group.end());
+  }
+  CHECK_EQ(new_transpose_perm.size(), new_reshape_dims.size());
+  return IotaTileAssignment::Create(new_dims, new_reshape_dims,
+                                    new_transpose_perm);
 }
 
 void IotaTileAssignment::PrintArray(Printer* printer) const {
@@ -660,8 +583,8 @@ int64_t IotaTileAssignment::value_at(absl::Span<const int64_t> index) const {
   auto transpose_perm = this->transpose_perm();
   absl::InlinedVector<int64_t, 6> reshape_index(reshape_ndims_);
   for (int64_t i = reshape_ndims_ - 1; i >= 0; --i) {
-    int dim = transpose_perm[i];
-    int dim_size = reshape_dims[dim];
+    const int dim = transpose_perm[i];
+    const int64_t dim_size = reshape_dims[dim];
     reshape_index[dim] = linear_index % dim_size;
     linear_index /= dim_size;
   }
@@ -928,7 +851,9 @@ std::vector<int64_t> ExtractCommonFactorSequence(
     if (val1 == 1 && val2 == 1) {
       break;
     }
-    if (val1 == 1 || val2 == 1) {
+    // Mismatched products, or non-positive sizes (which would otherwise lead
+    // to a division by zero below).
+    if (val1 <= 1 || val2 <= 1) {
       return {};
     }
 

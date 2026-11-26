@@ -1,0 +1,84 @@
+/* Copyright 2022 The OpenXLA Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include <gtest/gtest.h>
+
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include "absl/log/log.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/service/hlo_module_config.h"
+#include "xla/tests/restricted/hlo_test_base_legacy.h"
+
+namespace xla {
+namespace gpu {
+namespace {
+
+class AutoShardingTest : public HloTestBaseLegacy {
+ protected:
+  const char* const dot_hlo_string_ = R"(
+HloModule module
+ENTRY matmul {
+  parameter.1 = f32[32,64]{1,0} parameter(0)
+  parameter.2 = f32[64,128]{1,0} parameter(1)
+  ROOT root = f32[32,128]{1,0} dot(parameter.1, parameter.2), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+  std::unique_ptr<HloModule> CompileMatMul(bool use_autosharding,
+                                           int num_partitions) {
+    HloModuleConfig config;
+    config.set_use_spmd_partitioning(true);
+    config.set_use_auto_spmd_partitioning(use_autosharding);
+    config.set_auto_spmd_partitioning_mesh_shape({num_partitions});
+    config.set_num_partitions(num_partitions);
+
+    absl::StatusOr<std::unique_ptr<VerifiedHloModule>> module =
+        ParseAndReturnVerifiedModule(dot_hlo_string_, config);
+    if (!module.ok()) {
+      ADD_FAILURE() << module.status();
+      return nullptr;
+    }
+    absl::StatusOr<std::unique_ptr<HloModule>> compiled_module =
+        backend().compiler()->RunHloPasses((*module)->Clone(),
+                                           backend().default_stream_executor(),
+                                           /*device_allocator=*/nullptr);
+    if (!compiled_module.ok()) {
+      ADD_FAILURE() << compiled_module.status();
+      return nullptr;
+    }
+    VLOG(2) << (*compiled_module)->ToString();
+    return *std::move(compiled_module);
+  }
+};
+
+TEST_F(AutoShardingTest, MatMulWithoutAutosharding) {
+  auto compiled_module = CompileMatMul(false, 4);
+  ASSERT_NE(compiled_module, nullptr);
+  auto* instruction =
+      compiled_module->entry_computation()->parameter_instruction(0);
+  VLOG(2) << instruction->ToString();
+  EXPECT_FALSE(instruction->has_sharding());
+  ASSERT_TRUE(compiled_module->has_spmd_parameters_shardings());
+  EXPECT_EQ(compiled_module->spmd_parameters_shardings()[0],
+            HloSharding::Replicate());
+}
+
+}  // namespace
+}  // namespace gpu
+}  // namespace xla
