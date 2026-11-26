@@ -92,3 +92,20 @@ func.func @shuffler(%a: f32, %b: i32) -> (f32, i32) {
 // CHECK:        xla_gpu.shuffle_reduce(%[[IN1]], %[[IN2]]) to 4
 // CHECK-SAME:    combiner=@do_nothing {xla.range = [0 : index, 42 : index]}
 // CHECK-SAME:    : f32, i32
+
+// -----
+
+func.func @dsmem_extract_insert(%cta: index, %idx: index, %val: f32) -> f32 {
+  %shared = xla_gpu.allocate_shared : tensor<16xf32>
+  %ins = xla_gpu.dsmem_insert %val into %shared[%cta, %idx] : tensor<16xf32>
+  %sync = xla_gpu.sync_threads scope <cluster> %ins : tensor<16xf32>
+  %ext = xla_gpu.dsmem_extract %sync[%cta, %idx] : tensor<16xf32>
+  return %ext : f32
+}
+// CHECK-LABEL: func.func @dsmem_extract_insert(
+// CHECK-SAME:    %[[CTA:.*]]: index, %[[IDX:.*]]: index, %[[VAL:.*]]: f32)
+// CHECK:         %[[SHMEM:.*]] = xla_gpu.allocate_shared : tensor<16xf32>
+// CHECK:         %[[INS:.*]] = xla_gpu.dsmem_insert %[[VAL]] into %[[SHMEM]][%[[CTA]], %[[IDX]]] : tensor<16xf32>
+// CHECK:         %[[SYNC:.*]] = xla_gpu.sync_threads scope <cluster> %[[INS]] : tensor<16xf32>
+// CHECK:         %[[EXT:.*]] = xla_gpu.dsmem_extract %[[SYNC]][%[[CTA]], %[[IDX]]] : tensor<16xf32>
+// CHECK:         return %[[EXT]] : f32

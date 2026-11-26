@@ -963,6 +963,82 @@ struct RewriteTransferRead : OpRewritePattern<vector::TransferReadOp> {
   }
 };
 
+void CopyAliasAttrs(Operation* src, ml::StoreOp dst) {
+  if (auto alias_scope_attr = src->getAttrOfType<mlir::ArrayAttr>(
+          ml::LLVMDialect::getAliasScopesAttrName())) {
+    dst.setAliasScopesAttr(alias_scope_attr);
+  }
+  if (auto no_alias_attr = src->getAttrOfType<mlir::ArrayAttr>(
+          ml::LLVMDialect::getNoAliasAttrName())) {
+    dst.setNoaliasScopesAttr(no_alias_attr);
+  }
+}
+
+void EmitDirectScalarStore(Operation* op,
+                           TypedValue<mlir::RankedTensorType> tensor_dest,
+                           Value linear_index, Value scalar_value,
+                           mlir::ImplicitLocOpBuilder& b) {
+  ml::GEPOp gep = CreateGep(tensor_dest, linear_index, b);
+  mlir::LLVMTypeConverter converter(op->getContext());
+  Type llvm_type = converter.convertType(scalar_value.getType());
+  scalar_value =
+      scalar_value.getType().isIntOrFloat()
+          ? arith::BitcastOp::create(b, llvm_type, scalar_value)
+          : UnrealizedConversionCastOp::create(b, llvm_type, scalar_value)
+                .getResult(0);
+  auto store_op = ml::StoreOp::create(b, scalar_value, gep);
+  CopyAliasAttrs(op, store_op);
+}
+
+struct SubByteStoreParams {
+  Value byte_index;
+  Value inverse_mask;
+  Value shifted_value;
+};
+
+SubByteStoreParams PrepareSubByteStore(Value linear_index, Value scalar_value,
+                                       int sub_byte_width,
+                                       mlir::ImplicitLocOpBuilder& b) {
+  auto [byte_index, sub_byte_shift] =
+      GetSubByteIndex(linear_index, sub_byte_width, b);
+
+  Type ty = b.getI8Type();
+  if (scalar_value.getType() != b.getIntegerType(sub_byte_width)) {
+    scalar_value = arith::BitcastOp::create(b, b.getIntegerType(sub_byte_width),
+                                            scalar_value);
+  }
+  scalar_value = mlir::arith::ExtUIOp::create(b, ty, scalar_value);
+
+  // Mask of 1s in the sub-byte position & 0s elsewhere.
+  Value mask = mlir::arith::ShLIOp::create(
+      b, mlir::arith::ConstantIntOp::create(b, ty, (1 << sub_byte_width) - 1),
+      sub_byte_shift);
+  // Mask of 0s in the sub-byte position & 1s elsewhere.
+  Value inverse_mask = mlir::arith::XOrIOp::create(
+      b, mlir::arith::ConstantIntOp::create(b, ty, 0xff), mask);
+  Value shifted_value =
+      mlir::arith::ShLIOp::create(b, scalar_value, sub_byte_shift);
+  return {byte_index, inverse_mask, shifted_value};
+}
+
+void EmitSubByteNonAtomicStore(Operation* op,
+                               TypedValue<mlir::RankedTensorType> tensor_dest,
+                               Value linear_index, Value scalar_value,
+                               int sub_byte_width,
+                               mlir::ImplicitLocOpBuilder& b) {
+  SubByteStoreParams params =
+      PrepareSubByteStore(linear_index, scalar_value, sub_byte_width, b);
+
+  ml::GEPOp gep = CreateGep(tensor_dest, params.byte_index, b);
+  Value current_value = ml::LoadOp::create(b, b.getI8Type(), gep);
+  Value masked_out_current_value =
+      mlir::arith::AndIOp::create(b, current_value, params.inverse_mask);
+  Value new_value = mlir::arith::OrIOp::create(b, masked_out_current_value,
+                                               params.shifted_value);
+  auto store_op = ml::StoreOp::create(b, new_value, gep);
+  CopyAliasAttrs(op, store_op);
+}
+
 class RewriteTensorInsert : public OpRewritePattern<mlir::tensor::InsertOp> {
  public:
   RewriteTensorInsert(mlir::MLIRContext* context, bool atomic_sub_byte_inserts)
@@ -986,49 +1062,15 @@ class RewriteTensorInsert : public OpRewritePattern<mlir::tensor::InsertOp> {
     Type element_type = tensor_dest.getType().getElementType();
     std::optional<int> sub_byte_width = GetSubByteBitWidth(element_type);
     if (sub_byte_width) {
-      Value sub_byte_shift = nullptr;
-      std::tie(linear_index, sub_byte_shift) =
-          GetSubByteIndex(linear_index, *sub_byte_width, b);
-
-      Type ty = b.getI8Type();
-      if (scalar_value.getType() != b.getIntegerType(*sub_byte_width)) {
-        scalar_value = arith::BitcastOp::create(
-            b, b.getIntegerType(*sub_byte_width), scalar_value);
-      }
-      scalar_value = mlir::arith::ExtUIOp::create(b, ty, scalar_value);
-
-      // Mask of 1s in the sub-byte position & 0s elsewhere.
-      Value mask = mlir::arith::ShLIOp::create(
-          b,
-          mlir::arith::ConstantIntOp::create(b, ty, (1 << *sub_byte_width) - 1),
-          sub_byte_shift);
-      // Mask of 0s in the sub-byte position & 1s elsewhere.
-      Value inverse_mask = mlir::arith::XOrIOp::create(
-          b, mlir::arith::ConstantIntOp::create(b, ty, 0xff), mask);
-
-      Value shifted_value =
-          mlir::arith::ShLIOp::create(b, scalar_value, sub_byte_shift);
-
       if (!atomic_sub_byte_inserts_) {
         // On CPU, workgroup tiles are byte-aligned (see `GetWorkDimensions`),
         // so distinct threads never access the same byte.
-        auto gep = CreateGep(tensor_dest, linear_index, b);
-        Value current_value = ml::LoadOp::create(b, ty, gep);
-        Value masked_out_current_value =
-            mlir::arith::AndIOp::create(b, current_value, inverse_mask);
-        Value new_value = mlir::arith::OrIOp::create(
-            b, masked_out_current_value, shifted_value);
-        auto store_op = ml::StoreOp::create(b, new_value, gep);
-        if (auto alias_scope_attr = op->getAttrOfType<mlir::ArrayAttr>(
-                ml::LLVMDialect::getAliasScopesAttrName())) {
-          store_op.setAliasScopesAttr(alias_scope_attr);
-        }
-        if (auto no_alias_attr = op->getAttrOfType<mlir::ArrayAttr>(
-                ml::LLVMDialect::getNoAliasAttrName())) {
-          store_op.setNoaliasScopesAttr(no_alias_attr);
-        }
+        EmitSubByteNonAtomicStore(op, tensor_dest, linear_index, scalar_value,
+                                  *sub_byte_width, b);
         op.replaceAllUsesWith(op.getDest());
       } else {
+        SubByteStoreParams params =
+            PrepareSubByteStore(linear_index, scalar_value, *sub_byte_width, b);
         // We need to use directly op.getDest() as input, otherwise the
         // following rewrite might remove the only user of it.
         tensor_dest = op.getDest();
@@ -1037,7 +1079,7 @@ class RewriteTensorInsert : public OpRewritePattern<mlir::tensor::InsertOp> {
         // use the element type. Indexing is done by linear index, and GEP ops
         // don't care about the number of elements. The tensor types will
         // disappear completely after the LowerTensors pass.
-        Type tensor_ty = tensor_dest.getType().clone(ty);
+        Type tensor_ty = tensor_dest.getType().clone(b.getI8Type());
         auto tensor_dest_i8 =
             UnrealizedConversionCastOp::create(b, tensor_ty, tensor_dest)
                 .getResult(0);
@@ -1046,17 +1088,17 @@ class RewriteTensorInsert : public OpRewritePattern<mlir::tensor::InsertOp> {
         // to access the same memory location.
         SmallVector<Value, 1> rmw_indices;
         if (tensor_dest.getType().getRank() > 0) {
-          rmw_indices.push_back(
-              arith::IndexCastUIOp::create(b, b.getIndexType(), linear_index));
+          rmw_indices.push_back(arith::IndexCastUIOp::create(
+              b, b.getIndexType(), params.byte_index));
         }
         auto atomic_rmw = AtomicRMWOp::create(b, tensor_dest_i8, rmw_indices);
         mlir::ImplicitLocOpBuilder body_builder(atomic_rmw.getLoc(),
                                                 atomic_rmw.getBodyBuilder());
         Value current_value = atomic_rmw.getCurrentValue();
         Value masked_out_current_value = mlir::arith::AndIOp::create(
-            body_builder, current_value, inverse_mask);
+            body_builder, current_value, params.inverse_mask);
         Value new_value = mlir::arith::OrIOp::create(
-            body_builder, masked_out_current_value, shifted_value);
+            body_builder, masked_out_current_value, params.shifted_value);
         xla::YieldOp::create(body_builder, new_value);
         Value casted_result =
             UnrealizedConversionCastOp::create(b, tensor_dest.getType(),
@@ -1065,23 +1107,7 @@ class RewriteTensorInsert : public OpRewritePattern<mlir::tensor::InsertOp> {
         op.replaceAllUsesWith(casted_result);
       }
     } else {
-      auto gep = CreateGep(tensor_dest, linear_index, b);
-      mlir::LLVMTypeConverter converter(getContext());
-      auto llvm_type = converter.convertType(scalar_value.getType());
-      scalar_value =
-          scalar_value.getType().isIntOrFloat()
-              ? arith::BitcastOp::create(b, llvm_type, scalar_value)
-              : UnrealizedConversionCastOp::create(b, llvm_type, scalar_value)
-                    .getResult(0);
-      auto store_op = ml::StoreOp::create(b, scalar_value, gep);
-      if (auto alias_scope_attr = op->getAttrOfType<mlir::ArrayAttr>(
-              ml::LLVMDialect::getAliasScopesAttrName())) {
-        store_op.setAliasScopesAttr(alias_scope_attr);
-      }
-      if (auto no_alias_attr = op->getAttrOfType<mlir::ArrayAttr>(
-              ml::LLVMDialect::getNoAliasAttrName())) {
-        store_op.setNoaliasScopesAttr(no_alias_attr);
-      }
+      EmitDirectScalarStore(op, tensor_dest, linear_index, scalar_value, b);
       op.replaceAllUsesWith(op.getDest());
     }
 
@@ -1654,6 +1680,60 @@ bool CanLowerScalarOrComplexAsAtomicCAS(Operation* op,
   return false;
 }
 
+void EmitAtomicCasStore(Operation* op, TypedValue<mlir::RankedTensorType> dest,
+                        ValueRange indices, Value value,
+                        const LowerTensorsConfig& config,
+                        mlir::PatternRewriter& rewriter) {
+  Location loc = op->getLoc();
+  Type element_type = value.getType();
+  AtomicWordAccess access = PrepareAtomicWordAccess(
+      op, dest, indices, element_type, config.min_atomic_bit_width, rewriter);
+  mlir::ImplicitLocOpBuilder b(loc, rewriter);
+  Value shifted_value;
+  Value direct_new_value;
+  if (access.small_type) {
+    Value cast_value = ml::ZExtOp::create(
+        b, access.atomic_ty,
+        CreateBitcast(b, value,
+                      rewriter.getIntegerType(
+                          static_cast<unsigned>(access.result_size))));
+    shifted_value = ml::ShlOp::create(b, cast_value, access.shift);
+  } else {
+    direct_new_value = CreateBitcast(b, value, access.atomic_ty);
+  }
+
+  Value initial = CreateAtomicLoad(rewriter, loc, access.atomic_ty, access.addr,
+                                   config.atomic_load_store_ordering,
+                                   config.atomic_sync_scope);
+  scf::WhileOp::create(
+      rewriter, loc, TypeRange{access.atomic_ty}, ValueRange{initial},
+      [&](mlir::OpBuilder& builder, Location loop_loc, ValueRange values) {
+        mlir::ImplicitLocOpBuilder loop_b(loop_loc, builder);
+        Value old_value = values[0];
+        Value new_value =
+            access.small_type
+                ? ml::OrOp::create(
+                      loop_b, ml::AndOp::create(loop_b, old_value, access.mask),
+                      shifted_value)
+                      .getResult()
+                : direct_new_value;
+        Value cmpxchg = ml::AtomicCmpXchgOp::create(
+            loop_b, loop_loc, access.addr, old_value, new_value,
+            /*success_ordering=*/ml::AtomicOrdering::monotonic,
+            /*failure_ordering=*/ml::AtomicOrdering::monotonic,
+            config.atomic_sync_scope);
+        Value next = ml::ExtractValueOp::create(loop_b, cmpxchg, 0);
+        Value ok = ml::ExtractValueOp::create(loop_b, cmpxchg, 1);
+        Value low_bit = ml::ConstantOp::create(
+            loop_b, loop_b.getOneAttr(loop_b.getI1Type()));
+        Value not_ok = ml::XOrOp::create(loop_b, ok, low_bit);
+        scf::ConditionOp::create(loop_b, not_ok, ValueRange{next});
+      },
+      [](mlir::OpBuilder& builder, Location loop_loc, ValueRange values) {
+        scf::YieldOp::create(builder, loop_loc, values);
+      });
+}
+
 class RewriteAtomicStore : public OpRewritePattern<AtomicStoreOp> {
  public:
   RewriteAtomicStore(mlir::MLIRContext* context,
@@ -1725,54 +1805,8 @@ class RewriteAtomicStore : public OpRewritePattern<AtomicStoreOp> {
       return rewriter.notifyMatchFailure(
           op, "unsupported atomic word size for target atomicCAS");
     }
-    AtomicWordAccess access =
-        PrepareAtomicWordAccess(op, op.getDest(), op.getIndices(), element_type,
-                                config_.min_atomic_bit_width, rewriter);
-    mlir::ImplicitLocOpBuilder b(loc, rewriter);
-    Value shifted_value;
-    Value direct_new_value;
-    if (access.small_type) {
-      Value cast_value = ml::ZExtOp::create(
-          b, access.atomic_ty,
-          CreateBitcast(b, value,
-                        rewriter.getIntegerType(
-                            static_cast<unsigned>(access.result_size))));
-      shifted_value = ml::ShlOp::create(b, cast_value, access.shift);
-    } else {
-      direct_new_value = CreateBitcast(b, value, access.atomic_ty);
-    }
-
-    Value initial = CreateAtomicLoad(
-        rewriter, loc, access.atomic_ty, access.addr,
-        config_.atomic_load_store_ordering, config_.atomic_sync_scope);
-    scf::WhileOp::create(
-        rewriter, loc, TypeRange{access.atomic_ty}, ValueRange{initial},
-        [&](mlir::OpBuilder& builder, Location loop_loc, ValueRange values) {
-          mlir::ImplicitLocOpBuilder loop_b(loop_loc, builder);
-          Value old_value = values[0];
-          Value new_value =
-              access.small_type
-                  ? ml::OrOp::create(
-                        loop_b,
-                        ml::AndOp::create(loop_b, old_value, access.mask),
-                        shifted_value)
-                        .getResult()
-                  : direct_new_value;
-          Value cmpxchg = ml::AtomicCmpXchgOp::create(
-              loop_b, loop_loc, access.addr, old_value, new_value,
-              /*success_ordering=*/ml::AtomicOrdering::monotonic,
-              /*failure_ordering=*/ml::AtomicOrdering::monotonic,
-              config_.atomic_sync_scope);
-          Value next = ml::ExtractValueOp::create(loop_b, cmpxchg, 0);
-          Value ok = ml::ExtractValueOp::create(loop_b, cmpxchg, 1);
-          Value low_bit = ml::ConstantOp::create(
-              loop_b, loop_b.getOneAttr(loop_b.getI1Type()));
-          Value not_ok = ml::XOrOp::create(loop_b, ok, low_bit);
-          scf::ConditionOp::create(loop_b, not_ok, ValueRange{next});
-        },
-        [](mlir::OpBuilder& builder, Location loop_loc, ValueRange values) {
-          scf::YieldOp::create(builder, loop_loc, values);
-        });
+    EmitAtomicCasStore(op, op.getDest(), op.getIndices(), value, config_,
+                       rewriter);
     rewriter.replaceOp(op, op.getDest());
     return success();
   }
@@ -2250,6 +2284,25 @@ LogicalResult LowerTensors(mlir::ModuleOp module,
     return failure();
   }
   return success();
+}
+
+void EmitTensorElementStore(Operation* op,
+                            TypedValue<mlir::RankedTensorType> dest,
+                            ValueRange indices, Value value,
+                            const LowerTensorsConfig& config,
+                            mlir::PatternRewriter& rewriter) {
+  mlir::ImplicitLocOpBuilder b(op->getLoc(), rewriter);
+  Type element_type = dest.getType().getElementType();
+  if (std::optional<int> sub_byte_width = GetSubByteBitWidth(element_type)) {
+    if (config.atomic_sub_byte_inserts) {
+      EmitAtomicCasStore(op, dest, indices, value, config, rewriter);
+    } else {
+      EmitSubByteNonAtomicStore(op, dest, GetLinearIndex(indices, b), value,
+                                *sub_byte_width, b);
+    }
+    return;
+  }
+  EmitDirectScalarStore(op, dest, GetLinearIndex(indices, b), value, b);
 }
 
 }  // namespace emitters
