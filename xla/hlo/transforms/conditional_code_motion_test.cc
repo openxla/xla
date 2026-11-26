@@ -3683,6 +3683,351 @@ ENTRY main {
   EXPECT_THAT(module->entry_computation()->root_instruction(), op::Broadcast());
 }
 
+TEST_F(ConditionalCodeMotionTest,
+       SinksCoupledBoundaryCommunicatorsPreservingAliasingAndReadOnlySem) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule SinkCoupledBoundaryComms
+
+arm0_idle {
+  p = (f32[1,8,128]{2,1,0}, f32[8,128]{1,0}) parameter(0)
+  pay = f32[1,8,128]{2,1,0} get-tuple-element(p), index=0
+  acc = f32[8,128]{1,0} get-tuple-element(p), index=1
+  ROOT r = (f32[1,8,128]{2,1,0}, f32[8,128]{1,0}) tuple(pay, acc)
+}
+
+arm1_local {
+  p = (f32[8,128]{1,0}, f32[1,8,128]{2,1,0}, f32[8,128]{1,0}) parameter(0)
+  u = f32[8,128]{1,0} get-tuple-element(p), index=0
+  pay = f32[1,8,128]{2,1,0} get-tuple-element(p), index=1
+  acc = f32[8,128]{1,0} get-tuple-element(p), index=2
+  pro = f32[8,128]{1,0} tanh(u)
+  pro_3d = f32[1,8,128]{2,1,0} bitcast(pro)
+  out_pay = f32[1,8,128]{2,1,0} add(pay, pro_3d)
+  tail = f32[8,128]{1,0} add(acc, pro)
+  ROOT r = (f32[1,8,128]{2,1,0}, f32[8,128]{1,0}) tuple(out_pay, tail)
+}
+
+arm2_global {
+  p = (f32[8,128]{1,0}, f32[1,8,128]{2,1,0}, f32[8,128]{1,0}) parameter(0)
+  u = f32[8,128]{1,0} get-tuple-element(p), index=0
+  pay = f32[1,8,128]{2,1,0} get-tuple-element(p), index=1
+  acc = f32[8,128]{1,0} get-tuple-element(p), index=2
+  pro = f32[8,128]{1,0} exponential(u)
+  pro_3d = f32[1,8,128]{2,1,0} bitcast(pro)
+  out_pay = f32[1,8,128]{2,1,0} multiply(pay, pro_3d)
+  tail = f32[8,128]{1,0} subtract(acc, pro)
+  ROOT r = (f32[1,8,128]{2,1,0}, f32[8,128]{1,0}) tuple(out_pay, tail)
+}
+
+ENTRY main {
+  sel = s32[] parameter(0)
+  recv_scratch = f32[1,1,8,128]{3,2,1,0} parameter(1)
+  ro_send_src = f32[1,1,8,128]{3,2,1,0} parameter(2)
+  fifo = f32[4,1,8,128]{3,2,1,0} parameter(3)
+  rw_sem = s32[]{:S(2)} parameter(4)
+  cap_sem = s32[]{:S(2)} parameter(5)
+  smem_idx = s32[1]{0:S(4)} parameter(6)
+  untaint = f32[8,128]{1,0} parameter(7)
+  acc = f32[8,128]{1,0} parameter(8)
+
+  recv_p = (f32[1,1,8,128]{3,2,1,0}, f32[4,1,8,128]{3,2,1,0},
+            s32[]{:S(2)}, s32[1]{0:S(4)})
+      custom-call(recv_scratch, ro_send_src, fifo, rw_sem, cap_sem, smem_idx),
+      custom_call_target="PipeComm",
+      custom_call_has_side_effect=true,
+      output_to_operand_aliasing={{0}: (0, {}), {1}: (2, {}),
+                                  {2}: (3, {}), {3}: (5, {})}
+  p_pay = f32[1,1,8,128]{3,2,1,0} get-tuple-element(recv_p), index=0
+  p_fifo = f32[4,1,8,128]{3,2,1,0} get-tuple-element(recv_p), index=1
+  p_sem = s32[]{:S(2)} get-tuple-element(recv_p), index=2
+  p_idx = s32[1]{0:S(4)} get-tuple-element(recv_p), index=3
+
+  bc0 = f32[1,8,128]{2,1,0} bitcast(p_pay)
+  bc1 = f32[1,8,128]{2,1,0} bitcast(p_pay)
+  bc2 = f32[1,8,128]{2,1,0} bitcast(p_pay)
+  t0 = (f32[1,8,128]{2,1,0}, f32[8,128]{1,0}) tuple(bc0, acc)
+  t1 = (f32[8,128]{1,0}, f32[1,8,128]{2,1,0}, f32[8,128]{1,0})
+      tuple(untaint, bc1, acc)
+  t2 = (f32[8,128]{1,0}, f32[1,8,128]{2,1,0}, f32[8,128]{1,0})
+      tuple(untaint, bc2, acc)
+
+  cond = (f32[1,8,128]{2,1,0}, f32[8,128]{1,0})
+      conditional(sel, t0, t1, t2),
+      branch_computations={arm0_idle, arm1_local, arm2_global}
+  c_pay = f32[1,8,128]{2,1,0} get-tuple-element(cond), index=0
+  c_acc = f32[8,128]{1,0} get-tuple-element(cond), index=1
+
+  send_in = f32[1,1,8,128]{3,2,1,0} bitcast(c_pay)
+  send_q = (f32[1,1,8,128]{3,2,1,0}, f32[4,1,8,128]{3,2,1,0},
+            s32[]{:S(2)}, s32[1]{0:S(4)})
+      custom-call(send_in, p_fifo, p_sem, cap_sem, p_idx),
+      custom_call_target="PipeComm",
+      custom_call_has_side_effect=true,
+      output_to_operand_aliasing={{0}: (0, {}), {1}: (1, {}),
+                                  {2}: (2, {}), {3}: (4, {})}
+  q_pay = f32[1,1,8,128]{3,2,1,0} get-tuple-element(send_q), index=0
+  q_fifo = f32[4,1,8,128]{3,2,1,0} get-tuple-element(send_q), index=1
+  q_sem = s32[]{:S(2)} get-tuple-element(send_q), index=2
+  q_idx = s32[1]{0:S(4)} get-tuple-element(send_q), index=3
+
+  // ro_send_src and cap_sem remain read-only shared in ENTRY ROOT.
+  ROOT out = (f32[1,1,8,128]{3,2,1,0}, f32[8,128]{1,0},
+              f32[4,1,8,128]{3,2,1,0}, s32[]{:S(2)}, s32[]{:S(2)},
+              s32[1]{0:S(4)}, f32[1,1,8,128]{3,2,1,0})
+      tuple(q_pay, c_acc, q_fifo, q_sem, cap_sem, q_idx, ro_send_src)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ConditionalCodeMotion::BoundaryCommunicatorSinkConfig cfg;
+  cfg.is_boundary_communicator = [](const HloInstruction* inst) {
+    return inst->IsCustomCall("PipeComm");
+  };
+  cfg.estimate_instruction_cost = [](const HloInstruction* inst) {
+    return inst->IsElementwise() ? 50.0 : 0.0;
+  };
+  cfg.min_recv_prologue_cost = 40.0;
+  cfg.min_send_tail_cost = 10.0;
+
+  ConditionalCodeMotion pass(cfg);
+  EXPECT_THAT(pass.Run(module.get()), IsOkAndHolds(true));
+
+  // No PipeComm remains in ENTRY; read-only `cap_sem` and `ro_send_src` are NOT
+  // returned from `cond` (ENTRY ROOT still reads parameters 5 and 2 directly).
+  const HloComputation* entry = module->entry_computation();
+  for (const HloInstruction* inst : entry->instructions()) {
+    EXPECT_FALSE(inst->IsCustomCall("PipeComm"));
+  }
+  const HloInstruction* cond = FindInstruction(module.get(), "cond");
+  // Output arity: c_acc + 4 outputs of send_q = 5 (cap_sem NOT added!).
+  EXPECT_EQ(cond->shape().tuple_shapes().size(), 5);
+  EXPECT_EQ(entry->root_instruction()->operand(4),
+            entry->parameter_instruction(5));
+  EXPECT_EQ(entry->root_instruction()->operand(6),
+            entry->parameter_instruction(2));
+
+  // Every branch contains exactly one "recv" and one "send" PipeComm chained
+  // directly on pipe state, sharing a single read-only `cap_sem` branch slot.
+  for (int b = 0; b < cond->branch_count(); ++b) {
+    const HloComputation* br = cond->branch_computation(b);
+    const HloInstruction* br_recv = nullptr;
+    const HloInstruction* br_send = nullptr;
+    for (const HloInstruction* inst : br->instructions()) {
+      if (!inst->IsCustomCall("PipeComm")) {
+        continue;
+      }
+      const auto it = inst->frontend_attributes().map().find(
+          ConditionalCodeMotion::kSunkBoundaryCommunicatorAttr);
+      ASSERT_NE(it, inst->frontend_attributes().map().end());
+      if (it->second == ConditionalCodeMotion::kSunkBoundaryRecvRole) {
+        br_recv = inst;
+      } else if (it->second == ConditionalCodeMotion::kSunkBoundarySendRole) {
+        br_send = inst;
+      }
+    }
+    ASSERT_NE(br_recv, nullptr);
+    ASSERT_NE(br_send, nullptr);
+    EXPECT_EQ(br_send->operand(1)->operand(0), br_recv);
+    EXPECT_EQ(br_send->operand(2)->operand(0), br_recv);
+    EXPECT_EQ(br_send->operand(4)->operand(0), br_recv);
+    // Shared `cap_sem` uses the exact same branch parameter tuple index.
+    EXPECT_EQ(br_recv->operand(4)->tuple_index(),
+              br_send->operand(3)->tuple_index());
+  }
+}
+
+TEST_F(ConditionalCodeMotionTest,
+       SinksOnlySendWhenRecvPrologueBelowThresholdAndRejectsUnsafeRecv) {
+  constexpr absl::string_view kShortPrologueHlo = R"hlo(
+HloModule SinkSendOnly
+
+b0 {
+  p = (f32[8,128], f32[8,128]) parameter(0)
+  pay = f32[8,128] get-tuple-element(p), index=0
+  acc = f32[8,128] get-tuple-element(p), index=1
+  y = f32[8,128] tanh(pay)
+  tail = f32[8,128] add(acc, acc)
+  ROOT r = (f32[8,128], f32[8,128]) tuple(y, tail)
+}
+
+b1 {
+  p = (f32[8,128], f32[8,128]) parameter(0)
+  pay = f32[8,128] get-tuple-element(p), index=0
+  acc = f32[8,128] get-tuple-element(p), index=1
+  ROOT r = (f32[8,128], f32[8,128]) tuple(pay, acc)
+}
+
+ENTRY main {
+  flag = pred[] parameter(0)
+  buf = f32[8,128] parameter(1)
+  fifo = f32[4,8,128] parameter(2)
+  acc = f32[8,128] parameter(3)
+  recv_p = (f32[8,128], f32[4,8,128]) custom-call(buf, fifo),
+      custom_call_target="PipeComm", custom_call_has_side_effect=true,
+      output_to_operand_aliasing={{0}: (0, {}), {1}: (1, {})}
+  p0 = f32[8,128] get-tuple-element(recv_p), index=0
+  p1 = f32[4,8,128] get-tuple-element(recv_p), index=1
+  ta = (f32[8,128], f32[8,128]) tuple(p0, acc)
+  tb = (f32[8,128], f32[8,128]) tuple(p0, acc)
+  cond = (f32[8,128], f32[8,128]) conditional(flag, ta, tb),
+      true_computation=b0, false_computation=b1
+  c0 = f32[8,128] get-tuple-element(cond), index=0
+  c1 = f32[8,128] get-tuple-element(cond), index=1
+  send_q = (f32[8,128], f32[4,8,128]) custom-call(c0, p1),
+      custom_call_target="PipeComm", custom_call_has_side_effect=true,
+      output_to_operand_aliasing={{0}: (0, {}), {1}: (1, {})}
+  q0 = f32[8,128] get-tuple-element(send_q), index=0
+  q1 = f32[4,8,128] get-tuple-element(send_q), index=1
+  ROOT out = (f32[8,128], f32[8,128], f32[4,8,128]) tuple(q0, c1, q1)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> mod,
+                       ParseAndReturnVerifiedModule(kShortPrologueHlo));
+  ConditionalCodeMotion::BoundaryCommunicatorSinkConfig cfg;
+  cfg.is_boundary_communicator = [](const HloInstruction* inst) {
+    return inst->IsCustomCall("PipeComm");
+  };
+  cfg.estimate_instruction_cost = [](const HloInstruction* inst) {
+    return inst->IsElementwise() ? 20.0 : 0.0;
+  };
+  // Untainted prologue = 20 (< 45), non-payload tail = 20 (>= 10): only send_q
+  // sinks while recv_p stays in ENTRY!
+  cfg.min_recv_prologue_cost = 45.0;
+  cfg.min_send_tail_cost = 10.0;
+  EXPECT_THAT(ConditionalCodeMotion(cfg).Run(mod.get()), IsOkAndHolds(true));
+  EXPECT_NE(FindInstruction(mod.get(), "recv_p"), nullptr);
+  EXPECT_EQ(FindInstruction(mod.get(), "send_q"), nullptr);
+
+  // Also reject sinking recv when it taints the conditional selector or when an
+  // aliased input FIFO has an extra external user.
+  constexpr absl::string_view kSelectorTaintedHlo = R"hlo(
+HloModule RejectSelectorTainted
+
+b0 {
+  p = (s32[], f32[8]) parameter(0)
+  u = f32[8] get-tuple-element(p), index=1
+  y = f32[8] tanh(u)
+  ROOT r = (f32[8]) tuple(y)
+}
+
+b1 {
+  p = (s32[], f32[8]) parameter(0)
+  u = f32[8] get-tuple-element(p), index=1
+  ROOT r = (f32[8]) tuple(u)
+}
+
+ENTRY main {
+  s_in = s32[] parameter(0)
+  u = f32[8] parameter(1)
+  recv_p = (s32[]) custom-call(s_in), custom_call_target="PipeComm",
+      custom_call_has_side_effect=true,
+      output_to_operand_aliasing={{0}: (0, {})}
+  sel_val = s32[] get-tuple-element(recv_p), index=0
+  z = s32[] constant(0)
+  flag = pred[] compare(sel_val, z), direction=GT
+  ta = (s32[], f32[8]) tuple(sel_val, u)
+  tb = (s32[], f32[8]) tuple(sel_val, u)
+  cond = (f32[8]) conditional(flag, ta, tb),
+      true_computation=b0, false_computation=b1
+  c0 = f32[8] get-tuple-element(cond), index=0
+  ROOT out = (f32[8]) tuple(c0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> sel_mod,
+                       ParseAndReturnVerifiedModule(kSelectorTaintedHlo));
+  cfg.min_recv_prologue_cost = 1.0;
+  EXPECT_THAT(ConditionalCodeMotion(cfg).Run(sel_mod.get()),
+              IsOkAndHolds(false));
+}
+
+TEST_F(ConditionalCodeMotionTest,
+       SinksZeroOneTripWhileCommunicatorBypassingInvariantPassthroughs) {
+  constexpr absl::string_view kWhileCommHlo = R"hlo(
+HloModule SinkWhileWrappedComm
+
+w_cond {
+  wp = (s32[], f32[8,128], s32[], f32[16]) parameter(0)
+  i = s32[] get-tuple-element(wp), index=0
+  bound = s32[] get-tuple-element(wp), index=2
+  ROOT lt = pred[] compare(i, bound), direction=LT
+}
+
+w_body {
+  wp = (s32[], f32[8,128], s32[], f32[16]) parameter(0)
+  i = s32[] get-tuple-element(wp), index=0
+  pay = f32[8,128] get-tuple-element(wp), index=1
+  bound = s32[] get-tuple-element(wp), index=2
+  io_pass = f32[16] get-tuple-element(wp), index=3
+  comm = (f32[8,128]) custom-call(pay), custom_call_target="InnerPipe",
+      custom_call_has_side_effect=true,
+      output_to_operand_aliasing={{0}: (0, {})}
+  new_pay = f32[8,128] get-tuple-element(comm), index=0
+  one = s32[] constant(1)
+  next_i = s32[] add(i, one)
+  ROOT rt = (s32[], f32[8,128], s32[], f32[16])
+      tuple(next_i, new_pay, bound, io_pass)
+}
+
+b0 {
+  p = (f32[8,128], f32[8,128]) parameter(0)
+  pay = f32[8,128] get-tuple-element(p), index=0
+  u = f32[8,128] get-tuple-element(p), index=1
+  pro = f32[8,128] tanh(u)
+  s = f32[8,128] add(pay, pro)
+  ROOT r = (f32[8,128]) tuple(s)
+}
+
+b1 {
+  p = (f32[8,128]) parameter(0)
+  pay = f32[8,128] get-tuple-element(p), index=0
+  ROOT r = (f32[8,128]) tuple(pay)
+}
+
+ENTRY main {
+  flag = pred[] parameter(0)
+  i0 = s32[] parameter(1)
+  pay0 = f32[8,128] parameter(2)
+  bound = s32[] parameter(3)
+  io_buf = f32[16] parameter(4)
+  u = f32[8,128] parameter(5)
+  init = (s32[], f32[8,128], s32[], f32[16]) tuple(i0, pay0, bound, io_buf)
+  recv_w = (s32[], f32[8,128], s32[], f32[16]) while(init),
+      condition=w_cond, body=w_body
+  w_i = s32[] get-tuple-element(recv_w), index=0
+  w_pay = f32[8,128] get-tuple-element(recv_w), index=1
+  w_io = f32[16] get-tuple-element(recv_w), index=3
+  ta = (f32[8,128], f32[8,128]) tuple(w_pay, u)
+  tb = (f32[8,128]) tuple(w_pay)
+  cond = (f32[8,128]) conditional(flag, ta, tb),
+      true_computation=b0, false_computation=b1
+  c0 = f32[8,128] get-tuple-element(cond), index=0
+  // `io_buf` also read directly in ROOT: bypassed cleanly as invariant slot #3!
+  ROOT out = (f32[8,128], s32[], f32[16], f32[16]) tuple(c0, w_i, w_io, io_buf)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> mod,
+                       ParseAndReturnVerifiedModule(kWhileCommHlo));
+  ConditionalCodeMotion::BoundaryCommunicatorSinkConfig cfg;
+  cfg.is_boundary_communicator = [](const HloInstruction* inst) {
+    return inst->opcode() == HloOpcode::kWhile;
+  };
+  cfg.estimate_instruction_cost = [](const HloInstruction* inst) {
+    return inst->IsElementwise() ? 50.0 : 0.0;
+  };
+  cfg.min_recv_prologue_cost = 40.0;
+  EXPECT_THAT(ConditionalCodeMotion(cfg).Run(mod.get()), IsOkAndHolds(true));
+  // `recv_w` sunk into both branches with distinct cloned callees; `w_io`
+  // bypassed directly to parameter(4), while mutated `w_i` exported via `cond`.
+  const HloComputation* entry = mod->entry_computation();
+  EXPECT_EQ(entry->root_instruction()->operand(2),
+            entry->parameter_instruction(4));
+  const HloInstruction* cond = FindInstruction(mod.get(), "cond");
+  EXPECT_EQ(cond->shape().tuple_shapes().size(), 2);
+}
+
 }  // namespace conditional_opt
 
 }  // namespace xla
