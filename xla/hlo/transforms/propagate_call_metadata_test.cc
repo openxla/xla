@@ -328,5 +328,69 @@ ENTRY main {
   EXPECT_EQ(add->metadata().op_name(), "outer/inner");
 }
 
+TEST_F(PropagateCallMetadataTest,
+       InPlacePropagationSharesFramesAndPreservesOtherMetadataFields) {
+  constexpr absl::string_view kHlo = R"hlo(
+cond {
+  p = f32[4] parameter(0)
+  ROOT c = pred[] constant(false)
+}
+
+body {
+  p = f32[4] parameter(0)
+  neg = f32[4] negate(p), metadata={op_name="/step/"}
+  ROOT add = f32[4] add(neg, p), metadata={op_name="step2", source_file="orig.py", source_line=42}
+}
+
+callee {
+  p = f32[4] parameter(0)
+  ROOT w = f32[4] while(p), condition=cond, body=body
+}
+
+ENTRY main {
+  p = f32[4] parameter(0)
+  ROOT call = f32[4] call(p), to_apply=callee, metadata={op_name="outer/"}
+}
+)hlo";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  StackFrameId caller_frame = module->mutable_stack_frames().AddStackFrame(
+      {"caller.py", "call_site", 5, 0, 0, 0, StackFrameId{}});
+  StackFrameId shared_stem = module->mutable_stack_frames().AddStackFrame(
+      {"body.py", "helper", 12, 0, 0, 0, StackFrameId{}});
+  StackFrameId body_leaf = module->mutable_stack_frames().AddStackFrame(
+      {"body.py", "op", 13, 0, 0, 0, shared_stem});
+
+  HloInstruction* call = module->entry_computation()->root_instruction();
+  call->mutable_metadata().set_stack_frame_id(caller_frame.value);
+
+  HloComputation* body = module->GetComputationWithName("body");
+  HloInstruction* neg = body->GetInstructionWithName("neg");
+  HloInstruction* add = body->GetInstructionWithName("add");
+  neg->mutable_metadata().set_stack_frame_id(body_leaf.value);
+  add->mutable_metadata().set_stack_frame_id(body_leaf.value);
+  add->mutable_metadata().set_op_type("custom_add");
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          PropagateCallMetadata().Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  HloInstruction* while_inst =
+      module->GetComputationWithName("callee")->root_instruction();
+  EXPECT_EQ(while_inst->metadata().op_name(), "outer");
+  EXPECT_EQ(while_inst->metadata().stack_frame_id(), caller_frame.value);
+  EXPECT_EQ(neg->metadata().op_name(), "outer/step");
+  EXPECT_EQ(add->metadata().op_name(), "outer/step2");
+  EXPECT_EQ(neg->metadata().stack_frame_id(), add->metadata().stack_frame_id());
+  EXPECT_EQ(add->metadata().source_file(), "orig.py");
+  EXPECT_EQ(add->metadata().source_line(), 42);
+  EXPECT_EQ(add->metadata().op_type(), "custom_add");
+  // Only two concatenated frames (`helper` and `op` under `call_site`) created.
+  EXPECT_EQ(module->stack_frames().proto().stack_frames_size(), 5);
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed_again,
+                          PropagateCallMetadata().Run(module.get()));
+  EXPECT_FALSE(changed_again);
+}
+
 }  // namespace
 }  // namespace xla

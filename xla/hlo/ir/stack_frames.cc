@@ -18,8 +18,8 @@ limitations under the License.
 #include <string>
 #include <tuple>
 #include <utility>
-#include <vector>
 
+#include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -146,9 +146,13 @@ StackFrameId StackFrames::AddStackFrame(const HloStackFrame& frame) {
   }
   FileLocationId loc_id = loc_it->second;
 
+  return InternFrame(loc_id, frame.parent_frame_id);
+}
+
+StackFrameId StackFrames::InternFrame(FileLocationId loc_id,
+                                      StackFrameId parent_frame_id) {
   // Clamp out-of-bounds parent_frame_id to 0 (root) so it cannot reference the
   // frame currently being added and form a self-loop.
-  StackFrameId parent_frame_id = frame.parent_frame_id;
   if (!parent_frame_id.valid() ||
       parent_frame_id.value > proto_.stack_frames_size()) {
     parent_frame_id = StackFrameId{};
@@ -186,10 +190,11 @@ bool StackFrames::IsPrefix(StackFrameId prefix, StackFrameId full) const {
 
 StackFrameId StackFrames::Concatenate(StackFrameId prefix,
                                       StackFrameId suffix) {
-  if (!prefix.valid() || prefix.value > proto_.stack_frames_size()) {
+  const int num_frames = proto_.stack_frames_size();
+  if (!prefix.valid() || prefix.value > num_frames) {
     prefix = StackFrameId{};
   }
-  if (!suffix.valid() || suffix.value > proto_.stack_frames_size()) {
+  if (!suffix.valid() || suffix.value > num_frames) {
     suffix = StackFrameId{};
   }
   if (!prefix.valid()) {
@@ -198,19 +203,55 @@ StackFrameId StackFrames::Concatenate(StackFrameId prefix,
   if (!suffix.valid()) {
     return prefix;
   }
-  std::vector<HloStackFrame> frames;
-  while (suffix.valid() && suffix.value <= proto_.stack_frames_size()) {
-    frames.push_back(GetStackFrame(suffix));
-    suffix = frames.back().parent_frame_id;
+
+  // Walk the suffix ancestor chain until reaching the root or an ancestor whose
+  // concatenation onto `prefix` was already memoized, then reuse the existing
+  // interned FileLocationId values instead of re-hashing strings and locations.
+  absl::InlinedVector<StackFrameId, 16> uncached_suffix;
+  StackFrameId current_id = prefix;
+  StackFrameId cursor = suffix;
+  while (cursor.valid() && cursor.value <= num_frames &&
+         static_cast<int>(uncached_suffix.size()) < num_frames) {
+    if (auto it = concat_cache_.find({prefix, cursor});
+        it != concat_cache_.end()) {
+      current_id = it->second;
+      break;
+    }
+    uncached_suffix.push_back(cursor);
+    cursor =
+        StackFrameId{proto_.stack_frames(cursor.value - 1).parent_frame_id()};
   }
 
-  StackFrameId current_id = prefix;
-  for (auto it = frames.rbegin(); it != frames.rend(); ++it) {
-    HloStackFrame frame = *it;
-    frame.parent_frame_id = current_id;
-    current_id = AddStackFrame(frame);
+  for (auto it = uncached_suffix.rbegin(); it != uncached_suffix.rend(); ++it) {
+    const FileLocationId loc_id =
+        proto_.stack_frames(it->value - 1).file_location_id();
+    current_id = InternFrame(loc_id, current_id);
+    concat_cache_.emplace(FramePairKey{prefix, *it}, current_id);
   }
   return current_id;
+}
+
+StackFrameId StackFrames::PrependIfNotPrefix(StackFrameId prefix,
+                                             StackFrameId suffix) {
+  const int num_frames = proto_.stack_frames_size();
+  if (!prefix.valid() || prefix.value > num_frames) {
+    return (suffix.valid() && suffix.value <= num_frames) ? suffix
+                                                          : StackFrameId{};
+  }
+  if (!suffix.valid() || suffix.value > num_frames) {
+    return prefix;
+  }
+  if (prefix == suffix) {
+    return suffix;
+  }
+  const FramePairKey key{prefix, suffix};
+  if (auto it = prepend_cache_.find(key); it != prepend_cache_.end()) {
+    return it->second;
+  }
+  const StackFrameId result =
+      IsPrefix(prefix, suffix) ? suffix : Concatenate(prefix, suffix);
+  prepend_cache_.emplace(key, result);
+  return result;
 }
 
 }  // namespace xla

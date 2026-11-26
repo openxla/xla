@@ -49,12 +49,18 @@ class StackFrames {
   // Concatenates 'prefix' and 'suffix' and returns the new stack frame ID.
   StackFrameId Concatenate(StackFrameId prefix, StackFrameId suffix);
 
+  // Returns 'suffix' unchanged when 'prefix' is already a prefix of 'suffix';
+  // otherwise returns Concatenate(prefix, suffix).
+  StackFrameId PrependIfNotPrefix(StackFrameId prefix, StackFrameId suffix);
+
   bool empty() const { return proto_.stack_frames().empty(); }
 
  private:
   using FileNameId = int;
   using FunctionNameId = int;
   using FileLocationId = int;
+
+  StackFrameId InternFrame(FileLocationId loc_id, StackFrameId parent_frame_id);
 
   StackFrameIndexProto proto_;
 
@@ -67,6 +73,10 @@ class StackFrames {
 
   using FrameKey = std::pair<FileLocationId, StackFrameId>;
   absl::flat_hash_map<FrameKey, StackFrameId> frame_to_id_;
+
+  using FramePairKey = std::pair<StackFrameId, StackFrameId>;
+  absl::flat_hash_map<FramePairKey, StackFrameId> concat_cache_;
+  absl::flat_hash_map<FramePairKey, StackFrameId> prepend_cache_;
 };
 
 }  // namespace xla

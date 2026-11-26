@@ -200,5 +200,47 @@ TEST(StackFramesTest, OutOfBoundsIdsDoNotCreateCyclesOrHang) {
   EXPECT_FALSE(dag.IsPrefix(StackFrameId{3}, id1));
 }
 
+TEST(StackFramesTest, SharedAncestorConcatenateAndPrependIfNotPrefix) {
+  StackFrames dag;
+  StackFrameId call_root =
+      dag.AddStackFrame({"caller.py", "outer", 1, 0, 0, 0, StackFrameId{}});
+  StackFrameId call_leaf =
+      dag.AddStackFrame({"caller.py", "inner", 2, 0, 0, 0, call_root});
+
+  // Build a shared 20-frame suffix stem with two distinct leaf branches.
+  StackFrameId stem = StackFrameId{};
+  for (int i = 0; i < 20; ++i) {
+    stem = dag.AddStackFrame({"callee.py", "step", 10 + i, 0, 0, 0, stem});
+  }
+  StackFrameId branch1 =
+      dag.AddStackFrame({"callee.py", "leaf1", 100, 1, 0, 0, stem});
+  StackFrameId branch2 =
+      dag.AddStackFrame({"callee.py", "leaf2", 200, 2, 0, 0, stem});
+  const int initial_frames = dag.proto().stack_frames_size();
+  const int initial_locations = dag.proto().file_locations_size();
+
+  StackFrameId joined1 = dag.PrependIfNotPrefix(call_leaf, branch1);
+  // Branch 2 shares the 20-frame stem and should add only one new stack frame.
+  StackFrameId joined2 = dag.PrependIfNotPrefix(call_leaf, branch2);
+  EXPECT_EQ(dag.proto().file_locations_size(), initial_locations);
+  EXPECT_EQ(dag.proto().stack_frames_size(), initial_frames + 22);
+  EXPECT_EQ(dag.GetStackFrame(joined1).parent_frame_id,
+            dag.GetStackFrame(joined2).parent_frame_id);
+  EXPECT_EQ(dag.GetStackFrame(joined1).function_name, "leaf1");
+  EXPECT_EQ(dag.GetStackFrame(joined2).function_name, "leaf2");
+  EXPECT_TRUE(dag.IsPrefix(call_root, joined1));
+  EXPECT_TRUE(dag.IsPrefix(call_leaf, joined2));
+
+  // Re-prepending an existing prefix or its ancestor leaves the ID unchanged.
+  EXPECT_EQ(dag.PrependIfNotPrefix(call_leaf, joined1), joined1);
+  EXPECT_EQ(dag.PrependIfNotPrefix(call_leaf, joined1), joined1);
+  EXPECT_EQ(dag.PrependIfNotPrefix(call_root, joined2), joined2);
+  EXPECT_EQ(dag.PrependIfNotPrefix(call_leaf, call_leaf), call_leaf);
+  EXPECT_EQ(dag.PrependIfNotPrefix(call_leaf, StackFrameId{}), call_leaf);
+  EXPECT_EQ(dag.PrependIfNotPrefix(StackFrameId{}, branch1), branch1);
+  EXPECT_EQ(dag.PrependIfNotPrefix(StackFrameId{9999}, branch1), branch1);
+  EXPECT_EQ(dag.proto().stack_frames_size(), initial_frames + 22);
+}
+
 }  // namespace
 }  // namespace xla
