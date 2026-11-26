@@ -18,6 +18,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -42,6 +43,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal_util.h"
+#include "xla/service/hlo_verifier.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
@@ -2600,6 +2602,712 @@ TEST_F(WhileLoopSimplifierTest, AsyncChainWithoutSideEffectIsDead) {
 
   EXPECT_TRUE(changed);
   EXPECT_THAT(FindFirstWhile(m.get()), While(Tuple(Constant())));
+}
+
+std::string MakeNestedWriteOnlyRowPackHlo(
+    absl::string_view idx_type = "s32", int64_t num_rows = 16,
+    absl::string_view init_val = "0", absl::string_view pad_val = "0.0",
+    absl::string_view bcast_val = "0",
+    absl::string_view sharding = "{replicated}",
+    absl::string_view inner_attr = "keep_inner=\"yes\"") {
+  constexpr absl::string_view kTmpl = R"hlo(
+HloModule NestedWriteOnlyRowPack
+
+pass_branch_0 {
+  p = (s32[], u32[NROWS,1,1,1,512]{4,3,2,1,0}) parameter(0),
+      sharding={SHARD, SHARD}
+  s = s32[] get-tuple-element(p), index=0, sharding=SHARD
+  c = u32[NROWS,1,1,1,512]{4,3,2,1,0} get-tuple-element(p), index=1,
+      sharding=SHARD
+  ROOT r = (u32[NROWS,1,1,1,512]{4,3,2,1,0}, s32[]) tuple(c, s),
+      sharding={SHARD, SHARD}
+}
+
+update_branch {
+  p = (u32[NROWS,1,1,1,512]{4,3,2,1,0}, IDX[],
+       f32[1,128]{1,0}, f32[1,128]{1,0}, f32[384]{0},
+       f32[4,128]{1,0}, f32[2,128]{1,0}, f32[384]{0},
+       f32[1,128]{1,0}, f32[4,128]{1,0}, s32[]) parameter(0),
+      sharding={SHARD, SHARD, SHARD, SHARD, SHARD, SHARD,
+                SHARD, SHARD, SHARD, SHARD, SHARD}
+  c = u32[NROWS,1,1,1,512]{4,3,2,1,0} get-tuple-element(p), index=0,
+      sharding=SHARD
+  idx = IDX[] get-tuple-element(p), index=1, sharding=SHARD
+  l0 = f32[1,128]{1,0} get-tuple-element(p), index=2, sharding=SHARD
+  l1 = f32[1,128]{1,0} get-tuple-element(p), index=3, sharding=SHARD
+  l2 = f32[384]{0} get-tuple-element(p), index=4, sharding=SHARD
+  l3 = f32[4,128]{1,0} get-tuple-element(p), index=5, sharding=SHARD
+  l4 = f32[2,128]{1,0} get-tuple-element(p), index=6, sharding=SHARD
+  l5 = f32[384]{0} get-tuple-element(p), index=7, sharding=SHARD
+  l6 = f32[1,128]{1,0} get-tuple-element(p), index=8, sharding=SHARD
+  l7 = f32[4,128]{1,0} get-tuple-element(p), index=9, sharding=SHARD
+  s = s32[] get-tuple-element(p), index=10, sharding=SHARD
+
+  s00 = f32[1,21]{1,0} slice(l0), slice={[0:1], [0:21]}
+  s01 = f32[1,2]{1,0} slice(l0), slice={[0:1], [21:23]}
+  s10 = f32[1,21]{1,0} slice(l1), slice={[0:1], [0:21]}
+  s11 = f32[1,2]{1,0} slice(l1), slice={[0:1], [21:23]}
+  s2a = f32[120]{0} slice(l2), slice={[0:120]}
+  s2b = f32[7]{0} slice(l2), slice={[128:135]}
+  s2c = f32[1]{0} slice(l2), slice={[256:257]}
+  s3a = f32[1,21]{1,0} slice(l3), slice={[0:1], [0:21]}
+  s3b = f32[1,21]{1,0} slice(l3), slice={[1:2], [0:21]}
+  s3c = f32[1,2]{1,0} slice(l3), slice={[2:3], [0:2]}
+  s3d = f32[1,2]{1,0} slice(l3), slice={[3:4], [0:2]}
+  s4a = f32[1,21]{1,0} slice(l4), slice={[0:1], [0:21]}
+  s4b = f32[1,2]{1,0} slice(l4), slice={[1:2], [0:2]}
+  s5a = f32[120]{0} slice(l5), slice={[0:120]}
+  s5b = f32[7]{0} slice(l5), slice={[128:135]}
+  s5c = f32[1]{0} slice(l5), slice={[256:257]}
+  s6a = f32[1,8]{1,0} slice(l6), slice={[0:1], [0:8]}
+  s7a = f32[1,21]{1,0} slice(l7), slice={[0:1], [0:21]}
+  s7b = f32[1,2]{1,0} slice(l7), slice={[1:2], [0:2]}
+
+  r00 = f32[21]{0} bitcast(s00)
+  r01 = f32[2]{0} reshape(s01)
+  r10 = f32[21]{0} bitcast(s10)
+  r11 = f32[2]{0} reshape(s11)
+  r3a = f32[21]{0} reshape(s3a)
+  r3b = f32[21]{0} reshape(s3b)
+  r3c = f32[2]{0} reshape(s3c)
+  r3d = f32[2]{0} reshape(s3d)
+  r4a = f32[21]{0} reshape(s4a)
+  r4b = f32[2]{0} reshape(s4b)
+  r6a = f32[8]{0} bitcast(s6a)
+  r7a = f32[21]{0} reshape(s7a)
+  r7b = f32[2]{0} reshape(s7b)
+  b2c = f32[1,4]{1,0} broadcast(s2c), dimensions={0}
+  rb2c = f32[4]{0} reshape(b2c)
+
+  cat_f = f32[405]{0} concatenate(
+      r00, r01, r10, r11, s2a, s2b, rb2c, r3a, r3b, r3c, r3d,
+      r4a, r4b, s5a, s5b, s5c, r6a, r7a, r7b), dimensions={0}
+  pz = f32[] constant(PADVAL)
+  padded_f = f32[470]{0} pad(cat_f, pz), padding=0_65
+  packed_u = u32[470]{0} bitcast-convert(padded_f)
+  bz = u32[] constant(BCASTVAL)
+  tail_u = u32[42]{0} broadcast(bz), dimensions={}
+  full_u = u32[512]{0} concatenate(packed_u, tail_u), dimensions={0}
+  row_u = u32[1,1,1,1,512]{4,3,2,1,0} bitcast(full_u)
+  iz = IDX[] constant(0)
+  next_c = u32[NROWS,1,1,1,512]{4,3,2,1,0} dynamic-update-slice(
+      c, row_u, idx, iz, iz, iz, iz), sharding=SHARD
+  ROOT r = (u32[NROWS,1,1,1,512]{4,3,2,1,0}, s32[]) tuple(next_c, s),
+      sharding={SHARD, SHARD}
+}
+
+pass_branch_2 {
+  p = (u32[NROWS,1,1,1,512]{4,3,2,1,0}, s32[]) parameter(0),
+      sharding={SHARD, SHARD}
+  c = u32[NROWS,1,1,1,512]{4,3,2,1,0} get-tuple-element(p), index=0,
+      sharding=SHARD
+  s = s32[] get-tuple-element(p), index=1, sharding=SHARD
+  ROOT r = (u32[NROWS,1,1,1,512]{4,3,2,1,0}, s32[]) tuple(c, s),
+      sharding={SHARD, SHARD}
+}
+
+inner_cond {
+  p = (s32[], IDX[], u32[NROWS,1,1,1,512]{4,3,2,1,0},
+       f32[1,128]{1,0}, f32[1,128]{1,0}, f32[384]{0},
+       f32[4,128]{1,0}, f32[2,128]{1,0}, f32[384]{0},
+       f32[1,128]{1,0}, f32[4,128]{1,0}) parameter(0),
+      sharding={SHARD, SHARD, SHARD, SHARD, SHARD, SHARD,
+                SHARD, SHARD, SHARD, SHARD, SHARD}
+  i = s32[] get-tuple-element(p), index=0
+  lim = s32[] constant(2)
+  ROOT lt = pred[] compare(i, lim), direction=LT
+}
+
+inner_body {
+  p = (s32[], IDX[], u32[NROWS,1,1,1,512]{4,3,2,1,0},
+       f32[1,128]{1,0}, f32[1,128]{1,0}, f32[384]{0},
+       f32[4,128]{1,0}, f32[2,128]{1,0}, f32[384]{0},
+       f32[1,128]{1,0}, f32[4,128]{1,0}) parameter(0),
+      sharding={SHARD, SHARD, SHARD, SHARD, SHARD, SHARD,
+                SHARD, SHARD, SHARD, SHARD, SHARD}
+  i = s32[] get-tuple-element(p), index=0, sharding=SHARD
+  idx = IDX[] get-tuple-element(p), index=1, sharding=SHARD
+  c = u32[NROWS,1,1,1,512]{4,3,2,1,0} get-tuple-element(p), index=2,
+      sharding=SHARD
+  l0 = f32[1,128]{1,0} get-tuple-element(p), index=3, sharding=SHARD
+  l1 = f32[1,128]{1,0} get-tuple-element(p), index=4, sharding=SHARD
+  l2 = f32[384]{0} get-tuple-element(p), index=5, sharding=SHARD
+  l3 = f32[4,128]{1,0} get-tuple-element(p), index=6, sharding=SHARD
+  l4 = f32[2,128]{1,0} get-tuple-element(p), index=7, sharding=SHARD
+  l5 = f32[384]{0} get-tuple-element(p), index=8, sharding=SHARD
+  l6 = f32[1,128]{1,0} get-tuple-element(p), index=9, sharding=SHARD
+  l7 = f32[4,128]{1,0} get-tuple-element(p), index=10, sharding=SHARD
+  a0 = (s32[], u32[NROWS,1,1,1,512]{4,3,2,1,0}) tuple(i, c),
+      sharding={SHARD, SHARD}
+  a1 = (u32[NROWS,1,1,1,512]{4,3,2,1,0}, IDX[],
+        f32[1,128]{1,0}, f32[1,128]{1,0}, f32[384]{0},
+        f32[4,128]{1,0}, f32[2,128]{1,0}, f32[384]{0},
+        f32[1,128]{1,0}, f32[4,128]{1,0}, s32[]) tuple(
+      c, idx, l0, l1, l2, l3, l4, l5, l6, l7, i),
+      sharding={SHARD, SHARD, SHARD, SHARD, SHARD, SHARD,
+                SHARD, SHARD, SHARD, SHARD, SHARD}
+  a2 = (u32[NROWS,1,1,1,512]{4,3,2,1,0}, s32[]) tuple(c, i),
+      sharding={SHARD, SHARD}
+  sw = (u32[NROWS,1,1,1,512]{4,3,2,1,0}, s32[]) conditional(i, a0, a1, a2),
+      branch_computations={pass_branch_0, update_branch, pass_branch_2},
+      sharding={SHARD, SHARD}
+  co = u32[NROWS,1,1,1,512]{4,3,2,1,0} get-tuple-element(sw), index=0,
+      sharding=SHARD
+  so = s32[] get-tuple-element(sw), index=1, sharding=SHARD
+  one = s32[] constant(1)
+  ni = s32[] add(so, one), sharding=SHARD
+  ROOT r = (s32[], IDX[], u32[NROWS,1,1,1,512]{4,3,2,1,0},
+            f32[1,128]{1,0}, f32[1,128]{1,0}, f32[384]{0},
+            f32[4,128]{1,0}, f32[2,128]{1,0}, f32[384]{0},
+            f32[1,128]{1,0}, f32[4,128]{1,0}) tuple(
+      ni, idx, co, l0, l1, l2, l3, l4, l5, l6, l7),
+      sharding={SHARD, SHARD, SHARD, SHARD, SHARD, SHARD,
+                SHARD, SHARD, SHARD, SHARD, SHARD}
+}
+
+outer_cond {
+  p = (s32[], u32[NROWS,1,1,1,512]{4,3,2,1,0}, IDX[],
+       f32[1,128]{1,0}, f32[1,128]{1,0}, f32[384]{0},
+       f32[4,128]{1,0}, f32[2,128]{1,0}, f32[384]{0},
+       f32[1,128]{1,0}, f32[4,128]{1,0}) parameter(0),
+      sharding={SHARD, SHARD, SHARD, SHARD, SHARD, SHARD,
+                SHARD, SHARD, SHARD, SHARD, SHARD}
+  i = s32[] get-tuple-element(p), index=0
+  lim = s32[] constant(3)
+  ROOT lt = pred[] compare(i, lim), direction=LT
+}
+
+outer_body {
+  p = (s32[], u32[NROWS,1,1,1,512]{4,3,2,1,0}, IDX[],
+       f32[1,128]{1,0}, f32[1,128]{1,0}, f32[384]{0},
+       f32[4,128]{1,0}, f32[2,128]{1,0}, f32[384]{0},
+       f32[1,128]{1,0}, f32[4,128]{1,0}) parameter(0),
+      sharding={SHARD, SHARD, SHARD, SHARD, SHARD, SHARD,
+                SHARD, SHARD, SHARD, SHARD, SHARD}
+  i = s32[] get-tuple-element(p), index=0, sharding=SHARD
+  c = u32[NROWS,1,1,1,512]{4,3,2,1,0} get-tuple-element(p), index=1,
+      sharding=SHARD
+  idx = IDX[] get-tuple-element(p), index=2, sharding=SHARD
+  l0 = f32[1,128]{1,0} get-tuple-element(p), index=3, sharding=SHARD
+  l1 = f32[1,128]{1,0} get-tuple-element(p), index=4, sharding=SHARD
+  l2 = f32[384]{0} get-tuple-element(p), index=5, sharding=SHARD
+  l3 = f32[4,128]{1,0} get-tuple-element(p), index=6, sharding=SHARD
+  l4 = f32[2,128]{1,0} get-tuple-element(p), index=7, sharding=SHARD
+  l5 = f32[384]{0} get-tuple-element(p), index=8, sharding=SHARD
+  l6 = f32[1,128]{1,0} get-tuple-element(p), index=9, sharding=SHARD
+  l7 = f32[4,128]{1,0} get-tuple-element(p), index=10, sharding=SHARD
+  z = s32[] constant(0)
+  in_t = (s32[], IDX[], u32[NROWS,1,1,1,512]{4,3,2,1,0},
+          f32[1,128]{1,0}, f32[1,128]{1,0}, f32[384]{0},
+          f32[4,128]{1,0}, f32[2,128]{1,0}, f32[384]{0},
+          f32[1,128]{1,0}, f32[4,128]{1,0}) tuple(
+      z, idx, c, l0, l1, l2, l3, l4, l5, l6, l7),
+      sharding={SHARD, SHARD, SHARD, SHARD, SHARD, SHARD,
+                SHARD, SHARD, SHARD, SHARD, SHARD}
+  iw = (s32[], IDX[], u32[NROWS,1,1,1,512]{4,3,2,1,0},
+        f32[1,128]{1,0}, f32[1,128]{1,0}, f32[384]{0},
+        f32[4,128]{1,0}, f32[2,128]{1,0}, f32[384]{0},
+        f32[1,128]{1,0}, f32[4,128]{1,0}) while(in_t),
+      condition=inner_cond, body=inner_body,
+      sharding={SHARD, SHARD, SHARD, SHARD, SHARD, SHARD,
+                SHARD, SHARD, SHARD, SHARD, SHARD},
+      frontend_attributes={INNERATTR}
+  co = u32[NROWS,1,1,1,512]{4,3,2,1,0} get-tuple-element(iw), index=2,
+      sharding=SHARD, frontend_attributes={inner_gte_tag="preserve"}
+  one = s32[] constant(1)
+  ni = s32[] add(i, one), sharding=SHARD
+  ROOT r = (s32[], u32[NROWS,1,1,1,512]{4,3,2,1,0}, IDX[],
+            f32[1,128]{1,0}, f32[1,128]{1,0}, f32[384]{0},
+            f32[4,128]{1,0}, f32[2,128]{1,0}, f32[384]{0},
+            f32[1,128]{1,0}, f32[4,128]{1,0}) tuple(
+      ni, co, idx, l0, l1, l2, l3, l4, l5, l6, l7),
+      sharding={SHARD, SHARD, SHARD, SHARD, SHARD, SHARD,
+                SHARD, SHARD, SHARD, SHARD, SHARD}
+}
+
+ENTRY main {
+  idx = IDX[] parameter(0), sharding=SHARD
+  l0 = f32[1,128]{1,0} parameter(1), sharding=SHARD
+  l1 = f32[1,128]{1,0} parameter(2), sharding=SHARD
+  l2 = f32[384]{0} parameter(3), sharding=SHARD
+  l3 = f32[4,128]{1,0} parameter(4), sharding=SHARD
+  l4 = f32[2,128]{1,0} parameter(5), sharding=SHARD
+  l5 = f32[384]{0} parameter(6), sharding=SHARD
+  l6 = f32[1,128]{1,0} parameter(7), sharding=SHARD
+  l7 = f32[4,128]{1,0} parameter(8), sharding=SHARD
+  i0 = s32[] constant(0)
+  cz = u32[] constant(INITVAL)
+  c0 = u32[NROWS,1,1,1,512]{4,3,2,1,0} broadcast(cz), dimensions={},
+      sharding=SHARD, origin={{"collector"}}
+  init = (s32[], u32[NROWS,1,1,1,512]{4,3,2,1,0}, IDX[],
+          f32[1,128]{1,0}, f32[1,128]{1,0}, f32[384]{0},
+          f32[4,128]{1,0}, f32[2,128]{1,0}, f32[384]{0},
+          f32[1,128]{1,0}, f32[4,128]{1,0}) tuple(
+      i0, c0, idx, l0, l1, l2, l3, l4, l5, l6, l7),
+      sharding={SHARD, SHARD, SHARD, SHARD, SHARD, SHARD,
+                SHARD, SHARD, SHARD, SHARD, SHARD}
+  w = (s32[], u32[NROWS,1,1,1,512]{4,3,2,1,0}, IDX[],
+       f32[1,128]{1,0}, f32[1,128]{1,0}, f32[384]{0},
+       f32[4,128]{1,0}, f32[2,128]{1,0}, f32[384]{0},
+       f32[1,128]{1,0}, f32[4,128]{1,0}) while(init),
+      condition=outer_cond, body=outer_body,
+      sharding={SHARD, SHARD, SHARD, SHARD, SHARD, SHARD,
+                SHARD, SHARD, SHARD, SHARD, SHARD},
+      frontend_attributes={outer_tag="preserve"}
+  ROOT out = u32[NROWS,1,1,1,512]{4,3,2,1,0} get-tuple-element(w), index=1,
+      sharding=SHARD, frontend_attributes={exit_gte_tag="preserve"},
+      origin={{"collector_out"}}
+}
+)hlo";
+  return absl::StrReplaceAll(kTmpl, {{"IDX", idx_type},
+                                     {"NROWS", absl::StrCat(num_rows)},
+                                     {"INITVAL", init_val},
+                                     {"PADVAL", pad_val},
+                                     {"BCASTVAL", bcast_val},
+                                     {"SHARD", sharding},
+                                     {"INNERATTR", inner_attr}});
+}
+
+TEST_F(WhileLoopSimplifierTest,
+       SplitsWriteOnlyZeroInitRowPackAcrossNestedWhileAndConditional) {
+  for (absl::string_view idx_ty : {"s32", "u32", "s64"}) {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(
+                                     MakeNestedWriteOnlyRowPackHlo(idx_ty)));
+    HloInstruction* orig_outer = FindFirstWhile(m.get());
+    // Default constructor leaves write-only row-pack carries untouched.
+    ASSERT_OK_AND_ASSIGN(
+        bool default_changed,
+        WhileLoopSimplifier(/*simplify_compare_instrs=*/true).Run(m.get()));
+    EXPECT_FALSE(default_changed);
+
+    ASSERT_OK_AND_ASSIGN(
+        bool changed, WhileLoopSimplifier(/*simplify_compare_instrs=*/true,
+                                          /*hoist_write_only_row_packs=*/true)
+                          .Run(m.get()));
+    EXPECT_TRUE(changed);
+    HloVerifier layout_verifier(/*layout_sensitive=*/true,
+                                /*allow_mixed_precision=*/false);
+    ASSERT_THAT(layout_verifier.Run(m.get()), absl_testing::IsOk());
+
+    // In-place mutation keeps outer while identity, attributes, and shardings,
+    // replacing slot 1 and appending 7 more collectors (11 + 7 = 18 slots).
+    HloInstruction* outer = FindFirstWhile(m.get());
+    EXPECT_EQ(outer, orig_outer);
+    EXPECT_TRUE(outer->has_frontend_attribute("outer_tag"));
+    EXPECT_EQ(outer->original_value(), nullptr);
+    EXPECT_EQ(outer->shape().tuple_shapes().size(), 18);
+    // Rank-1 f32[384] leaves receive [N, 1, 384] collectors.
+    int unit_dim_384 = 0;
+    for (const Shape& sub : outer->shape().tuple_shapes()) {
+      if (sub.dimensions().size() == 3 && sub.dimensions(0) == 16 &&
+          sub.dimensions(1) == 1 && sub.dimensions(2) == 384) {
+        ++unit_dim_384;
+      }
+    }
+    EXPECT_EQ(unit_dim_384, 2);
+
+    int preserved_exit_gtes = 0;
+    for (const HloInstruction* u : outer->users()) {
+      if (u->has_frontend_attribute("exit_gte_tag")) {
+        ++preserved_exit_gtes;
+      }
+    }
+    EXPECT_EQ(preserved_exit_gtes, 8);
+    EXPECT_NE(m->entry_computation()->root_instruction()->original_value(),
+              nullptr);
+
+    const HloComputation* upd_br = m->GetComputationWithName("update_branch");
+    ASSERT_NE(upd_br, nullptr);
+    EXPECT_EQ(absl::c_count_if(upd_br->instructions(),
+                               HloPredicateIsOp<HloOpcode::kSlice>),
+              0);
+    EXPECT_EQ(absl::c_count_if(upd_br->instructions(),
+                               HloPredicateIsOp<HloOpcode::kConcatenate>),
+              0);
+    EXPECT_EQ(absl::c_count_if(upd_br->instructions(),
+                               HloPredicateIsOp<HloOpcode::kPad>),
+              0);
+    EXPECT_EQ(absl::c_count_if(upd_br->instructions(),
+                               HloPredicateIsOp<HloOpcode::kBitcastConvert>),
+              0);
+    EXPECT_EQ(
+        absl::c_count_if(upd_br->instructions(),
+                         HloPredicateIsOp<HloOpcode::kDynamicUpdateSlice>),
+        8);
+  }
+}
+
+TEST_F(WhileLoopSimplifierTest,
+       RejectsUnsafeOrUnprofitableWriteOnlyRowPackCarries) {
+  WhileLoopSimplifier pass(/*simplify_compare_instrs=*/true,
+                           /*hoist_write_only_row_packs=*/true);
+
+  // Non-zero init, -0.0 pad, non-zero interior broadcast, >16 MiB growth,
+  // disable_while_loop_dce on inner_while, and tiled tuple sharding.
+  const std::array<std::string, 5> rejected_variants = {
+      MakeNestedWriteOnlyRowPackHlo("s32", 16, /*init_val=*/"1"),
+      MakeNestedWriteOnlyRowPackHlo("s32", 16, "0", /*pad_val=*/"-0.0"),
+      MakeNestedWriteOnlyRowPackHlo("s32", 16, "0", "0.0", /*bcast_val=*/"1"),
+      MakeNestedWriteOnlyRowPackHlo("s32", /*num_rows=*/4096),
+      MakeNestedWriteOnlyRowPackHlo("s32", 16, "0", "0.0", "0", "{replicated}",
+                                    "xla.disable_while_loop_dce=\"true\""),
+  };
+  for (const std::string& hlo : rejected_variants) {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo));
+    ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(m.get()));
+    EXPECT_FALSE(changed);
+  }
+
+  // Reject -0.0f float init and cross-bitwidth bitcast-convert.
+  constexpr absl::string_view kDirectRejectTmpl = R"hlo(
+HloModule DirectRejectCases
+
+cond {
+  p = (s32[], f32[8,128], bf16[2,128]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  lim = s32[] constant(4)
+  ROOT lt = pred[] compare(i, lim), direction=LT
+}
+
+body {
+  p = (s32[], f32[8,128], bf16[2,128]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  c = f32[8,128] get-tuple-element(p), index=1
+  bf = bf16[2,128] get-tuple-element(p), index=2
+  sl0 = bf16[1,16] slice(bf), slice={[0:1], [0:16]}
+  sl1 = bf16[1,16] slice(bf), slice={[1:2], [16:32]}
+  cat_bf = bf16[1,32] concatenate(sl0, sl1), dimensions={1}
+  pz_bf = bf16[] constant(0)
+  pad_bf = bf16[1,256] pad(cat_bf, pz_bf), padding=0_0x0_224
+  r_bf = bf16[128,2] reshape(pad_bf)
+  bc_f = f32[128] bitcast-convert(r_bf)
+  upd = f32[1,128] reshape(bc_f)
+  z = s32[] constant(0)
+  nc = f32[8,128] dynamic-update-slice(c, upd, i, z)
+  one = s32[] constant(1)
+  ni = s32[] add(i, one)
+  ROOT r = (s32[], f32[8,128], bf16[2,128]) tuple(ni, nc, bf)
+}
+
+ENTRY main {
+  bf = bf16[2,128] parameter(0)
+  i0 = s32[] constant(0)
+  nz = f32[] constant(FINIT)
+  c0 = f32[8,128] broadcast(nz), dimensions={}
+  init = (s32[], f32[8,128], bf16[2,128]) tuple(i0, c0, bf)
+  w = (s32[], f32[8,128], bf16[2,128]) while(init),
+      condition=cond, body=body
+  ROOT out = f32[8,128] get-tuple-element(w), index=1
+}
+)hlo";
+  for (absl::string_view finit : {"-0.0", "0.0"}) {
+    ASSERT_OK_AND_ASSIGN(auto m_neg,
+                         ParseAndReturnVerifiedModule(absl::StrReplaceAll(
+                             kDirectRejectTmpl, {{"FINIT", finit}})));
+    ASSERT_OK_AND_ASSIGN(bool neg_changed, pass.Run(m_neg.get()));
+    EXPECT_FALSE(neg_changed);
+  }
+
+  // Isolated checks for F8E8M0FNU leaf, odd-sublane bf16[3,128] leaf, sub-512B
+  // leaf, non-128-aligned multi-leaf minor dim, and insufficient sublane slices
+  // (while accepting even-sublane bf16[2,128] single-leaf row packs).
+  constexpr absl::string_view kE8M0LeafHlo = R"hlo(
+HloModule RejectE8M0Leaf
+cond {
+  p = (s32[], u8[8,64], f8e8m0fnu[512]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  lim = s32[] constant(4)
+  ROOT lt = pred[] compare(i, lim), direction=LT
+}
+body {
+  p = (s32[], u8[8,64], f8e8m0fnu[512]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  c = u8[8,64] get-tuple-element(p), index=1
+  e8 = f8e8m0fnu[512] get-tuple-element(p), index=2
+  sl0 = f8e8m0fnu[16] slice(e8), slice={[0:16]}
+  sl1 = f8e8m0fnu[16] slice(e8), slice={[32:48]}
+  cat = f8e8m0fnu[32] concatenate(sl0, sl1), dimensions={0}
+  u = u8[32] bitcast-convert(cat)
+  z8 = u8[] constant(0)
+  pad = u8[64] pad(u, z8), padding=0_32
+  row = u8[1,64] reshape(pad)
+  iz = s32[] constant(0)
+  nc = u8[8,64] dynamic-update-slice(c, row, i, iz)
+  one = s32[] constant(1)
+  ni = s32[] add(i, one)
+  ROOT r = (s32[], u8[8,64], f8e8m0fnu[512]) tuple(ni, nc, e8)
+}
+ENTRY main {
+  e8 = f8e8m0fnu[512] parameter(0)
+  z8 = u8[] constant(0)
+  c0 = u8[8,64] broadcast(z8), dimensions={}
+  i0 = s32[] constant(0)
+  init = (s32[], u8[8,64], f8e8m0fnu[512]) tuple(i0, c0, e8)
+  w = (s32[], u8[8,64], f8e8m0fnu[512]) while(init),
+      condition=cond, body=body
+  ROOT out = u8[8,64] get-tuple-element(w), index=1
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto m_e8, ParseAndReturnVerifiedModule(kE8M0LeafHlo));
+  ASSERT_OK_AND_ASSIGN(bool e8_changed, pass.Run(m_e8.get()));
+  EXPECT_FALSE(e8_changed);
+
+  constexpr absl::string_view kBf16LeafTmpl = R"hlo(
+HloModule Bf16SublaneCheck
+cond {
+  p = (s32[], u16[8,64], bf16[SUB,128]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  lim = s32[] constant(4)
+  ROOT lt = pred[] compare(i, lim), direction=LT
+}
+body {
+  p = (s32[], u16[8,64], bf16[SUB,128]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  c = u16[8,64] get-tuple-element(p), index=1
+  bf = bf16[SUB,128] get-tuple-element(p), index=2
+  sl0 = bf16[1,16] slice(bf), slice={[0:1], [0:16]}
+  sl1 = bf16[1,16] slice(bf), slice={[1:2], [0:16]}
+  cat = bf16[1,32] concatenate(sl0, sl1), dimensions={1}
+  cp = bf16[1,32] copy(cat)
+  u = u16[1,32] bitcast-convert(cp)
+  z16 = u16[] constant(0)
+  pad = u16[1,64] pad(u, z16), padding=0_0x0_32
+  iz = s32[] constant(0)
+  nc = u16[8,64] dynamic-update-slice(c, pad, i, iz)
+  one = s32[] constant(1)
+  ni = s32[] add(i, one)
+  ROOT r = (s32[], u16[8,64], bf16[SUB,128]) tuple(ni, nc, bf)
+}
+ENTRY main {
+  bf = bf16[SUB,128] parameter(0)
+  z16 = u16[] constant(0)
+  c0 = u16[8,64] broadcast(z16), dimensions={}
+  i0 = s32[] constant(0)
+  init = (s32[], u16[8,64], bf16[SUB,128]) tuple(i0, c0, bf)
+  w = (s32[], u16[8,64], bf16[SUB,128]) while(init),
+      condition=cond, body=body
+  ROOT out = u16[8,64] get-tuple-element(w), index=1
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto m_bf_odd,
+                       ParseAndReturnVerifiedModule(
+                           absl::StrReplaceAll(kBf16LeafTmpl, {{"SUB", "3"}})));
+  ASSERT_OK_AND_ASSIGN(bool bf_odd_changed, pass.Run(m_bf_odd.get()));
+  EXPECT_FALSE(bf_odd_changed);
+
+  ASSERT_OK_AND_ASSIGN(auto m_bf_even,
+                       ParseAndReturnVerifiedModule(
+                           absl::StrReplaceAll(kBf16LeafTmpl, {{"SUB", "2"}})));
+  ASSERT_OK_AND_ASSIGN(bool bf_even_changed, pass.Run(m_bf_even.get()));
+  EXPECT_TRUE(bf_even_changed);
+
+  constexpr absl::string_view kMultiLeafGuardTmpl = R"hlo(
+HloModule MultiLeafGuard
+cond {
+  p = (s32[], f32[8,256], f32[1,MINOR], f32[1,MINOR]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  lim = s32[] constant(4)
+  ROOT lt = pred[] compare(i, lim), direction=LT
+}
+body {
+  p = (s32[], f32[8,256], f32[1,MINOR], f32[1,MINOR]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  c = f32[8,256] get-tuple-element(p), index=1
+  a = f32[1,MINOR] get-tuple-element(p), index=2
+  b = f32[1,MINOR] get-tuple-element(p), index=3
+  sl0 = f32[1,16] slice(a), slice={[0:1], [0:16]}
+  sl1 = f32[1,16] slice(a), slice={[0:1], [16:32]}
+  sl2 = f32[1,16] slice(a), slice={[0:1], [32:48]}
+  sl3 = f32[1,16] slice(b), slice={[0:1], [0:16]}
+  sl4 = f32[1,16] slice(b), slice={[0:1], [16:32]}
+  sl5 = f32[1,16] slice(b), slice={[0:1], [32:48]}
+  cat = f32[1,96] concatenate(sl0, sl1, sl2, sl3, sl4, sl5), dimensions={1}
+  pz = f32[] constant(0.0)
+  upd = f32[1,256] pad(cat, pz), padding=0_0x0_160
+  iz = s32[] constant(0)
+  nc = f32[8,256] dynamic-update-slice(c, upd, i, iz)
+  one = s32[] constant(1)
+  ni = s32[] add(i, one)
+  ROOT r = (s32[], f32[8,256], f32[1,MINOR], f32[1,MINOR]) tuple(ni, nc, a, b)
+}
+ENTRY main {
+  a = f32[1,MINOR] parameter(0)
+  b = f32[1,MINOR] parameter(1)
+  pz = f32[] constant(0.0)
+  c0 = f32[8,256] broadcast(pz), dimensions={}
+  i0 = s32[] constant(0)
+  init = (s32[], f32[8,256], f32[1,MINOR], f32[1,MINOR]) tuple(i0, c0, a, b)
+  w = (s32[], f32[8,256], f32[1,MINOR], f32[1,MINOR]) while(init),
+      condition=cond, body=body
+  ROOT out = f32[8,256] get-tuple-element(w), index=1
+}
+)hlo";
+  // MINOR=64 (<512 B) and MINOR=192 (% 128 != 0) are rejected; MINOR=128 fires.
+  for (absl::string_view bad_minor : {"64", "192"}) {
+    ASSERT_OK_AND_ASSIGN(auto m_bad,
+                         ParseAndReturnVerifiedModule(absl::StrReplaceAll(
+                             kMultiLeafGuardTmpl, {{"MINOR", bad_minor}})));
+    ASSERT_OK_AND_ASSIGN(bool bad_changed, pass.Run(m_bad.get()));
+    EXPECT_FALSE(bad_changed);
+  }
+  ASSERT_OK_AND_ASSIGN(auto m_ok,
+                       ParseAndReturnVerifiedModule(absl::StrReplaceAll(
+                           kMultiLeafGuardTmpl, {{"MINOR", "128"}})));
+  ASSERT_OK_AND_ASSIGN(bool ok_changed, pass.Run(m_ok.get()));
+  EXPECT_TRUE(ok_changed);
+
+  // With m=2 leaves, 5 sub-128-lane slices (< m + 4 = 6) are rejected even when
+  // total nontrivial ops (8 >= 6) meet the 2*m + 2 threshold.
+  ASSERT_OK_AND_ASSIGN(
+      auto m_few_sublane,
+      ParseAndReturnVerifiedModule(absl::StrReplaceAll(
+          kMultiLeafGuardTmpl,
+          {{"MINOR", "128"},
+           {"sl5 = f32[1,16] slice(b), slice={[0:1], [32:48]}",
+            "sl5 = f32[1,128] slice(b), slice={[0:1], [0:128]}"},
+           {"f32[1,96]", "f32[1,208]"},
+           {"0_0x0_160", "0_0x0_48"}})));
+  ASSERT_OK_AND_ASSIGN(bool few_sublane_changed, pass.Run(m_few_sublane.get()));
+  EXPECT_FALSE(few_sublane_changed);
+}
+
+TEST_F(WhileLoopSimplifierTest,
+       RejectsTiledShardingTwoWritersDuplicateBranchAndReadWriteCarry) {
+  WhileLoopSimplifier pass(/*simplify_compare_instrs=*/true,
+                           /*hoist_write_only_row_packs=*/true);
+
+  constexpr absl::string_view kTiledAndRwHlo = R"hlo(
+HloModule RejectTiledAndReadWrite
+cond {
+  p = (s32[], u32[8,64], u32[8,64], f32[256]) parameter(0),
+      sharding={{replicated}, {devices=[2,1]<=[2]}, {replicated}, {replicated}}
+  i = s32[] get-tuple-element(p), index=0
+  lim = s32[] constant(4)
+  ROOT lt = pred[] compare(i, lim), direction=LT
+}
+body {
+  p = (s32[], u32[8,64], u32[8,64], f32[256]) parameter(0),
+      sharding={{replicated}, {devices=[2,1]<=[2]}, {replicated}, {replicated}}
+  i = s32[] get-tuple-element(p), index=0
+  c_tiled = u32[8,64] get-tuple-element(p), index=1,
+      sharding={devices=[2,1]<=[2]}
+  c_rw = u32[8,64] get-tuple-element(p), index=2
+  leaf = f32[256] get-tuple-element(p), index=3
+  sl0 = f32[16] slice(leaf), slice={[0:16]}
+  sl1 = f32[16] slice(leaf), slice={[32:48]}
+  cat = f32[32] concatenate(sl0, sl1), dimensions={0}
+  u = u32[32] bitcast-convert(cat)
+  zu = u32[] constant(0)
+  pad = u32[64] pad(u, zu), padding=0_32
+  row = u32[1,64] reshape(pad)
+  prev = u32[1,64] slice(c_rw), slice={[0:1], [0:64]}
+  row_rw = u32[1,64] add(row, prev)
+  iz = s32[] constant(0)
+  nc1 = u32[8,64] dynamic-update-slice(c_tiled, row, i, iz),
+      sharding={devices=[2,1]<=[2]}
+  nc2 = u32[8,64] dynamic-update-slice(c_rw, row_rw, i, iz)
+  one = s32[] constant(1)
+  ni = s32[] add(i, one)
+  ROOT r = (s32[], u32[8,64], u32[8,64], f32[256]) tuple(ni, nc1, nc2, leaf),
+      sharding={{replicated}, {devices=[2,1]<=[2]}, {replicated}, {replicated}}
+}
+ENTRY main {
+  leaf = f32[256] parameter(0)
+  zu = u32[] constant(0)
+  c0 = u32[8,64] broadcast(zu), dimensions={}
+  i0 = s32[] constant(0)
+  init = (s32[], u32[8,64], u32[8,64], f32[256]) tuple(i0, c0, c0, leaf)
+  w = (s32[], u32[8,64], u32[8,64], f32[256]) while(init),
+      condition=cond, body=body,
+      sharding={{replicated}, {devices=[2,1]<=[2]}, {replicated}, {replicated}}
+  g1 = u32[8,64] get-tuple-element(w), index=1
+  g2 = u32[8,64] get-tuple-element(w), index=2
+  ROOT out = u32[8,64] add(g1, g2)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto m1, ParseAndReturnVerifiedModule(kTiledAndRwHlo));
+  ASSERT_OK_AND_ASSIGN(bool c1, pass.Run(m1.get()));
+  EXPECT_FALSE(c1);
+
+  constexpr absl::string_view kCondBranchTmpl = R"hlo(
+HloModule RejectDupAndTwoWriterBranch
+upd_b0 {
+  p = (s32[], u32[8,64], f32[256]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  c = u32[8,64] get-tuple-element(p), index=1
+  leaf = f32[256] get-tuple-element(p), index=2
+  sl0 = f32[16] slice(leaf), slice={[0:16]}
+  sl1 = f32[16] slice(leaf), slice={[32:48]}
+  cat = f32[32] concatenate(sl0, sl1), dimensions={0}
+  u = u32[32] bitcast-convert(cat)
+  zu = u32[] constant(0)
+  pad = u32[64] pad(u, zu), padding=0_32
+  row = u32[1,64] reshape(pad)
+  iz = s32[] constant(0)
+  nc = u32[8,64] dynamic-update-slice(c, row, i, iz)
+  ROOT r = (u32[8,64]) tuple(nc)
+}
+upd_b1 {
+  p = (s32[], u32[8,64], f32[256]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  c = u32[8,64] get-tuple-element(p), index=1
+  leaf = f32[256] get-tuple-element(p), index=2
+  sl0 = f32[16] slice(leaf), slice={[64:80]}
+  sl1 = f32[16] slice(leaf), slice={[80:96]}
+  cat = f32[32] concatenate(sl0, sl1), dimensions={0}
+  u = u32[32] bitcast-convert(cat)
+  zu = u32[] constant(0)
+  pad = u32[64] pad(u, zu), padding=0_32
+  row = u32[1,64] reshape(pad)
+  iz = s32[] constant(0)
+  nc = u32[8,64] dynamic-update-slice(c, row, i, iz)
+  ROOT r = (u32[8,64]) tuple(nc)
+}
+pass_b {
+  p = (s32[], u32[8,64], f32[256]) parameter(0)
+  c = u32[8,64] get-tuple-element(p), index=1
+  ROOT r = (u32[8,64]) tuple(c)
+}
+cond {
+  p = (s32[], u32[8,64], f32[256]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  lim = s32[] constant(4)
+  ROOT lt = pred[] compare(i, lim), direction=LT
+}
+body {
+  p = (s32[], u32[8,64], f32[256]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  c = u32[8,64] get-tuple-element(p), index=1
+  leaf = f32[256] get-tuple-element(p), index=2
+  a0 = (s32[], u32[8,64], f32[256]) tuple(i, c, leaf)
+  a1 = (s32[], u32[8,64], f32[256]) tuple(i, c, leaf)
+  a2 = (s32[], u32[8,64], f32[256]) tuple(i, c, leaf)
+  sw = (u32[8,64]) conditional(i, a0, a1, a2),
+      branch_computations={BRANCHES}
+  nc = u32[8,64] get-tuple-element(sw), index=0
+  one = s32[] constant(1)
+  ni = s32[] add(i, one)
+  ROOT r = (s32[], u32[8,64], f32[256]) tuple(ni, nc, leaf)
+}
+ENTRY main {
+  leaf = f32[256] parameter(0)
+  zu = u32[] constant(0)
+  c0 = u32[8,64] broadcast(zu), dimensions={}
+  i0 = s32[] constant(0)
+  init = (s32[], u32[8,64], f32[256]) tuple(i0, c0, leaf)
+  w = (s32[], u32[8,64], f32[256]) while(init),
+      condition=cond, body=body
+  ROOT out = u32[8,64] get-tuple-element(w), index=1
+}
+)hlo";
+  for (absl::string_view bad_branches :
+       {"upd_b0, pass_b, pass_b", "upd_b0, upd_b1, pass_b"}) {
+    ASSERT_OK_AND_ASSIGN(auto m2,
+                         ParseAndReturnVerifiedModule(absl::StrReplaceAll(
+                             kCondBranchTmpl, {{"BRANCHES", bad_branches}})));
+    ASSERT_OK_AND_ASSIGN(bool c2, pass.Run(m2.get()));
+    EXPECT_FALSE(c2);
+  }
 }
 
 }  // namespace

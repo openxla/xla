@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/while_loop_simplifier.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -27,6 +29,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -42,10 +45,14 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_original_value_util.h"
 #include "xla/hlo/ir/hlo_print_options.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/pass/hlo_pass_registry.h"
 #include "xla/hlo/transforms/call_inliner.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/layout.h"
+#include "xla/layout_util.h"
+#include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/overflow_util.h"
 #include "xla/primitive_util.h"
@@ -53,6 +60,7 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/while_util.h"
 #include "xla/shape.h"
+#include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/logging.h"
@@ -65,6 +73,975 @@ namespace xla {
 namespace m = match;
 using hlo_query::ContainsInstrWithOpcode;
 using std::optional;
+
+namespace {
+
+constexpr int64_t kMaxRowPackLeaves = 8;
+constexpr int64_t kMinRowPackLeafBytes = 512;
+constexpr int64_t kMaxRowPackLeafRowBytes = 32 * 1024;
+constexpr int64_t kMaxRowPackRowInflation = 8;
+constexpr int64_t kMaxRowPackLoopGrowthBytes = int64_t{16} << 20;
+constexpr int64_t kRowPackLaneWidth = 128;
+
+bool IsAllZeroBytesLiteral(const Literal& literal) {
+  if (!literal.shape().IsArray() || !ShapeUtil::IsScalar(literal.shape())) {
+    return false;
+  }
+  const int64_t nbytes = literal.size_bytes();
+  if (nbytes <= 0) {
+    return false;
+  }
+  const auto* bytes = static_cast<const uint8_t*>(literal.untyped_data());
+  return absl::c_all_of(absl::MakeSpan(bytes, static_cast<size_t>(nbytes)),
+                        [](uint8_t b) { return b == 0; });
+}
+
+bool IsZeroByteElementType(PrimitiveType type) {
+  if (!primitive_util::IsArrayType(type) || type == PRED || type == F8E8M0FNU) {
+    return false;
+  }
+  const int bit_width = primitive_util::BitWidth(type);
+  return bit_width >= 8 && (bit_width % 8) == 0 &&
+         IsAllZeroBytesLiteral(LiteralUtil::Zero(type));
+}
+
+bool IsAllZeroScalarConstant(const HloInstruction* inst) {
+  return inst->opcode() == HloOpcode::kConstant &&
+         !inst->HasControlDependencies() &&
+         (!inst->has_sharding() ||
+          (!inst->sharding().IsTuple() &&
+           (inst->sharding().IsReplicated() || inst->sharding().IsManual()))) &&
+         IsZeroByteElementType(inst->shape().element_type()) &&
+         IsAllZeroBytesLiteral(inst->literal());
+}
+
+bool IsCleanRowMajorArray(const Shape& shape, bool strict_dim0_major) {
+  if (!shape.IsArray() || !shape.is_static() ||
+      ShapeUtil::IsZeroElementArray(shape) ||
+      !IsZeroByteElementType(shape.element_type())) {
+    return false;
+  }
+  if (!shape.has_layout()) {
+    return true;
+  }
+  const Layout& layout = shape.layout();
+  if (!layout.tiles().empty() ||
+      layout.memory_space() != Layout::kDefaultMemorySpace ||
+      layout.element_size_in_bits() != 0 ||
+      layout.tail_padding_alignment_in_elements() > 1) {
+    return false;
+  }
+  if (strict_dim0_major) {
+    return LayoutUtil::IsMonotonicWithDim0Major(layout);
+  }
+  int64_t prev_non_unit_dim = shape.dimensions().size();
+  for (int64_t d : layout.minor_to_major()) {
+    if (shape.dimensions(d) > 1) {
+      if (d >= prev_non_unit_dim) {
+        return false;
+      }
+      prev_non_unit_dim = d;
+    }
+  }
+  return true;
+}
+
+bool IsSimpleNonTiledSharding(const HloSharding& sharding) {
+  return !sharding.IsTuple() &&
+         (sharding.IsReplicated() || sharding.IsManual());
+}
+
+bool HasAllowedArraySharding(const HloInstruction& inst) {
+  return !inst.has_sharding() || IsSimpleNonTiledSharding(inst.sharding());
+}
+
+bool HasAllowedTupleSharding(const HloInstruction& inst) {
+  if (!inst.has_sharding()) {
+    return true;
+  }
+  const HloSharding& sharding = inst.sharding();
+  return sharding.IsTuple() ? absl::c_all_of(sharding.tuple_elements(),
+                                             IsSimpleNonTiledSharding)
+                            : IsSimpleNonTiledSharding(sharding);
+}
+
+bool AllUsersAreGte(const HloInstruction& inst) {
+  return absl::c_all_of(inst.users(),
+                        HloPredicateIsOp<HloOpcode::kGetTupleElement>);
+}
+
+bool HasAnySlotGte(const HloInstruction& tuple_inst, int64_t slot) {
+  return absl::c_any_of(tuple_inst.users(), [slot](const HloInstruction* u) {
+    return u->opcode() == HloOpcode::kGetTupleElement &&
+           u->tuple_index() == slot;
+  });
+}
+
+HloInstruction* FindUniqueSlotGte(const HloInstruction& tuple_inst,
+                                  int64_t slot) {
+  HloInstruction* found = nullptr;
+  for (HloInstruction* user : tuple_inst.users()) {
+    if (user->opcode() == HloOpcode::kGetTupleElement &&
+        user->tuple_index() == slot) {
+      if (found != nullptr) {
+        return nullptr;
+      }
+      found = user;
+    }
+  }
+  return found;
+}
+
+bool IsEligibleRowPackWhileShell(const HloInstruction& w) {
+  if (w.opcode() != HloOpcode::kWhile || !w.shape().IsTuple() ||
+      &w == w.parent()->root_instruction() || w.HasControlDependencies() ||
+      frontend::HasDisableWhileLoopDceAttr(&w) || !HasAllowedTupleSharding(w) ||
+      !AllUsersAreGte(w)) {
+    return false;
+  }
+  const HloInstruction* init = w.operand(0);
+  const HloComputation* body = w.while_body();
+  const HloComputation* cond = w.while_condition();
+  if (init->opcode() != HloOpcode::kTuple || init->user_count() != 1 ||
+      init->HasControlDependencies() || !HasAllowedTupleSharding(*init) ||
+      body == cond || body->num_parameters() != 1 ||
+      cond->num_parameters() != 1 || body->caller_instructions().size() != 1 ||
+      cond->caller_instructions().size() != 1) {
+    return false;
+  }
+  const HloInstruction* bp = body->parameter_instruction(0);
+  const HloInstruction* cp = cond->parameter_instruction(0);
+  const HloInstruction* root = body->root_instruction();
+  return bp->shape().IsTuple() && cp->shape().IsTuple() &&
+         HasAllowedTupleSharding(*bp) && HasAllowedTupleSharding(*cp) &&
+         AllUsersAreGte(*bp) && AllUsersAreGte(*cp) &&
+         root->opcode() == HloOpcode::kTuple && root->user_count() == 0 &&
+         !root->HasControlDependencies() && HasAllowedTupleSharding(*root);
+}
+
+struct WriteOnlyRowDusChain {
+  HloInstruction* outer_in_gte = nullptr;
+  HloInstruction* inner_while = nullptr;
+  int64_t inner_slot = -1;
+  HloInstruction* inner_in_gte = nullptr;
+  HloInstruction* inner_out_gte = nullptr;
+  HloInstruction* cond = nullptr;
+  int64_t cond_out_slot = -1;
+  HloInstruction* cond_out_gte = nullptr;
+  int updating_branch = -1;
+  std::vector<int64_t> branch_in_slots;
+  std::vector<HloInstruction*> branch_in_gtes;
+  HloInstruction* dus = nullptr;
+};
+
+bool MatchFullRowDus(HloInstruction* in_gte, HloInstruction* dus,
+                     const Shape& carry_shape) {
+  const int64_t rank = carry_shape.dimensions().size();
+  if (dus->opcode() != HloOpcode::kDynamicUpdateSlice ||
+      in_gte->user_count() != 1 || dus->user_count() != 1 ||
+      dus->HasControlDependencies() || dus->has_frontend_attributes() ||
+      !HasAllowedArraySharding(*dus) ||
+      !ShapeUtil::Compatible(dus->shape(), carry_shape) ||
+      !IsCleanRowMajorArray(dus->shape(), /*strict_dim0_major=*/true) ||
+      dus->operand_count() != 2 + rank || dus->operand(0) != in_gte ||
+      dus->OperandIndices(in_gte).size() != 1) {
+    return false;
+  }
+  const HloInstruction* upd = dus->operand(1);
+  if (upd->user_count() != 1 || dus->OperandIndices(upd).size() != 1 ||
+      upd->shape().element_type() != carry_shape.element_type() ||
+      static_cast<int64_t>(upd->shape().dimensions().size()) != rank ||
+      upd->shape().dimensions(0) != 1 ||
+      !IsCleanRowMajorArray(upd->shape(), /*strict_dim0_major=*/false)) {
+    return false;
+  }
+  for (int64_t d = 1; d < rank; ++d) {
+    if (upd->shape().dimensions(d) != carry_shape.dimensions(d)) {
+      return false;
+    }
+  }
+  const HloInstruction* idx0 = dus->operand(2);
+  const PrimitiveType idx_ty = idx0->shape().element_type();
+  if (!idx0->shape().IsArray() || !ShapeUtil::IsScalar(idx0->shape()) ||
+      !primitive_util::IsIntegralType(idx_ty)) {
+    return false;
+  }
+  for (int64_t d = 1; d < rank; ++d) {
+    const HloInstruction* zk = dus->operand(2 + d);
+    if (zk->opcode() != HloOpcode::kConstant || zk->HasControlDependencies() ||
+        zk->shape().element_type() != idx_ty ||
+        !IsAllZeroBytesLiteral(zk->literal())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool MatchWriteOnlyRowDusBody(HloInstruction* in_gte,
+                              HloInstruction* root_tuple, int64_t out_slot,
+                              const Shape& carry_shape, bool allow_inner_while,
+                              WriteOnlyRowDusChain* chain) {
+  if (in_gte == nullptr || in_gte->HasControlDependencies() ||
+      !HasAllowedArraySharding(*in_gte) ||
+      out_slot >= root_tuple->operand_count()) {
+    return false;
+  }
+  HloInstruction* out_val = root_tuple->mutable_operand(out_slot);
+  if (out_val == in_gte || root_tuple->OperandIndices(out_val).size() != 1 ||
+      !root_tuple->OperandIndices(in_gte).empty()) {
+    return false;
+  }
+  if (MatchFullRowDus(in_gte, out_val, carry_shape)) {
+    chain->dus = out_val;
+    return true;
+  }
+  if (out_val->opcode() != HloOpcode::kGetTupleElement ||
+      out_val->user_count() != 1 || out_val->HasControlDependencies() ||
+      !HasAllowedArraySharding(*out_val)) {
+    return false;
+  }
+  HloInstruction* producer = out_val->mutable_operand(0);
+  const int64_t prod_slot = out_val->tuple_index();
+  if (FindUniqueSlotGte(*producer, prod_slot) != out_val) {
+    return false;
+  }
+  if (allow_inner_while && producer->opcode() == HloOpcode::kWhile) {
+    if (!IsEligibleRowPackWhileShell(*producer)) {
+      return false;
+    }
+    HloInstruction* inner_init = producer->mutable_operand(0);
+    if (in_gte->user_count() != 1 || in_gte->users()[0] != inner_init ||
+        prod_slot >= inner_init->operand_count() ||
+        inner_init->operand(prod_slot) != in_gte ||
+        inner_init->OperandIndices(in_gte).size() != 1 ||
+        HasAnySlotGte(*producer->while_condition()->parameter_instruction(0),
+                      prod_slot)) {
+      return false;
+    }
+    HloInstruction* inner_gte = FindUniqueSlotGte(
+        *producer->while_body()->parameter_instruction(0), prod_slot);
+    if (inner_gte == nullptr) {
+      return false;
+    }
+    chain->inner_while = producer;
+    chain->inner_slot = prod_slot;
+    chain->inner_in_gte = inner_gte;
+    chain->inner_out_gte = out_val;
+    return MatchWriteOnlyRowDusBody(
+        inner_gte, producer->while_body()->root_instruction(), prod_slot,
+        carry_shape, /*allow_inner_while=*/false, chain);
+  }
+  if (producer->opcode() != HloOpcode::kConditional ||
+      !producer->shape().IsTuple() ||
+      producer == producer->parent()->root_instruction() ||
+      producer->HasControlDependencies() ||
+      !HasAllowedTupleSharding(*producer) || !AllUsersAreGte(*producer)) {
+    return false;
+  }
+  const int bcount = producer->branch_count();
+  if (in_gte->user_count() != bcount) {
+    return false;
+  }
+  chain->branch_in_slots.assign(bcount, -1);
+  chain->branch_in_gtes.assign(bcount, nullptr);
+  int updating = -1;
+  for (int b = 0; b < bcount; ++b) {
+    HloInstruction* arg = producer->mutable_operand(b + 1);
+    HloComputation* br = producer->branch_computation(b);
+    if (arg->opcode() != HloOpcode::kTuple || arg->user_count() != 1 ||
+        producer->OperandIndices(arg).size() != 1 ||
+        arg->HasControlDependencies() || !HasAllowedTupleSharding(*arg) ||
+        br->num_parameters() != 1 || br->caller_instructions().size() != 1 ||
+        absl::c_count(producer->branch_computations(), br) != 1) {
+      return false;
+    }
+    auto indices = arg->OperandIndices(in_gte);
+    if (indices.size() != 1) {
+      return false;
+    }
+    const int64_t in_slot = indices[0];
+    HloInstruction* bp = br->parameter_instruction(0);
+    HloInstruction* br_root = br->root_instruction();
+    if (!bp->shape().IsTuple() || !HasAllowedTupleSharding(*bp) ||
+        !AllUsersAreGte(*bp) || br_root->opcode() != HloOpcode::kTuple ||
+        br_root->user_count() != 0 || br_root->HasControlDependencies() ||
+        !HasAllowedTupleSharding(*br_root) ||
+        prod_slot >= br_root->operand_count()) {
+      return false;
+    }
+    HloInstruction* br_gte = FindUniqueSlotGte(*bp, in_slot);
+    if (br_gte == nullptr || br_gte->HasControlDependencies() ||
+        !HasAllowedArraySharding(*br_gte)) {
+      return false;
+    }
+    HloInstruction* br_out = br_root->mutable_operand(prod_slot);
+    if (br_root->OperandIndices(br_out).size() != 1) {
+      return false;
+    }
+    if (br_out == br_gte) {
+      if (br_gte->user_count() != 1) {
+        return false;
+      }
+    } else if (updating == -1 && br_root->OperandIndices(br_gte).empty() &&
+               MatchFullRowDus(br_gte, br_out, carry_shape)) {
+      updating = b;
+      chain->dus = br_out;
+    } else {
+      return false;
+    }
+    chain->branch_in_slots[b] = in_slot;
+    chain->branch_in_gtes[b] = br_gte;
+  }
+  if (updating < 0) {
+    return false;
+  }
+  chain->cond = producer;
+  chain->cond_out_slot = prod_slot;
+  chain->cond_out_gte = out_val;
+  chain->updating_branch = updating;
+  return true;
+}
+
+bool IsEligibleRowPackInteriorOp(const HloInstruction& inst,
+                                 const HloInstruction* carry_gte) {
+  if (&inst == carry_gte || &inst == inst.parent()->root_instruction() ||
+      inst.HasControlDependencies() || inst.has_frontend_attributes() ||
+      !HasAllowedArraySharding(inst) ||
+      !IsCleanRowMajorArray(inst.shape(), /*strict_dim0_major=*/false)) {
+    return false;
+  }
+  switch (inst.opcode()) {
+    case HloOpcode::kSlice:
+      return !inst.shape().dimensions().empty() &&
+             IsCleanRowMajorArray(inst.operand(0)->shape(),
+                                  /*strict_dim0_major=*/false);
+    case HloOpcode::kConcatenate:
+      return inst.operand_count() >= 1 &&
+             absl::c_all_of(inst.operands(), [](const HloInstruction* op) {
+               return IsCleanRowMajorArray(op->shape(),
+                                           /*strict_dim0_major=*/false);
+             });
+    case HloOpcode::kPad:
+      return IsCleanRowMajorArray(inst.operand(0)->shape(),
+                                  /*strict_dim0_major=*/false) &&
+             IsAllZeroScalarConstant(inst.operand(1));
+    case HloOpcode::kReshape:
+    case HloOpcode::kBitcast:
+    case HloOpcode::kCopy:
+      return inst.operand(0)->shape().element_type() ==
+                 inst.shape().element_type() &&
+             ShapeUtil::ElementsIn(inst.operand(0)->shape()) ==
+                 ShapeUtil::ElementsIn(inst.shape()) &&
+             IsCleanRowMajorArray(inst.operand(0)->shape(),
+                                  /*strict_dim0_major=*/false);
+    case HloOpcode::kBitcastConvert:
+      return inst.operand(0)->shape().dimensions() ==
+                 inst.shape().dimensions() &&
+             primitive_util::BitWidth(
+                 inst.operand(0)->shape().element_type()) ==
+                 primitive_util::BitWidth(inst.shape().element_type()) &&
+             IsCleanRowMajorArray(inst.operand(0)->shape(),
+                                  /*strict_dim0_major=*/false);
+    case HloOpcode::kBroadcast:
+      return (inst.dimensions().empty() &&
+              IsAllZeroScalarConstant(inst.operand(0))) ||
+             IsCleanRowMajorArray(inst.operand(0)->shape(),
+                                  /*strict_dim0_major=*/false);
+    default:
+      return false;
+  }
+}
+
+struct RowPackDag {
+  std::vector<HloInstruction*> topo_ops;
+  std::vector<HloInstruction*> leaves;
+  int64_t net_growth_bytes = 0;
+};
+
+std::optional<RowPackDag> CollectZeroPreservingRowPackDag(
+    HloInstruction* dus, const HloInstruction* carry_gte, int64_t num_rows,
+    int64_t remaining_growth_bytes) {
+  HloInstruction* upd = dus->mutable_operand(1);
+  if (!IsEligibleRowPackInteriorOp(*upd, carry_gte)) {
+    return std::nullopt;
+  }
+  HloComputation* comp = dus->parent();
+  std::vector<HloInstruction*> post_order = comp->MakeInstructionPostOrder();
+  absl::flat_hash_set<const HloInstruction*> in_pack;
+  for (auto it = post_order.rbegin(); it != post_order.rend(); ++it) {
+    HloInstruction* inst = *it;
+    if (inst == comp->root_instruction() ||
+        !IsEligibleRowPackInteriorOp(*inst, carry_gte)) {
+      continue;
+    }
+    if (inst == upd ||
+        (!inst->users().empty() &&
+         absl::c_all_of(inst->users(), [&](const HloInstruction* u) {
+           return in_pack.contains(u);
+         }))) {
+      in_pack.insert(inst);
+    }
+  }
+  for (HloInstruction* inst : post_order) {
+    if (in_pack.contains(inst) && inst->opcode() == HloOpcode::kBroadcast &&
+        !(inst->dimensions().empty() &&
+          IsAllZeroScalarConstant(inst->operand(0))) &&
+        !in_pack.contains(inst->operand(0))) {
+      in_pack.erase(inst);
+    }
+  }
+  if (!in_pack.contains(upd)) {
+    return std::nullopt;
+  }
+
+  auto data_operands =
+      [](HloInstruction* inst) -> absl::InlinedVector<HloInstruction*, 4> {
+    if (inst->opcode() == HloOpcode::kPad) {
+      return {inst->mutable_operand(0)};
+    }
+    if (inst->opcode() == HloOpcode::kBroadcast && inst->dimensions().empty() &&
+        IsAllZeroScalarConstant(inst->operand(0))) {
+      return {};
+    }
+    return {inst->operands().begin(), inst->operands().end()};
+  };
+
+  absl::flat_hash_set<const HloInstruction*> reachable = {upd};
+  std::vector<HloInstruction*> worklist = {upd};
+  while (!worklist.empty()) {
+    HloInstruction* cur = worklist.back();
+    worklist.pop_back();
+    for (HloInstruction* op : data_operands(cur)) {
+      if (in_pack.contains(op) && reachable.insert(op).second) {
+        worklist.push_back(op);
+      }
+    }
+  }
+
+  RowPackDag dag;
+  absl::flat_hash_set<const HloInstruction*> seen_leaves;
+  int64_t nontrivial_ops = 0;
+  int64_t sublane_slices = 0;
+  for (HloInstruction* inst : post_order) {
+    if (!reachable.contains(inst)) {
+      continue;
+    }
+    dag.topo_ops.push_back(inst);
+    const HloOpcode op = inst->opcode();
+    if (op == HloOpcode::kSlice || op == HloOpcode::kConcatenate ||
+        op == HloOpcode::kPad) {
+      ++nontrivial_ops;
+    }
+    if (op == HloOpcode::kSlice &&
+        inst->shape().dimensions().back() < kRowPackLaneWidth) {
+      ++sublane_slices;
+    }
+    for (HloInstruction* operand : data_operands(inst)) {
+      if (!reachable.contains(operand) && seen_leaves.insert(operand).second) {
+        dag.leaves.push_back(operand);
+      }
+    }
+  }
+
+  const int64_t m = static_cast<int64_t>(dag.leaves.size());
+  if (m < 1 || m > kMaxRowPackLeaves || nontrivial_ops < 2 * m + 2 ||
+      (m > 1 && sublane_slices < m + 4)) {
+    return std::nullopt;
+  }
+  const int64_t upd_bytes = ShapeUtil::ByteSizeOfElements(upd->shape());
+  const int64_t max_row_bytes = std::min<int64_t>(
+      kMaxRowPackLeafRowBytes,
+      upd_bytes <= kMaxRowPackLeafRowBytes / kMaxRowPackRowInflation
+          ? upd_bytes * kMaxRowPackRowInflation
+          : kMaxRowPackLeafRowBytes);
+  int64_t sum_leaf_bytes = 0;
+  for (const HloInstruction* leaf : dag.leaves) {
+    const Shape& ls = leaf->shape();
+    const int64_t rank = ls.dimensions().size();
+    if (leaf == carry_gte || rank < 1 || !HasAllowedArraySharding(*leaf) ||
+        !IsCleanRowMajorArray(
+            ls, /*strict_dim0_major=*/rank >= 2 && ls.dimensions(0) > 1)) {
+      return std::nullopt;
+    }
+    const int64_t lb = ShapeUtil::ByteSizeOfElements(ls);
+    const int bw = primitive_util::BitWidth(ls.element_type());
+    if (lb < kMinRowPackLeafBytes ||
+        (bw < 32 && (rank < 2 || (ls.dimensions(rank - 2) % (32 / bw)) != 0)) ||
+        (m > 1 && (ls.dimensions(rank - 1) % kRowPackLaneWidth) != 0) ||
+        lb > max_row_bytes - sum_leaf_bytes) {
+      return std::nullopt;
+    }
+    sum_leaf_bytes += lb;
+  }
+  if (sum_leaf_bytes > upd_bytes) {
+    const int64_t row_delta = sum_leaf_bytes - upd_bytes;
+    if (num_rows > remaining_growth_bytes / row_delta) {
+      return std::nullopt;
+    }
+    dag.net_growth_bytes = num_rows * row_delta;
+  }
+  return dag;
+}
+
+Shape MakeRowPackShape(PrimitiveType type, absl::Span<const int64_t> dims,
+                       bool with_default_layout) {
+  return with_default_layout
+             ? ShapeUtil::MakeShapeWithDescendingLayout(type, dims)
+             : ShapeUtil::MakeShape(type, dims);
+}
+
+void ApplyWidenedRowPackSharding(HloInstruction* inst, const Shape& old_shape,
+                                 const std::optional<HloSharding>& old_sharding,
+                                 int64_t slot) {
+  if (!old_sharding.has_value()) {
+    return;
+  }
+  if (!old_sharding->IsTuple()) {
+    inst->set_sharding(*old_sharding);
+    return;
+  }
+  const int64_t old_count = old_shape.tuple_shapes().size();
+  const HloSharding slot_sharding =
+      old_sharding->GetSubSharding(old_shape, {slot});
+  ShapeTree<HloSharding> tree(inst->shape(), slot_sharding);
+  tree.ForEachMutableElement([&](const ShapeIndex& idx, HloSharding* sub) {
+    if (!idx.empty() && !ShapeUtil::GetSubshape(inst->shape(), idx).IsTuple() &&
+        idx[0] < old_count && idx[0] != slot) {
+      *sub = old_sharding->GetSubSharding(old_shape, idx);
+    }
+  });
+  inst->set_sharding(HloSharding::Tuple(tree));
+}
+
+void WidenTupleInstInPlace(HloInstruction* inst, int64_t slot,
+                           absl::Span<const Shape> collector_shapes) {
+  const Shape old_shape = inst->shape();
+  const std::optional<HloSharding> old_sharding =
+      inst->has_sharding() ? std::optional<HloSharding>(inst->sharding())
+                           : std::nullopt;
+  *inst->mutable_shape()->mutable_tuple_shapes(slot) = collector_shapes[0];
+  for (size_t j = 1; j < collector_shapes.size(); ++j) {
+    *inst->mutable_shape()->add_tuple_shapes() = collector_shapes[j];
+  }
+  inst->set_original_value(nullptr);
+  ApplyWidenedRowPackSharding(inst, old_shape, old_sharding, slot);
+}
+
+HloInstruction* BuildWidenedTuple(HloInstruction* old_tuple, int64_t slot,
+                                  absl::Span<HloInstruction* const> new_vals) {
+  const Shape old_shape = old_tuple->shape();
+  const std::optional<HloSharding> old_sharding =
+      old_tuple->has_sharding()
+          ? std::optional<HloSharding>(old_tuple->sharding())
+          : std::nullopt;
+  std::vector<HloInstruction*> ops(old_tuple->operands().begin(),
+                                   old_tuple->operands().end());
+  ops[slot] = new_vals[0];
+  ops.insert(ops.end(), new_vals.begin() + 1, new_vals.end());
+  HloInstruction* widened =
+      old_tuple->parent()->AddInstruction(HloInstruction::CreateTuple(ops));
+  widened->set_metadata(old_tuple->metadata());
+  ApplyWidenedRowPackSharding(widened, old_shape, old_sharding, slot);
+  return widened;
+}
+
+std::vector<HloInstruction*> EmitCollectorGtes(
+    HloInstruction* tuple_inst, int64_t slot, int64_t old_count,
+    const HloInstruction& tmpl, absl::Span<const Shape> collector_shapes) {
+  std::vector<HloInstruction*> gtes;
+  gtes.reserve(collector_shapes.size());
+  HloComputation* comp = tuple_inst->parent();
+  for (size_t j = 0; j < collector_shapes.size(); ++j) {
+    const int64_t idx = j == 0 ? slot : old_count + static_cast<int64_t>(j - 1);
+    HloInstruction* gte =
+        comp->AddInstruction(HloInstruction::CreateGetTupleElement(
+            collector_shapes[j], tuple_inst, idx));
+    gte->set_frontend_attributes(tmpl.frontend_attributes());
+    gte->set_metadata(tmpl.metadata());
+    if (tmpl.has_sharding()) {
+      gte->set_sharding(tmpl.sharding());
+    }
+    gtes.push_back(gte);
+  }
+  return gtes;
+}
+
+absl::StatusOr<bool> TryHoistOneWriteOnlyDusCarry(HloInstruction* outer_while,
+                                                  int64_t* loop_growth_bytes) {
+  if (!IsEligibleRowPackWhileShell(*outer_while)) {
+    return false;
+  }
+  HloComputation* preheader = outer_while->parent();
+  HloInstruction* outer_init = outer_while->mutable_operand(0);
+  HloComputation* outer_body = outer_while->while_body();
+  HloComputation* outer_cond = outer_while->while_condition();
+
+  for (int64_t slot = 0; slot < outer_init->operand_count(); ++slot) {
+    HloInstruction* c_init = outer_init->mutable_operand(slot);
+    const Shape carry_shape = c_init->shape();
+    if (c_init->opcode() != HloOpcode::kBroadcast ||
+        !c_init->dimensions().empty() || c_init->HasControlDependencies() ||
+        !HasAllowedArraySharding(*c_init) ||
+        !IsCleanRowMajorArray(carry_shape, /*strict_dim0_major=*/true) ||
+        carry_shape.dimensions().size() < 2 || carry_shape.dimensions(0) < 2 ||
+        !IsAllZeroScalarConstant(c_init->operand(0)) ||
+        HasAnySlotGte(*outer_cond->parameter_instruction(0), slot)) {
+      continue;
+    }
+    std::vector<HloInstruction*> post_gtes;
+    bool post_gtes_ok = true;
+    for (HloInstruction* u : outer_while->users()) {
+      if (u->tuple_index() == slot) {
+        if (u->HasControlDependencies() || !HasAllowedArraySharding(*u)) {
+          post_gtes_ok = false;
+          break;
+        }
+        post_gtes.push_back(u);
+      }
+    }
+    if (!post_gtes_ok || post_gtes.empty()) {
+      continue;
+    }
+    HloInstruction* outer_gte =
+        FindUniqueSlotGte(*outer_body->parameter_instruction(0), slot);
+    if (outer_gte == nullptr) {
+      continue;
+    }
+
+    WriteOnlyRowDusChain chain;
+    chain.outer_in_gte = outer_gte;
+    if (!MatchWriteOnlyRowDusBody(outer_gte, outer_body->root_instruction(),
+                                  slot, carry_shape, /*allow_inner_while=*/true,
+                                  &chain)) {
+      continue;
+    }
+    const int64_t num_rows = carry_shape.dimensions(0);
+    const HloInstruction* leaf_carry_gte =
+        chain.cond != nullptr
+            ? chain.branch_in_gtes[chain.updating_branch]
+            : (chain.inner_while != nullptr ? chain.inner_in_gte
+                                            : chain.outer_in_gte);
+    std::optional<RowPackDag> dag = CollectZeroPreservingRowPackDag(
+        chain.dus, leaf_carry_gte, num_rows,
+        kMaxRowPackLoopGrowthBytes - *loop_growth_bytes);
+    if (!dag.has_value()) {
+      continue;
+    }
+
+    const bool with_layout = carry_shape.has_layout();
+    const size_t m = dag->leaves.size();
+    std::vector<Shape> collector_shapes;
+    std::vector<Shape> row_upd_shapes;
+    std::vector<HloInstruction*> init_vals;
+    collector_shapes.reserve(m);
+    row_upd_shapes.reserve(m);
+    init_vals.reserve(m);
+    for (const HloInstruction* leaf : dag->leaves) {
+      const PrimitiveType ty = leaf->shape().element_type();
+      absl::InlinedVector<int64_t, 6> c_dims = {num_rows};
+      absl::InlinedVector<int64_t, 6> u_dims = {1};
+      if (leaf->shape().dimensions().size() == 1) {
+        c_dims.push_back(1);
+        u_dims.push_back(1);
+      }
+      c_dims.insert(c_dims.end(), leaf->shape().dimensions().begin(),
+                    leaf->shape().dimensions().end());
+      u_dims.insert(u_dims.end(), leaf->shape().dimensions().begin(),
+                    leaf->shape().dimensions().end());
+      collector_shapes.push_back(MakeRowPackShape(ty, c_dims, with_layout));
+      row_upd_shapes.push_back(MakeRowPackShape(ty, u_dims, with_layout));
+      HloInstruction* zero = preheader->AddInstruction(
+          HloInstruction::CreateConstant(LiteralUtil::Zero(ty)));
+      HloInstruction* bcast = preheader->AddInstruction(
+          HloInstruction::CreateBroadcast(collector_shapes.back(), zero, {}));
+      bcast->set_metadata(c_init->metadata());
+      if (c_init->has_sharding()) {
+        bcast->set_sharding(c_init->sharding());
+      }
+      init_vals.push_back(bcast);
+    }
+
+    std::vector<HloInstruction*> dead_tuples;
+    std::vector<HloInstruction*> dead_gtes = {chain.outer_in_gte};
+
+    // Widen outer_while init, shape, and parameters in place.
+    const int64_t outer_old_count = outer_while->shape().tuple_shapes().size();
+    ABSL_RETURN_IF_ERROR(outer_while->ReplaceOperandWithDifferentShape(
+        0, BuildWidenedTuple(outer_init, slot, init_vals)));
+    dead_tuples.push_back(outer_init);
+    WidenTupleInstInPlace(outer_while, slot, collector_shapes);
+    WidenTupleInstInPlace(outer_body->parameter_instruction(0), slot,
+                          collector_shapes);
+    WidenTupleInstInPlace(outer_cond->parameter_instruction(0), slot,
+                          collector_shapes);
+    std::vector<HloInstruction*> cur_in_gtes = EmitCollectorGtes(
+        outer_body->parameter_instruction(0), slot, outer_old_count,
+        *chain.outer_in_gte, collector_shapes);
+
+    if (chain.inner_while != nullptr) {
+      HloInstruction* iw = chain.inner_while;
+      const int64_t iw_old_count = iw->shape().tuple_shapes().size();
+      HloInstruction* iw_init = iw->mutable_operand(0);
+      ABSL_RETURN_IF_ERROR(iw->ReplaceOperandWithDifferentShape(
+          0, BuildWidenedTuple(iw_init, chain.inner_slot, cur_in_gtes)));
+      dead_tuples.push_back(iw_init);
+      WidenTupleInstInPlace(iw, chain.inner_slot, collector_shapes);
+      WidenTupleInstInPlace(iw->while_body()->parameter_instruction(0),
+                            chain.inner_slot, collector_shapes);
+      WidenTupleInstInPlace(iw->while_condition()->parameter_instruction(0),
+                            chain.inner_slot, collector_shapes);
+      cur_in_gtes = EmitCollectorGtes(
+          iw->while_body()->parameter_instruction(0), chain.inner_slot,
+          iw_old_count, *chain.inner_in_gte, collector_shapes);
+      dead_gtes.push_back(chain.inner_in_gte);
+    }
+
+    auto emit_leaf_duses = [&](absl::Span<HloInstruction* const> base_gtes) {
+      HloComputation* b_star = chain.dus->parent();
+      HloInstruction* idx0 = chain.dus->mutable_operand(2);
+      HloInstruction* z_idx = chain.dus->mutable_operand(3);
+      std::vector<HloInstruction*> duses;
+      duses.reserve(m);
+      for (size_t j = 0; j < m; ++j) {
+        HloInstruction* upd_j = b_star->AddInstruction(
+            HloInstruction::CreateReshape(row_upd_shapes[j], dag->leaves[j]));
+        upd_j->set_metadata(chain.dus->metadata());
+        std::vector<HloInstruction*> starts(
+            collector_shapes[j].dimensions().size(), z_idx);
+        starts[0] = idx0;
+        HloInstruction* dus_j =
+            b_star->AddInstruction(HloInstruction::CreateDynamicUpdateSlice(
+                collector_shapes[j], base_gtes[j], upd_j, starts));
+        dus_j->set_metadata(chain.dus->metadata());
+        if (chain.dus->has_sharding()) {
+          dus_j->set_sharding(chain.dus->sharding());
+        }
+        duses.push_back(dus_j);
+      }
+      return duses;
+    };
+
+    std::vector<HloInstruction*> cur_out_vals;
+    if (chain.cond != nullptr) {
+      HloInstruction* cond = chain.cond;
+      const int64_t cond_old_count = cond->shape().tuple_shapes().size();
+      WidenTupleInstInPlace(cond, chain.cond_out_slot, collector_shapes);
+      for (int b = 0; b < cond->branch_count(); ++b) {
+        HloInstruction* old_arg = cond->mutable_operand(b + 1);
+        const int64_t arg_old_count = old_arg->shape().tuple_shapes().size();
+        ABSL_RETURN_IF_ERROR(cond->ReplaceOperandWithDifferentShape(
+            b + 1,
+            BuildWidenedTuple(old_arg, chain.branch_in_slots[b], cur_in_gtes)));
+        dead_tuples.push_back(old_arg);
+        HloComputation* br = cond->branch_computation(b);
+        WidenTupleInstInPlace(br->parameter_instruction(0),
+                              chain.branch_in_slots[b], collector_shapes);
+        std::vector<HloInstruction*> br_gtes = EmitCollectorGtes(
+            br->parameter_instruction(0), chain.branch_in_slots[b],
+            arg_old_count, *chain.branch_in_gtes[b], collector_shapes);
+        dead_gtes.push_back(chain.branch_in_gtes[b]);
+        std::vector<HloInstruction*> br_outs =
+            b == chain.updating_branch ? emit_leaf_duses(br_gtes) : br_gtes;
+        HloInstruction* old_br_root = br->root_instruction();
+        br->set_root_instruction(
+            BuildWidenedTuple(old_br_root, chain.cond_out_slot, br_outs),
+            /*accept_different_shape=*/true);
+        dead_tuples.push_back(old_br_root);
+      }
+      cur_out_vals =
+          EmitCollectorGtes(cond, chain.cond_out_slot, cond_old_count,
+                            *chain.cond_out_gte, collector_shapes);
+      dead_gtes.push_back(chain.cond_out_gte);
+    } else {
+      cur_out_vals = emit_leaf_duses(cur_in_gtes);
+    }
+
+    if (chain.inner_while != nullptr) {
+      HloInstruction* iw = chain.inner_while;
+      HloInstruction* old_iw_root = iw->while_body()->root_instruction();
+      iw->while_body()->set_root_instruction(
+          BuildWidenedTuple(old_iw_root, chain.inner_slot, cur_out_vals),
+          /*accept_different_shape=*/true);
+      dead_tuples.push_back(old_iw_root);
+      cur_out_vals = EmitCollectorGtes(
+          iw, chain.inner_slot,
+          iw->shape().tuple_shapes().size() - static_cast<int64_t>(m - 1),
+          *chain.inner_out_gte, collector_shapes);
+      dead_gtes.push_back(chain.inner_out_gte);
+    }
+
+    HloInstruction* old_outer_root = outer_body->root_instruction();
+    outer_body->set_root_instruction(
+        BuildWidenedTuple(old_outer_root, slot, cur_out_vals),
+        /*accept_different_shape=*/true);
+    dead_tuples.push_back(old_outer_root);
+
+    // Replay V_pack once after outer_while batched along leading axis N.
+    std::vector<HloInstruction*> exit_gtes = EmitCollectorGtes(
+        outer_while, slot, outer_old_count, *post_gtes[0], collector_shapes);
+    absl::flat_hash_map<const HloInstruction*, HloInstruction*> replay;
+    for (size_t j = 0; j < m; ++j) {
+      HloInstruction* val = exit_gtes[j];
+      if (dag->leaves[j]->shape().dimensions().size() == 1) {
+        const Shape squeezed = MakeRowPackShape(
+            val->shape().element_type(),
+            {num_rows, dag->leaves[j]->shape().dimensions(0)}, with_layout);
+        val = preheader->AddInstruction(
+            HloInstruction::CreateReshape(squeezed, val));
+        val->set_metadata(post_gtes[0]->metadata());
+      }
+      replay.emplace(dag->leaves[j], val);
+    }
+
+    for (HloInstruction* inst : dag->topo_ops) {
+      absl::InlinedVector<int64_t, 6> bdims = {num_rows};
+      bdims.insert(bdims.end(), inst->shape().dimensions().begin(),
+                   inst->shape().dimensions().end());
+      const Shape out_shape =
+          MakeRowPackShape(inst->shape().element_type(), bdims, with_layout);
+      HloInstruction* batched = nullptr;
+      switch (inst->opcode()) {
+        case HloOpcode::kReshape:
+        case HloOpcode::kBitcast:
+        case HloOpcode::kCopy:
+          batched = preheader->AddInstruction(HloInstruction::CreateReshape(
+              out_shape, replay.at(inst->operand(0))));
+          break;
+        case HloOpcode::kBitcastConvert:
+          batched =
+              preheader->AddInstruction(HloInstruction::CreateBitcastConvert(
+                  out_shape, replay.at(inst->operand(0))));
+          break;
+        case HloOpcode::kSlice: {
+          std::vector<int64_t> starts = {0};
+          std::vector<int64_t> limits = {num_rows};
+          std::vector<int64_t> strides = {1};
+          starts.insert(starts.end(), inst->slice_starts().begin(),
+                        inst->slice_starts().end());
+          limits.insert(limits.end(), inst->slice_limits().begin(),
+                        inst->slice_limits().end());
+          strides.insert(strides.end(), inst->slice_strides().begin(),
+                         inst->slice_strides().end());
+          batched = preheader->AddInstruction(HloInstruction::CreateSlice(
+              out_shape, replay.at(inst->operand(0)), starts, limits, strides));
+          break;
+        }
+        case HloOpcode::kConcatenate: {
+          std::vector<HloInstruction*> ops;
+          ops.reserve(inst->operand_count());
+          for (const HloInstruction* op : inst->operands()) {
+            ops.push_back(replay.at(op));
+          }
+          batched = preheader->AddInstruction(HloInstruction::CreateConcatenate(
+              out_shape, ops, inst->concatenate_dimension() + 1));
+          break;
+        }
+        case HloOpcode::kPad: {
+          HloInstruction* pad_val =
+              preheader->AddInstruction(inst->operand(1)->Clone());
+          PaddingConfig pc;
+          auto* d0 = pc.add_dimensions();
+          d0->set_edge_padding_low(0);
+          d0->set_edge_padding_high(0);
+          d0->set_interior_padding(0);
+          for (const auto& dim : inst->padding_config().dimensions()) {
+            *pc.add_dimensions() = dim;
+          }
+          batched = preheader->AddInstruction(HloInstruction::CreatePad(
+              out_shape, replay.at(inst->operand(0)), pad_val, pc));
+          break;
+        }
+        case HloOpcode::kBroadcast: {
+          auto it = replay.find(inst->operand(0));
+          if (it != replay.end()) {
+            std::vector<int64_t> dims = {0};
+            for (int64_t d : inst->dimensions()) {
+              dims.push_back(d + 1);
+            }
+            batched = preheader->AddInstruction(
+                HloInstruction::CreateBroadcast(out_shape, it->second, dims));
+          } else {
+            HloInstruction* zc =
+                preheader->AddInstruction(inst->operand(0)->Clone());
+            batched = preheader->AddInstruction(
+                HloInstruction::CreateBroadcast(out_shape, zc, {}));
+          }
+          break;
+        }
+        default:
+          LOG(FATAL) << "Unexpected row-pack opcode: " << inst->opcode();
+      }
+      batched->set_metadata(inst->metadata());
+      if (post_gtes[0]->has_sharding()) {
+        batched->set_sharding(post_gtes[0]->sharding());
+      }
+      replay.emplace(inst, batched);
+    }
+
+    HloInstruction* restored =
+        preheader->AddInstruction(HloInstruction::CreateReshape(
+            carry_shape, replay.at(chain.dus->operand(1))));
+    restored->set_metadata(post_gtes[0]->metadata());
+    if (post_gtes[0]->has_sharding()) {
+      restored->set_sharding(post_gtes[0]->sharding());
+    }
+    for (HloInstruction* pg : post_gtes) {
+      if (pg->original_value() != nullptr) {
+        restored->CopyOriginalValue(pg);
+        break;
+      }
+    }
+    for (HloInstruction* pg : post_gtes) {
+      ABSL_RETURN_IF_ERROR(pg->ReplaceAllUsesWith(restored));
+      if (preheader->root_instruction() == pg) {
+        preheader->set_root_instruction(restored);
+      }
+      ABSL_RETURN_IF_ERROR(preheader->RemoveInstruction(pg));
+    }
+
+    absl::flat_hash_set<const HloInstruction*> pruned;
+    auto prune_dead =
+        [&](absl::Span<HloInstruction* const> insts) -> absl::Status {
+      for (auto it = insts.rbegin(); it != insts.rend(); ++it) {
+        HloInstruction* inst = *it;
+        if (!pruned.contains(inst) && inst->IsDead()) {
+          pruned.insert(inst);
+          ABSL_RETURN_IF_ERROR(inst->parent()->RemoveInstruction(inst));
+        }
+      }
+      return absl::OkStatus();
+    };
+    ABSL_RETURN_IF_ERROR(prune_dead(dead_tuples));
+    ABSL_RETURN_IF_ERROR(prune_dead({chain.dus}));
+    ABSL_RETURN_IF_ERROR(prune_dead(dag->topo_ops));
+    ABSL_RETURN_IF_ERROR(prune_dead(dead_gtes));
+    ABSL_RETURN_IF_ERROR(prune_dead({c_init}));
+
+    *loop_growth_bytes += dag->net_growth_bytes;
+    return true;
+  }
+  return false;
+}
+
+absl::StatusOr<bool> TryHoistRowPackFromWriteOnlyDusCarries(
+    HloInstruction* while_op) {
+  if (while_op->GetModule()->has_schedule()) {
+    return false;
+  }
+  int64_t loop_growth_bytes = 0;
+  bool any_changed = false;
+  while (true) {
+    ABSL_ASSIGN_OR_RETURN(
+        bool step, TryHoistOneWriteOnlyDusCarry(while_op, &loop_growth_bytes));
+    if (!step) {
+      break;
+    }
+    any_changed = true;
+  }
+  return any_changed;
+}
+
+}  // namespace
 
 // This function removes trivial compare hlo instructions inside the while body.
 // Assuming a while loop with known trip count k, loop induction variable i with
@@ -1847,6 +2824,15 @@ absl::StatusOr<bool> WhileLoopSimplifier::RunImpl(
       continue;
     }
 
+    if (hoist_write_only_row_packs_) {
+      ABSL_ASSIGN_OR_RETURN(result,
+                            TryHoistRowPackFromWriteOnlyDusCarries(while_op));
+      changed |= result;
+      if (result) {
+        continue;
+      }
+    }
+
     if (simplify_compare_instrs_) {
       ABSL_ASSIGN_OR_RETURN(result, TryRemoveTrivialCompare(while_op));
       changed |= result;
@@ -1901,7 +2887,7 @@ absl::StatusOr<bool> WhileLoopSimplifier::RunImpl(
   }
   if (changed) {
     HloDCE dce;
-    ABSL_RETURN_IF_ERROR(dce.Run(module).status());
+    ABSL_RETURN_IF_ERROR(dce.Run(module, execution_threads).status());
   }
   XLA_VLOG_LINES(
       3, "WhileLoopSimplifier::RunImpl(), after:\n" + module->ToString());
