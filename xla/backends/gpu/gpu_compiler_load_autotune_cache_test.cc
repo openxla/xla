@@ -26,7 +26,7 @@ limitations under the License.
 #include "tsl/platform/path.h"
 #include "tsl/platform/protobuf.h"
 #include "xla/autotune_cache.pb.h"
-#include "xla/backends/autotuner/backends.pb.h"
+#include "xla/backends/core/autotuner/backends.pb.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/xla.pb.h"
