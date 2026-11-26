@@ -16,7 +16,10 @@ limitations under the License.
 #include "xla/stream_executor/sycl/onednn_util.h"
 
 #include <string>
+
+// clang-format off
 #include <sycl/sycl.hpp>  // NOLINT
+// clang-format on
 
 #include "absl/base/const_init.h"
 #include "absl/container/flat_hash_map.h"
@@ -27,12 +30,12 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "dnnl.hpp"
 #include "dnnl_sycl.hpp"
-#include "tsl/platform/str_util.h"
 #include "xla/primitive_util.h"
 #include "xla/stream_executor/sycl/sycl_gpu_runtime.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/util/env_var.h"
+#include "tsl/platform/str_util.h"
 
 namespace stream_executor {
 namespace sycl {
