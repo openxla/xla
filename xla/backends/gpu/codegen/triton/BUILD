@@ -297,6 +297,7 @@ cc_library(
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/gpu:tma_metadata",
+        "//xla/stream_executor/rocm:rocm_compute_capability",
         "//xla/tools:hlo_decomposer_lib",
         "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
         "//xla/tsl/platform:logging",

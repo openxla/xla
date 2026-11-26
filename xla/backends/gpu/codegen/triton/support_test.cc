@@ -843,12 +843,6 @@ ENTRY triton_computation {
   ASSERT_OK_AND_ASSIGN(TestedInstruction ti, ParseTemplateAndGetInstruction(
                                                  hlo_text, data_type, opcode));
 
-  if (auto* rocm_cc = cc.rocm_compute_capability();
-      rocm_cc && !rocm_cc->gfx1250() && data_type == PrimitiveType::BF16 &&
-      opcode == HloOpcode::kFma) {
-    GTEST_SKIP() << "BF16 fma is only supported on gfx1250.";
-  }
-
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 32}, cc);
 }
 
