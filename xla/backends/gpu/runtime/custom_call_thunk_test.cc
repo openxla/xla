@@ -146,6 +146,7 @@ namespace {
 using absl_testing::IsOk;
 using absl_testing::IsOkAndHolds;
 using absl_testing::StatusIs;
+using ::testing::ElementsAre;
 using ::testing::HasSubstr;
 using ::testing::Pair;
 namespace ffi = ::xla::ffi;
@@ -1452,6 +1453,85 @@ TEST(CustomCallThunkTest, KernelRegistryPrepareAndExecute) {
   ASSERT_OK(setup->stream->Memcpy(&host_exec, setup->alloc->result_dev_ptrs[0],
                                   sizeof(int32_t)));
   EXPECT_EQ(host_exec, 15);
+}
+
+TEST(CustomCallThunkTest, RecordReceivesPreparedAndInitializedState) {
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                       executor->CreateStream());
+
+  constexpr int kPreparedValue = 101;
+  constexpr int kInitializedValue = 202;
+
+  std::vector<ffi::RecordAction> actions;
+  std::vector<std::pair<int, int>> observed_values;
+
+  CustomCallThunk::OwnedHandlerBundle bundle;
+  bundle.prepare = ffi::Ffi::BindPrepare().To(
+      []() -> absl::StatusOr<std::unique_ptr<NonSerializableTestState>> {
+        return std::make_unique<NonSerializableTestState>(
+            NonSerializableTestState{kPreparedValue});
+      });
+  bundle.initialize = ffi::Ffi::BindInitialize().To(
+      []() -> absl::StatusOr<std::unique_ptr<NonSerializableTestState>> {
+        return std::make_unique<NonSerializableTestState>(
+            NonSerializableTestState{kInitializedValue});
+      });
+  bundle.execute =
+      ffi::Ffi::BindExecute().To([]() { return absl::OkStatus(); });
+  bundle.record =
+      ffi::Ffi::BindRecord()
+          .Ctx<ffi::Extension<ffi::RecordExtension>>()
+          .Ctx<ffi::Prepared<NonSerializableTestState>>()
+          .Ctx<ffi::Initialized<NonSerializableTestState>>()
+          .To([&actions, &observed_values](
+                  ffi::RecordExtension::Type record_ctx,
+                  NonSerializableTestState* prepared,
+                  NonSerializableTestState* initialized) -> absl::Status {
+            actions.push_back(record_ctx.action());
+            observed_values.emplace_back(prepared->value, initialized->value);
+            if (record_ctx.action() == ffi::RecordAction::kCreate) {
+              return record_ctx.CreateEmptyCommand({}).status();
+            }
+            return absl::OkStatus();
+          });
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<CustomCallThunk> thunk,
+      CustomCallThunk::Create(
+          Thunk::ThunkInfo(), "ffi_record_scoped_state", std::move(bundle),
+          /*operands=*/{}, /*results=*/{}, /*attributes=*/{},
+          /*called_computation=*/nullptr,
+          executor->GetDeviceDescription().gpu_compute_capability()));
+
+  BufferAllocations buffer_allocations({}, 0, nullptr);
+  TestThunkParams thunk_params(executor, &buffer_allocations, stream.get());
+  ASSERT_OK(thunk->Prepare(thunk_params.PrepareParams()));
+  ASSERT_OK(thunk->Initialize(thunk_params.InitializeParams()));
+
+  Thunk::ExecuteParams execute_params = thunk_params.ExecuteParams();
+  CommandStateManager state;
+  Command::RecordParams record_params = {state};
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<se::CommandBuffer> cb,
+      executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
+  ASSERT_OK_AND_ASSIGN(
+      const se::CommandBuffer::Command* cmd,
+      thunk->Record(execute_params, record_params,
+                    Command::RecordCreate{/*dependencies=*/{}}, cb.get()));
+  ASSERT_NE(cmd, nullptr);
+  ASSERT_OK(cb->Finalize());
+  ASSERT_OK(cb->Update());
+  EXPECT_THAT(thunk->Record(execute_params, record_params,
+                            Command::RecordUpdate{cmd}, cb.get()),
+              IsOkAndHolds(cmd));
+  EXPECT_THAT(cb->Finalize(), IsOk());
+
+  EXPECT_THAT(actions, ElementsAre(ffi::RecordAction::kCreate,
+                                   ffi::RecordAction::kUpdate));
+  EXPECT_THAT(observed_values,
+              ElementsAre(Pair(kPreparedValue, kInitializedValue),
+                          Pair(kPreparedValue, kInitializedValue)));
 }
 
 }  // namespace
