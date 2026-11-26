@@ -1,0 +1,48 @@
+// RUN: fusion_to_xtile %s --xla_cpu_prefer_vector_width=256 \
+// RUN:   | fusion_compiler_opt --xtile-cpu-xtile-to-vector \
+// RUN:     --xtile-cpu-normalize-vector-contract \
+// RUN:     --xtile-cpu-hoist-gemv-reduction \
+// RUN:     --xtile-cpu-lower-vector-contract --canonicalize \
+// RUN:   | FileCheck %s --check-prefix=CHECK
+// RUN: fusion_to_xtile %s --xla_cpu_prefer_vector_width=256 \
+// RUN:   | fusion_compiler_opt --xtile-cpu-xtile-to-vector --xtile-cpu-vector-to-llvm \
+// RUN:   | FileCheck %s --check-prefix=CHECK-LLVM
+// RUN: test_correctness %s --abs_error_bound=1e-4 --rel_error_bound=1e-5
+
+fusion {
+  p0 = f32[37,67]{1,0} parameter(0)
+  p1 = f32[67,1]{1,0} parameter(1)
+  ROOT dot = f32[37,1]{1,0} dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    backend_config={sizes:[8]}
+}
+
+// CHECK-LABEL: @wrapped_fusion_impl
+
+// CHECK: %[[LOOP:.*]] = scf.for {{.*}} -> (vector<8x8xf32>)
+// CHECK-NOT: vector.contract
+// CHECK-NOT: vector.transpose
+// CHECK:     vector.broadcast {{.*}} : vector<8xf32> to vector<8x8xf32>
+// CHECK:     vector.fma {{.*}} : vector<8x8xf32>
+// CHECK:   scf.yield {{.*}} : vector<8x8xf32>
+// CHECK:   %[[RED:.*]] = vector.multi_reduction <add>, %[[LOOP]], %{{.*}} [1]
+// CHECK-SAME:  vector<8x8xf32> to vector<8xf32>
+// CHECK:   vector.shape_cast %[[RED]] : vector<8xf32> to vector<8x1xf32>
+
+// CHECK-LLVM-LABEL: llvm.func internal @wrapped_fusion_impl
+// CHECK-LLVM-COUNT-8: llvm.intr.fmuladd({{.*}}) : (vector<8xf32>, vector<8xf32>, vector<8xf32>) -> vector<8xf32>
+// CHECK-LLVM-NOT: llvm.alloc
+
+ENTRY main {
+  p0 = f32[37,67]{1,0} parameter(0)
+  p1 = f32[67,1]{1,0} parameter(1)
+  ROOT fusion = f32[37,1]{1,0} fusion(p0, p1), kind=kLoop, calls=fusion,
+    backend_config={
+      "fusion_backend_config":{
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["8", "1"]}],
+          "num_ctas":"1"
+        }
+      }
+    }
+}
