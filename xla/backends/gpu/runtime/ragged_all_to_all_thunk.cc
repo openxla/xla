@@ -969,15 +969,6 @@ absl::StatusOr<const se::CommandBuffer::Command*> RaggedAllToAllThunk::Record(
          "clique";
   RankId rank = rank_opt.value();
 
-  ABSL_ASSIGN_OR_RETURN(
-      std::vector<DeviceBufferPair> device_buffers,
-      ConvertToDeviceBuffers(execute_params.buffer_allocations, buffers(),
-                             config_.config.operand_element_type));
-
-  RaggedAllToAllStreamState* state = per_device_states_.Find(device_ordinal);
-  TF_RET_CHECK(state != nullptr)
-      << "RaggedAllToAllThunk::Record: Initialize must be called first";
-
   if (config_.enable_gxl) {
     ABSL_ASSIGN_OR_RETURN(
         Communicator * comm,
@@ -989,6 +980,15 @@ absl::StatusOr<const se::CommandBuffer::Command*> RaggedAllToAllThunk::Record(
                                      record_action, command_buffer);
     }
   }
+
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<DeviceBufferPair> device_buffers,
+      ConvertToDeviceBuffers(execute_params.buffer_allocations, buffers(),
+                             config_.config.operand_element_type));
+
+  RaggedAllToAllStreamState* state = per_device_states_.Find(device_ordinal);
+  TF_RET_CHECK(state != nullptr)
+      << "RaggedAllToAllThunk::Record: Initialize must be called first";
 
   if (state->kernel_strategy ==
       RaggedAllToAllKernelStrategy::kSymmetricMemory) {

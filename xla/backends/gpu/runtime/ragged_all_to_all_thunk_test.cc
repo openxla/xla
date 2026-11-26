@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -26,14 +23,23 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/base/casts.h"
+#include "absl/container/btree_map.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/platform/casts.h"
+#include "xla/backends/gpu/collectives/cancellation_token.h"
+#include "xla/backends/gpu/collectives/gpu_clique.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_cliques.h"
+#include "xla/backends/gpu/collectives/gpu_communicator.h"
+#include "xla/backends/gpu/collectives/gxl_communicator.h"
+#include "xla/backends/gpu/collectives/mock_gpu_communicator.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/buffer_allocations.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
@@ -52,6 +58,8 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/backends/gpu/runtime/thunk_test_utils.h"
+#include "xla/core/collectives/communicator.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -68,6 +76,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_init.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
@@ -83,11 +92,15 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::NiceMock;
+using ::testing::Return;
+using ::testing::StrictMock;
 using Kind = Thunk::Kind;
 using ::tsl::proto_testing::EqualsProto;
 
@@ -116,7 +129,9 @@ static se::StreamExecutor* GpuExecutor() {
   return platform->ExecutorForDevice(0).value();
 }
 
-static RaggedAllToAllConfig MakeOneRankConfig() {
+static RaggedAllToAllConfig MakeOneRankConfig(
+    bool enable_gxl = false, bool allow_fallback_to_nccl = false,
+    bool use_device_kernel = false) {
   ReplicaGroup replica_group;
   replica_group.add_replica_ids(0);
 
@@ -124,10 +139,14 @@ static RaggedAllToAllConfig MakeOneRankConfig() {
   config.config.operand_element_type = {F32, F32, S64, S64, S64, S64};
   config.config.replica_groups = {replica_group};
   config.config.group_mode = COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA;
+  config.config.use_symmetric_buffer = use_device_kernel;
   config.num_total_updates = kNumOneRankUpdates;
   config.num_input_rows = kNumOneRankInputRows;
   config.num_row_elements = kNumOneRankRowElements;
   config.one_shot_kernel_enabled = true;
+  config.enable_gxl = enable_gxl;
+  config.allow_fallback_to_nccl = allow_fallback_to_nccl;
+  config.use_device_kernel = use_device_kernel;
   return config;
 }
 
@@ -160,7 +179,8 @@ static std::vector<BufferAllocation> MakeOneRankBufferAllocations() {
 }
 
 static RaggedAllToAllThunk MakeOneRankThunk(
-    const std::vector<BufferAllocation>& allocations) {
+    const std::vector<BufferAllocation>& allocations,
+    RaggedAllToAllConfig config = MakeOneRankConfig()) {
   std::vector<CollectiveThunk::Buffer> buffers;
   buffers.reserve(kNumRaggedBuffers);
   buffers.push_back(MakeBuffer(allocations[0], F32, kNumOneRankElements));
@@ -168,8 +188,57 @@ static RaggedAllToAllThunk MakeOneRankThunk(
   for (int i = 2; i < kNumRaggedBuffers; ++i) {
     buffers.push_back(MakeBuffer(allocations[i], S64, kNumOneRankUpdates));
   }
-  return RaggedAllToAllThunk(Thunk::ThunkInfo(), MakeOneRankConfig(),
+  return RaggedAllToAllThunk(Thunk::ThunkInfo(), std::move(config),
                              std::move(buffers), /*devices_per_host=*/1);
+}
+
+// A GxlCommunicator stub that records how many times each GXL entry point is
+// invoked, so tests can assert that the thunk delegated to the GXL path.
+class CountingGxlCommunicator : public GxlCommunicator {
+ public:
+  absl::Status RunAllGatherGxl(se::Stream* stream, PrimitiveType element_type,
+                               se::DeviceAddressBase input_buffer,
+                               se::DeviceAddressBase output_buffer,
+                               int64_t element_count, int64_t rank) override {
+    ++all_gather_calls;
+    return absl::OkStatus();
+  }
+
+  absl::Status RunRaggedAllToAllGxl(
+      se::Stream* stream, PrimitiveType element_type,
+      se::DeviceAddressBase input_buffer, se::DeviceAddressBase output_buffer,
+      se::DeviceAddressBase input_offsets_buffer,
+      se::DeviceAddressBase send_sizes_buffer,
+      se::DeviceAddressBase output_offsets_buffer,
+      se::DeviceAddressBase recv_sizes_buffer, int64_t num_row_elements,
+      int64_t num_total_updates, int64_t rank) override {
+    ++ragged_calls;
+    // Record at least one op on the trace stream so the nested command buffer
+    // built by CollectiveThunk::Record is not empty.
+    return stream->MemZero(&output_buffer, output_buffer.size());
+  }
+
+  int ragged_calls = 0;
+  int all_gather_calls = 0;
+};
+
+// Builds a single-rank CollectiveCliques whose rank-0 communicator is `comm`,
+// bypassing AcquireCollectiveCliques so tests can inject a MockGpuCommunicator.
+// `lockable_out` must outlive the returned CollectiveCliques, which holds the
+// clique lock; declare it before the CollectiveCliques in the caller so the
+// lock is released before ~LockableGpuClique runs.
+static CollectiveCliques MakeMockGxlCliques(
+    const GpuCliqueKey& clique_key, std::unique_ptr<Communicator> comm,
+    std::shared_ptr<LockableGpuClique>& lockable_out) {
+  absl::btree_map<RankId, std::unique_ptr<Communicator>> comms;
+  comms[RankId(0)] = std::move(comm);
+  lockable_out = std::make_shared<LockableGpuClique>(
+      clique_key, /*clique_ids=*/std::nullopt, std::move(comms),
+      /*peer_access_enabled=*/true, std::make_shared<CancellationToken>());
+  AcquiredCliquesMap cliques_map;
+  cliques_map[clique_key] =
+      std::make_shared<LockableGpuClique::Lock>(lockable_out->Acquire());
+  return CollectiveCliques(std::move(cliques_map));
 }
 
 static std::vector<se::DeviceAddressBase> AllocateOneRankDeviceBuffers(
@@ -358,6 +427,170 @@ TEST(RaggedAllToAllThunkTest, RecordCommandBufferCreateAndUpdate) {
   ASSERT_OK(command_buffer->Submit(stream.get()));
   ASSERT_OK(stream->BlockHostUntilDone());
   ASSERT_OK(VerifyOneRankOutput(*stream, phase2_buffers[1], /*phase=*/2));
+}
+
+// When enable_gxl is set and the clique's communicator exposes a GXL
+// communicator, Initialize must return early without allocating any
+// fallback/kernel state (kernel_strategy stays kNone). We assert this with a
+// StrictMock communicator that only permits gxl_communicator(): the config also
+// requests the NCCL fallback and the device kernel, so if the early return did
+// not fire, Initialize would reach the fallback/kernel setup and call
+// comm->LsaSize(), failing the StrictMock.
+TEST(RaggedAllToAllThunkTest,
+     InitializeReturnsEarlyWhenGxlCommunicatorPresent) {
+  se::StreamExecutor* executor = GpuExecutor();
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                       executor->CreateStream());
+  auto allocator =
+      std::make_unique<se::StreamExecutorAddressAllocator>(executor);
+
+  DeviceAssignment device_assignment(/*replica_count=*/1,
+                                     /*computation_count=*/1);
+  device_assignment(0, 0) = 0;
+
+  GpuExecutableRunOptions::DeviceIdMap id_map;
+  id_map[LocalDeviceId(0)] = GlobalDeviceId(0);
+  GpuExecutableRunOptions gpu_run_options;
+  gpu_run_options.set_gpu_global_device_ids(std::move(id_map));
+
+  ServiceExecutableRunOptions run_options;
+  run_options.mutable_run_options()->set_stream(stream.get());
+  run_options.mutable_run_options()->set_device_assignment(&device_assignment);
+  run_options.mutable_run_options()->set_local_device_count(1);
+  run_options.mutable_run_options()->set_gpu_executable_run_options(
+      &gpu_run_options);
+
+  ASSERT_OK_AND_ASSIGN(
+      CollectiveParams collective_params,
+      CollectiveParams::Create(run_options, /*async_streams=*/{},
+                               LocalDeviceId(0)));
+
+  RaggedAllToAllConfig config =
+      MakeOneRankConfig(/*enable_gxl=*/true, /*allow_fallback_to_nccl=*/true,
+                        /*use_device_kernel=*/true);
+
+  std::vector<BufferAllocation> buffer_allocations =
+      MakeOneRankBufferAllocations();
+  RaggedAllToAllThunk thunk = MakeOneRankThunk(buffer_allocations, config);
+
+  std::vector<se::DeviceAddressBase> device_buffers =
+      AllocateOneRankDeviceBuffers(executor);
+  BufferAllocations allocations(device_buffers, /*device_ordinal=*/0,
+                                allocator.get());
+
+  ASSERT_OK_AND_ASSIGN(
+      GpuCliqueKey clique_key,
+      GetCollectiveGpuCliqueKey(collective_params, config.config));
+
+  CountingGxlCommunicator gxl_comm;
+  auto mock_comm = std::make_unique<StrictMock<MockGpuCommunicator>>();
+  EXPECT_CALL(*mock_comm, gxl_communicator()).WillRepeatedly(Return(&gxl_comm));
+
+  // `lockable` must outlive `collective_cliques` (which holds the clique lock),
+  // so it is declared first and destroyed last.
+  std::shared_ptr<LockableGpuClique> lockable;
+  CollectiveCliques collective_cliques =
+      MakeMockGxlCliques(clique_key, std::move(mock_comm), lockable);
+
+  TestThunkParams thunk_params(executor, &allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options)
+      .WithCollectiveParams(&collective_params)
+      .WithCollectiveCliques(&collective_cliques)
+      .WithLocalDeviceCount(1);
+
+  ASSERT_OK(thunk.Initialize(thunk_params.InitializeParams()));
+}
+
+// When enable_gxl is set and the clique's communicator exposes a GXL
+// communicator, Record must delegate to CollectiveThunk::Record, which traces
+// RunCollective and dispatches to the GXL communicator. We assert that the GXL
+// communicator's RunRaggedAllToAllGxl was invoked exactly once.
+TEST(RaggedAllToAllThunkTest, RecordDelegatesToGxlWhenGxlCommunicatorPresent) {
+  se::StreamExecutor* executor = GpuExecutor();
+  if (!executor->GetDeviceDescription()
+           .cuda_compute_capability()
+           .IsAtLeastHopper() &&
+      !executor->GetDeviceDescription().gpu_compute_capability().IsRocm()) {
+    GTEST_SKIP()
+        << "Child command nodes require Hopper or newer, or a ROCm device";
+  }
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                       executor->CreateStream());
+  auto allocator =
+      std::make_unique<se::StreamExecutorAddressAllocator>(executor);
+
+  DeviceAssignment device_assignment(/*replica_count=*/1,
+                                     /*computation_count=*/1);
+  device_assignment(0, 0) = 0;
+
+  GpuExecutableRunOptions::DeviceIdMap id_map;
+  id_map[LocalDeviceId(0)] = GlobalDeviceId(0);
+  GpuExecutableRunOptions gpu_run_options;
+  gpu_run_options.set_gpu_global_device_ids(std::move(id_map));
+
+  ServiceExecutableRunOptions run_options;
+  run_options.mutable_run_options()->set_stream(stream.get());
+  run_options.mutable_run_options()->set_device_assignment(&device_assignment);
+  run_options.mutable_run_options()->set_local_device_count(1);
+  run_options.mutable_run_options()->set_gpu_executable_run_options(
+      &gpu_run_options);
+
+  ASSERT_OK_AND_ASSIGN(
+      CollectiveParams collective_params,
+      CollectiveParams::Create(run_options, /*async_streams=*/{},
+                               LocalDeviceId(0)));
+
+  RaggedAllToAllConfig config = MakeOneRankConfig(/*enable_gxl=*/true);
+
+  std::vector<BufferAllocation> buffer_allocations =
+      MakeOneRankBufferAllocations();
+  RaggedAllToAllThunk thunk = MakeOneRankThunk(buffer_allocations, config);
+
+  std::vector<se::DeviceAddressBase> device_buffers =
+      AllocateOneRankDeviceBuffers(executor);
+  BufferAllocations allocations(device_buffers, /*device_ordinal=*/0,
+                                allocator.get());
+
+  ASSERT_OK_AND_ASSIGN(
+      GpuCliqueKey clique_key,
+      GetCollectiveGpuCliqueKey(collective_params, config.config));
+
+  CountingGxlCommunicator gxl_comm;
+  auto mock_comm = std::make_unique<NiceMock<MockGpuCommunicator>>();
+  ON_CALL(*mock_comm, gxl_communicator()).WillByDefault(Return(&gxl_comm));
+
+  // `lockable` must outlive `collective_cliques` (which holds the clique lock),
+  // so it is declared first and destroyed last.
+  std::shared_ptr<LockableGpuClique> lockable;
+  CollectiveCliques collective_cliques =
+      MakeMockGxlCliques(clique_key, std::move(mock_comm), lockable);
+
+  TestThunkParams thunk_params(executor, &allocations, stream.get());
+  thunk_params.WithRunOptions(&run_options)
+      .WithCommandBufferTraceStream(stream.get())
+      .WithCollectiveParams(&collective_params)
+      .WithCollectiveCliques(&collective_cliques)
+      .WithLocalDeviceCount(1);
+
+  // The GXL Initialize path still creates the per-device state, so the later
+  // state != nullptr invariant in RunCollective holds.
+  ASSERT_OK(thunk.Initialize(thunk_params.InitializeParams()));
+
+  Thunk::ExecuteParams execute_params = thunk_params.ExecuteParams();
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<se::CommandBuffer> command_buffer,
+      executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
+  CommandStateManager state_manager;
+  Command::RecordParams record_params = {state_manager};
+  ASSERT_OK_AND_ASSIGN(const se::CommandBuffer::Command* command,
+                       thunk.Record(execute_params, record_params,
+                                    Command::RecordCreate{/*dependencies=*/{}},
+                                    command_buffer.get()));
+  ASSERT_NE(command, nullptr);
+  EXPECT_EQ(gxl_comm.ragged_calls, 1);
 }
 
 TEST_F(GpuRaggedAllToAllTest, TestConvertToCommands) {
