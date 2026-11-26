@@ -314,6 +314,9 @@ absl::flat_hash_set<HloOpcode> TritonSupportedBinaryElementwiseOps(
     ret.insert(HloOpcode::kOr);
     ret.insert(HloOpcode::kXor);
     ret.insert(HloOpcode::kRemainder);
+    ret.insert(HloOpcode::kShiftLeft);
+    ret.insert(HloOpcode::kShiftRightArithmetic);
+    ret.insert(HloOpcode::kShiftRightLogical);
   }
 
   if (element_type == PrimitiveType::F32 ||

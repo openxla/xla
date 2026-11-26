@@ -585,6 +585,55 @@ class LowerSignOp : public OpRewritePattern<stablehlo::SignOp> {
   }
 };
 
+// Lowers StableHLO shift ops to arith while preserving XLA's out-of-bounds
+// shift saturation semantics. The unsigned `ult` comparison against `bit_width`
+// catches both `rhs >= bit_width` and negative signed shift amounts.
+// `arith.shrsi` saturates to `lhs >> (bit_width - 1)` (sign extension), whereas
+// `arith.shli` and `arith.shrui` saturate to `0`.
+template <typename StableHloShiftOp, typename ArithShiftOp>
+class LowerShiftOpToArith : public OpRewritePattern<StableHloShiftOp> {
+ public:
+  using OpRewritePattern<StableHloShiftOp>::OpRewritePattern;
+
+ private:
+  LogicalResult matchAndRewrite(StableHloShiftOp op,
+                                PatternRewriter& rewriter) const override {
+    ImplicitLocOpBuilder b(op.getLoc(), rewriter);
+    Type result_elem_type = getElementTypeOrSelf(op.getResult().getType());
+    bool is_unsigned = result_elem_type.isUnsignedInteger();
+
+    Value lhs = op.getLhs();
+    Value rhs = op.getRhs();
+    if (is_unsigned) {
+      lhs = UnsignedIntegerToSignlessInteger(rewriter, lhs);
+      rhs = UnsignedIntegerToSignlessInteger(rewriter, rhs);
+    }
+
+    unsigned bit_width = result_elem_type.getIntOrFloatBitWidth();
+    Value bit_width_const = ConstLike(b, lhs, bit_width);
+    Value in_bounds = arith::CmpIOp::create(b, arith::CmpIPredicate::ult, rhs,
+                                            bit_width_const);
+
+    Value shifted = ArithShiftOp::create(b, lhs, rhs);
+    Value saturated;
+    if constexpr (std::is_same_v<ArithShiftOp, arith::ShRSIOp>) {
+      Value max_shift = ConstLike(b, lhs, bit_width - 1);
+      saturated = arith::ShRSIOp::create(b, lhs, max_shift);
+    } else {
+      saturated = ZerosLike(b, lhs);
+    }
+
+    Value result = arith::SelectOp::create(b, in_bounds, shifted, saturated);
+    if (is_unsigned) {
+      result = UnrealizedConversionCastOp::create(b, op.getResult().getType(),
+                                                  result)
+                   .getResult(0);
+    }
+    rewriter.replaceOp(op, result);
+    return mlir::success();
+  }
+};
+
 struct StablehloLowerToArithPass
     : public impl::StablehloLowerToArithPassBase<StablehloLowerToArithPass> {
   using StablehloLowerToArithPassBase::StablehloLowerToArithPassBase;
@@ -610,6 +659,9 @@ struct StablehloLowerToArithPass
                                 arith::MinSIOp, arith::MinUIOp>,
         LowerStableHloOpToArith<stablehlo::PowOp, math::PowFOp, math::IPowIOp>,
         LowerStableHloOpToArith<stablehlo::AbsOp, math::AbsFOp, math::AbsIOp>,
+        LowerShiftOpToArith<stablehlo::ShiftLeftOp, arith::ShLIOp>,
+        LowerShiftOpToArith<stablehlo::ShiftRightLogicalOp, arith::ShRUIOp>,
+        LowerShiftOpToArith<stablehlo::ShiftRightArithmeticOp, arith::ShRSIOp>,
         LowerStableHloNegOpToArith,
         LowerStableHloUnaryOpToMath<stablehlo::RoundNearestEvenOp,
                                     math::RoundEvenOp>,
