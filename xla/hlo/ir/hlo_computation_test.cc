@@ -847,6 +847,53 @@ ENTRY entry {
                                      called->unique_id()));
 }
 
+TEST_F(HLOComputationTest,
+       CreateFromProtoWithPreservedIdsAndGapsDoesNotInflateNextLocalId) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule m
+
+ENTRY entry {
+  p0 = f32[4] parameter(0)
+  dead1 = f32[4] negate(p0)
+  dead2 = f32[4] negate(p0)
+  dead3 = f32[4] negate(p0)
+  ROOT out = f32[4] add(p0, p0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kHlo));
+  HloComputation* entry = module->entry_computation();
+  ASSERT_OK(entry->RemoveInstruction(entry->GetInstructionWithName("dead1")));
+  ASSERT_OK(entry->RemoveInstruction(entry->GetInstructionWithName("dead2")));
+  ASSERT_OK(entry->RemoveInstruction(entry->GetInstructionWithName("dead3")));
+  ASSERT_EQ(entry->instruction_count(), 2);
+  const int32_t p0_local_id = entry->parameter_instruction(0)->local_id();
+  const int32_t root_local_id = entry->root_instruction()->local_id();
+  ASSERT_EQ(p0_local_id, 0);
+  ASSERT_EQ(root_local_id, 4);
+
+  HloComputationProto proto;
+  entry->ToProto(&proto);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloComputation> deserialized,
+      HloComputation::CreateFromProto(proto, /*computation_map=*/{},
+                                      /*prohibit_empty_literal=*/true,
+                                      /*preserve_instruction_ids=*/true));
+
+  EXPECT_EQ(deserialized->instruction_count(), 2);
+  EXPECT_EQ(deserialized->parameter_instruction(0)->local_id(), p0_local_id);
+  EXPECT_EQ(deserialized->root_instruction()->local_id(), root_local_id);
+
+  // Adding a new instruction after deserializing with preserved IDs and 3
+  // deleted-instruction gaps must assign local_id = max_local_id + 1 (5),
+  // not max_local_id + 1 + num_gaps (8).
+  HloInstruction* added =
+      deserialized->AddInstruction(HloInstruction::CreateUnary(
+          deserialized->root_instruction()->shape(), HloOpcode::kNegate,
+          deserialized->parameter_instruction(0)));
+  EXPECT_EQ(added->local_id(), root_local_id + 1);
+}
+
 TEST_F(HLOComputationTest, IsRestrictedAsyncComputation) {
   constexpr absl::string_view kHlo = R"(
 HloModule m
