@@ -21,6 +21,7 @@ limitations under the License.
 #include <cstdint>
 #include <initializer_list>
 #include <iterator>
+#include <limits>
 #include <string_view>
 #include <type_traits>
 #include <vector>
@@ -283,6 +284,57 @@ class RecordContextBase {
                          size_t size) {
     XLA_FFI_Error* err = frame_->api->update_memcpy_d2d(
         frame_->record_ctx, command, dst, src, size);
+    if (err) {
+      return ErrorPolicy::TakeError(api_, err);
+    }
+    return ErrorPolicy::Ok();
+  }
+
+  // Creates a memset command filling `size` bytes at `dst` with `value`.
+  template <typename DepSpan = std::initializer_list<const XLA_FFI_Command*>>
+  StatusOr<const XLA_FFI_Command*> CreateMemset(void* dst, uint8_t value,
+                                                size_t size,
+                                                DepSpan dependencies = {}) {
+    if (size > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
+      return ErrorPolicy::FromErrorCode(
+          XLA_FFI_Error_Code_INVALID_ARGUMENT,
+          "memset size exceeds maximum int64_t value.");
+    }
+    // Check for space first, so we never create a command we cannot track.
+    BoundedCommandVector recorded = commands();
+    if (recorded.is_full()) {
+      return ErrorPolicy::FromErrorCode(
+          XLA_FFI_Error_Code_RESOURCE_EXHAUSTED,
+          "Maximum number of commands that can be recorded per FFI::Record "
+          "call has been reached.");
+    }
+    const XLA_FFI_Command* out_command = nullptr;
+    XLA_FFI_Error* err = frame_->api->create_memset(
+        frame_->record_ctx, dst, value, static_cast<int64_t>(size),
+        std::data(dependencies), std::size(dependencies), &out_command);
+    if (err) {
+      return ErrorPolicy::TakeError(api_, err);
+    }
+    if (!out_command) {
+      return ErrorPolicy::FromErrorCode(
+          XLA_FFI_Error_Code_INTERNAL,
+          "out_command is null but no error was returned during "
+          "create_memset.");
+    }
+    recorded.push_back(out_command);
+    return out_command;
+  }
+
+  // Updates a memset command in place.
+  Status UpdateMemset(const XLA_FFI_Command* command, void* dst, uint8_t value,
+                      size_t size) {
+    if (size > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
+      return ErrorPolicy::FromErrorCode(
+          XLA_FFI_Error_Code_INVALID_ARGUMENT,
+          "memset size exceeds maximum int64_t value.");
+    }
+    XLA_FFI_Error* err = frame_->api->update_memset(
+        frame_->record_ctx, command, dst, value, static_cast<int64_t>(size));
     if (err) {
       return ErrorPolicy::TakeError(api_, err);
     }

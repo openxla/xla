@@ -127,6 +127,8 @@ TEST_P(RecordStageTest, CreateLaunch) {
       /*.update_memcpy_d2d=*/kMockApi,
       /*.request_stream_capture=*/kMockApi,
       /*.create_empty_command=*/kMockApi,
+      /*.create_memset=*/kMockApi,
+      /*.update_memset=*/kMockApi,
   };
 
   const XLA_FFI_Command* commands_storage[10] = {nullptr};
@@ -186,6 +188,98 @@ TEST(FfiTest, RecordExtensionVersionMismatch) {
   EXPECT_THAT(
       status.message(),
       testing::HasSubstr("Extension version mismatch for RecordExtension"));
+}
+
+TEST(FfiTest, CreateAndUpdateMemset) {
+  struct CaptureState {
+    void* dst = nullptr;
+    uint8_t value = 0;
+    int64_t size = 0;
+    const XLA_FFI_Command* cmd = nullptr;
+    std::vector<const XLA_FFI_Command*> deps;
+    const XLA_FFI_Command* dummy_cmd =
+        reinterpret_cast<const XLA_FFI_Command*>(0x3);
+    int create_calls = 0;
+    int update_calls = 0;
+  } state;
+
+  const auto* dep_cmd = reinterpret_cast<const XLA_FFI_Command*>(0x2);
+  uint8_t buffer[16] = {};
+  uint8_t updated_buffer[8] = {};
+
+  auto handler = Ffi::BindRecord().Ctx<Extension<RecordExtension>>().To(
+      [&](RecordContext ctx) {
+        if (ctx.action() == RecordAction::kCreate) {
+          auto cmd = ctx.CreateMemset(buffer, 0, sizeof(buffer), {dep_cmd});
+          EXPECT_TRUE(cmd.has_value());
+          EXPECT_EQ(*cmd, state.dummy_cmd);
+          EXPECT_FALSE(ctx.CreateMemset(buffer, 0, sizeof(buffer)).has_value());
+          return Error::Success();
+        }
+        EXPECT_EQ(ctx.commands().size(), 1);
+        return ctx.UpdateMemset(ctx.commands()[0], updated_buffer, 0xAB,
+                                sizeof(updated_buffer));
+      });
+
+  XLA_FFI_RecordApi mock_api{};
+  mock_api.create_memset =
+      +[](XLA_FFI_RecordContext* ctx, void* dst, uint8_t value, int64_t size,
+          const XLA_FFI_Command* const* dependencies, uint32_t num_dependencies,
+          const XLA_FFI_Command** out_command) -> XLA_FFI_Error* {
+    auto* s = reinterpret_cast<CaptureState*>(ctx);
+    ++s->create_calls;
+    s->dst = dst;
+    s->value = value;
+    s->size = size;
+    s->deps.assign(dependencies, dependencies + num_dependencies);
+    *out_command = s->dummy_cmd;
+    return nullptr;
+  };
+  mock_api.update_memset =
+      +[](XLA_FFI_RecordContext* ctx, const XLA_FFI_Command* command, void* dst,
+          uint8_t value, int64_t size) -> XLA_FFI_Error* {
+    auto* s = reinterpret_cast<CaptureState*>(ctx);
+    ++s->update_calls;
+    s->cmd = command;
+    s->dst = dst;
+    s->value = value;
+    s->size = size;
+    return nullptr;
+  };
+
+  const XLA_FFI_Command* commands_storage[1] = {nullptr};
+  int64_t num_commands = 0;
+  XLA_FFI_RecordFrame record_frame = {
+      /*record_ctx=*/reinterpret_cast<XLA_FFI_RecordContext*>(&state),
+      /*api=*/&mock_api,
+      /*action=*/XLA_FFI_RecordAction_Create,
+      /*commands=*/commands_storage,
+      /*num_commands=*/&num_commands,
+      /*max_commands=*/1};
+  RecordExtension::CExtension record_frame_ext =
+      BuildRecordCExtension(&record_frame);
+  InvokeContext context;
+  context.extension_start = &record_frame_ext.extension_base;
+  CallFrame call_frame =
+      CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
+
+  ASSERT_OK(
+      Invoke(Api(), *handler, call_frame, context, ExecutionStage::kRecord));
+  EXPECT_EQ(state.create_calls, 1);
+  EXPECT_EQ(state.dst, buffer);
+  EXPECT_EQ(state.value, 0);
+  EXPECT_EQ(state.size, sizeof(buffer));
+  EXPECT_THAT(state.deps, ElementsAre(dep_cmd));
+  EXPECT_EQ(num_commands, 1);
+
+  record_frame.action = XLA_FFI_RecordAction_Update;
+  ASSERT_OK(
+      Invoke(Api(), *handler, call_frame, context, ExecutionStage::kRecord));
+  EXPECT_EQ(state.update_calls, 1);
+  EXPECT_EQ(state.cmd, state.dummy_cmd);
+  EXPECT_EQ(state.dst, updated_buffer);
+  EXPECT_EQ(state.value, 0xAB);
+  EXPECT_EQ(state.size, sizeof(updated_buffer));
 }
 
 }  // namespace

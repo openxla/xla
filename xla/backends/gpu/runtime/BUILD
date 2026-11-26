@@ -6223,6 +6223,7 @@ xla_test(
         "//xla/ffi/api:kernel_api",
         "//xla/ffi/api:record_api",
         "//xla/stream_executor:activate_context",
+        "//xla/stream_executor:bit_pattern",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",

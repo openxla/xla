@@ -406,6 +406,65 @@ XLA_FFI_Error* FfiCreateEmptyCommand(XLA_FFI_RecordContext* ctx,
   return nullptr;
 }
 
+XLA_FFI_Error* FfiCreateMemset(XLA_FFI_RecordContext* ctx, void* dst,
+                               uint8_t value, int64_t size,
+                               const XLA_FFI_Command* const* dependencies,
+                               uint32_t num_dependencies,
+                               const XLA_FFI_Command** out_command) {
+  if (ctx == nullptr || out_command == nullptr) {
+    return xla::ffi::CreateError(
+        absl::InvalidArgumentError("ctx and out_command must not be null"));
+  }
+  if (dst == nullptr) {
+    return xla::ffi::CreateError(
+        absl::InvalidArgumentError("dst must not be null"));
+  }
+  if (size <= 0) {
+    return xla::ffi::CreateError(
+        absl::InvalidArgumentError("size must be greater than 0"));
+  }
+  absl::StatusOr<std::vector<const se::CommandBuffer::Command*>> deps =
+      ResolveDependencies(ctx, dependencies, num_dependencies);
+  if (!deps.ok()) {
+    return xla::ffi::CreateError(deps.status());
+  }
+
+  se::DeviceAddressBase dst_addr(dst, size);
+  absl::StatusOr<const se::CommandBuffer::Command*> cmd =
+      ctx->command_buffer->CreateMemset(&dst_addr, value, size, *deps);
+  if (!cmd.ok()) {
+    return xla::ffi::CreateError(cmd.status());
+  }
+
+  *out_command = AsXlaFfiCommand(*cmd);
+  return nullptr;
+}
+
+XLA_FFI_Error* FfiUpdateMemset(XLA_FFI_RecordContext* ctx,
+                               const XLA_FFI_Command* command, void* dst,
+                               uint8_t value, int64_t size) {
+  if (ctx == nullptr || command == nullptr) {
+    return xla::ffi::CreateError(
+        absl::InvalidArgumentError("ctx and command must not be null"));
+  }
+  if (dst == nullptr) {
+    return xla::ffi::CreateError(
+        absl::InvalidArgumentError("dst must not be null"));
+  }
+  if (size <= 0) {
+    return xla::ffi::CreateError(
+        absl::InvalidArgumentError("size must be greater than 0"));
+  }
+
+  se::DeviceAddressBase dst_addr(dst, size);
+  absl::Status status = ctx->command_buffer->UpdateMemset(
+      AsStreamExecutorCommand(command), &dst_addr, value, size);
+  if (!status.ok()) {
+    return xla::ffi::CreateError(status);
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 const XLA_FFI_RecordApi* GetXlaFfiRecordApi() {
@@ -416,6 +475,8 @@ const XLA_FFI_RecordApi* GetXlaFfiRecordApi() {
       /*.update_memcpy_d2d =*/FfiUpdateMemcpyD2D,
       /*.request_stream_capture =*/FfiRequestStreamCapture,
       /*.create_empty_command =*/FfiCreateEmptyCommand,
+      /*.create_memset =*/FfiCreateMemset,
+      /*.update_memset =*/FfiUpdateMemset,
   };
   return &ffi_record_api;
 }

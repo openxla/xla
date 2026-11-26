@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/ffi/invoke.h"
 #include "xla/ffi/record_ffi.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/bit_pattern.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/gpu/gpu_init.h"
@@ -648,6 +649,295 @@ TEST(RecordFfiTest, MemcpyD2DAndEmptyCommandRejectInvalidArguments) {
                   &record_ctx, &null_dep, 1, &out_cmd)),
               StatusIs(absl::StatusCode::kInvalidArgument,
                        HasSubstr("dependency command must not be null")));
+}
+
+TEST(RecordFfiTest, MemsetResolvesDependencies) {
+  se::MockStreamExecutor mock_executor;
+  se::MockCommandBuffer mock_cmd_buffer;
+  FakeCommand ext_dep, root_cmd, chained_cmd;
+
+  XLA_FFI_RecordContext record_ctx_c = {
+      &mock_cmd_buffer, &mock_executor, {&ext_dep}, false};
+  const XLA_FFI_Command* commands_storage[4] = {};
+  int64_t num_commands = 0;
+  XLA_FFI_RecordFrame record_frame = {
+      &record_ctx_c,    GetXlaFfiRecordApi(), XLA_FFI_RecordAction_Create,
+      commands_storage, &num_commands,        4};
+  ffi::RecordContext record_ctx(ffi::GetXlaFfiApi(), &record_frame);
+
+  void* dummy_dst = reinterpret_cast<void*>(0x1000);
+  {
+    InSequence seq;
+    EXPECT_CALL(mock_cmd_buffer, CreateMemset(_, se::BitPattern(uint8_t{0}), 4,
+                                              ElementsAre(&ext_dep)))
+        .WillOnce(Return(&root_cmd));
+    EXPECT_CALL(mock_cmd_buffer, CreateMemset(_, se::BitPattern(uint8_t{0xAB}),
+                                              4, ElementsAre(&root_cmd)))
+        .WillOnce(Return(&chained_cmd));
+    EXPECT_CALL(mock_cmd_buffer,
+                UpdateMemset(&root_cmd, _, se::BitPattern(uint8_t{0xCD}), 4))
+        .WillOnce(Return(absl::OkStatus()));
+  }
+
+  ASSERT_OK_AND_ASSIGN(const XLA_FFI_Command* cmd0,
+                       record_ctx.CreateMemset(dummy_dst, 0, 4));
+  EXPECT_THAT(record_ctx.CreateMemset(dummy_dst, 0xAB, 4, {cmd0}), IsOk());
+  EXPECT_OK(record_ctx.UpdateMemset(cmd0, dummy_dst, 0xCD, 4));
+}
+
+TEST(RecordFfiTest, MemsetRejectsInvalidArguments) {
+  se::MockStreamExecutor mock_executor;
+  se::MockCommandBuffer mock_cmd_buffer;
+  FakeCommand dummy_se_cmd;
+  const auto* dummy_cmd =
+      reinterpret_cast<const XLA_FFI_Command*>(&dummy_se_cmd);
+  XLA_FFI_RecordContext record_ctx = {
+      &mock_cmd_buffer, &mock_executor, {}, false};
+  const XLA_FFI_RecordApi* ffi_api = GetXlaFfiRecordApi();
+
+  void* dummy_dst = reinterpret_cast<void*>(0x1000);
+  const XLA_FFI_Command* out_cmd = nullptr;
+  const XLA_FFI_Command* null_dep = nullptr;
+
+  EXPECT_THAT(ffi::TakeError(ffi_api->create_memset(nullptr, dummy_dst, 0, 4,
+                                                    nullptr, 0, &out_cmd)),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("ctx and out_command")));
+  EXPECT_THAT(ffi::TakeError(ffi_api->create_memset(&record_ctx, dummy_dst, 0,
+                                                    4, nullptr, 0, nullptr)),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("ctx and out_command")));
+  EXPECT_THAT(ffi::TakeError(ffi_api->create_memset(&record_ctx, nullptr, 0, 4,
+                                                    nullptr, 0, &out_cmd)),
+              StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("dst")));
+  EXPECT_THAT(ffi::TakeError(ffi_api->create_memset(&record_ctx, dummy_dst, 0,
+                                                    0, nullptr, 0, &out_cmd)),
+              StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("size")));
+  EXPECT_THAT(ffi::TakeError(ffi_api->create_memset(&record_ctx, dummy_dst, 0,
+                                                    -1, nullptr, 0, &out_cmd)),
+              StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("size")));
+  EXPECT_THAT(ffi::TakeError(ffi_api->create_memset(&record_ctx, dummy_dst, 0,
+                                                    4, nullptr, 1, &out_cmd)),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("dependencies must not be null")));
+  EXPECT_THAT(ffi::TakeError(ffi_api->create_memset(&record_ctx, dummy_dst, 0,
+                                                    4, &null_dep, 1, &out_cmd)),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("dependency command must not be null")));
+
+  EXPECT_THAT(ffi::TakeError(
+                  ffi_api->update_memset(nullptr, dummy_cmd, dummy_dst, 0, 4)),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("ctx and command")));
+  EXPECT_THAT(ffi::TakeError(ffi_api->update_memset(&record_ctx, nullptr,
+                                                    dummy_dst, 0, 4)),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("ctx and command")));
+  EXPECT_THAT(ffi::TakeError(ffi_api->update_memset(&record_ctx, dummy_cmd,
+                                                    nullptr, 0, 4)),
+              StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("dst")));
+  EXPECT_THAT(ffi::TakeError(ffi_api->update_memset(&record_ctx, dummy_cmd,
+                                                    dummy_dst, 0, 0)),
+              StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("size")));
+  EXPECT_THAT(ffi::TakeError(ffi_api->update_memset(&record_ctx, dummy_cmd,
+                                                    dummy_dst, 0, -1)),
+              StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("size")));
+}
+
+TEST(RecordFfiTest, CreateAndUpdateMemsetOnDevice) {
+  ASSERT_OK_AND_ASSIGN(auto platform,
+                       stream_executor::PlatformManager::PlatformWithName(
+                           stream_executor::GpuPlatformName()));
+  ASSERT_OK_AND_ASSIGN(auto* executor, platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+
+  constexpr size_t kNumBytes = 8;
+  se::DeviceAddress<uint8_t> buf_a =
+      executor->AllocateArray<uint8_t>(kNumBytes);
+  se::DeviceAddress<uint8_t> buf_b =
+      executor->AllocateArray<uint8_t>(kNumBytes);
+  se::DeviceAddress<uint8_t> buf_c =
+      executor->AllocateArray<uint8_t>(kNumBytes);
+  for (auto* buf : {&buf_a, &buf_b, &buf_c}) {
+    ASSERT_OK(stream->Memset32(buf, 0x55555555u, kNumBytes));
+  }
+  ASSERT_OK(stream->BlockHostUntilDone());
+
+  ASSERT_OK_AND_ASSIGN(auto cmd_buffer,
+                       executor->CreateCommandBuffer(
+                           stream_executor::CommandBuffer::Mode::kPrimary));
+  const XLA_FFI_Command* storage[2] = {};
+  int64_t num_commands = 0;
+  XLA_FFI_RecordContext record_ctx_c = {cmd_buffer.get(), executor, {}, false};
+  XLA_FFI_RecordFrame frame = {
+      &record_ctx_c, GetXlaFfiRecordApi(), XLA_FFI_RecordAction_Create,
+      storage,       &num_commands,        2};
+  ffi::RecordContext ctx(ffi::GetXlaFfiApi(), &frame);
+
+  ASSERT_OK_AND_ASSIGN(const XLA_FFI_Command* cmd_a,
+                       ctx.CreateMemset(buf_a.opaque(), 0, 5));
+  ASSERT_OK(ctx.CreateMemset(buf_b.opaque(), 0x12, 5).status());
+  ASSERT_OK(cmd_buffer->Finalize());
+  ASSERT_OK(cmd_buffer->Submit(stream.get()));
+
+  std::vector<uint8_t> host_a(kNumBytes), host_b(kNumBytes), host_c(kNumBytes);
+  ASSERT_OK(stream->Memcpy(host_a.data(), buf_a, kNumBytes));
+  ASSERT_OK(stream->Memcpy(host_b.data(), buf_b, kNumBytes));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  EXPECT_THAT(host_a, ElementsAre(0, 0, 0, 0, 0, 0x55, 0x55, 0x55));
+  EXPECT_THAT(host_b,
+              ElementsAre(0x12, 0x12, 0x12, 0x12, 0x12, 0x55, 0x55, 0x55));
+
+  ASSERT_OK(cmd_buffer->Update());
+  ASSERT_OK(ctx.UpdateMemset(cmd_a, buf_c.opaque(), 0xAB, 5));
+  ASSERT_OK(cmd_buffer->Finalize());
+  ASSERT_OK(cmd_buffer->Submit(stream.get()));
+
+  ASSERT_OK(stream->Memcpy(host_c.data(), buf_c, kNumBytes));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  EXPECT_THAT(host_c,
+              ElementsAre(0xAB, 0xAB, 0xAB, 0xAB, 0xAB, 0x55, 0x55, 0x55));
+}
+
+TEST(RecordFfiTest, MemsetDependencyChainingWithLaunchAndMemcpy) {
+  ASSERT_OK_AND_ASSIGN(auto platform,
+                       stream_executor::PlatformManager::PlatformWithName(
+                           stream_executor::GpuPlatformName()));
+  ASSERT_OK_AND_ASSIGN(auto* executor, platform->ExecutorForDevice(0));
+  const auto* cuda_cc = executor->GetDeviceDescription()
+                            .gpu_compute_capability()
+                            .cuda_compute_capability();
+  if (cuda_cc && !cuda_cc->IsAtLeastAmpere()) {
+    GTEST_SKIP() << "Skipping test for compute capability less than Ampere.";
+  }
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+
+  ASSERT_OK_AND_ASSIGN(KernelBinary binary, GetKernelSpec());
+  FfiKernelRegistry registry(platform->VisibleDeviceCount());
+  ASSERT_OK_AND_ASSIGN(
+      FfiKernelRegistry::RegisterResult registered,
+      registry.Register(executor, "AddI32", binary.data(), binary.size(),
+                        XLA_FFI_SourceFormat_CUBIN, /*use_pdl=*/false,
+                        /*required_features=*/0));
+  const XLA_FFI_Kernel* kernel = registered.kernel;
+
+  constexpr size_t kLength = 8;
+  constexpr size_t kByteSize = kLength * sizeof(int32_t);
+  uint8_t value_a = 0x01;
+  uint8_t value_b = 0x02;
+
+  auto handler =
+      ffi::Ffi::BindRecord()
+          .Ctx<ffi::Extension<ffi::RecordExtension>>()
+          .Arg<ffi::AnyBuffer>()
+          .Arg<ffi::AnyBuffer>()
+          .Arg<ffi::AnyBuffer>()
+          .Arg<ffi::AnyBuffer>()
+          .To([kernel, &value_a, &value_b](
+                  ffi::RecordContext ctx, ffi::AnyBuffer buf_a,
+                  ffi::AnyBuffer buf_b, ffi::AnyBuffer buf_scratch,
+                  ffi::AnyBuffer buf_out) -> absl::Status {
+            void* a = buf_a.untyped_data();
+            void* b = buf_b.untyped_data();
+            void* scratch = buf_scratch.untyped_data();
+            void* out = buf_out.untyped_data();
+            std::vector<ffi::KernelArg> args = {ffi::DevicePointer{a},
+                                                ffi::DevicePointer{b},
+                                                ffi::DevicePointer{scratch}};
+
+            if (ctx.action() == ffi::RecordAction::kCreate) {
+              ABSL_ASSIGN_OR_RETURN(const XLA_FFI_Command* memset_a,
+                                    ctx.CreateMemset(a, value_a, kByteSize));
+              ABSL_ASSIGN_OR_RETURN(const XLA_FFI_Command* memset_b,
+                                    ctx.CreateMemset(b, value_b, kByteSize));
+              ABSL_ASSIGN_OR_RETURN(
+                  const XLA_FFI_Command* launch,
+                  ctx.CreateLaunch(kernel,
+                                   /*launch_dims=*/{{1, 1, 1}, {kLength, 1, 1}},
+                                   /*shared_mem_bytes=*/0, args,
+                                   /*dependencies=*/{memset_a, memset_b}));
+              ABSL_ASSIGN_OR_RETURN(
+                  const XLA_FFI_Command* memcpy_out,
+                  ctx.CreateMemcpyD2D(out, scratch, kByteSize, {launch}));
+              ABSL_ASSIGN_OR_RETURN(
+                  const XLA_FFI_Command* zero_a,
+                  ctx.CreateMemset(a, 0, kByteSize, {launch}));
+              return ctx.CreateEmptyCommand({memcpy_out, zero_a}).status();
+            }
+
+            auto cmds = ctx.commands();
+            TF_RET_CHECK(cmds.size() == 6);
+            ABSL_RETURN_IF_ERROR(
+                ctx.UpdateMemset(cmds[0], a, value_a, kByteSize));
+            ABSL_RETURN_IF_ERROR(
+                ctx.UpdateMemset(cmds[1], b, value_b, kByteSize));
+            ABSL_RETURN_IF_ERROR(ctx.UpdateLaunch(cmds[2], args));
+            ABSL_RETURN_IF_ERROR(
+                ctx.UpdateMemcpyD2D(cmds[3], out, scratch, kByteSize));
+            return ctx.UpdateMemset(cmds[4], a, 0, kByteSize);
+          });
+
+  ASSERT_OK_AND_ASSIGN(auto cmd_buffer,
+                       executor->CreateCommandBuffer(
+                           stream_executor::CommandBuffer::Mode::kPrimary));
+  ASSERT_OK_AND_ASSIGN(const se::CommandBuffer::Command* ext_dep,
+                       cmd_buffer->CreateEmptyCmd({}));
+
+  const XLA_FFI_RecordApi* ffi_api = GetXlaFfiRecordApi();
+  int64_t num_commands = 0;
+  const XLA_FFI_Command* commands_storage[6] = {};
+  XLA_FFI_RecordContext record_ctx_c = {
+      cmd_buffer.get(), executor, {ext_dep}, false};
+  XLA_FFI_RecordFrame record_frame = {
+      &record_ctx_c,    ffi_api,       XLA_FFI_RecordAction_Create,
+      commands_storage, &num_commands, 6};
+  auto record_extension = ffi::BuildRecordCExtension(&record_frame);
+  ffi::InvokeContext invoke_context;
+  invoke_context.extension_start = &record_extension.extension_base;
+
+  auto run_phase = [&](DeviceMemoryBundle& mem, ffi::CallFrame& call_frame,
+                       std::vector<int32_t>& host_out,
+                       std::vector<int32_t>& host_a) -> absl::Status {
+    for (auto* ptr : {&mem.a, &mem.b, &mem.scratch, &mem.c}) {
+      ABSL_RETURN_IF_ERROR(stream->Memset32(ptr, 0x77777777u, kByteSize));
+    }
+    ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
+    if (record_frame.action == XLA_FFI_RecordAction_Update) {
+      ABSL_RETURN_IF_ERROR(call_frame.UpdateWithBuffers(
+          {mem.a, mem.b, mem.scratch, mem.c}, /*rets=*/{}));
+      ABSL_RETURN_IF_ERROR(cmd_buffer->Update());
+    }
+    ABSL_RETURN_IF_ERROR(ffi::Invoke(ffi::GetXlaFfiApi(), *handler, call_frame,
+                                     invoke_context,
+                                     ffi::ExecutionStage::kRecord));
+    ABSL_RETURN_IF_ERROR(cmd_buffer->Finalize());
+    ABSL_RETURN_IF_ERROR(cmd_buffer->Submit(stream.get()));
+
+    host_out.assign(kLength, 0);
+    host_a.assign(kLength, -1);
+    ABSL_RETURN_IF_ERROR(stream->Memcpy(host_out.data(), mem.c, kByteSize));
+    ABSL_RETURN_IF_ERROR(stream->Memcpy(host_a.data(), mem.a, kByteSize));
+    return stream->BlockHostUntilDone();
+  };
+
+  DeviceMemoryBundle mem_create;
+  mem_create.Allocate(executor, kLength);
+  ffi::CallFrameBuilder builder(/*num_args=*/4, /*num_rets=*/0);
+  mem_create.AddAsBuffers(builder);
+  ffi::CallFrame call_frame = builder.Build();
+  std::vector<int32_t> host_out, host_a;
+  ASSERT_OK(run_phase(mem_create, call_frame, host_out, host_a));
+  EXPECT_EQ(host_out, std::vector<int32_t>(kLength, 0x03030303));
+  EXPECT_EQ(host_a, std::vector<int32_t>(kLength, 0));
+
+  value_a = 0x03;
+  value_b = 0x04;
+  record_frame.action = XLA_FFI_RecordAction_Update;
+  DeviceMemoryBundle mem_update;
+  mem_update.Allocate(executor, kLength);
+  ASSERT_OK(run_phase(mem_update, call_frame, host_out, host_a));
+  EXPECT_EQ(host_out, std::vector<int32_t>(kLength, 0x07070707));
+  EXPECT_EQ(host_a, std::vector<int32_t>(kLength, 0));
 }
 
 }  // namespace
