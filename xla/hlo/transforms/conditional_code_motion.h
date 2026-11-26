@@ -242,6 +242,8 @@ class ConditionalCodeMotion : public HloModulePass {
   absl::StatusOr<bool> MoveInstructionOut(
       HloInstruction* conditional, std::vector<Boundary>& to_move_out,
       std::vector<Boundary>& new_boundaries);
+  absl::StatusOr<bool> TrySinkConditionalConcatenateUserRuns(
+      HloInstruction* conditional);
   absl::StatusOr<bool> MoveUserInstructionsIn(
       HloInstruction* conditional, std::vector<Boundary>& to_move_in);
   absl::StatusOr<bool> MoveOperandInstructionsIn(

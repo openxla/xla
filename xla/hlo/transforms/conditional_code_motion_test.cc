@@ -2745,11 +2745,11 @@ ENTRY %xla_computation_unknown.45 (parameter.3: u8[], parameter.4: u8[], paramet
   ASSERT_TRUE(changed);
 
   // %reduce.1 is moved into the branches, so the argument tuple passes its
-  // operands instead. The first operand replaces %reduce.1 in place, so element
-  // 0 stops holding the value of %reduce.1 and starts holding the value of
-  // %parameter.5, and the remaining operand is appended as a new element.
+  // operands instead. The first operand replaces %reduce.1 in place, and the
+  // second operand (%constant.2) reuses the existing tuple element 1 rather
+  // than appending a duplicate unused slot.
   constexpr absl::string_view kArgumentOriginalValue =
-      R"(({"parameter.5"}, {"constant.2"}, {"constant.2"}))";
+      R"(({"parameter.5"}, {"constant.2"}))";
   const HloInstruction* argument_tuple =
       FindInstruction(module.get(), "tuple.10");
   ASSERT_NE(argument_tuple, nullptr);
@@ -3681,6 +3681,320 @@ ENTRY main {
           .Run(module.get()),
       IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(), op::Broadcast());
+}
+
+TEST_F(ConditionalCodeMotionTest,
+       SinksSingleBranchConcatenateOperandWithoutDuplicateAppendOrSliceOom) {
+  // 1. Concat used only by false_branch sinks into false_branch, reuses `b`
+  // already present in the branch tuple without appending a duplicate slot, and
+  // leaves size-shrinking `s = slice(large)` outside on BOTH pass 1 and pass 2
+  // (b/423941718 regression).
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule SinkSingleBranchConcat
+
+on_true {
+  p = () parameter(0)
+  z = f32[] constant(0)
+  zb = f32[2,128]{1,0} broadcast(z), dimensions={}
+  ROOT r = (f32[2,128]{1,0}) tuple(zb)
+}
+
+on_false {
+  p = (f32[2,128]{1,0}, f32[1,128]{1,0}) parameter(0)
+  cat_in = f32[2,128]{1,0} get-tuple-element(p), index=0
+  b_in = f32[1,128]{1,0} get-tuple-element(p), index=1
+  b_pad = f32[2,128]{1,0} concatenate(b_in, b_in), dimensions={0}
+  sum = f32[2,128]{1,0} add(cat_in, b_pad)
+  ROOT r = (f32[2,128]{1,0}) tuple(sum)
+}
+
+ENTRY main {
+  flag = pred[] parameter(0)
+  large = f32[64,128]{1,0} parameter(1)
+  b = f32[1,128]{1,0} parameter(2)
+  sliced = f32[1,128]{1,0} slice(large), slice={[0:1], [0:128]}
+  cat = f32[2,128]{1,0} concatenate(sliced, b), dimensions={0}
+  t0 = () tuple()
+  t1 = (f32[2,128]{1,0}, f32[1,128]{1,0}) tuple(cat, b)
+  ROOT cond = (f32[2,128]{1,0}) conditional(flag, t0, t1),
+      true_computation=on_true, false_computation=on_false
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ConditionalCodeMotion pass(/*is_layout_sensitive=*/true,
+                             /*pursue_full_conditional_code_motion=*/true);
+  EXPECT_THAT(pass.Run(module.get()), IsOkAndHolds(true));
+  // Second pass must make no change (`sliced` stays outside!).
+  EXPECT_THAT(pass.Run(module.get()), IsOkAndHolds(false));
+
+  const HloInstruction* cond = module->entry_computation()->root_instruction();
+  // `t1` keeps arity 2 `(sliced, b)`: `b` was reused, not duplicated to 3!
+  EXPECT_EQ(cond->operand(2)->operand_count(), 2);
+  EXPECT_EQ(cond->operand(2)->operand(0)->opcode(), HloOpcode::kSlice);
+  EXPECT_EQ(FindInstruction(module.get(), "cat"), nullptr);
+
+  // 2. Reject kInsideBranch concat move-out, nested kOutfeed, duplicate concat
+  // in tuple, and operand_count() > 16.
+  constexpr absl::string_view kInsideConcatNoMoveOut = R"hlo(
+HloModule NoMoveOutConcat
+b0 {
+  p = (f32[4], f32[4]) parameter(0)
+  x = f32[4] get-tuple-element(p), index=0
+  y = f32[4] get-tuple-element(p), index=1
+  c = f32[8] concatenate(x, y), dimensions={0}
+  ROOT r = (f32[8]) tuple(c)
+}
+b1 {
+  p = (f32[4], f32[4]) parameter(0)
+  x = f32[4] get-tuple-element(p), index=0
+  y = f32[4] get-tuple-element(p), index=1
+  c = f32[8] concatenate(x, y), dimensions={0}
+  ROOT r = (f32[8]) tuple(c)
+}
+ENTRY main {
+  f = pred[] parameter(0)
+  a = f32[4] parameter(1)
+  b = f32[4] parameter(2)
+  t = (f32[4], f32[4]) tuple(a, b)
+  ROOT cond = (f32[8]) conditional(f, t, t),
+      true_computation=b0, false_computation=b1
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> inside_mod,
+                       ParseAndReturnVerifiedModule(kInsideConcatNoMoveOut));
+  EXPECT_THAT(
+      ConditionalCodeMotion(/*is_layout_sensitive=*/false,
+                            /*pursue_full_conditional_code_motion=*/true)
+          .Run(inside_mod.get()),
+      IsOkAndHolds(false));
+
+  constexpr absl::string_view kNestedOutfeedBlocksSink = R"hlo(
+HloModule NestedOutfeedBlocksConcat
+callee {
+  x = f32[8] parameter(0)
+  tok = token[] after-all()
+  outf = token[] outfeed(x, tok)
+  ROOT r = f32[8] add(x, x)
+}
+b0 {
+  p = () parameter(0)
+  z = f32[] constant(0)
+  zb = f32[8] broadcast(z), dimensions={}
+  ROOT r = (f32[8]) tuple(zb)
+}
+b1 {
+  p = (f32[8]) parameter(0)
+  x = f32[8] get-tuple-element(p), index=0
+  y = f32[8] call(x), to_apply=callee
+  ROOT r = (f32[8]) tuple(y)
+}
+ENTRY main {
+  f = pred[] parameter(0)
+  a = f32[4] parameter(1)
+  b = f32[4] parameter(2)
+  cat = f32[8] concatenate(a, b), dimensions={0}
+  t0 = () tuple()
+  t1 = (f32[8]) tuple(cat)
+  ROOT cond = (f32[8]) conditional(f, t0, t1),
+      true_computation=b0, false_computation=b1
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> outfeed_mod,
+                       ParseAndReturnVerifiedModule(kNestedOutfeedBlocksSink));
+  EXPECT_THAT(
+      ConditionalCodeMotion(/*is_layout_sensitive=*/false,
+                            /*pursue_full_conditional_code_motion=*/true)
+          .Run(outfeed_mod.get()),
+      IsOkAndHolds(false));
+}
+
+TEST_F(ConditionalCodeMotionTest,
+       SinksContiguousConcatenateOutputRunsAndFoldsIdenticalScalarConstants) {
+  // Full run (`full_cat`, 3x f32[1,7,1] with reshape(broadcast(0)) in b0) +
+  // partial run (`part_cat`, ext + 2x reshape(f32[]) with copy(0) and
+  // barrier_wrap="true" in b0): shrinks conditional tuple arity from 5 to 2
+  // and folds b0 to a single broadcast per run.
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule SinkContiguousConcatOutputRuns
+
+b0 {
+  p = () parameter(0)
+  z = f32[] constant(0)
+  zb0 = f32[7] broadcast(z), dimensions={}
+  zr0 = f32[1,7,1]{1,2,0} reshape(zb0)
+  zb1 = f32[1,7,1]{1,2,0} broadcast(z), dimensions={}
+  zb2 = f32[7] broadcast(z), dimensions={}
+  zr2 = f32[1,7,1]{1,2,0} reshape(zb2)
+  zs0 = f32[] copy(z)
+  zs1 = f32[] copy(z)
+  ROOT r = (f32[1,7,1]{1,2,0}, f32[1,7,1]{1,2,0}, f32[1,7,1]{1,2,0},
+            f32[], f32[]) tuple(zr0, zb1, zr2, zs0, zs1)
+}
+
+b1 {
+  p = (f32[1,7,1]{1,2,0}, f32[], f32[]) parameter(0)
+  x = f32[1,7,1]{1,2,0} get-tuple-element(p), index=0
+  sc0 = f32[] get-tuple-element(p), index=1
+  sc1 = f32[] get-tuple-element(p), index=2
+  x1 = f32[1,7,1]{1,2,0} add(x, x)
+  x2 = f32[1,7,1]{1,2,0} negate(x)
+  ROOT r = (f32[1,7,1]{1,2,0}, f32[1,7,1]{1,2,0}, f32[1,7,1]{1,2,0},
+            f32[], f32[]) tuple(x, x1, x2, sc0, sc1)
+}
+
+ENTRY main {
+  idx = s32[] parameter(0)
+  x = f32[1,7,1]{1,2,0} parameter(1)
+  sc0 = f32[] parameter(2)
+  sc1 = f32[] parameter(3)
+  ext = f32[2]{0} parameter(4)
+  t0 = () tuple()
+  t1 = (f32[1,7,1]{1,2,0}, f32[], f32[]) tuple(x, sc0, sc1)
+  cond = (f32[1,7,1]{1,2,0}, f32[1,7,1]{1,2,0}, f32[1,7,1]{1,2,0},
+          f32[], f32[]) conditional(idx, t0, t1),
+      branch_computations={b0, b1}
+  g0 = f32[1,7,1]{1,2,0} get-tuple-element(cond), index=0,
+      frontend_attributes={barrier_wrap="true"}
+  g1 = f32[1,7,1]{1,2,0} get-tuple-element(cond), index=1
+  g2 = f32[1,7,1]{1,2,0} get-tuple-element(cond), index=2
+  g3 = f32[] get-tuple-element(cond), index=3,
+      frontend_attributes={barrier_wrap="true"}
+  g4 = f32[] get-tuple-element(cond), index=4,
+      frontend_attributes={barrier_wrap="true"}
+  r3 = f32[1]{0} reshape(g3)
+  r4 = f32[1]{0} reshape(g4)
+  full_cat = f32[1,7,3]{1,2,0} concatenate(g0, g1, g2), dimensions={2}
+  part_cat = f32[6]{0} concatenate(ext, r3, r4, ext), dimensions={0}
+  ROOT out = (f32[1,7,3]{1,2,0}, f32[6]{0}) tuple(full_cat, part_cat)
+}
+)hlo";
+
+  for (bool layout_sensitive : {false, true}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(kHlo));
+    EXPECT_THAT(
+        ConditionalCodeMotion(layout_sensitive,
+                              /*pursue_full_conditional_code_motion=*/true)
+            .Run(module.get()),
+        IsOkAndHolds(true));
+    const HloInstruction* cond = FindInstruction(module.get(), "cond");
+    ASSERT_NE(cond, nullptr);
+    EXPECT_EQ(cond->shape().tuple_shapes().size(), 2);
+    // Branch 0 folded both runs to single scalar broadcasts (0 concats in b0).
+    const HloComputation* b0 = cond->branch_computation(0);
+    for (const HloInstruction* inst : b0->instructions()) {
+      EXPECT_NE(inst->opcode(), HloOpcode::kConcatenate);
+    }
+    EXPECT_THAT(b0->root_instruction(),
+                op::Tuple(op::Broadcast(op::Constant()),
+                          op::Broadcast(op::Constant())));
+    // Direct-GTE run preserves `barrier_wrap="true"` on the merged GTE, and
+    // partial reshape(GTE) run compacts `part_cat` from 4 operands to 3.
+    const HloInstruction* root_full =
+        module->entry_computation()->root_instruction()->operand(0);
+    EXPECT_TRUE(
+        root_full->frontend_attributes().map().contains("barrier_wrap"));
+    const HloInstruction* root_part =
+        module->entry_computation()->root_instruction()->operand(1);
+    EXPECT_EQ(root_part->opcode(), HloOpcode::kConcatenate);
+    ASSERT_EQ(root_part->operand_count(), 3);
+  }
+}
+
+TEST_F(ConditionalCodeMotionTest,
+       ConcatOutputRunGuardsSpecialFloatsDuplicatesSizeCapAndTiledSharding) {
+  // +0.0 vs -0.0 must NOT fold into a single +0.0 broadcast (preserves sign
+  // bit), and duplicate GTE `concat(g2, g3, g2)` leaves `g2` out of the run.
+  constexpr absl::string_view kSignedZeroAndDupHlo = R"hlo(
+HloModule SignedZeroAndDup
+b0 {
+  p = () parameter(0)
+  pz = f32[] constant(0.0)
+  nz = f32[] constant(-0.0)
+  bp0 = f32[1] broadcast(pz), dimensions={}
+  bn1 = f32[1] broadcast(nz), dimensions={}
+  bp2 = f32[1] broadcast(pz), dimensions={}
+  bp3 = f32[1] broadcast(pz), dimensions={}
+  ROOT r = (f32[1], f32[1], f32[1], f32[1]) tuple(bp0, bn1, bp2, bp3)
+}
+b1 {
+  p = (f32[1]) parameter(0)
+  x = f32[1] get-tuple-element(p), index=0
+  ROOT r = (f32[1], f32[1], f32[1], f32[1]) tuple(x, x, x, x)
+}
+ENTRY main {
+  f = pred[] parameter(0)
+  x = f32[1] parameter(1)
+  t0 = () tuple()
+  t1 = (f32[1]) tuple(x)
+  cond = (f32[1], f32[1], f32[1], f32[1]) conditional(f, t0, t1),
+      true_computation=b0, false_computation=b1
+  g0 = f32[1] get-tuple-element(cond), index=0
+  g1 = f32[1] get-tuple-element(cond), index=1
+  g2 = f32[1] get-tuple-element(cond), index=2
+  g3 = f32[1] get-tuple-element(cond), index=3
+  cat_sign = f32[2] concatenate(g0, g1), dimensions={0}
+  cat_dup = f32[3] concatenate(g2, g3, g2), dimensions={0}
+  ROOT out = (f32[2], f32[3]) tuple(cat_sign, cat_dup)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> mod,
+                       ParseAndReturnVerifiedModule(kSignedZeroAndDupHlo));
+  EXPECT_THAT(
+      ConditionalCodeMotion(/*is_layout_sensitive=*/false,
+                            /*pursue_full_conditional_code_motion=*/true)
+          .Run(mod.get()),
+      IsOkAndHolds(true));
+  const HloInstruction* cond = FindInstruction(mod.get(), "cond");
+  // `cat_sign` sank (without folding +0/-0 into a broadcast!), while `cat_dup`
+  // stayed intact because `g2` appeared twice in `cat_dup` -> arity 3.
+  EXPECT_EQ(cond->shape().tuple_shapes().size(), 3);
+  EXPECT_EQ(
+      cond->branch_computation(0)->root_instruction()->operand(2)->opcode(),
+      HloOpcode::kConcatenate);
+
+  // Reject > 1 MiB sub_shape and tiled non-replicated concatenate sharding.
+  constexpr absl::string_view kLargeAndTiledHlo = R"hlo(
+HloModule RejectLargeAndTiled
+b0 {
+  p = (f32[256,1024], f32[4]) parameter(0)
+  a = f32[256,1024] get-tuple-element(p), index=0
+  s = f32[4] get-tuple-element(p), index=1
+  ROOT r = (f32[256,1024], f32[256,1024], f32[4], f32[4]) tuple(a, a, s, s)
+}
+b1 {
+  p = (f32[256,1024], f32[4]) parameter(0)
+  a = f32[256,1024] get-tuple-element(p), index=0
+  s = f32[4] get-tuple-element(p), index=1
+  b = f32[256,1024] negate(a)
+  t = f32[4] negate(s)
+  ROOT r = (f32[256,1024], f32[256,1024], f32[4], f32[4]) tuple(a, b, s, t)
+}
+ENTRY main {
+  f = pred[] parameter(0)
+  a = f32[256,1024] parameter(1)
+  s = f32[4] parameter(2)
+  tp = (f32[256,1024], f32[4]) tuple(a, s)
+  cond = (f32[256,1024], f32[256,1024], f32[4], f32[4]) conditional(f, tp, tp),
+      true_computation=b0, false_computation=b1
+  g0 = f32[256,1024] get-tuple-element(cond), index=0
+  g1 = f32[256,1024] get-tuple-element(cond), index=1
+  g2 = f32[4] get-tuple-element(cond), index=2
+  g3 = f32[4] get-tuple-element(cond), index=3
+  huge = f32[512,1024] concatenate(g0, g1), dimensions={0}
+  tiled = f32[8] concatenate(g2, g3), dimensions={0}, sharding={devices=[2]<=[2]}
+  ROOT out = (f32[512,1024], f32[8]) tuple(huge, tiled)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> guard_mod,
+                       ParseAndReturnVerifiedModule(kLargeAndTiledHlo));
+  EXPECT_THAT(
+      ConditionalCodeMotion(/*is_layout_sensitive=*/false,
+                            /*pursue_full_conditional_code_motion=*/true)
+          .Run(guard_mod.get()),
+      IsOkAndHolds(false));
 }
 
 }  // namespace conditional_opt

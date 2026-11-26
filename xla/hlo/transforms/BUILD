@@ -1136,6 +1136,7 @@ cc_library(
     hdrs = ["conditional_code_motion.h"],
     deps = [
         "//xla:debug_options_flags",
+        "//xla:literal",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
