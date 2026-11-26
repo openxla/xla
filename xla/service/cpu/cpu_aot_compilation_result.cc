@@ -225,18 +225,18 @@ CpuAotCompilationResult::LoadExecutableImpl(bool embed_ir_in_executable) && {
                             std::move(*thunks), std::move(constants),
                             target_machine_options, proto_.data_layout()));
 
-  // Match CpuCompiler: embed the HloProto only when requested. Snapshot
-  // dumping also dereferences hlo_proto(), so attach it then as well.
-  const bool dump_snapshots = cpu_executable->dumping_snapshot();
-  if (embed_ir_in_executable || dump_snapshots) {
+  // Match CpuCompiler: expose the buffer assignment only when requested. HLO
+  // snapshots include it as well, so also expose it when dumping them.
+  if (embed_ir_in_executable || DumpingHloSnapshots(*cpu_executable)) {
+    cpu_executable->set_buffer_assignment_proto(
+        cpu_executable->buffer_assignment().ToProto());
+  }
+  if (embed_ir_in_executable) {
     auto hlo_proto = std::make_unique<HloProto>();
     *hlo_proto->mutable_hlo_module() = cpu_executable->module().ToProto();
     *hlo_proto->mutable_buffer_assignment() =
-        cpu_executable->buffer_assignment().ToProto();
-    // Snapshots must be replayable, so keep literal payloads when dumping.
-    if (!dump_snapshots) {
-      StripPayloadFromLiteralProto(*hlo_proto);
-    }
+        *cpu_executable->buffer_assignment_proto();
+    StripPayloadFromLiteralProto(*hlo_proto);
     cpu_executable->set_hlo_proto(std::move(hlo_proto));
   }
 
