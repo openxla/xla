@@ -137,6 +137,7 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/scatter_expander.h"
 #include "xla/hlo/transforms/expanders/scatter_simplifier.h"
 #include "xla/hlo/transforms/expanders/select_and_scatter_expander.h"
+#include "xla/hlo/transforms/expanders/shuffle_expander.h"
 #include "xla/hlo/transforms/expanders/stochastic_convert_decomposer.h"
 #include "xla/hlo/transforms/expanders/triangular_solve_expander.h"
 #include "xla/hlo/transforms/layout_assignment.h"
@@ -823,6 +824,10 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
 
   pipeline.AddPass(CreateSimplificationPipeline("simplification", module,
                                                 use_onednn_custom_call));
+
+  // Expand shuffles after DynamicPadder and initial simplification so
+  // algebraic simplification and constant folding see the original kShuffle.
+  pipeline.AddPass<ShuffleExpander>();
 
   // Scatter expander is sandwiched between two simplification pipelines to
   // enable constant folding with the original scatter instructions (which is
