@@ -4768,6 +4768,7 @@ xla_test(
         "//xla/core/collectives:symmetric_memory",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_handle",
+        "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:memory_allocator",
         "//xla/stream_executor:memory_space",
