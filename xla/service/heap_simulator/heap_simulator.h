@@ -126,6 +126,11 @@ class HeapSimulator {
     // The total size in bytes of heap fragmentation.
     int64_t fragmentation_size = 0;
 
+    // The number of buffers that reuse the buffer of an operand value that
+    // their instruction only reads through other positions, see
+    // Options::may_reuse_operand_buffers_through_other_positions.
+    int64_t num_buffers_reused_through_other_positions = 0;
+
     // A trace of heap simulation events.
     HeapSimulatorTrace debug_trace;
   };
@@ -134,12 +139,19 @@ class HeapSimulator {
   struct Options {
     Options()
         : may_reuse_operand_buffers(true),
+          may_reuse_operand_buffers_through_other_positions(false),
           alloc_constants(false),
           buffers_to_assign(nullptr) {}
 
     // Whether a buffer about to be Free()-ed, can be recycled for a new born
     // one, hence collapsing Free()+Alloc() calls (default true).
     bool may_reuse_operand_buffers;
+    // Whether a new born buffer may also recycle the buffer of an operand value
+    // that its instruction only reads through other positions, e.g. through a
+    // get-tuple-element or a bitcast (default false). Only relevant if
+    // `may_reuse_operand_buffers` is true. RunWithBeneficialOperandReuse()
+    // ignores this option.
+    bool may_reuse_operand_buffers_through_other_positions;
     // Whether to issue Alloc() and Free() calls for constants (default false).
     bool alloc_constants;
     // If 'buffers_to_assign' is provided, only those buffers are assigned
@@ -153,6 +165,12 @@ class HeapSimulator {
     // recycled before them.
     std::optional<int64_t> view_color;
   };
+
+  // Creates the algorithm of a heap simulation. It is called once for each
+  // simulation. Finish() of two algorithms that it created can run at the same
+  // time on different threads.
+  using AlgorithmFactory =
+      absl::FunctionRef<std::unique_ptr<HeapAlgorithm<HloValue>>()>;
 
   // Returns the minimum memory required to compute an HLO module where all
   // computations have been scheduled (represented by the given
@@ -207,14 +225,63 @@ class HeapSimulator {
       const BufferValue::SizeFunction* absl_nonnull size_fn,
       const HloSchedule* schedule, const Options& options = Options());
 
+  // Like Run() on the whole module, but also reuses operand buffers through
+  // other positions if that results in a smaller heap. To save a slow second
+  // Finish(), algorithms without HasFastFinish() already drop this kind of
+  // reuse if it does not lower the peak memory. If both heaps have to be
+  // finished, this happens at the same time on two threads.
+  static absl::StatusOr<Result<HloValue>> RunWithBeneficialOperandReuse(
+      AlgorithmFactory make_algorithm, const HloModule& module,
+      const HloSchedule& schedule, const HloAliasAnalysis& alias_analysis,
+      const AliasInfo& alias_info, const BufferValue::SizeFunction& size_fn,
+      const Options& options = Options());
+
+  // Same as above, but runs on a single computation.
+  static absl::StatusOr<Result<HloValue>> RunWithBeneficialOperandReuse(
+      AlgorithmFactory make_algorithm, const HloComputation& computation,
+      const HloInstructionSequence& instruction_sequence,
+      const HloAliasAnalysis& alias_analysis, const AliasInfo& alias_info,
+      const BufferValue::SizeFunction& size_fn,
+      const Options& options = Options());
+
+  ~HeapSimulator();
+
  private:
+  // Replays the allocs and frees with the given options, see Replay().
+  using ReplayFn =
+      absl::FunctionRef<absl::StatusOr<std::unique_ptr<HeapSimulator>>(
+          const Options&)>;
+
   // If 'schedule' is non-null, it is used to find kCall and kWhile
   // sub-computations, and the heap simulation for those sub-computations will
   // be run recursively. I.e. the simulation is run over the whole module.
   HeapSimulator(std::unique_ptr<HeapAlgorithm<HloValue>> algorithm,
                 const BufferValue::SizeFunction* absl_nonnull size_fn,
                 const Options& options, const HloSchedule* schedule = nullptr);
-  ~HeapSimulator();
+
+  // Replays the allocs and frees of the whole module or of a single
+  // computation into a new heap simulator, without calling Finish().
+  static absl::StatusOr<std::unique_ptr<HeapSimulator>> Replay(
+      std::unique_ptr<HeapAlgorithm<HloValue>> algorithm,
+      const HloModule& module, const HloSchedule& schedule,
+      const HloAliasAnalysis& alias_analysis, const AliasInfo& alias_info,
+      const BufferValue::SizeFunction& size_fn, const Options& options);
+  static absl::StatusOr<std::unique_ptr<HeapSimulator>> Replay(
+      std::unique_ptr<HeapAlgorithm<HloValue>> algorithm,
+      const HloComputation& computation,
+      const HloInstructionSequence& instruction_sequence,
+      const HloAliasAnalysis& alias_analysis, const AliasInfo& alias_info,
+      const BufferValue::SizeFunction& size_fn, const Options& options);
+
+  // Implements RunWithBeneficialOperandReuse().
+  static absl::StatusOr<Result<HloValue>> FinishWithBeneficialOperandReuse(
+      const Options& options, ReplayFn replay);
+
+  // Returns the peak memory of the allocs and frees replayed so far, as
+  // counted by NoFragmentationStatsHeap. It counts a buffer that shares its
+  // memory with another buffer like a buffer of its own, so it can be larger
+  // than the heap.
+  int64_t PeakMemory() const;
 
   absl::Status RunComputation(
       const HloComputation& computation,
@@ -259,6 +326,10 @@ class HeapSimulator {
   // both in order to handle subcomputations. It would be good to unify the
   // handling of subcomputations, but it's not clear how.
   const HloSchedule* schedule_;
+
+  // The number of buffers that reuse the buffer of an operand value which their
+  // instruction only reads through other positions.
+  int64_t num_buffers_reused_through_other_positions_ = 0;
 
   // Hold some sets for error-checking the sequence of Alloc and Free calls.
   absl::flat_hash_set<const HloValue*> allocated_buffers_;
@@ -319,6 +390,10 @@ class HeapAlgorithm {
   // Finish collects the buffer offset assignment results.  Finish may only be
   // called once, after all Alloc and Free calls.
   virtual absl::StatusOr<Result> Finish() = 0;
+
+  // Returns true if Finish() is fast even for many buffers, so that it is
+  // cheap to call it for several variants of the same allocs and frees.
+  virtual bool HasFastFinish() const { return false; }
 };
 
 // NoFragmentationStatsHeap computes the heap size assuming no fragmentation;
@@ -342,6 +417,9 @@ class NoFragmentationStatsHeap : public HeapAlgorithm<BufferType> {
   void Free(const BufferType* buffer, int64_t size) override;
 
   absl::StatusOr<Result> Finish() override;
+
+  // Returns the maximum heap size of the allocs and frees so far.
+  int64_t max_heap_size() const { return max_heap_size_; }
 
  private:
   int64_t current_heap_size_ = 0;
@@ -1139,6 +1217,10 @@ class ConstrainedGlobalDecreasingSizeBestFitHeap
 
   absl::StatusOr<Result> Finish() override;
 
+  bool HasFastFinish() const override {
+    return packing_strategy_ == kFastMerge || packing_strategy_ == kFastSplit;
+  }
+
  private:
   // Allocate buffers for a single heap, processing them one by one in the
   // given order, keeping the ones that did not fit in the list.
@@ -1199,6 +1281,15 @@ class ChooseBestHeapAlgorithm : public HeapAlgorithm<BufferType> {
   }
 
   absl::StatusOr<Result> Finish() override;
+
+  bool HasFastFinish() const override {
+    for (const auto& algorithm : algorithms_) {
+      if (!algorithm->HasFastFinish()) {
+        return false;
+      }
+    }
+    return true;
+  }
 
  private:
   std::vector<std::unique_ptr<HeapAlgorithm<BufferType>>> algorithms_;
@@ -1274,6 +1365,10 @@ class HeapAlgorithmWithFallback : public HeapAlgorithm<BufferType> {
                 << primary_result->heap_size;
     }
     return primary_result;
+  }
+
+  bool HasFastFinish() const override {
+    return primary_algorithm_->HasFastFinish();
   }
 
  private:

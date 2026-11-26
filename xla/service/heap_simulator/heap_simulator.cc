@@ -43,6 +43,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
+#include "absl/memory/memory.h"
 #include "absl/numeric/bits.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -71,6 +72,7 @@ limitations under the License.
 #include "xla/service/hlo_value.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/service/time_utils.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -258,17 +260,10 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
     const AliasInfo* alias_info,
     const BufferValue::SizeFunction* absl_nonnull size_fn,
     const Options& options) {
-  HeapSimulator heap(std::move(algorithm), size_fn, options, &schedule);
-  const HloComputation* entry_computation = module.entry_computation();
-  const HloInstructionSequence& instruction_sequence =
-      schedule.sequence(entry_computation);
-  ABSL_ASSIGN_OR_RETURN(
-      std::unique_ptr<HloLiveRange> hlo_live_range,
-      HloLiveRange::Run(schedule, alias_analysis, entry_computation));
-  ABSL_RETURN_IF_ERROR(heap.RunComputation(*entry_computation,
-                                           instruction_sequence, alias_analysis,
-                                           alias_info, hlo_live_range.get()));
-  return heap.Finish();
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HeapSimulator> heap,
+                        Replay(std::move(algorithm), module, schedule,
+                               alias_analysis, *alias_info, *size_fn, options));
+  return heap->Finish();
 }
 
 /*static*/
@@ -279,18 +274,11 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
     const HloAliasAnalysis& alias_analysis, const AliasInfo* alias_info,
     const BufferValue::SizeFunction* absl_nonnull size_fn,
     const Options& options) {
-  HeapSimulator heap(std::move(algorithm), size_fn, options,
-                     /*schedule=*/nullptr);
-  HloSchedule schedule(computation.parent());
-  schedule.set_sequence(&computation, instruction_sequence);
   ABSL_ASSIGN_OR_RETURN(
-      std::unique_ptr<HloLiveRange> hlo_live_range,
-      HloLiveRange::Run(schedule, alias_analysis, &computation,
-                        /*module_scoped_analysis=*/false));
-  ABSL_RETURN_IF_ERROR(heap.RunComputation(computation, instruction_sequence,
-                                           alias_analysis, alias_info,
-                                           hlo_live_range.get()));
-  return heap.Finish();
+      std::unique_ptr<HeapSimulator> heap,
+      Replay(std::move(algorithm), computation, instruction_sequence,
+             alias_analysis, *alias_info, *size_fn, options));
+  return heap->Finish();
 }
 
 /*static*/
@@ -310,6 +298,118 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
                                            alias_analysis, alias_info,
                                            hlo_live_range.get()));
   return heap.Finish();
+}
+
+absl::StatusOr<HeapSimulator::Result<HloValue>>
+HeapSimulator::RunWithBeneficialOperandReuse(
+    AlgorithmFactory make_algorithm, const HloModule& module,
+    const HloSchedule& schedule, const HloAliasAnalysis& alias_analysis,
+    const AliasInfo& alias_info, const BufferValue::SizeFunction& size_fn,
+    const Options& options) {
+  return FinishWithBeneficialOperandReuse(
+      options, [&](const Options& replay_options) {
+        return Replay(make_algorithm(), module, schedule, alias_analysis,
+                      alias_info, size_fn, replay_options);
+      });
+}
+
+absl::StatusOr<HeapSimulator::Result<HloValue>>
+HeapSimulator::RunWithBeneficialOperandReuse(
+    AlgorithmFactory make_algorithm, const HloComputation& computation,
+    const HloInstructionSequence& instruction_sequence,
+    const HloAliasAnalysis& alias_analysis, const AliasInfo& alias_info,
+    const BufferValue::SizeFunction& size_fn, const Options& options) {
+  return FinishWithBeneficialOperandReuse(
+      options, [&](const Options& replay_options) {
+        return Replay(make_algorithm(), computation, instruction_sequence,
+                      alias_analysis, alias_info, size_fn, replay_options);
+      });
+}
+
+absl::StatusOr<std::unique_ptr<HeapSimulator>> HeapSimulator::Replay(
+    std::unique_ptr<HeapAlgorithm<HloValue>> algorithm, const HloModule& module,
+    const HloSchedule& schedule, const HloAliasAnalysis& alias_analysis,
+    const AliasInfo& alias_info, const BufferValue::SizeFunction& size_fn,
+    const Options& options) {
+  std::unique_ptr<HeapSimulator> heap = absl::WrapUnique(
+      new HeapSimulator(std::move(algorithm), &size_fn, options, &schedule));
+  const HloComputation* entry_computation = module.entry_computation();
+  const HloInstructionSequence& instruction_sequence =
+      schedule.sequence(entry_computation);
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloLiveRange> hlo_live_range,
+      HloLiveRange::Run(schedule, alias_analysis, entry_computation));
+  ABSL_RETURN_IF_ERROR(
+      heap->RunComputation(*entry_computation, instruction_sequence,
+                           alias_analysis, &alias_info, hlo_live_range.get()));
+  return heap;
+}
+
+absl::StatusOr<std::unique_ptr<HeapSimulator>> HeapSimulator::Replay(
+    std::unique_ptr<HeapAlgorithm<HloValue>> algorithm,
+    const HloComputation& computation,
+    const HloInstructionSequence& instruction_sequence,
+    const HloAliasAnalysis& alias_analysis, const AliasInfo& alias_info,
+    const BufferValue::SizeFunction& size_fn, const Options& options) {
+  std::unique_ptr<HeapSimulator> heap = absl::WrapUnique(new HeapSimulator(
+      std::move(algorithm), &size_fn, options, /*schedule=*/nullptr));
+  HloSchedule schedule(computation.parent());
+  schedule.set_sequence(&computation, instruction_sequence);
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloLiveRange> hlo_live_range,
+      HloLiveRange::Run(schedule, alias_analysis, &computation,
+                        /*module_scoped_analysis=*/false));
+  ABSL_RETURN_IF_ERROR(heap->RunComputation(computation, instruction_sequence,
+                                            alias_analysis, &alias_info,
+                                            hlo_live_range.get()));
+  return heap;
+}
+
+absl::StatusOr<HeapSimulator::Result<HloValue>>
+HeapSimulator::FinishWithBeneficialOperandReuse(const Options& options,
+                                                ReplayFn replay) {
+  Options reuse_options = options;
+  reuse_options.may_reuse_operand_buffers_through_other_positions = true;
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HeapSimulator> heap,
+                        replay(reuse_options));
+  if (heap->num_buffers_reused_through_other_positions_ == 0) {
+    return heap->Finish();
+  }
+
+  Options direct_only_options = options;
+  direct_only_options.may_reuse_operand_buffers_through_other_positions = false;
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HeapSimulator> direct_only_heap,
+                        replay(direct_only_options));
+  // If the reuse does not lower the peak memory, its heap can still be smaller
+  // because the buffers happen to be packed better. Finding that out is only
+  // worth a second Finish() if it is fast.
+  if (!heap->algorithm_->HasFastFinish() &&
+      heap->PeakMemory() >= direct_only_heap->PeakMemory()) {
+    return direct_only_heap->Finish();
+  }
+
+  // Finish() only works on the data of its own heap, so the two heaps can be
+  // finished at the same time.
+  absl::StatusOr<Result<HloValue>> result;
+  absl::StatusOr<Result<HloValue>> direct_only_result;
+  {
+    // Deleting the thread at the end of this block waits for it to stop.
+    std::unique_ptr<tsl::Thread> direct_only_thread(
+        tsl::Env::Default()->StartThread(
+            tsl::ThreadOptions(), "heap_simulator_finish",
+            [&] { direct_only_result = direct_only_heap->Finish(); }));
+    result = heap->Finish();
+  }
+  ABSL_RETURN_IF_ERROR(result.status());
+  ABSL_RETURN_IF_ERROR(direct_only_result.status());
+  if (result->heap_size < direct_only_result->heap_size) {
+    return result;
+  }
+  return direct_only_result;
+}
+
+int64_t HeapSimulator::PeakMemory() const {
+  return no_fragmentation_stats_->max_heap_size();
 }
 
 // Runs a heap simulation for the given 'computation', assuming the given
@@ -470,15 +570,21 @@ absl::Status HeapSimulator::RunComputation(
               continue;
             }
 
-            // Only share with values that the user consumes through their
-            // defining instruction. The user may also read the value through
-            // other positions (e.g. a bitcast of it) or through several
-            // operands. All of them are backed by the same buffer, so every use
-            // of the value by the user has to allow sharing.
-            if (value->instruction()->IsUserOf(operand_value->instruction()) &&
+            // The user may read the operand value through its defining
+            // instruction, through other positions (e.g. a get-tuple-element
+            // or a bitcast of it), or through several operands. All of them
+            // are backed by the same buffer, so every use of the value by the
+            // user has to allow sharing.
+            const bool is_direct_operand =
+                value->instruction()->IsUserOf(operand_value->instruction());
+            if ((is_direct_operand ||
+                 options_.may_reuse_operand_buffers_through_other_positions) &&
                 dataflow_analysis.CanShareOperandValueBufferWithUser(
                     *operand_value, value->instruction(), value->index(),
                     alias_info)) {
+              if (!is_direct_operand) {
+                ++num_buffers_reused_through_other_positions_;
+              }
               // Remove the operand buffer right before sharing (allocating) a
               // new one.
               Free(operand_value, operand_value->instruction());
@@ -615,6 +721,8 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Finish() {
   ABSL_ASSIGN_OR_RETURN(const Result<HloValue> no_frag_result,
                         no_fragmentation_stats_->Finish());
   result.fragmentation_size = result.heap_size - no_frag_result.heap_size;
+  result.num_buffers_reused_through_other_positions =
+      num_buffers_reused_through_other_positions_;
 
   // Copy the debug trace we collected to the final result.
   result.debug_trace.Swap(&debug_trace_);

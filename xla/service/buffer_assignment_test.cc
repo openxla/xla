@@ -2050,6 +2050,196 @@ ENTRY main {
   EXPECT_FALSE(x_slice.OverlapsWith(out_slice));
 }
 
+TEST_F(BufferAssignmentTest,
+       ValueReadElementwiseTwiceThroughTupleIsReusedForTemp) {
+  // Like ValueReadElementwiseTwiceThroughTupleIsReused, but the fusion's result
+  // is a temporary buffer placed by the heap simulator. Even though `temp` is
+  // not a direct user of `x` (it consumes `gte0` and `gte1`), the heap
+  // simulator can still reuse `x`'s buffer for `temp`.
+  const char* const hlo_text = R"hlo(
+HloModule test, is_scheduled=true
+
+fused_computation {
+  p0 = s32[8]{0} parameter(0)
+  p1 = s32[8]{0} parameter(1)
+  ROOT add = s32[8]{0} add(p0, p1)
+}
+
+ENTRY main {
+  a = s32[8]{0} parameter(0)
+  x = s32[8]{0} negate(a)
+  tuple = (s32[8]{0}, s32[8]{0}) tuple(x, x)
+  gte0 = s32[8]{0} get-tuple-element(tuple), index=0
+  gte1 = s32[8]{0} get-tuple-element(tuple), index=1
+  temp = s32[8]{0} fusion(gte0, gte1), kind=kLoop, calls=fused_computation
+  ROOT out = s32[4]{0} slice(temp), slice={[0:8:2]}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  HloInstruction* x = FindInstruction(module.get(), "x");
+  HloInstruction* temp = FindInstruction(module.get(), "temp");
+
+  std::unique_ptr<BufferAssignment> buffers =
+      RunBufferAssignmentWithSequentialOrdering(module.get());
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice x_slice,
+                       buffers->GetUniqueSlice(x, {}));
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice temp_slice,
+                       buffers->GetUniqueSlice(temp, {}));
+  EXPECT_EQ(x_slice, temp_slice);
+}
+
+TEST_F(BufferAssignmentTest,
+       ValueReadNonElementwiseThroughTupleIsNotReusedForTemp) {
+  // Even when `temp` consumes `x` only through `gte0` and `gte1`, every
+  // consumed position of `x` must allow sharing. Because `p1` is read via
+  // `reverse`, `x`'s buffer must not be reused for `temp`.
+  const char* const hlo_text = R"hlo(
+HloModule test, is_scheduled=true
+
+fused_computation {
+  p0 = s32[8]{0} parameter(0)
+  p1 = s32[8]{0} parameter(1)
+  rev = s32[8]{0} reverse(p1), dimensions={0}
+  ROOT add = s32[8]{0} add(p0, rev)
+}
+
+ENTRY main {
+  a = s32[8]{0} parameter(0)
+  x = s32[8]{0} negate(a)
+  tuple = (s32[8]{0}, s32[8]{0}) tuple(x, x)
+  gte0 = s32[8]{0} get-tuple-element(tuple), index=0
+  gte1 = s32[8]{0} get-tuple-element(tuple), index=1
+  temp = s32[8]{0} fusion(gte0, gte1), kind=kLoop, calls=fused_computation
+  ROOT out = s32[4]{0} slice(temp), slice={[0:8:2]}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  HloInstruction* x = FindInstruction(module.get(), "x");
+  HloInstruction* temp = FindInstruction(module.get(), "temp");
+
+  std::unique_ptr<BufferAssignment> buffers =
+      RunBufferAssignmentWithSequentialOrdering(module.get());
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice x_slice,
+                       buffers->GetUniqueSlice(x, {}));
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice temp_slice,
+                       buffers->GetUniqueSlice(temp, {}));
+  EXPECT_FALSE(x_slice.OverlapsWith(temp_slice));
+}
+
+TEST_F(BufferAssignmentTest,
+       ValueReadThroughBitcastIsNotReusedIfItIncreasesFragmentation) {
+  // Live ranges (positions in the sequence below) and sizes of the large temp
+  // buffers:
+  //   early: [1, 3],  1600B
+  //   mid:   [2, 5],  1200B
+  //   x:     [4, 7],   800B
+  //   temp:  [7, 9],   800B
+  //   late:  [8, 10], 1600B
+  // SPATIAL places `early` and `late` at offset 0 and `mid` on top of them.
+  // `temp` reads `x` elementwise through a bitcast, so it could reuse the
+  // buffer of `x`. The reused buffer would be live over [4, 9], so it would fit
+  // neither below `mid` (where `late` is) nor above `late` (where `mid` is),
+  // and would be placed on top of `mid`. Without the reuse, `x` fits below
+  // `mid` and `temp` fits above `late`, both in the 2800 bytes that `early` and
+  // `mid` need. So the heap is smaller without the reuse.
+  const char* const hlo_text = R"hlo(
+HloModule test
+
+add {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT r = f32[] add(a, b)
+}
+
+ENTRY main {
+  p = f32[] parameter(0)
+  early = f32[400] broadcast(p), dimensions={}
+  mid = f32[300] broadcast(p), dimensions={}
+  early_sum = f32[] reduce(early, p), dimensions={0}, to_apply=add
+  x = f32[200] broadcast(p), dimensions={}
+  mid_sum = f32[] reduce(mid, p), dimensions={0}, to_apply=add
+  x_bitcast = f32[20,10] bitcast(x)
+  temp = f32[20,10] negate(x_bitcast)
+  late = f32[400] broadcast(p), dimensions={}
+  temp_sum = f32[] reduce(temp, p), dimensions={0,1}, to_apply=add
+  late_sum = f32[] reduce(late, p), dimensions={0}, to_apply=add
+  f1 = f32[] add(early_sum, mid_sum)
+  f2 = f32[] add(f1, temp_sum)
+  ROOT f3 = f32[] add(f2, late_sum)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  std::vector<HloInstruction*> sequence;
+  for (const char* name :
+       {"p", "early", "mid", "early_sum", "x", "mid_sum", "x_bitcast", "temp",
+        "late", "temp_sum", "late_sum", "f1", "f2", "f3"}) {
+    sequence.push_back(FindInstruction(module.get(), name));
+  }
+
+  std::unique_ptr<BufferAssignment> buffers =
+      RunBufferAssignmentWithInstructionSequence(
+          module.get(), sequence, /*alignment=*/1,
+          BufferAssigner::DefaultCanUseAllocation(),
+          buffer_assignment::BufferAssignmentAlgorithmProto::SPATIAL);
+
+  EXPECT_FALSE(
+      buffers->SharesTopLevelSlice(FindInstruction(module.get(), "x"),
+                                   FindInstruction(module.get(), "temp")));
+}
+
+TEST_F(BufferAssignmentTest,
+       ValueReadThroughBitcastIsNotReusedIfItDoesNotShrinkTheHeap) {
+  // `temp` reads `x` elementwise through a bitcast, so it could reuse the
+  // buffer of `x`. Without the reuse, `x` and `temp` need 1600 bytes together.
+  // `big` is live after both and needs 1600 bytes as well, so the heap has the
+  // same size with and without the reuse. In that case, only the buffers of
+  // direct operands are reused.
+  const char* const hlo_text = R"hlo(
+HloModule test
+
+add {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT r = f32[] add(a, b)
+}
+
+ENTRY main {
+  p = f32[] parameter(0)
+  x = f32[200] broadcast(p), dimensions={}
+  x_bitcast = f32[20,10] bitcast(x)
+  temp = f32[20,10] negate(x_bitcast)
+  temp_sum = f32[] reduce(temp, p), dimensions={0,1}, to_apply=add
+  big = f32[400] broadcast(p), dimensions={}
+  big_sum = f32[] reduce(big, p), dimensions={0}, to_apply=add
+  ROOT sum = f32[] add(temp_sum, big_sum)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  std::vector<HloInstruction*> sequence;
+  for (const char* name :
+       {"p", "x", "x_bitcast", "temp", "temp_sum", "big", "big_sum", "sum"}) {
+    sequence.push_back(FindInstruction(module.get(), name));
+  }
+
+  std::unique_ptr<BufferAssignment> buffers =
+      RunBufferAssignmentWithInstructionSequence(
+          module.get(), sequence, /*alignment=*/1,
+          BufferAssigner::DefaultCanUseAllocation(),
+          buffer_assignment::BufferAssignmentAlgorithmProto::SPATIAL);
+
+  EXPECT_FALSE(
+      buffers->SharesTopLevelSlice(FindInstruction(module.get(), "x"),
+                                   FindInstruction(module.get(), "temp")));
+}
+
 TEST_F(BufferAssignmentTest, CanUseAllocationDoesNotMixInputOutputColors) {
   // Even when a backend allows S(0) temps to be assigned to S(1) temp
   // allocations, input/output allocations must match raw colors. They are
