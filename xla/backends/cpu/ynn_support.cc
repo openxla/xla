@@ -546,6 +546,23 @@ bool IsReduceLikeOpSupportedByYnn(const HloInstruction* hlo) {
     return false;
   }
 
+  // Do not send reductions over bf16 values to YNNPACK
+  // (https://github.com/openxla/xla/issues/51014): once a fused reduction
+  // has at least 4096 outputs, YNNPACK can return uninitialized memory
+  // (inf/NaN/~1e38, varying between calls) when the values being reduced
+  // originated as bf16 -- either because the reduction input itself is bf16
+  // (e.g. a bf16 max), or because it arrives through a widening convert
+  // from bf16 (e.g. jnp.mean/jnp.sum upcast bf16 to f32 before accumulating,
+  // and the ResNet-18 pooled f32 sum in the same issue). Keep such reductions
+  // in XLA codegen until the YNNPACK reduce is fixed.
+  if (input_dtype == BF16) {
+    return false;
+  }
+  if (input->opcode() == HloOpcode::kConvert &&
+      input->operand(0)->shape().element_type() == BF16) {
+    return false;
+  }
+
   const HloComputation* to_apply = hlo->to_apply();
   CHECK_NE(to_apply, nullptr);
   // DefineReduceOp and DefineReduceWindowOp in ynn_emitter.cc only map the
@@ -564,7 +581,9 @@ bool IsReduceLikeOpSupportedByYnn(const HloInstruction* hlo) {
             {F64, F64},
             {F32, F32},
             {F16, F32},
-            {BF16, F32},
+            // {BF16, F32} is not sent to YNNPACK: reductions over bf16
+            // values can return uninitialized memory, see above and
+            // https://github.com/openxla/xla/issues/51014.
             // YNNPACK accumulates these with an F32 accumulator, which seems to
             // be invalid for some tests, e.g. sequence_layers/jax:dense_test
             // {BF16, BF16},
