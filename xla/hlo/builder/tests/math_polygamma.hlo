@@ -26,9 +26,9 @@
 // CHECK-NEXT:  %[[constant_369:[^ ]+]] = f32[] constant(nan)
 // CHECK-NEXT:  %[[broadcast_8:[^ ]+]] = f32[] broadcast(%[[constant_369]]), dimensions={}
 // CHECK-NEXT:  %[[compare_63:[^ ]+]] = pred[] compare(%[[arg1_1]], %[[constant_341]]), direction=EQ
-// CHECK-NEXT:  %[[bitcast_convert_1:[^ ]+]] = u32[] bitcast-convert(%[[arg1_1]])
-// CHECK-NEXT:  %[[constant_366:[^ ]+]] = u32[] constant(2147483648)
-// CHECK-NEXT:  %[[compare_62:[^ ]+]] = pred[] compare(%[[bitcast_convert_1]], %[[constant_366]]), direction=EQ
+// CHECK-NEXT:  %[[bitcast_convert_1:[^ ]+]] = s32[] bitcast-convert(%[[arg1_1]])
+// CHECK-NEXT:  %[[constant_366:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT:  %[[compare_62:[^ ]+]] = pred[] compare(%[[bitcast_convert_1]], %[[constant_366]]), direction=LT
 // CHECK-NEXT:  %[[constant_367:[^ ]+]] = f32[] constant(inf)
 // CHECK-NEXT:  %[[broadcast_6:[^ ]+]] = f32[] broadcast(%[[constant_367]]), dimensions={}
 // CHECK-NEXT:  %[[constant_368:[^ ]+]] = f32[] constant(-inf)
