@@ -141,9 +141,7 @@ std::optional<ReduceScatterSpec> AllGatherDynamicSliceCancellation(
 // }
 //
 // This function would match this pattern and return permutation pairs like
-// {{0,7}, {1,6}, ..., {7,0}}.
-//
-
+// {{0,7}, {1,6}, ..., {7,0}}, sorted in ascending (source, target) order.
 std::optional<AllGatherDynamicSliceMatchSpec>
 MatchPermutedSliceAndPartitionOffset(const HloAllGatherInstruction* ag,
                                      int64_t num_partitions,

@@ -41,7 +41,7 @@ namespace {
 
 namespace op = xla::testing::opcode_matchers;
 using ::testing::_;
-using ::testing::UnorderedElementsAreArray;
+using ::testing::ElementsAreArray;
 
 class AllGatherPermutedDsSimplifierTest
     : public HloHardwareIndependentTestBase {
@@ -93,7 +93,7 @@ TEST_F(AllGatherPermutedDsSimplifierTest,
   EXPECT_THAT(root, op::CollectivePermute(op::Parameter(0)));
   EXPECT_THAT(
       root->source_target_pairs(),
-      (UnorderedElementsAreArray<std::pair<int64_t, int64_t>>(
+      (ElementsAreArray<std::pair<int64_t, int64_t>>(
           {{0, 7}, {1, 6}, {2, 5}, {3, 4}, {4, 3}, {5, 2}, {6, 1}, {7, 0}})));
   EXPECT_EQ(root->get_frontend_attribute(kCollectiveGroupKeyAttr), "g0");
 }
@@ -131,7 +131,7 @@ TEST_F(AllGatherPermutedDsSimplifierTest,
   // would silently zero those partitions.
   EXPECT_THAT(
       root->source_target_pairs(),
-      (UnorderedElementsAreArray<std::pair<int64_t, int64_t>>(
+      (ElementsAreArray<std::pair<int64_t, int64_t>>(
           {{0, 0}, {1, 2}, {2, 1}, {3, 3}, {4, 4}, {5, 5}, {6, 6}, {7, 7}})));
 }
 
@@ -166,7 +166,7 @@ TEST_F(AllGatherPermutedDsSimplifierTest,
   // shard) is not zeroed by the collective-permute.
   EXPECT_THAT(
       root->source_target_pairs(),
-      (UnorderedElementsAreArray<std::pair<int64_t, int64_t>>(
+      (ElementsAreArray<std::pair<int64_t, int64_t>>(
           {{0, 3}, {1, 2}, {2, 1}, {3, 0}, {4, 7}, {5, 5}, {6, 4}, {7, 6}})));
 }
 
@@ -201,7 +201,7 @@ TEST_F(AllGatherPermutedDsSimplifierTest,
   EXPECT_THAT(root, op::CollectivePermute(op::Parameter(0)));
   EXPECT_THAT(
       root->source_target_pairs(),
-      (UnorderedElementsAreArray<std::pair<int64_t, int64_t>>(
+      (ElementsAreArray<std::pair<int64_t, int64_t>>(
           {{0, 3}, {1, 2}, {2, 1}, {3, 0}, {4, 7}, {5, 6}, {6, 5}, {7, 4}})));
 }
 
@@ -237,7 +237,7 @@ TEST_F(AllGatherPermutedDsSimplifierTest, KeepsSelfPairsForIdentityPartitions) {
   EXPECT_THAT(root, op::CollectivePermute(op::Parameter(0)));
   EXPECT_THAT(
       root->source_target_pairs(),
-      (UnorderedElementsAreArray<std::pair<int64_t, int64_t>>(
+      (ElementsAreArray<std::pair<int64_t, int64_t>>(
           {{0, 1}, {1, 0}, {2, 2}, {3, 3}, {4, 4}, {5, 5}, {6, 6}, {7, 7}})));
 }
 

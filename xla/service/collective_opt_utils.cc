@@ -873,40 +873,30 @@ std::optional<AllGatherDynamicSliceMatchSpec> MatchAllGatherDynamicSliceOffset(
   }
   for (int i = 0; i < ag_shard_offset_spec.per_replica_group_offsets.size();
        ++i) {
-    const auto& ag_offset_map =
+    const OffsetToIdMap& ag_offset_map =
         ag_shard_offset_spec.per_replica_group_offsets[i];
-    // `rg_local_offset_to_src_id_map` is the offset->source_partition_id map.
-    // `indices_spec` is the offset->target_partition_id map.
-    absl::flat_hash_map<int64_t, int64_t> rg_local_offset_to_src_id_map;
-    for (const auto& [offset, partition_id] : ag_offset_map) {
-      if (!rg_local_offset_to_src_id_map.try_emplace(offset, partition_id)
-               .second) {
-        VLOG(2) << "Duplicate offset " << offset << " in replica group " << i
-                << " in AG " << ag->ToString() << " for partition id "
-                << partition_id;
-        return std::nullopt;
-      }
-    }
+    const OffsetToIdMap& ds_offset_map =
+        ds_offset_dest_id_spec.per_replica_group_offsets[i];
 
-    if (rg_local_offset_to_src_id_map.size() !=
-        ds_offset_dest_id_spec.per_replica_group_offsets[i].size()) {
+    if (ag_offset_map.size() != ds_offset_map.size()) {
       VLOG(2) << "AG does not have valid partition offset spec "
               << ag->ToString() << " for replica group " << i;
       return std::nullopt;
     }
-    for (const auto& [offset, src_id] : rg_local_offset_to_src_id_map) {
-      if (!ds_offset_dest_id_spec.per_replica_group_offsets[i].contains(
-              offset)) {
+    for (const auto& [offset, src_id] : ag_offset_map) {
+      auto it = ds_offset_map.find(offset);
+      if (it == ds_offset_map.end()) {
         VLOG(2) << "AG does not have valid partition offset spec "
                 << ag->ToString() << " for replica group " << i
                 << " for DS offset " << ds->ToString();
         return std::nullopt;
       }
-      spec.permutation_pairs.push_back(std::make_pair(
-          src_id,
-          ds_offset_dest_id_spec.per_replica_group_offsets[i].at(offset)));
+      spec.permutation_pairs.emplace_back(src_id, it->second);
     }
   }
+  // Canonicalize into ascending (source, target) order so output is
+  // deterministic across processes and independent of replica-group ordering.
+  absl::c_sort(spec.permutation_pairs);
   return spec;
 }
 
