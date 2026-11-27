@@ -35,5 +35,7 @@ ENTRY main {
 // CHECK:      %[[INPUT:.*]] = xtile.extract {{.*}} -> tensor<2x16x256xf32>
 // CHECK:      %[[EXP:.*]] = tt.extern_elementwise %[[INPUT]]
 // CHECK:      %[[MASKED:.*]] = xtile.mask %[[EXP]] bounds [2, 16, 151]
-// CHECK:      "tt.reduce"(%[[MASKED]]) <{axis = 2 : i32}>
-// CHECK:      "tt.reduce"({{.*}}) <{axis = 0 : i32}>
+// CHECK:      %[[REDUCE2:.*]] = "tt.reduce"(%[[MASKED]]) <{axis = 2 : i32}>
+// CHECK:      %[[TRANS:.*]] = tt.trans %[[REDUCE2]] {order = array<i32: 1, 0>} : tensor<2x16xf32> -> tensor<16x2xf32>
+// CHECK:      %[[LHS:.*]], %[[RHS:.*]] = tt.split %[[TRANS]] : tensor<16x2xf32> -> tensor<16xf32>
+// CHECK:      arith.addf %[[LHS]], %[[RHS]] : tensor<16xf32>

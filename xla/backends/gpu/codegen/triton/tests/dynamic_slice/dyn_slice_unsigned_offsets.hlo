@@ -1,0 +1,92 @@
+// RUN: fusion_to_triton %s | FileCheck %s
+// RUN: triton_test_correctness %s
+
+fusion {
+  p_300 = f32[300,16]{1,0} parameter(0)
+  p_200 = f32[200,16]{1,0} parameter(1)
+  p_32 = f32[32,16]{1,0} parameter(2)
+  off_u8_hi = u8[] parameter(3)
+  off_u8_192 = u8[] parameter(4)
+  off_u8_max = u8[] parameter(5)
+  off_u16_hi = u16[] parameter(6)
+  off_u32_hi = u32[] parameter(7)
+  off_u32_mid = u32[] parameter(8)
+  off_u64_hi = u64[] parameter(9)
+  off_u64_max = u64[] parameter(10)
+
+  c0_u8 = u8[] constant(0)
+  c0_u16 = u16[] constant(0)
+  c0_u32 = u32[] constant(0)
+  c0_u64 = u64[] constant(0)
+
+  // u8=200 with upper=292 (> UINT8_MAX): requires zero-extension to i64.
+  ds_u8_hi = f32[8,16]{1,0} dynamic-slice(p_300, off_u8_hi, c0_u8),
+    dynamic_slice_sizes={8,16}
+  // u8=192 with upper=192 (fits in u8 but overflows signed i8): requires
+  // zero-extension to i64 before signed arith.index_cast.
+  ds_u8_192 = f32[8,16]{1,0} dynamic-slice(p_200, off_u8_192, c0_u8),
+    dynamic_slice_sizes={8,16}
+  // u8=255 with upper=24: clamps to 24 via unsigned minui (not 0 via maxsi).
+  ds_u8_max = f32[8,16]{1,0} dynamic-slice(p_32, off_u8_max, c0_u8),
+    dynamic_slice_sizes={8,16}
+  // u16=50000 (> INT16_MAX) with upper=24: clamps to 24.
+  ds_u16_hi = f32[8,16]{1,0} dynamic-slice(p_32, off_u16_hi, c0_u16),
+    dynamic_slice_sizes={8,16}
+  // u32=3000000000 (> INT32_MAX) with upper=24: clamps to 24.
+  ds_u32_hi = f32[8,16]{1,0} dynamic-slice(p_32, off_u32_hi, c0_u32),
+    dynamic_slice_sizes={8,16}
+  // u32=13 + 2 = 15 (computed in-bounds unsigned offset).
+  c2_u32 = u32[] constant(2)
+  off_u32_computed = u32[] add(off_u32_mid, c2_u32)
+  ds_u32_mid = f32[8,16]{1,0} dynamic-slice(p_32, off_u32_computed, c0_u32),
+    dynamic_slice_sizes={8,16}
+  // u64=4294967297 (2^32 + 1) with upper=24: clamps to 24 without 32-bit
+  // truncation.
+  ds_u64_hi = f32[8,16]{1,0} dynamic-slice(p_32, off_u64_hi, c0_u64),
+    dynamic_slice_sizes={8,16}
+  // u64=9223372036854775807 (INT64_MAX) with upper=24: clamps to 24.
+  ds_u64_max = f32[8,16]{1,0} dynamic-slice(p_32, off_u64_max, c0_u64),
+    dynamic_slice_sizes={8,16}
+
+  ROOT result = f32[64,16]{1,0} concatenate(
+    ds_u8_hi, ds_u8_192, ds_u8_max, ds_u16_hi,
+    ds_u32_hi, ds_u32_mid, ds_u64_hi, ds_u64_max), dimensions={0}
+}
+// CHECK-DAG: arith.extui %{{.*}} : i8 to i64
+// CHECK-DAG: arith.minui %{{.*}}, %{{.*}} : i64
+// CHECK-DAG: arith.minui %{{.*}}, %{{.*}} : i8
+// CHECK-DAG: arith.minui %{{.*}}, %{{.*}} : i16
+// CHECK-DAG: arith.minui %{{.*}}, %{{.*}} : i32
+// CHECK-DAG: arith.index_cast %{{.*}} {xla.range = [0 : index, 292 : index]} : i64 to index
+// CHECK-DAG: arith.index_cast %{{.*}} {xla.range = [0 : index, 192 : index]} : i64 to index
+// CHECK-DAG: arith.index_cast %{{.*}} {xla.range = [0 : index, 24 : index]} : i8 to index
+// CHECK-DAG: arith.index_cast %{{.*}} {xla.range = [0 : index, 24 : index]} : i16 to index
+// CHECK-DAG: arith.index_cast %{{.*}} {xla.range = [0 : index, 24 : index]} : i32 to index
+
+ENTRY main {
+  p_300 = f32[300,16]{1,0} parameter(0)
+  p_200 = f32[200,16]{1,0} parameter(1)
+  p_32 = f32[32,16]{1,0} parameter(2)
+  off_u8_hi = u8[] constant(200)
+  off_u8_192 = u8[] constant(192)
+  off_u8_max = u8[] constant(255)
+  off_u16_hi = u16[] constant(50000)
+  off_u32_hi = u32[] constant(3000000000)
+  off_u32_mid = u32[] constant(13)
+  off_u64_hi = u64[] constant(4294967297)
+  off_u64_max = u64[] constant(9223372036854775807)
+  ROOT fusion = f32[64,16]{1,0} fusion(
+    p_300, p_200, p_32,
+    off_u8_hi, off_u8_192, off_u8_max, off_u16_hi,
+    off_u32_hi, off_u32_mid, off_u64_hi, off_u64_max),
+    kind=kCustom, calls=fusion,
+    backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["8","16"]}],
+          "num_warps":"1",
+          "num_ctas":"1",
+          "num_stages":"1",
+          "is_tma_allowed":false}}}
+}

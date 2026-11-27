@@ -25,9 +25,13 @@ limitations under the License.
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Location.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Types.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
@@ -100,6 +104,64 @@ class RewriteIndexBinaryElementwiseOp
   uint64_t index_bitwidth_;
 };
 
+// Folds `arith.index_cast(arith.index_cast(x : iN) : index) : iM` into direct
+// integer casts (`arith.extsi` / `arith.trunci` / identity) using the known
+// `index` bitwidth from the module's DataLayout. MLIR's built-in
+// canonicalizer only folds when N == M because the index width is unknown.
+// Eliminating the intermediate `index` casts lets downstream analyses (such as
+// Triton's AxisInfoAnalysis) preserve offset divisibility and vectorize loads.
+class FoldIndexCastChain : public OpRewritePattern<arith::IndexCastOp> {
+ public:
+  FoldIndexCastChain(MLIRContext* context, uint64_t index_bitwidth)
+      : OpRewritePattern<arith::IndexCastOp>(context, 2),
+        index_bitwidth_(index_bitwidth) {}
+
+  LogicalResult matchAndRewrite(arith::IndexCastOp outer,
+                                PatternRewriter& rewriter) const override {
+    auto inner = outer.getIn().getDefiningOp<arith::IndexCastOp>();
+    if (!inner) {
+      return rewriter.notifyMatchFailure(outer, "input is not an index_cast");
+    }
+    mlir::Value src = inner.getIn();
+    Type src_elem = mlir::getElementTypeOrSelf(src.getType());
+    Type dst_elem = mlir::getElementTypeOrSelf(outer.getType());
+    auto src_int = llvm::dyn_cast<mlir::IntegerType>(src_elem);
+    auto dst_int = llvm::dyn_cast<mlir::IntegerType>(dst_elem);
+    if (!src_int || !dst_int || !src_int.isSignless() ||
+        !dst_int.isSignless()) {
+      return rewriter.notifyMatchFailure(
+          outer, "endpoints are not signless integer types");
+    }
+
+    uint64_t src_w = src_int.getWidth();
+    uint64_t dst_w = dst_int.getWidth();
+    mlir::Location loc = outer.getLoc();
+    mlir::Value cur = src;
+    if (src_w > index_bitwidth_ && dst_w > index_bitwidth_) {
+      Type idx_int_type =
+          src.getType() == src_elem
+              ? Type(rewriter.getIntegerType(index_bitwidth_))
+              : llvm::cast<mlir::ShapedType>(src.getType())
+                    .clone(rewriter.getIntegerType(index_bitwidth_));
+      cur = arith::TruncIOp::create(rewriter, loc, idx_int_type, cur);
+      cur = arith::ExtSIOp::create(rewriter, loc, outer.getType(), cur);
+      rewriter.replaceOp(outer, cur);
+      return mlir::success();
+    }
+    if (src_w == dst_w) {
+      rewriter.replaceOp(outer, cur);
+    } else if (src_w < dst_w) {
+      rewriter.replaceOpWithNewOp<arith::ExtSIOp>(outer, outer.getType(), cur);
+    } else {
+      rewriter.replaceOpWithNewOp<arith::TruncIOp>(outer, outer.getType(), cur);
+    }
+    return mlir::success();
+  }
+
+ private:
+  uint64_t index_bitwidth_;
+};
+
 struct ConvertIndexTypePass
     : public impl::ConvertIndexTypePassBase<ConvertIndexTypePass> {
  public:
@@ -117,8 +179,8 @@ struct ConvertIndexTypePass
                  RewriteIndexBinaryElementwiseOp<arith::RemUIOp>,
                  RewriteIndexBinaryElementwiseOp<arith::RemSIOp>,
                  RewriteIndexBinaryElementwiseOp<arith::SubIOp>,
-                 RewriteIndexBinaryElementwiseOp<arith::XOrIOp>>(
-        ctx, *index_bitwidth);
+                 RewriteIndexBinaryElementwiseOp<arith::XOrIOp>,
+                 FoldIndexCastChain>(ctx, *index_bitwidth);
     arith::IndexCastOp::getCanonicalizationPatterns(patterns, ctx);
 
     if (mlir::failed(

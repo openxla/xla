@@ -23,7 +23,7 @@ fusion (p0: f32[1024, 16], offset: s32[]) -> f32[8192] {
 // CHECK:           %[[EXTRACT_1:.*]] = tensor.extract %[[EXTRACT_0]][] : tensor<i32>
 // CHECK:           %[[MAXSI_0:.*]] = arith.maxsi %[[EXTRACT_1]], %[[CONSTANT_1]] : i32
 // CHECK:           %[[MINSI_0:.*]] = arith.minsi %[[MAXSI_0]], %[[CONSTANT_0]] : i32
-// CHECK:           %[[INDEX_CAST_0:.*]] = arith.index_cast %[[MINSI_0]] : i32 to index
+// CHECK:           %[[INDEX_CAST_0:.*]] = arith.index_cast %[[MINSI_0]] {xla.range = [0 : index, 512 : index]} : i32 to index
 // CHECK:           %[[APPLY_INDEXING_0:.*]] = xla.apply_indexing #[[$ATTR_0]](%[[ARG3]], %[[INDEX_CAST_0]])
 // CHECK:           %[[APPLY_INDEXING_1:.*]] = xla.apply_indexing #[[$ATTR_1]](%[[ARG3]])
 // CHECK:           %[[EXTRACT_2:.*]] = xtile.extract %[[ARG0]][%[[APPLY_INDEXING_0]], %[[APPLY_INDEXING_1]]] [1, 8] [1, 1] : memref<1024x16xf32> -> tensor<1x8xf32>
