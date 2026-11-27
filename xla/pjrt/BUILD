@@ -1413,6 +1413,8 @@ xla_cc_test(
         ":transpose",
         ":transpose_kernels",
         ":transpose_plan",
+        "//third_party/gloop/util/gtl:c_memcpy",
+        "//third_party/gloop/util/gtl:c_memset",
         "//xla:array",
         "//xla:ef57",
         "//xla:permutation_util",

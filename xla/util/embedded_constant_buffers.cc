@@ -46,6 +46,8 @@ limitations under the License.
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Triple.h"
+#include "third_party/gloop/util/gtl/c_memcpy.h"
+#include "third_party/gloop/util/gtl/c_memset.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/service/llvm_ir/llvm_type_conversion_util.h"
 #include "xla/tsl/platform/errors.h"
@@ -66,9 +68,10 @@ void ConstantToEmbed::SerializeIntoBuffer(absl::Span<const uint8_t> buffer) {
   data_buffer.resize(header_size + buffer_size);
 
   std::memcpy(data_buffer.data(), &buffer_size, sizeof(uint64_t));
-  std::memset(data_buffer.data() + sizeof(uint64_t), 0, padding_size);
+  gtl::c_memset_n(absl::MakeSpan(data_buffer).subspan(sizeof(uint64_t)), 0,
+                  padding_size);
   if (!buffer.empty()) {
-    std::memcpy(data_buffer.data() + header_size, buffer.data(), buffer.size());
+    gtl::c_memcpy(absl::MakeSpan(data_buffer).subspan(header_size), buffer);
   }
 }
 

@@ -49,6 +49,8 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "hwy/per_target.h"
 #include "hwy/targets.h"
+#include "third_party/gloop/util/gtl/c_memcpy.h"
+#include "third_party/gloop/util/gtl/c_memset.h"
 #include "unsupported/Eigen/CXX11/Tensor"
 #include "xla/array.h"
 #include "xla/ef57.h"
@@ -1077,8 +1079,8 @@ void ExecuteTestWithT(const TransposeTestCase& test, int parallelism,
       if (chunk_contiguity == TransposePlan::ChunkContiguity::kOutput) {
         std::vector<char> output_temp(output_bytes + 2 * kChunkGuardBytes,
                                       static_cast<char>(guard_byte));
-        std::memset(output_temp.data() + kChunkGuardBytes, init_byte,
-                    output_bytes);
+        gtl::c_memset_n(absl::MakeSpan(output_temp).subspan(kChunkGuardBytes),
+                        init_byte, output_bytes);
         plan->ExecuteChunk(chunk, input_temp.data(),
                            output_temp.data() + kChunkGuardBytes,
                            /*input_is_global=*/false,
@@ -1857,8 +1859,8 @@ void TestPackIntN(
   const char guard_byte = static_cast<char>(init_byte ^ 0x5A);
   std::vector<char> guarded_output(output_size_bytes + 2 * kPackGuardBytes,
                                    guard_byte);
-  std::memset(guarded_output.data() + kPackGuardBytes, init_byte,
-              output_size_bytes);
+  gtl::c_memset_n(absl::MakeSpan(guarded_output).subspan(kPackGuardBytes),
+                  init_byte, output_size_bytes);
   tsl::thread::ThreadPool threadpool(tsl::Env::Default(), "Transpose",
                                      std::max(1, num_threads));
   plan->Execute(
@@ -1905,8 +1907,8 @@ void TestPackIntN(
       plan->ExecuteChunk(i, in_slot.data(), out_slot.data(),
                          /*input_is_global=*/false,
                          /*output_is_global=*/false);
-      std::memcpy(local_chunked_output.data() + out_offset, out_slot.data(),
-                  out_bytes);
+      gtl::c_memcpy(absl::MakeSpan(local_chunked_output).subspan(out_offset),
+                    out_slot, out_bytes);
     }
     EXPECT_EQ(sum_chunk_bytes, output_size_bytes);
     EXPECT_EQ(plan->MaxInputChunkSizeBytes(), max_in_chunk_bytes);
