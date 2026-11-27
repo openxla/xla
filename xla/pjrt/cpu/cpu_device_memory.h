@@ -25,6 +25,10 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 
+namespace tsl {
+class TiedAny;
+}  // namespace tsl
+
 namespace xla {
 
 // A region of device memory that can be used to construct PjRt buffers. Device
@@ -61,6 +65,14 @@ class CpuDeviceMemory {
 
   virtual void* untyped_data() const = 0;
   virtual size_t size_bytes() const = 0;
+
+  // Identifies the current contents and owns cached representations of them.
+  // The identity does not retain this allocation. Writes replace it; slices
+  // share it. Only owned memory supports caching.
+  virtual std::shared_ptr<tsl::TiedAny> GetCacheIdentity() { return nullptr; }
+  virtual void InvalidateCacheIdentity() {}
+  // Mutable pointer exports can outlive a call: disable caching permanently.
+  virtual void DisableCacheIdentity() {}
 
   // Creates an unavailable AsyncValueRef placeholder for a delayed
   // memory allocation (see `AllocateInto` below).

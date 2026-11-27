@@ -121,19 +121,24 @@ TEST_F(OneDnnOpThunkSerdesTest, MatMul) {
   config.set_transpose_a(true);
   config.set_transpose_b(false);
 
-  ASSERT_OK_AND_ASSIGN(auto thunk,
-                       OneDnnOpThunk::Create("__onednn$matmul", Thunk::Info(),
-                                             op_buffers, config));
-  ASSERT_OK_AND_ASSIGN(auto round_tripped,
-                       RoundTrip(std::move(thunk), buffer_allocations_));
+  // Legacy configs omit the flag; newly compiled eligible matmuls retain it.
+  for (bool eligible : {false, true}) {
+    SCOPED_TRACE(eligible);
+    config.set_weights_cache_eligible(eligible);
+    ASSERT_OK_AND_ASSIGN(auto thunk,
+                         OneDnnOpThunk::Create("__onednn$matmul", Thunk::Info(),
+                                               op_buffers, config));
+    ASSERT_OK_AND_ASSIGN(auto round_tripped,
+                         RoundTrip(std::move(thunk), buffer_allocations_));
 
-  ExpectRoundTripPreservesBuffers("__onednn$matmul", op_buffers,
-                                  *round_tripped);
-  ASSERT_TRUE(std::holds_alternative<OneDnnMatMulConfig>(
-      round_tripped->onednn_op_config()));
-  EXPECT_EQ(std::get<OneDnnMatMulConfig>(round_tripped->onednn_op_config())
-                .SerializeAsString(),
-            config.SerializeAsString());
+    ExpectRoundTripPreservesBuffers("__onednn$matmul", op_buffers,
+                                    *round_tripped);
+    ASSERT_TRUE(std::holds_alternative<OneDnnMatMulConfig>(
+        round_tripped->onednn_op_config()));
+    EXPECT_EQ(std::get<OneDnnMatMulConfig>(round_tripped->onednn_op_config())
+                  .SerializeAsString(),
+              config.SerializeAsString());
+  }
 }
 
 TEST_F(OneDnnOpThunkSerdesTest, Convolution) {

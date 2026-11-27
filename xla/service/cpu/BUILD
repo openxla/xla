@@ -22,7 +22,7 @@ load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable", "if_include_google_deps")
 load("//xla/tsl/mkl:build_defs.bzl", "if_graph_api", "if_onednn")
-load("//xla/tsl/mkl:graph.bzl", "onednn_cc_library")
+load("//xla/tsl/mkl:graph.bzl", "onednn_cc_library", "onednn_cc_test")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 load(
     "//xla/tsl/platform:build_config_root.bzl",
@@ -656,6 +656,7 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@tsl//tsl/profiler/lib:traceme",
     ] + if_onednn([
+        ":onednn_config_proto_cc",
         "//xla/backends/cpu/runtime/onednn:onednn_op_thunk",
     ]),
 )
@@ -1054,6 +1055,7 @@ onednn_cc_library(
     copts = runtime_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
     deps = [
+        ":onednn_weight_cache",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -1071,6 +1073,38 @@ onednn_cc_library(
 )
 
 onednn_cc_library(
+    name = "onednn_weight_cache",
+    srcs = ["onednn_weight_cache.cc"],
+    hdrs = ["onednn_weight_cache.h"],
+    copts = runtime_copts() + tsl_copts(),
+    visibility = ["//visibility:public"],
+    deps = [
+        "//xla/tsl/mkl:onednn",
+        "//xla/tsl/util:env_var",
+        "//xla/tsl/util:tied_ref",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:platform_port",
+    ],
+)
+
+onednn_cc_test(
+    name = "onednn_weight_cache_test",
+    srcs = ["onednn_weight_cache_test.cc"],
+    copts = tsl_copts(),
+    deps = [
+        ":onednn_weight_cache",
+        "//xla/tsl/mkl:onednn",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/util:tied_ref",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+onednn_cc_library(
     name = "onednn_matmul",
     srcs = ["onednn_matmul.cc"],
     hdrs = ["onednn_matmul.h"],
@@ -1081,6 +1115,7 @@ onednn_cc_library(
         ":onednn_config_proto_cc",
         ":onednn_memory_util",
         ":onednn_util",
+        ":onednn_weight_cache",
         "//xla:executable_run_options",
         "//xla:literal",
         "//xla:shape_util",
@@ -1093,7 +1128,6 @@ onednn_cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:platform_port",
     ],
 )
 

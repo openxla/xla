@@ -13,24 +13,30 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gtest/gtest.h>
-
 #include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/pjrt/c/pjrt_c_api_device_event.h"
 #include "xla/pjrt/common_pjrt_client.h"
 #include "xla/pjrt/cpu/abstract_cpu_buffer.h"
 #include "xla/pjrt/cpu/cpu_client.h"
 #include "xla/pjrt/cpu/cpu_event.h"
 #include "xla/pjrt/cpu/raw_buffer.h"
 #include "xla/pjrt/device_event.h"
+#include "xla/pjrt/device_event_utils.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
+#include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
+#include "xla/pjrt/raw_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/concurrency/async_value.h"
@@ -160,6 +166,62 @@ TEST(CpuDeviceMemoryTest, PackOrCopyOobWrite) {
   // Asserts that the mismatched target size triggers the CHECK abort securely.
   EXPECT_DEATH(PackOrCopy(S4, literal, dst.data(), 4),
                "Mismatched packed target size in PackOrCopy");
+}
+
+TEST(CpuDeviceMemoryTest, CacheIdentityTracksWritesAndSlices) {
+  ASSERT_OK_AND_ASSIGN(auto memory, CpuDeviceMemory::Allocate(64));
+  // Writes before the first identity do not prevent subsequent caching.
+  memory->InvalidateCacheIdentity();
+  auto identity = memory->GetCacheIdentity();
+  ASSERT_NE(identity, nullptr);
+  EXPECT_EQ(identity, memory->GetCacheIdentity());
+  auto slice = CpuDeviceMemory::CreateSlicedMemory(memory, 16, 32);
+  EXPECT_EQ(identity, slice->GetCacheIdentity());
+  slice->InvalidateCacheIdentity();
+  auto updated = memory->GetCacheIdentity();
+  ASSERT_NE(updated, nullptr);
+  EXPECT_NE(identity, updated);
+  EXPECT_EQ(updated, slice->GetCacheIdentity());
+  slice->DisableCacheIdentity();
+  EXPECT_EQ(memory->GetCacheIdentity(), nullptr);
+  memory->InvalidateCacheIdentity();
+  EXPECT_EQ(slice->GetCacheIdentity(), nullptr);
+}
+
+TEST(CpuDeviceMemoryTest, DeferredWriteInvalidatesAfterItsDependencies) {
+  ASSERT_OK_AND_ASSIGN(auto client, GetXlaPjrtCpuClient(CpuClientOptions()));
+  AsyncWorkRunner* async_work_runner =
+      absl::down_cast<CommonPjRtClient*>(client.get())->async_work_runner();
+  ASSERT_OK_AND_ASSIGN(
+      auto raw, CpuRawBuffer::Allocate(client->memory_spaces()[0]->ToCApiPtr(),
+                                       64, async_work_runner));
+  alignas(64) char bytes[64];
+  std::memset(bytes, 1, sizeof(bytes));
+  auto identity = raw->buffer()->GetCacheIdentity();
+  PjRtRawBufferInterface* interface = raw.get();
+  EXPECT_EQ(interface->GetHostPointerForInternalUse(
+                PjRtRawBufferInterface::HostAccess::kRead),
+            raw->buffer()->untyped_data());
+  EXPECT_EQ(identity, raw->buffer()->GetCacheIdentity());
+  std::memset(interface->GetHostPointerForInternalUse(
+                  PjRtRawBufferInterface::HostAccess::kWrite),
+              2, sizeof(bytes));
+  EXPECT_NE(identity, raw->buffer()->GetCacheIdentity());
+  identity = raw->buffer()->GetCacheIdentity();
+  ASSERT_NE(identity, nullptr);
+  auto pending = tsl::MakeConstructedAsyncValueRef<CpuEvent>();
+  ASSERT_OK_AND_ASSIGN(auto written,
+                       raw->CopyRawHostToDeviceAndReturnEvent(
+                           bytes, 0, 64, {PjRtDeviceEventRef(pending)}));
+  EXPECT_EQ(written.state(), PJRT_DeviceEvent_State_Unavailable);
+  EXPECT_EQ(identity, raw->buffer()->GetCacheIdentity());
+  pending.SetStateConcrete();
+  BlockUntilReady(written);
+  ASSERT_OK(written.GetErrorIfPresent().value_or(absl::OkStatus()));
+  EXPECT_EQ(std::memcmp(raw->buffer()->untyped_data(), bytes, sizeof(bytes)),
+            0);
+  EXPECT_NE(identity, raw->buffer()->GetCacheIdentity());
+  EXPECT_NE(raw->buffer()->GetCacheIdentity(), nullptr);
 }
 
 }  // namespace

@@ -130,7 +130,11 @@ class HostRawBufferPjRtStagingBuffer : public PjRtStagingBuffer {
 
   ~HostRawBufferPjRtStagingBuffer() override { usage_promise_.SetReady(); }
 
-  absl::Span<uint8_t> data() override { return data_; }
+  absl::Span<uint8_t> data() override {
+    raw_buffer_->GetHostPointerForInternalUse(
+        PjRtRawBufferInterface::HostAccess::kWrite);
+    return data_;
+  }
   absl::Span<const uint8_t> const_data() const override { return data_; }
 
  private:
@@ -249,7 +253,8 @@ tsl::AsyncValueRef<PjRtStagingBuffer> ToStagingBuffer(
     absl::FunctionRef<tsl::AsyncValueRef<PjRtStagingBuffer>(size_t,
                                                             PjRtMemorySpace*)>
         allocate_staging_buffer) {
-  void* host_ptr = raw_buffer->GetHostPointer();
+  void* host_ptr = raw_buffer->GetHostPointerForInternalUse(
+      PjRtRawBufferInterface::HostAccess::kRead);
   if (host_ptr != nullptr) {
     size_t size = raw_buffer->GetOnDeviceSizeInBytes();
     absl::Span<uint8_t> data_span(static_cast<uint8_t*>(host_ptr), size);
@@ -507,6 +512,14 @@ PjRtRawBufferInterface::memory_space() const {
 ABSL_ATTRIBUTE_NO_SANITIZE_CFI void* PjRtRawBufferInterface::GetHostPointer()
     const {
   return vtable->get_host_pointer(this);
+}
+
+void* PjRtRawBufferInterface::GetHostPointerForInternalUse(
+    HostAccess access) const {
+  if (const auto* buffer = down_cast<PjRtRawBuffer>()) {
+    return buffer->GetHostPointerForInternalUse(access);
+  }
+  return GetHostPointer();
 }
 
 ABSL_ATTRIBUTE_NO_SANITIZE_CFI size_t

@@ -32,8 +32,14 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
 
+namespace tsl {
+class TiedAny;
+}  // namespace tsl
+
 namespace xla {
 namespace cpu {
+
+class OneDnnPackedWeights;
 
 static const int kOneDnnMaxNDims = DNNL_MAX_NDIMS;
 
@@ -146,23 +152,25 @@ struct OneDnnBaseResources {
 // oneDNN primitive resources.
 struct OneDnnPrimResources : public OneDnnBaseResources {
   dnnl::primitive primitive;
+  dnnl::reorder weights_reorder;
   dnnl::memory src_mem;
   dnnl::memory wei_mem;
   dnnl::memory dst_mem;
+  dnnl::memory weights_reorder_src_mem;
   dnnl::memory scratch_mem;
   dnnl::memory scale_mem;
   dnnl::memory shift_mem;
   std::vector<std::pair<int, dnnl::memory>> postop_args;
+  std::shared_ptr<tsl::TiedAny> weights_source_identity;
+  std::shared_ptr<OneDnnPackedWeights> packed_weights;
+  // This invocation owns a miss reservation until CompleteWeightCache() runs.
+  bool weights_pending = false;
 
-  OneDnnPrimResources()
-      : primitive(),
-        src_mem(),
-        wei_mem(),
-        dst_mem(),
-        scratch_mem(),
-        scale_mem(),
-        shift_mem(),
-        postop_args() {}
+  OneDnnPrimResources() = default;
+
+  ~OneDnnPrimResources() override;
+
+  void CompleteWeightCache(bool success);
 };
 
 // TODO(intel-tf): Add a child struct of OneDnnBaseResources for oneDNN graph.
