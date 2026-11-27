@@ -33,6 +33,9 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_split.h"
+#include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -782,6 +785,7 @@ void HloScheduleGraph::AnnotateGraph(
 std::shared_ptr<const HloAliasAnalysis> SchedulingContext::GetAliasAnalysis()
     const {
   // Lazy initialization of alias analysis on first use.
+  absl::MutexLock lock(alias_analysis_mu_);
   if (alias_analysis_ == nullptr) {
     absl::StatusOr<std::unique_ptr<HloAliasAnalysis>> alias_analysis =
         HloAliasAnalysis::Run(module_, alias_info_);
@@ -808,11 +812,26 @@ AnnotationTracker::AnnotationTracker(const HloModule* module)
 
 std::optional<int64_t> AnnotationTracker::GetAnnotation(
     const HloInstruction* instr) const {
-  if (std::optional<std::string> annotation =
-          instr->get_frontend_attribute(kXlaSchedulingGroupIdAttr)) {
-    return std::stoi(*annotation);
+  std::optional<std::string> annotation =
+      instr->get_frontend_attribute(kXlaSchedulingGroupIdAttr);
+  if (!annotation.has_value() || *annotation == kXlaNoOpSchedulingGroup) {
+    return std::nullopt;
   }
-  return std::nullopt;
+  std::vector<absl::string_view> fields = absl::StrSplit(*annotation, ':');
+  if (fields.size() > 2 || fields[0].empty()) {
+    return std::nullopt;
+  }
+  if (fields.size() == 2 && !fields[1].empty()) {
+    int64_t iteration_id = 0;
+    if (!absl::SimpleAtoi(fields[1], &iteration_id)) {
+      return std::nullopt;
+    }
+  }
+  int64_t group_id = 0;
+  if (!absl::SimpleAtoi(fields[0], &group_id) || group_id < 0) {
+    return std::nullopt;
+  }
+  return group_id;
 }
 
 std::vector<const HloInstruction*> AnnotationTracker::GetInstructions(
