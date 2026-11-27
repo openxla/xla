@@ -58,18 +58,17 @@ build:rocm_rbe_dynamic --local_resources=cpu=HOST_CPUS
 
 build:ci_repo_cache --repository_cache=/bazel-repo-cache/repo
 
+build:tsan --features=tsan
 build:tsan --strip=never
-build:tsan --copt -fsanitize=thread
 build:tsan --copt=-gmlt
 build:tsan --per_file_copt=+.*,-xla.*@-g0
 build:tsan --copt -fno-omit-frame-pointer
-build:tsan --linkopt -fsanitize=thread
 build:tsan --copt -O1
 build:tsan --run_under=//build_tools/rocm:sanitizer_wrapper
-build:tsan --repo_env=GLOBAL_SYMBOLS_TO_VERSION="llvm::*,LLVM*"
+build:tsan --@rules_ml_toolchain//common:dynamic_sanitizer_runtime
 
 build:asan --run_under=//build_tools/rocm:sanitizer_wrapper
-build:asan --repo_env=GLOBAL_SYMBOLS_TO_VERSION="llvm::*,LLVM*"
+build:asan --@rules_ml_toolchain//common:dynamic_sanitizer_runtime
 
 build:ci_single_gpu --config=rocm_base
 
