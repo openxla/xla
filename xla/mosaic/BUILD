@@ -359,6 +359,24 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "serde_test",
+    srcs = ["serde_test.cc"],
+    deps = [
+        ":serde",
+        ":tpu_dialect",
+        ":tpu_serde_pass",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Parser",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
 cc_library(
     name = "stringify_util",
     hdrs = ["dialect/tpu/stringify_util.h"],
