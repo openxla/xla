@@ -175,6 +175,7 @@ xla_cc_test(
         ":gpu_latency_hiding_scheduler",
         "//xla:util",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/cost_model:sol_latency_estimator",
         "//xla/backends/gpu/hlo/analysis:alias_info",
         "//xla/backends/gpu/hlo/transforms/collectives:collective_domain",
         "//xla/hlo/ir:hlo",

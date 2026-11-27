@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/backends/gpu/cost_model/sol_latency_estimator.h"
 #include "xla/backends/gpu/hlo/analysis/alias_info.h"
 #include "xla/backends/gpu/hlo/transforms/collectives/collective_domain.h"
 #include "xla/backends/gpu/hlo/transforms/hlo_scheduling/gpu_hlo_schedule.h"
@@ -3214,6 +3215,158 @@ ENTRY main {
       absl_testing::StatusIs(
           absl::StatusCode::kInternal,
           HasSubstr("carried-done: Skipped due to kExceedsOverlapLimit")));
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       NopDoesNotPinIndependentOpOutsideCollective) {
+  // Bottom-up scheduling pops `act_bitcast` (0-cost NOP) before `act`. With a
+  // non-zero synchronous edge latency, `act` would get a positive ready
+  // interval (fake stall) and lose `kLessStall` to `weight_convert`, pinning
+  // `weight_convert` outside `[ag_start, ag_done]`.
+  constexpr absl::string_view kHloModule = R"hlo(
+HloModule test, replica_count=2
+
+act_body {
+  p = bf16[2048,512]{1,0} parameter(0)
+  ROOT neg = bf16[2048,512]{1,0} negate(p)
+}
+
+convert_body {
+  w = s8[2048,512]{1,0} parameter(0)
+  ROOT c = bf16[2048,512]{1,0} convert(w)
+}
+
+consumer_body {
+  a = bf16[2048,512]{1,0} parameter(0)
+  b = bf16[2048,512]{1,0} parameter(1)
+  ROOT add = bf16[2048,512]{1,0} add(a, b)
+}
+
+ENTRY main {
+  p0 = bf16[2048,256]{1,0} parameter(0)
+  w = s8[2048,512]{1,0} parameter(1)
+  ag_start = (bf16[2048,256]{1,0}, bf16[2048,512]{1,0}) all-gather-start(p0),
+      dimensions={1}, replica_groups={{0,1}}
+  ag_done = bf16[2048,512]{1,0} all-gather-done(ag_start)
+  act = bf16[2048,512]{1,0} fusion(ag_done), kind=kLoop, calls=act_body
+  act_bitcast = bf16[2048,512]{1,0} bitcast(act)
+  weight_convert = bf16[2048,512]{1,0} fusion(w), kind=kLoop, calls=convert_body
+  ROOT consumer = bf16[2048,512]{1,0} fusion(act_bitcast, weight_convert),
+      kind=kLoop, calls=consumer_body
+})hlo";
+
+  HloModuleConfig config = GetModuleConfig(/*fdo_profile=*/"");
+  config.set_replica_count(2);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule, config));
+
+  // Verify GpuLatencyEstimator assigns 0 latency to non-async edges.
+  GpuLatencyEstimator estimator(/*pointer_size=*/8);
+  HloComputation* entry = module->entry_computation();
+  HloGraphNode act_node(entry->GetInstructionWithName("act"), 0);
+  HloGraphNode bitcast_node(entry->GetInstructionWithName("act_bitcast"), 1);
+  HloGraphNode ag_start_node(entry->GetInstructionWithName("ag_start"), 2);
+  HloGraphNode ag_done_node(entry->GetInstructionWithName("ag_done"), 3);
+  EXPECT_EQ(estimator.GetLatencyBetween(act_node, bitcast_node), 0.0);
+  EXPECT_GT(estimator.GetLatencyBetween(ag_start_node, ag_done_node), 0.0);
+
+  ASSERT_OK(ScheduleModule(module.get()));
+  const std::vector<HloInstruction*>& sequence =
+      module->schedule().sequence(entry).instructions();
+  EXPECT_LT(GetIndexByName(sequence, "ag_start"),
+            GetIndexByName(sequence, "weight_convert"));
+  EXPECT_LT(GetIndexByName(sequence, "weight_convert"),
+            GetIndexByName(sequence, "ag_done"));
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       SubMicrosecondOpUnderSolDoesNotPinIndependentOpOutsideCollective) {
+  // Under SolLatencyEstimator on H100, `tiny_fusion` is a non-NOP kLoop fusion
+  // with sub-microsecond NodeCost (< 1.0 us). Without 0-latency non-async
+  // edges, scheduling `tiny_fusion` bottom-up would create a fake stall on
+  // `act`, causing `weight_convert` to win `kLessStall` and land outside
+  // `[ag_start, ag_done]`.
+  constexpr absl::string_view kHloModule = R"hlo(
+HloModule test, replica_count=8
+
+act_body {
+  p = bf16[2048,4096]{1,0} parameter(0)
+  ROOT neg = bf16[2048,4096]{1,0} negate(p)
+}
+
+tiny_body {
+  p = bf16[2048,4096]{1,0} parameter(0)
+  s = bf16[1,4]{1,0} slice(p), slice={[0:1], [0:4]}
+  ROOT neg = bf16[1,4]{1,0} negate(s)
+}
+
+convert_body {
+  w = s8[2048,512]{1,0} parameter(0)
+  ROOT c = bf16[2048,512]{1,0} convert(w)
+}
+
+consumer_body {
+  t = bf16[1,4]{1,0} parameter(0)
+  w = bf16[2048,512]{1,0} parameter(1)
+  s = bf16[1,1]{1,0} slice(t), slice={[0:1], [0:1]}
+  r = bf16[] reshape(s)
+  b = bf16[2048,512]{1,0} broadcast(r), dimensions={}
+  ROOT add = bf16[2048,512]{1,0} add(w, b)
+}
+
+ENTRY main {
+  p0 = bf16[2048,512]{1,0} parameter(0)
+  w = s8[2048,512]{1,0} parameter(1)
+  ag_start = (bf16[2048,512]{1,0}, bf16[2048,4096]{1,0}) all-gather-start(p0),
+      dimensions={1}, replica_groups={{0,1,2,3,4,5,6,7}}
+  ag_done = bf16[2048,4096]{1,0} all-gather-done(ag_start)
+  act = bf16[2048,4096]{1,0} fusion(ag_done), kind=kLoop, calls=act_body
+  tiny_fusion = bf16[1,4]{1,0} fusion(act), kind=kLoop, calls=tiny_body
+  weight_convert = bf16[2048,512]{1,0} fusion(w), kind=kLoop, calls=convert_body
+  ROOT consumer = bf16[2048,512]{1,0} fusion(tiny_fusion, weight_convert),
+      kind=kLoop, calls=consumer_body
+})hlo";
+
+  HloModuleConfig config = GetModuleConfig(/*fdo_profile=*/"");
+  config.set_replica_count(8);
+  config.mutable_debug_options()
+      .set_xla_gpu_enable_analytical_sol_latency_estimator(true);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule, config));
+
+  stream_executor::DeviceDescription h100_device_info =
+      TestGpuDeviceInfo::H100SXMDeviceInfo();
+  ASSERT_TRUE(
+      SolLatencyEstimator::IsSupportedForModule(*module, h100_device_info));
+  HloComputation* entry = module->entry_computation();
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SolLatencyEstimator> sol_estimator,
+      SolLatencyEstimator::Create(
+          SchedulerConfig{},
+          std::make_unique<GpuLatencyEstimator>(/*pointer_size=*/8),
+          h100_device_info, ShapeSizeBytesFunction(/*pointer_size=*/8), entry));
+  const HloInstruction* tiny_fusion =
+      entry->GetInstructionWithName("tiny_fusion");
+  const LatencyEstimator::TimeCost tiny_cost =
+      sol_estimator->NodeCost(tiny_fusion);
+  ASSERT_GT(tiny_cost, 0.0);
+  ASSERT_LT(tiny_cost, 1.0);
+  EXPECT_EQ(sol_estimator->GetLatencyBetween(
+                HloGraphNode(entry->GetInstructionWithName("act"),
+                             /*original_position=*/0),
+                HloGraphNode(tiny_fusion, /*original_position=*/1)),
+            0.0);
+
+  GpuAliasInfo alias_info(h100_device_info);
+  ASSERT_OK(ScheduleGpuModule(module.get(), /*pointer_size=*/8,
+                              h100_device_info, &mlir_context_, &alias_info));
+
+  const std::vector<HloInstruction*>& sequence =
+      module->schedule().sequence(entry).instructions();
+  EXPECT_LT(GetIndexByName(sequence, "ag_start"),
+            GetIndexByName(sequence, "weight_convert"));
+  EXPECT_LT(GetIndexByName(sequence, "weight_convert"),
+            GetIndexByName(sequence, "ag_done"));
 }
 
 }  // namespace
