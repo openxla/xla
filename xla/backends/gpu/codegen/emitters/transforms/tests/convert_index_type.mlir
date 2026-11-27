@@ -159,3 +159,75 @@ func.func @complex(%arg0: index, %arg1: index, %arg2: index) -> index {
 // CHECK: arith.remui %{{.*}} : i64
 // CHECK: %[[R:.*]] = arith.index_cast %{{.*}} : i64 to index
 // CHECK: return %[[R]] : index
+
+// -----
+
+func.func @fold_index_cast_i32_to_i64(%arg0: i32) -> i64 {
+  %0 = arith.index_cast %arg0 : i32 to index
+  %1 = arith.index_cast %0 : index to i64
+  return %1 : i64
+}
+
+// CHECK-LABEL: @fold_index_cast_i32_to_i64
+// CHECK-SAME: (%[[ARG0:.*]]: i32) -> i64 {
+// CHECK-NOT: arith.index_cast
+// CHECK: %[[R:.*]] = arith.extsi %[[ARG0]] : i32 to i64
+// CHECK: return %[[R]] : i64
+
+// -----
+
+func.func @fold_index_cast_i64_to_i32(%arg0: i64) -> i32 {
+  %0 = arith.index_cast %arg0 : i64 to index
+  %1 = arith.index_cast %0 : index to i32
+  return %1 : i32
+}
+
+// CHECK-LABEL: @fold_index_cast_i64_to_i32
+// CHECK-SAME: (%[[ARG0:.*]]: i64) -> i32 {
+// CHECK-NOT: arith.index_cast
+// CHECK: %[[R:.*]] = arith.trunci %[[ARG0]] : i64 to i32
+// CHECK: return %[[R]] : i32
+
+// -----
+
+func.func @fold_index_cast_same_width(%arg0: i32) -> i32 {
+  %0 = arith.index_cast %arg0 : i32 to index
+  %1 = arith.index_cast %0 : index to i32
+  return %1 : i32
+}
+
+// CHECK-LABEL: @fold_index_cast_same_width
+// CHECK-SAME: (%[[ARG0:.*]]: i32) -> i32 {
+// CHECK-NOT: arith.index_cast
+// CHECK: return %[[ARG0]] : i32
+
+// -----
+
+module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 16 : i16>>} {
+  func.func @fold_index_cast_narrow_index(%arg0: i32) -> i64 {
+    %0 = arith.index_cast %arg0 : i32 to index
+    %1 = arith.index_cast %0 : index to i64
+    return %1 : i64
+  }
+}
+
+// CHECK-LABEL: @fold_index_cast_narrow_index
+// CHECK-SAME: (%[[ARG0:.*]]: i32) -> i64 {
+// CHECK-NOT: arith.index_cast
+// CHECK: %[[T:.*]] = arith.trunci %[[ARG0]] : i32 to i16
+// CHECK: %[[E:.*]] = arith.extsi %[[T]] : i16 to i64
+// CHECK: return %[[E]] : i64
+
+// -----
+
+func.func @fold_index_cast_tensor(%arg0: tensor<4xi32>) -> tensor<4xi64> {
+  %0 = arith.index_cast %arg0 : tensor<4xi32> to tensor<4xindex>
+  %1 = arith.index_cast %0 : tensor<4xindex> to tensor<4xi64>
+  return %1 : tensor<4xi64>
+}
+
+// CHECK-LABEL: @fold_index_cast_tensor
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<4xi32>) -> tensor<4xi64> {
+// CHECK-NOT: arith.index_cast
+// CHECK: %[[R:.*]] = arith.extsi %[[ARG0]] : tensor<4xi32> to tensor<4xi64>
+// CHECK: return %[[R]] : tensor<4xi64>
