@@ -1019,13 +1019,21 @@ bool CheckUniformReplicaGroups(const HloChannelInstruction* instruction) {
 
 namespace {
 
-// Decides whether `instruction` is a broadcast of a scalar that can be
-// re-created with a different shape. A broadcast with control dependencies
-// cannot, as the new broadcast would not be ordered by them.
-Decision CanRecreateScalarBroadcast(const HloInstruction* instruction) {
+// Decides whether `instruction`, an operand of `user`, is a broadcast of a
+// scalar that can be re-created with a different shape. It has to have the
+// dimensions of `user`: operations such as clamp and select also accept rank-0
+// operands, which are not sliced together with `user`. A broadcast with
+// control dependencies cannot be re-created either, as the new broadcast would
+// not be ordered by them.
+Decision CanRecreateScalarBroadcast(const HloInstruction* instruction,
+                                    const HloInstruction* user) {
   if (instruction->opcode() != HloOpcode::kBroadcast ||
       !ShapeUtil::IsScalar(instruction->operand(0)->shape())) {
     return Decision::Forbid("not a broadcast of a scalar");
+  }
+  if (!ShapeUtil::SameDimensions(instruction->shape(), user->shape())) {
+    return Decision::Forbid(
+        "the scalar broadcast does not have the dimensions of its user");
   }
   if (instruction->HasControlDependencies()) {
     return Decision::Forbid("the scalar broadcast has control dependencies");
@@ -1036,7 +1044,8 @@ Decision CanRecreateScalarBroadcast(const HloInstruction* instruction) {
 // Decides whether a dynamic-slice of `user` can be replaced by `user` applied
 // to a dynamic-slice of `operand`. This is the case if `user` only applies a
 // per-element function to `operand`: it is either a copy, or an elementwise
-// operation whose remaining operands are all broadcasts of scalars.
+// operation whose remaining operands are all broadcasts of scalars to the
+// dimensions of `user`.
 Decision CanSliceCommuteWithUser(const HloInstruction* user,
                                  const HloInstruction* operand) {
   if (user->HasSideEffect()) {
@@ -1062,11 +1071,11 @@ Decision CanSliceCommuteWithUser(const HloInstruction* user,
   }
   if (!absl::c_all_of(user->operands(), [&](const HloInstruction* other) {
         return other == operand ||
-               CanRecreateScalarBroadcast(other).IsAllowed();
+               CanRecreateScalarBroadcast(other, user).IsAllowed();
       })) {
     return Decision::Forbid(
-        "another operand of the user is not a scalar broadcast without "
-        "control dependencies");
+        "another operand of the user is not a scalar broadcast with the "
+        "dimensions of the user and without control dependencies");
   }
   return Decision::Allow();
 }
