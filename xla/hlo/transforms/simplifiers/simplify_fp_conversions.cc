@@ -55,14 +55,16 @@ absl::StatusOr<bool> RunOnComputation(HloComputation& computation) {
     if (convert_chain_length < 2) {
       continue;
     }
-    // F32 and BF16 chains through an 8 bit float are deliberate quantization
-    // (e.g. FP8xN dot emulation), not excess precision, so keep them.
-    auto is_f32_or_bf16 = [](PrimitiveType type) {
-      return type == F32 || type == BF16;
+    // Chains of wider floating-point types (>8-bit) through an <=8-bit float
+    // (e.g. FP8, FP4, FP8xN dot emulation) are deliberate quantization, not
+    // excess precision, so keep them.
+    auto is_wider_float = [](PrimitiveType type) {
+      return primitive_util::IsFloatingPointType(type) &&
+             primitive_util::BitWidth(type) > 8;
     };
     if (has_8_bit_intermediate &&
-        is_f32_or_bf16(instruction->shape().element_type()) &&
-        is_f32_or_bf16(input->shape().element_type())) {
+        is_wider_float(instruction->shape().element_type()) &&
+        is_wider_float(input->shape().element_type())) {
       continue;
     }
 
