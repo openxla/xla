@@ -39,6 +39,10 @@ struct ReduceScatterSpec {
   int64_t group_size;
   std::vector<int64_t> original_split_dims;
   HloInstruction* dynamic_slice;
+  // The copies and elementwise operations between the collective and
+  // `dynamic_slice`, ordered from the collective to the dynamic-slice. Only
+  // populated when matching with `allow_intervening_elementwise`.
+  std::vector<HloInstruction*> intervening_elementwise;
 };
 
 struct SplitDimSpec {
@@ -74,13 +78,23 @@ using MapIdToTableOffset =
     std::function<int64_t(const HloInstruction*, int64_t)>;
 
 // Matches the given all-reduce operation to a reduce-scatter pattern.
+//
+// With `allow_intervening_elementwise`, the dynamic-slice may also be reached
+// through a chain of copies and elementwise operations whose other operands
+// are broadcasts of scalars, e.g.
+//   all-reduce -> multiply(broadcast(scalar)) -> copy -> dynamic-slice
+// Slicing commutes with such operations, so the caller can re-create them on
+// the result of the reduce-scatter. The chain is returned in
+// `ReduceScatterSpec::intervening_elementwise`. It cannot be combined with an
+// intervening reshape or bitcast.
 std::optional<ReduceScatterSpec> MatchReduceScatter(
     const HloAllReduceInstructionBase* ar, int64_t num_partitions,
     int64_t num_replicas, bool allow_multiple_split_dims = false,
     bool allow_intervening_reshape = false, int64_t min_rank = 1,
     HloPredicate match_partition_id = HloPredicateIsOp<HloOpcode::kPartitionId>,
     HloPredicate match_replica_id = HloPredicateIsOp<HloOpcode::kReplicaId>,
-    bool allow_intervening_bitcast = false);
+    bool allow_intervening_bitcast = false,
+    bool allow_intervening_elementwise = false);
 
 // The function checks if the dynamic-slice's offset matches the expected
 // pattern for local slicing. It supports two cases:
@@ -159,14 +173,19 @@ struct CollectiveUsers {
   HloInstruction* dynamic_slice = nullptr;
   HloInstruction* bitcast = nullptr;
   HloInstruction* reshape = nullptr;
+  // The copies and elementwise operations between the collective and the
+  // dynamic-slice, ordered from the collective to the dynamic-slice.
+  std::vector<HloInstruction*> elementwise;
 };
 
 // Extracts the dynamic-slice user from a collective instruction, potentially
-// looking through reshapes and bitcasts.
+// looking through reshapes and bitcasts. With `allow_intervening_elementwise`,
+// it alternatively looks through a chain of single-user copies and elementwise
+// operations whose other operands are broadcasts of scalars.
 std::optional<CollectiveUsers> FindUniqueDynamicSliceUserFromCollective(
     const HloChannelInstruction* absl_nonnull instruction,
     bool allow_multiple_users, bool allow_intervening_reshape,
-    bool allow_intervening_bitcast);
+    bool allow_intervening_bitcast, bool allow_intervening_elementwise = false);
 
 // Check if a given instruction (AllReduce or AllGather) matches a DynamicSlice;
 // the DynamicSlice has to be the user of the given instruction.
@@ -178,7 +197,8 @@ std::optional<ReduceScatterSpec> MatchWithDynamicSlice(
     HloPredicate match_replica_id = HloPredicateIsOp<HloOpcode::kReplicaId>,
     bool is_constrain_layout = false, bool use_global_device_ids = false,
     bool is_cross_module = false, bool allow_intervening_bitcast = false,
-    bool allow_multiple_users = false);
+    bool allow_multiple_users = false,
+    bool allow_intervening_elementwise = false);
 
 // Extracts the split dimension spec from a `DynamicSlice` instruction. This
 // spec identifies the dimension(s) being operated on by a collective
