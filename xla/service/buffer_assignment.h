@@ -1437,13 +1437,20 @@ class BufferAssigner {
       std::optional<BufferAssignment::BufferIsolationOptions>
           isolation_options);
 
+  // Returns true when buffers of `buffer_color` may use a temporary allocation
+  // of `alloc_color` without violating alignment guarantees.
+  bool CanUseCrossColorAllocation(LogicalBuffer::Color buffer_color,
+                                  LogicalBuffer::Color alloc_color,
+                                  const BufferAssignment& assignment) const;
+
   // Orders colors so that if buffers of color A can use allocations of color B
   // (but not the reverse), B is simulated before A. This lets the fixed-size B
   // heap be available for opportunistic reuse before A's remaining buffers are
   // heap-simulated. Colors with no directional relation are ordered by numeric
   // color for stability.
   std::vector<LogicalBuffer::Color> SortColorsForCanUseAllocation(
-      absl::Span<const LogicalBuffer::Color> colors) const;
+      absl::Span<const LogicalBuffer::Color> colors,
+      const BufferAssignment& assignment) const;
 
   // Tries to place whole buffers of `buffer_color` into the free space of
   // already-materialized compatible temp allocations (those of a different
