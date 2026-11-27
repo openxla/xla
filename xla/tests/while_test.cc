@@ -1436,6 +1436,44 @@ TEST_F(HloWhileTest, ParallelExecution) {
   }
 }
 
+TEST_F(HloWhileTest, ZeroTripForwardLoopWithControlDepPreservesInit) {
+  static constexpr absl::string_view kHloString = R"hlo(
+  HloModule zero_trip_ctrl
+
+  Body {
+    param = (s32[]) parameter(0)
+    i = s32[] get-tuple-element(param), index=0
+    one = s32[] constant(1)
+    ROOT tuple = (s32[]) tuple(s32[] add(i, one))
+  }
+
+  Cond {
+    param = (s32[]) parameter(0)
+    i = s32[] get-tuple-element(param), index=0
+    limit = s32[] constant(4)
+    ROOT done = pred[] compare(i, limit), direction=LT
+  }
+
+  ENTRY main {
+    p = s32[] parameter(0)
+    init = (s32[]) tuple(s32[] constant(5))
+    loop = (s32[]) while(init), condition=Cond, body=Body,
+      control-predecessors={p}
+    i_out = s32[] get-tuple-element(loop), index=0
+    ROOT sum = s32[] add(i_out, p)
+  }
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
+  std::unique_ptr<HloRunnerInterface> runner = NewTestRunner();
+  Literal arg = LiteralUtil::CreateR0<int32_t>(10);
+  ASSERT_OK_AND_ASSIGN(
+      Literal result,
+      runner->Execute(std::move(module), {&arg}, /*run_hlo_passes=*/true));
+  EXPECT_EQ(result, LiteralUtil::CreateR0<int32_t>(15));
+}
+
 void BM_WhileLoop(::testing::benchmark::State& state) {
   // Benchmark a simple kernel to measure while loop overheads.
 
