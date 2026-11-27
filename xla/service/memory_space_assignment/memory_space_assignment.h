@@ -188,6 +188,7 @@ Useful logging and error messages
 #ifndef XLA_SERVICE_MEMORY_SPACE_ASSIGNMENT_MEMORY_SPACE_ASSIGNMENT_H_
 #define XLA_SERVICE_MEMORY_SPACE_ASSIGNMENT_MEMORY_SPACE_ASSIGNMENT_H_
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -239,6 +240,29 @@ class PresetAssignments {
   void add_scoped_allocation_chunk(HloInstruction* instruction,
                                    const HeapSimulator::Chunk& chunk) {
     scoped_allocation_chunks_.emplace_back(instruction, chunk);
+  }
+
+  // Atomically remaps defining HloPositions in preset chunks and heap-trace
+  // position tables in one pass (safe when positions swap or form cycles).
+  void RemapPositions(
+      const absl::flat_hash_map<HloPosition, HloPosition>& remap) {
+    if (remap.empty()) {
+      return;
+    }
+    for (auto& [position, chunk] : chunks_) {
+      if (auto it = remap.find(position); it != remap.end()) {
+        position = it->second;
+      }
+    }
+    for (auto& [space, info] : assignment_info_) {
+      std::for_each(info.buffer_id_to_position.begin(),
+                    info.buffer_id_to_position.end(), [&remap](auto& entry) {
+                      if (auto it = remap.find(entry.second);
+                          it != remap.end()) {
+                        entry.second = it->second;
+                      }
+                    });
+    }
   }
 
   AssignmentInformation* assignment_information_for_space(
