@@ -21,21 +21,24 @@ limitations under the License.
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
-#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "xla/backends/cpu/collectives/cpu_collective_reduction.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
@@ -44,17 +47,17 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/collective_rendezvous.h"
 #include "xla/service/rendezvous.h"
+#include "xla/status_macros.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/tsl/lib/math/math_util.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
+#include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
 namespace {
 
-static absl::Duration WarnStuckTimeout() {
+absl::Duration WarnStuckTimeout() {
   static const absl::Duration warn_stuck_timeout = []() {
     int64_t timeout = xla::GetDebugOptionsFromFlags()
                           .xla_cpu_collective_call_warn_stuck_seconds();
@@ -63,7 +66,7 @@ static absl::Duration WarnStuckTimeout() {
   return warn_stuck_timeout;
 }
 
-static absl::Duration TerminateTimeout() {
+absl::Duration TerminateTimeout() {
   static const absl::Duration terminate_timeout = []() {
     int64_t timeout = xla::GetDebugOptionsFromFlags()
                           .xla_cpu_collective_call_terminate_timeout_seconds();
@@ -72,58 +75,54 @@ static absl::Duration TerminateTimeout() {
   return terminate_timeout;
 }
 
-// In-process collective operation participants.
-//
-// In-process collective operations implemented as a multi-step process
-// coordinated by a rendezvous:
-//
-// - All participants arrive to a rendezvous barrier and exchange their local
-//   participant information.
-//
-// - Rendezvous leader collects data from all participants and returns an
-//   `OpParticipants` struct to all collective participants.
-//
-// - Each participant computes its own portion of the collective result in
-//   parallel. Each partitipant waits for the completion of all other
-//   participants before proceeding.
-//
-template <typename Participant>
-class OpParticipants {
+class PhaseBarrier {
  public:
-  explicit OpParticipants(std::vector<Participant> participants)
-      : counter_(participants.size()), participants_(std::move(participants)) {}
+  explicit PhaseBarrier(size_t count) : counter_(static_cast<int64_t>(count)) {}
 
-  // Invokes user-provided collective operation function with participants data
-  // sorted by rank and user-provided arguments. Returns when all participants
-  // complete their portion of the collective operation.
-  template <typename Fn, typename... Args>
-  absl::Status Invoke(Fn fn, Args... args) {
-    // Invoke user-provided collective operation function.
-    absl::Status status = fn(participants_, std::forward<Args>(args)...);
-
+  void Wait() {
     int64_t cnt = counter_.fetch_sub(1, std::memory_order_acq_rel);
     DCHECK_GE(cnt, 1) << "Counter should never drop below 0";
-
-    // Wait for the completion of all collective operation participants.
-    if (cnt == 1) notification_.Notify();
+    if (cnt == 1) {
+      notification_.Notify();
+    }
     notification_.WaitForNotification();
-
-    return status;
   }
+
+  absl::Mutex& write_mutex() { return write_mu_; }
 
  private:
   std::atomic<int64_t> counter_;
   absl::Notification notification_;
+  absl::Mutex write_mu_;
+};
+
+template <typename Participant>
+class OpParticipants {
+ public:
+  explicit OpParticipants(std::vector<Participant> participants)
+      : stage_barrier_(participants.size()),
+        done_barrier_(participants.size()),
+        participants_(std::move(participants)) {}
+
+  template <typename Fn, typename... Args>
+  absl::Status Invoke(Fn fn, Args... args) {
+    absl::Status status =
+        fn(participants_, stage_barrier_, std::forward<Args>(args)...);
+    done_barrier_.Wait();
+    return status;
+  }
+
+ private:
+  PhaseBarrier stage_barrier_;
+  PhaseBarrier done_barrier_;
   std::vector<Participant> participants_;
 };
 
-// Comparator for sorting participants by rank.
 template <typename Participant>
-static bool ByRank(const Participant* a, const Participant* b) {
+bool ByRank(const Participant* a, const Participant* b) {
   return a->rank < b->rank;
 }
 
-// Collects participants for an in-process collective operation.
 template <typename Participant>
 std::vector<Participant> CollectParticipants(
     absl::Span<Participant*> participants) {
@@ -134,108 +133,132 @@ std::vector<Participant> CollectParticipants(
   for (const Participant* participant : participants) {
     ret.push_back(*participant);
   }
-
   return ret;
 }
 
-template <typename T>
-T GetInitialValue(ReductionKind reduction_kind) {
-  switch (reduction_kind) {
-    case ReductionKind::SUM:
-      return static_cast<T>(0);
-    case ReductionKind::PRODUCT:
-      return static_cast<T>(1);
-    case ReductionKind::MIN:
-      return std::numeric_limits<T>::has_infinity
-                 ? std::numeric_limits<T>::infinity()
-                 : std::numeric_limits<T>::max();
-    case ReductionKind::MAX:
-      return std::numeric_limits<T>::has_infinity
-                 ? -std::numeric_limits<T>::infinity()
-                 : std::numeric_limits<T>::lowest();
+absl::Status ValidateReductionKind(PrimitiveType dtype,
+                                   ReductionKind reduction_kind) {
+  if (primitive_util::IsComplexType(dtype) &&
+      (reduction_kind == ReductionKind::MIN ||
+       reduction_kind == ReductionKind::MAX)) {
+    return absl::InvalidArgumentError(
+        "MIN/MAX reductions are not supported for complex types");
   }
+  return absl::OkStatus();
 }
 
-// We cannot use static_assert(false), because the C++ standard (prior to
-// CWG2518) does not allow the statement discarded by a constexpr if to
-// be ill-formed for every possible specialization.
-// See https://en.cppreference.com/w/cpp/language/if#Constexpr_if
+void* OffsetBytes(se::DeviceAddressBase mem, size_t offset) {
+  return offset == 0 ? mem.opaque()
+                     : static_cast<std::byte*>(mem.opaque()) + offset;
+}
+
 template <ReductionKind>
 constexpr bool always_false_v = false;
 
-template <ReductionKind reduction_kind, typename T>
+template <ReductionKind kKind, typename T>
 void ReduceHelper(absl::Span<T> acc, absl::Span<T const* const> inputs) {
-  // TODO(penporn): make sure this gets vectorized.
-  if constexpr (reduction_kind == ReductionKind::SUM) {
-    for (size_t j = 0; j < inputs.size(); ++j) {
+  if constexpr (kKind == ReductionKind::SUM) {
+    for (const T* input : inputs) {
       for (size_t i = 0; i < acc.size(); ++i) {
-        acc[i] += inputs[j][i];
+        acc[i] += input[i];
       }
     }
-  } else if constexpr (reduction_kind == ReductionKind::PRODUCT) {
-    for (size_t j = 0; j < inputs.size(); ++j) {
+  } else if constexpr (kKind == ReductionKind::PRODUCT) {
+    for (const T* input : inputs) {
       for (size_t i = 0; i < acc.size(); ++i) {
-        acc[i] *= inputs[j][i];
+        acc[i] *= input[i];
       }
     }
-  } else if constexpr (reduction_kind == ReductionKind::MIN) {
-    for (size_t j = 0; j < inputs.size(); ++j) {
+  } else if constexpr (kKind == ReductionKind::MIN) {
+    if (inputs.empty()) {
+      if constexpr (is_specialized_floating_point_v<T> &&
+                    std::numeric_limits<T>::has_signaling_NaN) {
+        for (T& v : acc) {
+          v = IeeeMinMax<T, /*kIsMax=*/false>(v, v);
+        }
+      }
+      return;
+    }
+    for (const T* input : inputs) {
       for (size_t i = 0; i < acc.size(); ++i) {
-        acc[i] = std::min(acc[i], inputs[j][i]);
+        acc[i] = IeeeMinMax<T, /*kIsMax=*/false>(acc[i], input[i]);
       }
     }
-  } else if constexpr (reduction_kind == ReductionKind::MAX) {
-    for (size_t j = 0; j < inputs.size(); ++j) {
+  } else if constexpr (kKind == ReductionKind::MAX) {
+    if (inputs.empty()) {
+      if constexpr (is_specialized_floating_point_v<T> &&
+                    std::numeric_limits<T>::has_signaling_NaN) {
+        for (T& v : acc) {
+          v = IeeeMinMax<T, /*kIsMax=*/true>(v, v);
+        }
+      }
+      return;
+    }
+    for (const T* input : inputs) {
       for (size_t i = 0; i < acc.size(); ++i) {
-        acc[i] = std::max(acc[i], inputs[j][i]);
+        acc[i] = IeeeMinMax<T, /*kIsMax=*/true>(acc[i], input[i]);
       }
     }
   } else {
-    static_assert(always_false_v<reduction_kind>, "Unsupported reduction kind");
+    static_assert(always_false_v<kKind>, "Unsupported reduction kind");
   }
 }
 
 template <PrimitiveType PT>
-absl::Status ReduceScatter(ReductionKind reduction_kind,
-                           absl::Span<const void* const> inputs, void* output,
-                           int64_t num_elems) {
+absl::Status ReduceChunk(ReductionKind reduction_kind,
+                         absl::Span<const void* const> inputs, void* output,
+                         size_t num_elems) {
   using T = primitive_util::NativeTypeOf<PT>;
-  T initial_value = GetInitialValue<T>(reduction_kind);
-
-  absl::Span<T> out_chunk =
-      absl::MakeSpan(reinterpret_cast<T*>(output), num_elems);
-  for (int64_t i = 0; i < num_elems; ++i) {
-    out_chunk[i] = initial_value;
+  TF_RET_CHECK(!inputs.empty());
+  if (num_elems == 0) {
+    return absl::OkStatus();
   }
-
-  absl::Span<T const* const> input_chunks(
-      reinterpret_cast<T const* const*>(inputs.data()), inputs.size());
+  CopyBytesIfNeeded(output, inputs[0], num_elems * sizeof(T));
+  absl::Span<T> out_chunk(static_cast<T*>(output), num_elems);
+  absl::Span<T const* const> rest(
+      reinterpret_cast<T const* const*>(inputs.data() + 1), inputs.size() - 1);
   switch (reduction_kind) {
     case ReductionKind::SUM:
-      ReduceHelper<ReductionKind::SUM, T>(out_chunk, input_chunks);
-      break;
+      ReduceHelper<ReductionKind::SUM, T>(out_chunk, rest);
+      return absl::OkStatus();
     case ReductionKind::PRODUCT:
-      ReduceHelper<ReductionKind::PRODUCT, T>(out_chunk, input_chunks);
-      break;
+      ReduceHelper<ReductionKind::PRODUCT, T>(out_chunk, rest);
+      return absl::OkStatus();
     case ReductionKind::MIN:
       if constexpr (!is_complex_v<T>) {
-        ReduceHelper<ReductionKind::MIN, T>(out_chunk, input_chunks);
-      } else {
-        return absl::InvalidArgumentError(
-            "Min reductions not supported for complex types");
+        ReduceHelper<ReductionKind::MIN, T>(out_chunk, rest);
+        return absl::OkStatus();
       }
-      break;
+      return absl::InvalidArgumentError(
+          "MIN reductions are not supported for complex types");
     case ReductionKind::MAX:
       if constexpr (!is_complex_v<T>) {
-        ReduceHelper<ReductionKind::MAX, T>(out_chunk, input_chunks);
-      } else {
-        return absl::InvalidArgumentError(
-            "Max reductions not supported for complex types");
+        ReduceHelper<ReductionKind::MAX, T>(out_chunk, rest);
+        return absl::OkStatus();
       }
-      break;
+      return absl::InvalidArgumentError(
+          "MAX reductions are not supported for complex types");
   }
+  return absl::InvalidArgumentError("Unsupported reduction kind");
+}
 
-  return absl::OkStatus();
+template <PrimitiveType PT, typename WriteFn>
+absl::Status ReduceChunkStaged(ReductionKind reduction_kind,
+                               absl::Span<const void* const> inputs,
+                               size_t num_elems, PhaseBarrier& stage_barrier,
+                               WriteFn write_fn) {
+  using T = primitive_util::NativeTypeOf<PT>;
+  std::unique_ptr<T[]> scratch;
+  absl::Status status = absl::OkStatus();
+  if (num_elems > 0) {
+    scratch = std::make_unique<T[]>(num_elems);
+    status = ReduceChunk<PT>(reduction_kind, inputs, scratch.get(), num_elems);
+  }
+  stage_barrier.Wait();
+  if (status.ok() && num_elems > 0) {
+    write_fn(scratch.get(), num_elems * sizeof(T));
+  }
+  return status;
 }
 
 //===----------------------------------------------------------------------===//
@@ -248,53 +271,91 @@ struct AllReduceParticipant {
   se::DeviceAddressBase dest;
 };
 
-static absl::Status AllReduceOp(
-    absl::Span<const AllReduceParticipant> participants, size_t rank,
-    PrimitiveType primitive_type, size_t count, ReductionKind reduction_kind) {
-  if (!primitive_util::IsArrayType(primitive_type)) {
-    return Unimplemented(
-        "Unexpected datatype: %s",
-        primitive_util::LowercasePrimitiveTypeName(primitive_type));
+absl::Status AllReduceOp(absl::Span<const AllReduceParticipant> participants,
+                         PhaseBarrier& stage_barrier, size_t rank,
+                         PrimitiveType primitive_type, size_t count,
+                         size_t total_bytes, ReductionKind reduction_kind) {
+  if (count == 0 || participants.empty()) {
+    return absl::OkStatus();
+  }
+  const size_t n = participants.size();
+  const size_t byte_width = primitive_util::ByteWidth(primitive_type);
+  bool needs_staging = false;
+  bool dests_overlap = false;
+  for (size_t a = 0; a < n; ++a) {
+    for (size_t b = 0; b < n; ++b) {
+      if (a == b &&
+          participants[a].dest.opaque() == participants[b].src.opaque()) {
+        continue;
+      }
+      if (ByteRangesOverlap(participants[a].dest.opaque(), total_bytes,
+                            participants[b].src.opaque(), total_bytes)) {
+        needs_staging = true;
+      }
+    }
+    for (size_t b = a + 1; b < n; ++b) {
+      if (ByteRangesOverlap(participants[a].dest.opaque(), total_bytes,
+                            participants[b].dest.opaque(), total_bytes)) {
+        dests_overlap = true;
+        needs_staging = true;
+      }
+    }
   }
 
-  // Each partiticipant will process a single chunk of the data and then copy
-  // the result to all other participants.
-  size_t chunk_size = tsl::MathUtil::CeilOfRatio(count, participants.size());
+  const size_t chunk_size = tsl::MathUtil::CeilOfRatio(count, n);
+  const size_t start_elem = std::min(chunk_size * rank, count);
+  const size_t end_elem =
+      rank + 1 < n ? std::min(chunk_size * (rank + 1), count) : count;
+  const size_t chunk_count = end_elem - start_elem;
+  const size_t chunk_offset = start_elem * byte_width;
 
-  // Compute the count of elements to process for the given participant rank.
-  size_t chunk_count = std::min(chunk_size * (rank + 1), count) -
-                       std::min(chunk_size * rank, count);
-  if (chunk_count == 0) return absl::OkStatus();
-
-  // Returns a pointer to the chunk of data for the given participant rank.
-  auto chunk_ptr = [&](se::DeviceAddressBase mem) -> void* {
-    std::byte* ptr = static_cast<std::byte*>(mem.opaque());
-    return ptr + rank * chunk_size * primitive_util::ByteWidth(primitive_type);
-  };
-
-  // Collect reduction inputs from all participants.
-  std::vector<const void*> inputs(participants.size());
-  for (auto& participant : participants) {
-    inputs[participant.rank] = chunk_ptr(participant.src);
+  std::vector<const void*> inputs(n, nullptr);
+  if (chunk_count > 0) {
+    for (size_t j = 0; j < n; ++j) {
+      inputs[j] = OffsetBytes(participants[j].src, chunk_offset);
+    }
   }
 
-  // Reduce all inputs into the destination buffer at rank 0.
-  void* output = chunk_ptr(participants[0].dest);
+  if (needs_staging) {
+    return primitive_util::ArrayTypeSwitch(
+        [&](const auto type_tag) {
+          return ReduceChunkStaged<type_tag>(
+              reduction_kind, inputs, chunk_count, stage_barrier,
+              [&](const void* data, size_t chunk_bytes) {
+                auto scatter = [&]() {
+                  for (size_t i = 0; i < n; ++i) {
+                    CopyBytesIfNeeded(
+                        OffsetBytes(participants[i].dest, chunk_offset), data,
+                        chunk_bytes);
+                  }
+                };
+                if (dests_overlap) {
+                  absl::MutexLock lock(stage_barrier.write_mutex());
+                  scatter();
+                } else {
+                  scatter();
+                }
+              });
+        },
+        primitive_type);
+  }
 
+  if (chunk_count == 0) {
+    return absl::OkStatus();
+  }
+  void* output = OffsetBytes(participants[0].dest, chunk_offset);
   ABSL_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch(
       [&](const auto type_tag) {
-        return ReduceScatter<type_tag>(reduction_kind, inputs, output,
-                                       chunk_count);
+        return ReduceChunk<type_tag>(reduction_kind, inputs, output,
+                                     chunk_count);
       },
       primitive_type));
 
-  // Copy all-reduced output to all other participants.
-  for (size_t i = 1; i < participants.size(); ++i) {
-    std::memcpy(chunk_ptr(participants[i].dest),
-                chunk_ptr(participants[0].dest),
-                chunk_count * primitive_util::ByteWidth(primitive_type));
+  const size_t chunk_bytes = chunk_count * byte_width;
+  for (size_t i = 1; i < n; ++i) {
+    CopyBytesIfNeeded(OffsetBytes(participants[i].dest, chunk_offset), output,
+                      chunk_bytes);
   }
-
   return absl::OkStatus();
 }
 
@@ -308,37 +369,69 @@ struct ReduceScatterParticipant {
   se::DeviceAddressBase dest;
 };
 
-static absl::Status ReduceScatterOp(
-    absl::Span<const ReduceScatterParticipant> participants, size_t rank,
-    PrimitiveType primitive_type, size_t count, ReductionKind reduction_kind) {
-  if (!primitive_util::IsArrayType(primitive_type)) {
-    return Unimplemented(
-        "Unexpected datatype: %s",
-        primitive_util::LowercasePrimitiveTypeName(primitive_type));
+absl::Status ReduceScatterOp(
+    absl::Span<const ReduceScatterParticipant> participants,
+    PhaseBarrier& stage_barrier, size_t rank, PrimitiveType primitive_type,
+    size_t count, size_t num_bytes, size_t total_src_bytes,
+    ReductionKind reduction_kind) {
+  if (count == 0 || participants.empty()) {
+    return absl::OkStatus();
+  }
+  const size_t n = participants.size();
+  const size_t offset = rank * num_bytes;
+
+  bool needs_staging = false;
+  bool dests_overlap = false;
+  for (size_t a = 0; a < n; ++a) {
+    for (size_t b = 0; b < n; ++b) {
+      // Rank 0's output aliasing its own shard is seeded in place without
+      // overwriting any unconsumed input; higher ranks stage to preserve
+      // rank-0..n-1 reduction order.
+      if (a == 0 && b == 0 &&
+          participants[0].dest.opaque() == participants[0].src.opaque()) {
+        continue;
+      }
+      if (ByteRangesOverlap(participants[a].dest.opaque(), num_bytes,
+                            participants[b].src.opaque(), total_src_bytes)) {
+        needs_staging = true;
+      }
+    }
+    for (size_t b = a + 1; b < n; ++b) {
+      if (ByteRangesOverlap(participants[a].dest.opaque(), num_bytes,
+                            participants[b].dest.opaque(), num_bytes)) {
+        dests_overlap = true;
+        needs_staging = true;
+      }
+    }
   }
 
-  size_t num_participants = participants.size();
-  size_t num_bytes = count * primitive_util::ByteWidth(primitive_type);
-
-  size_t offset = rank * num_bytes;
-
-  // Collect reduction inputs from all participants.
-  std::vector<const void*> inputs(num_participants);
-  for (size_t j = 0; j < num_participants; ++j) {
-    std::byte* src = static_cast<std::byte*>(participants[j].src.opaque());
-    inputs[j] = src + offset;
+  std::vector<const void*> inputs(n);
+  for (size_t j = 0; j < n; ++j) {
+    inputs[j] = OffsetBytes(participants[j].src, offset);
   }
-
-  // Reduce all inputs into the destination buffer.
   void* output = participants[rank].dest.opaque();
+  if (needs_staging) {
+    return primitive_util::ArrayTypeSwitch(
+        [&](const auto type_tag) {
+          return ReduceChunkStaged<type_tag>(
+              reduction_kind, inputs, count, stage_barrier,
+              [&](const void* data, size_t bytes) {
+                if (dests_overlap) {
+                  absl::MutexLock lock(stage_barrier.write_mutex());
+                  CopyBytesIfNeeded(output, data, bytes);
+                } else {
+                  CopyBytesIfNeeded(output, data, bytes);
+                }
+              });
+        },
+        primitive_type);
+  }
 
-  ABSL_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch(
+  return primitive_util::ArrayTypeSwitch(
       [&](const auto type_tag) {
-        return ReduceScatter<type_tag>(reduction_kind, inputs, output, count);
+        return ReduceChunk<type_tag>(reduction_kind, inputs, output, count);
       },
-      primitive_type));
-
-  return absl::OkStatus();
+      primitive_type);
 }
 
 //===----------------------------------------------------------------------===//
@@ -351,12 +444,55 @@ struct AllGatherParticipant {
   se::DeviceAddressBase dest;
 };
 
-static absl::Status AllGatherOp(
-    absl::Span<const AllGatherParticipant> participants, size_t rank,
-    size_t num_bytes) {
-  for (size_t i = 0; i < participants.size(); ++i) {
-    std::byte* dest = static_cast<std::byte*>(participants[rank].dest.opaque());
-    std::memcpy(dest + i * num_bytes, participants[i].src.opaque(), num_bytes);
+absl::Status AllGatherOp(absl::Span<const AllGatherParticipant> participants,
+                         PhaseBarrier& stage_barrier, size_t rank,
+                         size_t num_bytes, size_t total_dest_bytes) {
+  if (num_bytes == 0 || participants.empty()) {
+    return absl::OkStatus();
+  }
+  const size_t n = participants.size();
+  bool needs_staging = false;
+  bool dests_overlap = false;
+  for (size_t a = 0; a < n; ++a) {
+    for (size_t b = 0; b < n; ++b) {
+      if (a == b && participants[b].src.opaque() ==
+                        OffsetBytes(participants[a].dest, a * num_bytes)) {
+        continue;
+      }
+      if (ByteRangesOverlap(participants[a].dest.opaque(), total_dest_bytes,
+                            participants[b].src.opaque(), num_bytes)) {
+        needs_staging = true;
+      }
+    }
+    for (size_t b = a + 1; b < n; ++b) {
+      if (ByteRangesOverlap(participants[a].dest.opaque(), total_dest_bytes,
+                            participants[b].dest.opaque(), total_dest_bytes)) {
+        dests_overlap = true;
+        needs_staging = true;
+      }
+    }
+  }
+
+  se::DeviceAddressBase dest = participants[rank].dest;
+  if (needs_staging) {
+    std::vector<std::byte> scratch(total_dest_bytes);
+    for (size_t i = 0; i < n; ++i) {
+      std::memcpy(scratch.data() + i * num_bytes, participants[i].src.opaque(),
+                  num_bytes);
+    }
+    stage_barrier.Wait();
+    if (dests_overlap) {
+      absl::MutexLock lock(stage_barrier.write_mutex());
+      CopyBytesIfNeeded(dest.opaque(), scratch.data(), total_dest_bytes);
+    } else {
+      CopyBytesIfNeeded(dest.opaque(), scratch.data(), total_dest_bytes);
+    }
+    return absl::OkStatus();
+  }
+
+  for (size_t i = 0; i < n; ++i) {
+    CopyBytesIfNeeded(OffsetBytes(dest, i * num_bytes),
+                      participants[i].src.opaque(), num_bytes);
   }
   return absl::OkStatus();
 }
@@ -372,12 +508,75 @@ struct AllToAllParticipant {
   std::vector<se::DeviceAddressBase> dest;
 };
 
-static absl::Status AllToAllOp(
-    absl::Span<const AllToAllParticipant> participants, size_t rank,
-    size_t num_bytes) {
-  for (size_t i = 0; i < participants.size(); ++i) {
-    std::memcpy(participants[i].dest[rank].opaque(),
-                participants[rank].src[i].opaque(), num_bytes);
+absl::Status AllToAllOp(absl::Span<const AllToAllParticipant> participants,
+                        PhaseBarrier& stage_barrier, size_t rank,
+                        size_t num_bytes, size_t total_bytes) {
+  const size_t n = participants.size();
+  for (const AllToAllParticipant& p : participants) {
+    if (p.src.size() != n || p.dest.size() != n) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "AllToAll expected %d send and recv buffers per participant, got %d "
+          "and %d",
+          n, p.src.size(), p.dest.size()));
+    }
+  }
+  if (num_bytes == 0 || n == 0) {
+    return absl::OkStatus();
+  }
+
+  bool needs_staging = false;
+  bool dests_overlap = false;
+  for (size_t a = 0; a < n; ++a) {
+    for (size_t k = 0; k < n; ++k) {
+      const void* da = participants[a].dest[k].opaque();
+      for (size_t b = 0; b < n; ++b) {
+        for (size_t m = 0; m < n; ++m) {
+          const void* sb = participants[b].src[m].opaque();
+          if (a == b && k == a && m == a && da == sb) {
+            continue;
+          }
+          if (ByteRangesOverlap(da, num_bytes, sb, num_bytes)) {
+            needs_staging = true;
+          }
+        }
+      }
+      for (size_t b = a; b < n; ++b) {
+        for (size_t m = (b == a ? k + 1 : 0); m < n; ++m) {
+          if (ByteRangesOverlap(da, num_bytes, participants[b].dest[m].opaque(),
+                                num_bytes)) {
+            dests_overlap = true;
+            needs_staging = true;
+          }
+        }
+      }
+    }
+  }
+
+  if (needs_staging) {
+    std::vector<std::byte> scratch(total_bytes);
+    for (size_t i = 0; i < n; ++i) {
+      std::memcpy(scratch.data() + i * num_bytes,
+                  participants[i].src[rank].opaque(), num_bytes);
+    }
+    stage_barrier.Wait();
+    auto write_dests = [&]() {
+      for (size_t i = 0; i < n; ++i) {
+        CopyBytesIfNeeded(participants[rank].dest[i].opaque(),
+                          scratch.data() + i * num_bytes, num_bytes);
+      }
+    };
+    if (dests_overlap) {
+      absl::MutexLock lock(stage_barrier.write_mutex());
+      write_dests();
+    } else {
+      write_dests();
+    }
+    return absl::OkStatus();
+  }
+
+  for (size_t i = 0; i < n; ++i) {
+    CopyBytesIfNeeded(participants[rank].dest[i].opaque(),
+                      participants[i].src[rank].opaque(), num_bytes);
   }
   return absl::OkStatus();
 }
@@ -394,19 +593,85 @@ struct CollectivePermuteParticipant {
   se::DeviceAddressBase dest;
 };
 
-static absl::Status CollectivePermuteOp(
-    absl::Span<const CollectivePermuteParticipant> participants, size_t rank,
-    size_t num_bytes) {
+absl::Status CollectivePermuteOp(
+    absl::Span<const CollectivePermuteParticipant> participants,
+    PhaseBarrier& stage_barrier, size_t rank, size_t num_bytes) {
+  const size_t n = participants.size();
+  std::vector<size_t> reader_count(n, 0);
+  for (const CollectivePermuteParticipant& p : participants) {
+    if (p.src_rank.has_value()) {
+      const int64_t sr = p.src_rank->value();
+      if (sr < 0 || static_cast<size_t>(sr) >= n) {
+        return absl::InvalidArgumentError(absl::StrFormat(
+            "Invalid CollectivePermute source rank %d for %d participants", sr,
+            n));
+      }
+      ++reader_count[static_cast<size_t>(sr)];
+    }
+  }
+  if (num_bytes == 0 || n == 0) {
+    return absl::OkStatus();
+  }
+
+  bool needs_staging = false;
+  bool dests_overlap = false;
+  for (size_t a = 0; a < n; ++a) {
+    const void* da = participants[a].dest.opaque();
+    for (size_t b = 0; b < n; ++b) {
+      if (reader_count[b] == 0) {
+        continue;
+      }
+      const void* sb = participants[b].src.opaque();
+      if (a == b && reader_count[b] == 1 &&
+          participants[b].src_rank == RankId(static_cast<int64_t>(b)) &&
+          da == sb) {
+        continue;
+      }
+      if (ByteRangesOverlap(da, num_bytes, sb, num_bytes)) {
+        needs_staging = true;
+      }
+    }
+    for (size_t b = a + 1; b < n; ++b) {
+      if (ByteRangesOverlap(da, num_bytes, participants[b].dest.opaque(),
+                            num_bytes)) {
+        dests_overlap = true;
+        needs_staging = true;
+      }
+    }
+  }
+
   const CollectivePermuteParticipant& participant = participants[rank];
   void* dest = participant.dest.opaque();
+  if (needs_staging) {
+    std::vector<std::byte> scratch;
+    if (participant.src_rank.has_value()) {
+      scratch.resize(num_bytes);
+      const size_t sr = static_cast<size_t>(participant.src_rank->value());
+      std::memcpy(scratch.data(), participants[sr].src.opaque(), num_bytes);
+    }
+    stage_barrier.Wait();
+    auto finish = [&]() {
+      if (participant.src_rank.has_value()) {
+        CopyBytesIfNeeded(dest, scratch.data(), num_bytes);
+      } else {
+        std::memset(dest, 0, num_bytes);
+      }
+    };
+    if (dests_overlap) {
+      absl::MutexLock lock(stage_barrier.write_mutex());
+      finish();
+    } else {
+      finish();
+    }
+    return absl::OkStatus();
+  }
 
-  if (participant.src_rank) {
-    size_t src_rank = participant.src_rank->value();
-    std::memcpy(dest, participants.at(src_rank).src.opaque(), num_bytes);
+  if (participant.src_rank.has_value()) {
+    const size_t sr = static_cast<size_t>(participant.src_rank->value());
+    CopyBytesIfNeeded(dest, participants[sr].src.opaque(), num_bytes);
   } else {
     std::memset(dest, 0, num_bytes);
   }
-
   return absl::OkStatus();
 }
 
@@ -422,21 +687,25 @@ Future<> InProcessCommunicator::AllReduce(se::DeviceAddressBase send_buffer,
                                           PrimitiveType dtype, size_t count,
                                           ReductionKind reduction_kind,
                                           const Executor& executor) {
+  ABSL_RETURN_IF_ERROR(ValidateByteArrayDataType(dtype));
+  ABSL_RETURN_IF_ERROR(ValidateReductionKind(dtype, reduction_kind));
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t total_bytes,
+      CheckedCollectiveByteSize(count, primitive_util::ByteWidth(dtype)));
   ABSL_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
   const RendezvousKey& key = cpu_executor->rendezvous_key();
 
   std::string name = absl::StrCat("all reduce ", key.ToString());
-  AllReduceParticipant partiticipant{rank_, send_buffer, recv_buffer};
+  AllReduceParticipant participant{rank_, send_buffer, recv_buffer};
 
-  ABSL_ASSIGN_OR_RETURN(
-      auto op, Rendezvous<OpParticipants<AllReduceParticipant>>(
-                   name, key, partiticipant, key.num_local_participants,
-                   CollectParticipants<AllReduceParticipant>,
-                   WarnStuckTimeout(), TerminateTimeout()));
+  ABSL_ASSIGN_OR_RETURN(auto op,
+                        Rendezvous<OpParticipants<AllReduceParticipant>>(
+                            name, key, participant, key.num_local_participants,
+                            CollectParticipants<AllReduceParticipant>,
+                            WarnStuckTimeout(), TerminateTimeout()));
 
-  ABSL_RETURN_IF_ERROR(
-      op->Invoke(AllReduceOp, rank_, dtype, count, reduction_kind));
-
+  ABSL_RETURN_IF_ERROR(op->Invoke(AllReduceOp, rank_, dtype, count, total_bytes,
+                                  reduction_kind));
   return Future<>(absl::OkStatus());
 }
 
@@ -445,21 +714,28 @@ Future<> InProcessCommunicator::ReduceScatter(se::DeviceAddressBase send_buffer,
                                               PrimitiveType dtype, size_t count,
                                               ReductionKind reduction_kind,
                                               const Executor& executor) {
+  ABSL_RETURN_IF_ERROR(ValidateByteArrayDataType(dtype));
+  ABSL_RETURN_IF_ERROR(ValidateReductionKind(dtype, reduction_kind));
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t num_bytes,
+      CheckedCollectiveByteSize(count, primitive_util::ByteWidth(dtype)));
   ABSL_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
   const RendezvousKey& key = cpu_executor->rendezvous_key();
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t total_src_bytes,
+      CheckedCollectiveByteSize(num_bytes, key.num_local_participants));
 
   std::string name = absl::StrCat("reduce scatter ", key.ToString());
-  ReduceScatterParticipant partiticipant{rank_, send_buffer, recv_buffer};
+  ReduceScatterParticipant participant{rank_, send_buffer, recv_buffer};
 
-  ABSL_ASSIGN_OR_RETURN(
-      auto op, Rendezvous<OpParticipants<ReduceScatterParticipant>>(
-                   name, key, partiticipant, key.num_local_participants,
-                   CollectParticipants<ReduceScatterParticipant>,
-                   WarnStuckTimeout(), TerminateTimeout()));
+  ABSL_ASSIGN_OR_RETURN(auto op,
+                        Rendezvous<OpParticipants<ReduceScatterParticipant>>(
+                            name, key, participant, key.num_local_participants,
+                            CollectParticipants<ReduceScatterParticipant>,
+                            WarnStuckTimeout(), TerminateTimeout()));
 
-  ABSL_RETURN_IF_ERROR(
-      op->Invoke(ReduceScatterOp, rank_, dtype, count, reduction_kind));
-
+  ABSL_RETURN_IF_ERROR(op->Invoke(ReduceScatterOp, rank_, dtype, count,
+                                  num_bytes, total_src_bytes, reduction_kind));
   return Future<>(absl::OkStatus());
 }
 
@@ -467,23 +743,24 @@ Future<> InProcessCommunicator::CollectivePermute(
     se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
     PrimitiveType dtype, size_t count, std::optional<RankId> source_rank,
     absl::Span<const RankId> target_ranks, const Executor& executor) {
+  ABSL_RETURN_IF_ERROR(ValidateByteArrayDataType(dtype));
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t num_bytes,
+      CheckedCollectiveByteSize(count, primitive_util::ByteWidth(dtype)));
   ABSL_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
   const RendezvousKey& key = cpu_executor->rendezvous_key();
 
   std::string name = absl::StrCat("collective permute ", key.ToString());
-  CollectivePermuteParticipant partiticipant{rank_, source_rank, send_buffer,
-                                             recv_buffer};
+  CollectivePermuteParticipant participant{rank_, source_rank, send_buffer,
+                                           recv_buffer};
 
   ABSL_ASSIGN_OR_RETURN(
       auto op, Rendezvous<OpParticipants<CollectivePermuteParticipant>>(
-                   name, key, partiticipant, key.num_local_participants,
+                   name, key, participant, key.num_local_participants,
                    CollectParticipants<CollectivePermuteParticipant>,
                    WarnStuckTimeout(), TerminateTimeout()));
 
-  size_t num_bytes = count * primitive_util::ByteWidth(dtype);
-
   ABSL_RETURN_IF_ERROR(op->Invoke(CollectivePermuteOp, rank_, num_bytes));
-
   return Future<>(absl::OkStatus());
 }
 
@@ -491,8 +768,15 @@ Future<> InProcessCommunicator::AllToAll(
     absl::InlinedVector<se::DeviceAddressBase, 4> send_buffers,
     absl::InlinedVector<se::DeviceAddressBase, 4> recv_buffers,
     PrimitiveType dtype, size_t count, const Executor& executor) {
+  ABSL_RETURN_IF_ERROR(ValidateByteArrayDataType(dtype));
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t num_bytes,
+      CheckedCollectiveByteSize(count, primitive_util::ByteWidth(dtype)));
   ABSL_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
   const RendezvousKey& key = cpu_executor->rendezvous_key();
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t total_bytes,
+      CheckedCollectiveByteSize(num_bytes, key.num_local_participants));
 
   std::string name = absl::StrCat("all to all ", key.ToString());
   AllToAllParticipant participant{rank_,
@@ -505,10 +789,7 @@ Future<> InProcessCommunicator::AllToAll(
                    CollectParticipants<AllToAllParticipant>, WarnStuckTimeout(),
                    TerminateTimeout()));
 
-  size_t num_bytes = count * primitive_util::ByteWidth(dtype);
-
-  ABSL_RETURN_IF_ERROR(op->Invoke(AllToAllOp, rank_, num_bytes));
-
+  ABSL_RETURN_IF_ERROR(op->Invoke(AllToAllOp, rank_, num_bytes, total_bytes));
   return Future<>(absl::OkStatus());
 }
 
@@ -516,22 +797,27 @@ Future<> InProcessCommunicator::AllGather(se::DeviceAddressBase send_buffer,
                                           se::DeviceAddressBase recv_buffer,
                                           PrimitiveType dtype, size_t count,
                                           const Executor& executor) {
+  ABSL_RETURN_IF_ERROR(ValidateByteArrayDataType(dtype));
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t num_bytes,
+      CheckedCollectiveByteSize(count, primitive_util::ByteWidth(dtype)));
   ABSL_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
   const RendezvousKey& key = cpu_executor->rendezvous_key();
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t total_dest_bytes,
+      CheckedCollectiveByteSize(num_bytes, key.num_local_participants));
 
   std::string name = absl::StrCat("all gather ", key.ToString());
-  AllGatherParticipant partiticipant{rank_, send_buffer, recv_buffer};
+  AllGatherParticipant participant{rank_, send_buffer, recv_buffer};
 
-  ABSL_ASSIGN_OR_RETURN(
-      auto op, Rendezvous<OpParticipants<AllGatherParticipant>>(
-                   name, key, partiticipant, key.num_local_participants,
-                   CollectParticipants<AllGatherParticipant>,
-                   WarnStuckTimeout(), TerminateTimeout()));
+  ABSL_ASSIGN_OR_RETURN(auto op,
+                        Rendezvous<OpParticipants<AllGatherParticipant>>(
+                            name, key, participant, key.num_local_participants,
+                            CollectParticipants<AllGatherParticipant>,
+                            WarnStuckTimeout(), TerminateTimeout()));
 
-  size_t num_bytes = count * primitive_util::ByteWidth(dtype);
-
-  ABSL_RETURN_IF_ERROR(op->Invoke(AllGatherOp, rank_, num_bytes));
-
+  ABSL_RETURN_IF_ERROR(
+      op->Invoke(AllGatherOp, rank_, num_bytes, total_dest_bytes));
   return Future<>(absl::OkStatus());
 }
 

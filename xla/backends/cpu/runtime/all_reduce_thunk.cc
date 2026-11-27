@@ -93,8 +93,11 @@ tsl::AsyncValueRef<AllReduceThunk::ExecuteEvent> AllReduceThunk::Execute(
   if (single_replica_) {
     DCHECK_EQ(data.source.size(), data.destination.size());
     for (int i = 0; i < data.source.size(); ++i) {
-      std::memcpy(data.destination[i].opaque(), data.source[i].opaque(),
-                  data.destination[i].size());
+      const size_t size = data.destination[i].size();
+      if (size > 0 && data.destination[i].opaque() != data.source[i].opaque()) {
+        std::memcpy(data.destination[i].opaque(), data.source[i].opaque(),
+                    size);
+      }
     }
     return OkExecuteEvent();
   }

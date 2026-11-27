@@ -46,6 +46,7 @@ limitations under the License.
 #include "gloo/transport/unbound_buffer.h"
 #include "gloo/types.h"
 #include "tsl/platform/fingerprint.h"
+#include "xla/backends/cpu/collectives/cpu_collective_reduction.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/backends/cpu/collectives/gloo_reduce_scatter.h"
 #include "xla/core/collectives/communicator.h"
@@ -75,9 +76,7 @@ Future<> GlooCommunicator::AllReduceMany(
                                        executor);
   }
 
-  if (!primitive_util::IsArrayType(dtype)) {
-    return absl::InvalidArgumentError("Invalid all-reduce datatype");
-  }
+  ABSL_RETURN_IF_ERROR(ValidateByteArrayDataType(dtype));
   const size_t width = primitive_util::ByteWidth(dtype);
   size_t bytes = 0;
   for (const AllReduceBuffer& buffer : buffers) {
@@ -161,16 +160,26 @@ static absl::Status SetAllReduceOptions(ReductionKind reduction_kind,
                                         size_t num_elements,
                                         gloo::AllreduceOptions& options) {
   // With no separate input, Gloo reduces the output buffer in place instead of
-  // first copying input to output.
-  if (input_buffer.opaque() != output_buffer.opaque()) {
-    options.setInput(
+  // first copying input to output. If the buffers partially overlap, move input
+  // into output first so Gloo never invokes overlapping memcpy.
+  const size_t total_bytes = num_elements * sizeof(T);
+  if (num_elements > 0 && input_buffer.opaque() != output_buffer.opaque()) {
+    if (ByteRangesOverlap(input_buffer.opaque(), total_bytes,
+                          output_buffer.opaque(), total_bytes)) {
+      std::memmove(output_buffer.opaque(), input_buffer.opaque(), total_bytes);
+    } else {
+      options.setInput(
+          reinterpret_cast<T*>(  // REINTERPRET_CAST_OK=existing code.
+              input_buffer.opaque()),
+          num_elements);
+    }
+  }
+  if (num_elements > 0) {
+    options.setOutput(
         reinterpret_cast<T*>(  // REINTERPRET_CAST_OK=existing code.
-            input_buffer.opaque()),
+            output_buffer.opaque()),
         num_elements);
   }
-  options.setOutput(reinterpret_cast<T*>(  // REINTERPRET_CAST_OK=existing code.
-                        output_buffer.opaque()),
-                    num_elements);
 
   using ReductionFn = void (*)(void*, const void*, const void*, size_t);
 
@@ -183,7 +192,12 @@ static absl::Status SetAllReduceOptions(ReductionKind reduction_kind,
       break;
     case ReductionKind::MIN:
       if constexpr (!is_complex_v<T>) {
-        options.setReduceFunction(static_cast<ReductionFn>(&gloo::min<T>));
+        if constexpr (is_specialized_floating_point_v<T>) {
+          options.setReduceFunction(
+              static_cast<ReductionFn>(&IeeeMinMaxReduce<T, /*kIsMax=*/false>));
+        } else {
+          options.setReduceFunction(static_cast<ReductionFn>(&gloo::min<T>));
+        }
       } else {
         return absl::InvalidArgumentError(
             "MIN reduction not supported for complex types");
@@ -191,7 +205,12 @@ static absl::Status SetAllReduceOptions(ReductionKind reduction_kind,
       break;
     case ReductionKind::MAX:
       if constexpr (!is_complex_v<T>) {
-        options.setReduceFunction(static_cast<ReductionFn>(&gloo::max<T>));
+        if constexpr (is_specialized_floating_point_v<T>) {
+          options.setReduceFunction(
+              static_cast<ReductionFn>(&IeeeMinMaxReduce<T, /*kIsMax=*/true>));
+        } else {
+          options.setReduceFunction(static_cast<ReductionFn>(&gloo::max<T>));
+        }
       } else {
         return absl::InvalidArgumentError(
             "MAX reduction not supported for complex types");
@@ -206,6 +225,10 @@ Future<> GlooCommunicator::AllReduce(se::DeviceAddressBase send_buffer,
                                      PrimitiveType dtype, size_t count,
                                      ReductionKind reduction_kind,
                                      const Executor& executor) {
+  ABSL_RETURN_IF_ERROR(ValidateByteArrayDataType(dtype));
+  ABSL_RETURN_IF_ERROR(
+      CheckedCollectiveByteSize(count, primitive_util::ByteWidth(dtype))
+          .status());
   ABSL_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
 
   gloo::AllreduceOptions options(context_);
@@ -244,8 +267,16 @@ Future<> GlooCommunicator::AllReduce(se::DeviceAddressBase send_buffer,
           reduction_kind, send_buffer, recv_buffer, count, options));
       break;
     case F16:
-      ABSL_RETURN_IF_ERROR(SetAllReduceOptions<gloo::float16>(
-          reduction_kind, send_buffer, recv_buffer, count, options));
+      if (reduction_kind == ReductionKind::MIN ||
+          reduction_kind == ReductionKind::MAX) {
+        static_assert(sizeof(half) == sizeof(gloo::float16) &&
+                      alignof(half) == alignof(gloo::float16));
+        ABSL_RETURN_IF_ERROR(SetAllReduceOptions<half>(
+            reduction_kind, send_buffer, recv_buffer, count, options));
+      } else {
+        ABSL_RETURN_IF_ERROR(SetAllReduceOptions<gloo::float16>(
+            reduction_kind, send_buffer, recv_buffer, count, options));
+      }
       break;
     case BF16:
       ABSL_RETURN_IF_ERROR(SetAllReduceOptions<bfloat16>(
@@ -270,12 +301,29 @@ Future<> GlooCommunicator::AllReduce(se::DeviceAddressBase send_buffer,
     default:
       return absl::InvalidArgumentError("Unknown datatype in allreduce");
   }
-  options.setTag(NextTag(cpu_executor->rendezvous_key()));
+  const uint32_t tag = NextTag(cpu_executor->rendezvous_key());
+  if (count == 0) {
+    return absl::OkStatus();
+  }
+  options.setTag(tag);
   options.setAlgorithm(gloo::AllreduceOptions::Algorithm::RING);
   options.setTimeout(absl::ToChronoMilliseconds(cpu_executor->timeout()));
 
   try {
     gloo::allreduce(options);
+    if (context_->size == 1 && (reduction_kind == ReductionKind::MIN ||
+                                reduction_kind == ReductionKind::MAX)) {
+      void* out = recv_buffer.opaque();
+      if (dtype == F16) {
+        IeeeMinMaxReduce<half, false>(out, out, out, count);
+      } else if (dtype == BF16) {
+        IeeeMinMaxReduce<bfloat16, false>(out, out, out, count);
+      } else if (dtype == F32) {
+        IeeeMinMaxReduce<float, false>(out, out, out, count);
+      } else if (dtype == F64) {
+        IeeeMinMaxReduce<double, false>(out, out, out, count);
+      }
+    }
   } catch (std::exception& e) {
     return absl::UnknownError(
         absl::StrCat("Gloo all-reduce failed: ", e.what()));
@@ -287,26 +335,49 @@ Future<> GlooCommunicator::CollectivePermute(
     se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
     PrimitiveType dtype, size_t count, std::optional<RankId> source_rank,
     absl::Span<const RankId> target_ranks, const Executor& executor) {
+  ABSL_RETURN_IF_ERROR(ValidateByteArrayDataType(dtype));
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t num_bytes,
+      CheckedCollectiveByteSize(count, primitive_util::ByteWidth(dtype)));
   ABSL_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
   uint32_t tag = NextTag(cpu_executor->rendezvous_key());
+  if (num_bytes == 0) {
+    return absl::OkStatus();
+  }
   const auto slot = gloo::Slot::build(kCollectivePermuteSlotPrefix, tag);
-  size_t num_bytes = count * primitive_util::ByteWidth(dtype);
 
   try {
+    std::vector<char> send_scratch;
+    void* send_ptr = send_buffer.opaque();
+    const bool sends_remote = absl::c_any_of(target_ranks, [&](RankId target) {
+      return target != RankId(context_->rank);
+    });
+    const bool modifies_recv = !source_rank.has_value() ||
+                               *source_rank != RankId(context_->rank) ||
+                               recv_buffer.opaque() != send_buffer.opaque();
+    if (sends_remote && modifies_recv &&
+        ByteRangesOverlap(send_ptr, num_bytes, recv_buffer.opaque(),
+                          num_bytes)) {
+      send_scratch.resize(num_bytes);
+      std::memcpy(send_scratch.data(), send_ptr, num_bytes);
+      send_ptr = send_scratch.data();
+    }
     std::unique_ptr<gloo::transport::UnboundBuffer> in;
     std::unique_ptr<gloo::transport::UnboundBuffer> out;
     for (RankId target : target_ranks) {
       if (target != context_->rank) {
         VLOG(1) << "send from " << context_->rank << " to " << target.value();
         if (!in) {
-          in = context_->createUnboundBuffer(send_buffer.opaque(), num_bytes);
+          in = context_->createUnboundBuffer(send_ptr, num_bytes);
         }
         in->send(target.value(), slot);
       }
     }
     if (source_rank) {
       if (*source_rank == context_->rank) {
-        std::memcpy(recv_buffer.opaque(), send_buffer.opaque(), num_bytes);
+        if (recv_buffer.opaque() != send_ptr) {
+          std::memmove(recv_buffer.opaque(), send_ptr, num_bytes);
+        }
       } else {
         VLOG(1) << "recv at " << context_->rank << " from "
                 << source_rank->value();
@@ -337,6 +408,10 @@ Future<> GlooCommunicator::AllToAll(
     absl::InlinedVector<se::DeviceAddressBase, 4> send_buffers,
     absl::InlinedVector<se::DeviceAddressBase, 4> recv_buffers,
     PrimitiveType dtype, size_t count, const Executor& executor) {
+  ABSL_RETURN_IF_ERROR(ValidateByteArrayDataType(dtype));
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t chunk_bytes,
+      CheckedCollectiveByteSize(count, primitive_util::ByteWidth(dtype)));
   // We can't use Gloo's all-to-all implementation directly because it assumes
   // that the inputs and outputs are contiguous. No big deal; it's just built
   // on top of send/recv and we can do the same as it.
@@ -348,18 +423,39 @@ Future<> GlooCommunicator::AllToAll(
 
   ABSL_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
   uint32_t tag = NextTag(cpu_executor->rendezvous_key());
-  size_t chunk_bytes = count * primitive_util::ByteWidth(dtype);
+  if (chunk_bytes == 0) {
+    return absl::OkStatus();
+  }
 
   try {
     const auto slot = gloo::Slot::build(gloo::kAlltoallSlotPrefix, tag);
+    std::vector<std::vector<char>> send_scratch(world_size);
     std::vector<std::unique_ptr<gloo::transport::UnboundBuffer>> ins(
         context_->size);
     std::vector<std::unique_ptr<gloo::transport::UnboundBuffer>> outs(
         context_->size);
-    for (size_t i = 0; i < world_size; ++i) {
+    for (int i = 0; i < world_size; ++i) {
+      bool aliases_recv = false;
+      for (int j = 0; j < world_size; ++j) {
+        if (i == my_rank && j == my_rank &&
+            send_buffers[i].opaque() == recv_buffers[j].opaque()) {
+          continue;
+        }
+        if (ByteRangesOverlap(send_buffers[i].opaque(), chunk_bytes,
+                              recv_buffers[j].opaque(), chunk_bytes)) {
+          aliases_recv = true;
+          break;
+        }
+      }
+      if (aliases_recv) {
+        send_scratch[i].resize(chunk_bytes);
+        std::memcpy(send_scratch[i].data(), send_buffers[i].opaque(),
+                    chunk_bytes);
+      }
       if (i != my_rank) {
-        ins[i] = context_->createUnboundBuffer(send_buffers[i].opaque(),
-                                               chunk_bytes);
+        void* send_ptr = send_scratch[i].empty() ? send_buffers[i].opaque()
+                                                 : send_scratch[i].data();
+        ins[i] = context_->createUnboundBuffer(send_ptr, chunk_bytes);
         outs[i] = context_->createUnboundBuffer(recv_buffers[i].opaque(),
                                                 chunk_bytes);
       }
@@ -372,8 +468,10 @@ Future<> GlooCommunicator::AllToAll(
       outs[recv_rank]->recv(recv_rank, slot);
     }
 
-    std::memcpy(recv_buffers[my_rank].opaque(), send_buffers[my_rank].opaque(),
-                chunk_bytes);
+    const void* self_src = send_scratch[my_rank].empty()
+                               ? send_buffers[my_rank].opaque()
+                               : send_scratch[my_rank].data();
+    CopyBytesIfNeeded(recv_buffers[my_rank].opaque(), self_src, chunk_bytes);
 
     auto deadline = absl::ToChronoTime(absl::Now() + cpu_executor->timeout());
     for (int i = 0; i < world_size; i++) {
@@ -393,16 +491,32 @@ Future<> GlooCommunicator::AllGather(se::DeviceAddressBase send_buffer,
                                      se::DeviceAddressBase recv_buffer,
                                      PrimitiveType dtype, size_t count,
                                      const Executor& executor) {
+  ABSL_RETURN_IF_ERROR(ValidateByteArrayDataType(dtype));
+  ABSL_ASSIGN_OR_RETURN(
+      const size_t chunk_bytes,
+      CheckedCollectiveByteSize(count, primitive_util::ByteWidth(dtype)));
+  ABSL_ASSIGN_OR_RETURN(const size_t total_bytes,
+                        CheckedCollectiveByteSize(chunk_bytes, context_->size));
   ABSL_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
   uint32_t tag = NextTag(cpu_executor->rendezvous_key());
-  size_t chunk_bytes = count * primitive_util::ByteWidth(dtype);
+  if (chunk_bytes == 0) {
+    return absl::OkStatus();
+  }
 
   gloo::AllgatherOptions options(context_);
   options.setTag(tag);
   options.setTimeout(absl::ToChronoMilliseconds(cpu_executor->timeout()));
-  options.setInput(reinterpret_cast<char*>(send_buffer.opaque()), chunk_bytes);
-  options.setOutput(reinterpret_cast<char*>(recv_buffer.opaque()),
-                    chunk_bytes * context_->size);
+  char* send_ptr = static_cast<char*>(send_buffer.opaque());
+  char* recv_ptr = static_cast<char*>(recv_buffer.opaque());
+  char* own_slot = recv_ptr + context_->rank * chunk_bytes;
+  if (send_ptr != own_slot) {
+    if (ByteRangesOverlap(send_ptr, chunk_bytes, recv_ptr, total_bytes)) {
+      std::memmove(own_slot, send_ptr, chunk_bytes);
+    } else {
+      options.setInput(send_ptr, chunk_bytes);
+    }
+  }
+  options.setOutput(recv_ptr, total_bytes);
 
   try {
     gloo::allgather(options);
