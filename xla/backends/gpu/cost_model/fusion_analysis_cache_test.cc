@@ -20,10 +20,10 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "tsl/platform/statusor.h"
+#include "xla/backends/gpu/hlo/analysis/hlo_fusion_analysis.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
-#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/stream_executor/device_description.h"
 
 namespace xla::gpu {
