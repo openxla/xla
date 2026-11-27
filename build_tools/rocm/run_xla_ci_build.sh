@@ -21,8 +21,6 @@ set -x
 SCRIPT_DIR=$(realpath $(dirname $0))
 TAG_FILTERS=$($SCRIPT_DIR/rocm_tag_filters.sh)
 
-mkdir -p /tf/pkg
-
 for arg in "$@"; do
     if [[ "$arg" == "--config=ci_multi_gpu" ]]; then
         TAG_FILTERS="${TAG_FILTERS},multi_gpu"
@@ -32,6 +30,9 @@ for arg in "$@"; do
     fi
     if [[ "$arg" == "--config=ci_rocm_cpu" ]]; then
         TAG_FILTERS="${TAG_FILTERS},gpu,-requires-gpu-rocm,-requires-gpu-amd"
+    fi
+    if [[ "$arg" == "--config=ci_rocm_untagged" ]]; then
+        TAG_FILTERS="${TAG_FILTERS},-gpu,-requires-gpu-rocm,-requires-gpu-amd,-multi_gpu"
     fi
     if [[ "$arg" == "--config=no_flaky" ]]; then
         TAG_FILTERS="${TAG_FILTERS},-flaky"
