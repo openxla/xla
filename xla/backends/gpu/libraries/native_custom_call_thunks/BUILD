@@ -48,7 +48,7 @@ cc_library(
     hdrs = ["native_custom_call_emitter_context.h"],
     visibility = internal_visibility([
         ":handler_allowlist",
-        "//xla/service/gpu:__pkg__",
+        "//xla/backends/gpu/thunk_emitter:__pkg__",
     ]),
     deps = [
         "//xla:shape_util",

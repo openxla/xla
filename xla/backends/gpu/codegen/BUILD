@@ -199,6 +199,7 @@ cc_library(
         "//xla/backends/gpu/codegen:__subpackages__",
         "//xla/backends/gpu/cost_model:__subpackages__",
         "//xla/backends/gpu/hlo/transforms:__subpackages__",
+        "//xla/backends/gpu/thunk_emitter:__subpackages__",
         "//xla/service/gpu:__subpackages__",
     ],
     deps = [
@@ -254,6 +255,7 @@ cc_library(
         "//xla/backends/gpu/codegen:__subpackages__",
         "//xla/backends/gpu/cost_model:__subpackages__",
         "//xla/backends/gpu/hlo/transforms:__subpackages__",
+        "//xla/backends/gpu/thunk_emitter:__subpackages__",
         "//xla/service/gpu:__subpackages__",
     ],
     deps = [

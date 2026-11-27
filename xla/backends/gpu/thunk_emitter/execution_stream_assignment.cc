@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/execution_stream_assignment.h"
+#include "xla/backends/gpu/thunk_emitter/execution_stream_assignment.h"
 
 #include <algorithm>
 #include <cstdint>

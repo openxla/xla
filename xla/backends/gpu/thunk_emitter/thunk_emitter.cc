@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/thunk_emitter.h"
+#include "xla/backends/gpu/thunk_emitter/thunk_emitter.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -141,6 +141,10 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/triangular_solve_thunk.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/backends/gpu/target_config/cudnn_device_props_json.h"
+#include "xla/backends/gpu/thunk_emitter/execution_stream_assignment.h"
+#include "xla/backends/gpu/thunk_emitter/gpu_hlo_ordering.h"
+#include "xla/backends/gpu/thunk_emitter/ptx_custom_kernel_emitter.h"
+#include "xla/backends/gpu/thunk_emitter/triton_call.h"
 #include "xla/codegen/emitters/computation_fingerprint.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/codegen/kernel_definition.h"
@@ -176,11 +180,8 @@ limitations under the License.
 #include "xla/service/dump.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
-#include "xla/service/gpu/custom_kernel_emitter.h"
 #include "xla/service/gpu/dense_data_intermediate.h"
-#include "xla/service/gpu/execution_stream_assignment.h"
 #include "xla/service/gpu/gpu_conv_runner.h"
-#include "xla/service/gpu/gpu_hlo_ordering.h"
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu/gpu_norm_runner.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
@@ -193,7 +194,6 @@ limitations under the License.
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/gpu/stream_executor_util.h"
-#include "xla/service/gpu/triton_call.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/llvm_ir/buffer_assignment_util.h"

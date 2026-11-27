@@ -16,55 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_EXECUTION_STREAM_ASSIGNMENT_H_
 #define XLA_SERVICE_GPU_EXECUTION_STREAM_ASSIGNMENT_H_
 
-#include "absl/container/flat_hash_map.h"
-#include "absl/status/statusor.h"
-#include "xla/backends/gpu/runtime/execution_stream_id.h"
-#include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_module.h"
-
-namespace xla::gpu {
-
-// `ExecutionStreamAssignment` maps async scope-start `HloInstructions` to
-// `ExecutionStreamIds`. Only operations that start a new execution scope (e.g.
-// async-start, all-reduce-start, send, recv, copy-start) are assigned an
-// `ExecutionStreamId`. Operations inside an execution scope inherit their
-// stream from the parent `AsyncStartThunk` at run time (structured
-// concurrency).
-class ExecutionStreamAssignment {
- public:
-  struct Options {
-    // Number of additional compute execution streams for round-robin
-    // assignment of async compute operations.
-    int number_of_compute_execution_streams = 4;
-    // Number of additional communication execution streams in each
-    // collective-domain pool for round-robin assignment.
-    int number_of_communication_execution_streams = 1;
-    // Whether to assign dedicated D2H, H2D, and D2D streams for memory copies
-    // instead of the general compute stream pool.
-    bool enable_dedicated_memcpy_streams = true;
-  };
-
-  // The `HloModule` must be flat. In other words, there must be a one-to-one
-  // mapping between callsites and computations. One way to guarantee this is to
-  // pass the module through the `FlattenCallGraph` pass.
-  //
-  // The ExecutionStreamAssignment does not take ownership of the `HloModule`.
-  ExecutionStreamAssignment(const HloModule* module, const Options& options);
-
-  explicit ExecutionStreamAssignment(const HloModule* module)
-      : ExecutionStreamAssignment(module, Options{}) {}
-
-  // Returns the `ExecutionStreamId` for the given instruction, which must be
-  // an async scope-start operation. Returns an error if the instruction is not
-  // a scope-start or is not reachable from the module's entrypoint.
-  absl::StatusOr<ExecutionStreamId> GetExecutionStreamId(
-      const HloInstruction* instruction) const;
-
- private:
-  absl::flat_hash_map<const HloInstruction*, ExecutionStreamId>
-      async_start_instructions_;
-};
-
-}  // namespace xla::gpu
+// IWYU pragma: private, include "xla/backends/gpu/thunk_emitter/execution_stream_assignment.h"
+#include "xla/backends/gpu/thunk_emitter/execution_stream_assignment.h"  // IWYU pragma: export // INLINER_FORWARD_TO
 
 #endif  // XLA_SERVICE_GPU_EXECUTION_STREAM_ASSIGNMENT_H_
