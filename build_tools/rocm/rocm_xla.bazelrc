@@ -82,6 +82,9 @@ build:ci_multi_gpu --test_env=HIP_VISIBLE_DEVICES=0,1,2,3
 
 build:ci_rocm_cpu --jobs=50
 
+# Deviceless tests without the gpu tag, which ci_rocm_cpu does not run
+build:ci_rocm_untagged --config=ci_rocm_cpu
+
 build:no_flaky --config=rocm_base
 
 test:xla_sgpu -- \

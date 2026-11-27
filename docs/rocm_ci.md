@@ -268,18 +268,8 @@ The XLA single-GPU step in `rocm_ci.yml` uses essentially this approach by
 passing `--internal_spawn_scheduler --strategy=TestRunner=dynamic` directly on
 the command line on top of `--config=rocm_rbe`.
 
-The third "umbrella" config, `rocm_ci`, is loaded via:
-
-```
-# rocm_xla_ci.bazelrc
-try-import /usertools/rocm.bazelrc
-try-import %workspace%/build_tools/rocm/rocm_xla.bazelrc
-```
-
-`/usertools/rocm.bazelrc` is provided by the AMD-built Docker image (it encodes
-the host's ROCm install paths); the in-tree bazelrc is layered on top.
-`--config=rocm_ci` therefore means "use the in-image ROCm toolchain plus the
-in-tree XLA configs".
+`build_tools/rocm/rocm_xla_ci.bazelrc`, the `--bazelrc` the CI scripts pass,
+imports `build_tools/rocm/rocm_xla.bazelrc`, which defines the configs above.
 
 ## GPU locking
 
@@ -509,9 +499,6 @@ If anything fails:
 -   An EngFlow link (`https://wardite.cluster.engflow.com/invocation/<UUID>`) is
     printed by Bazel; it is the canonical place to look at action logs, cache
     hits, and per-test stdout.
--   Profile data goes to `/tf/pkg/profile.json.gz` (this path is hardcoded in
-    the AMD scripts; the container `--tmpfs` plus the `/tf/pkg` directory is
-    where Bazel writes timing data for `bazel analyze-profile`).
 -   `lscpu` and `rocminfo` output are at the top of each job log, which is often
     enough to triage "is the GPU actually visible to the container".
 
