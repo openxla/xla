@@ -30,14 +30,70 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/hlo/builder/padding.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/literal.h"
+#include "xla/primitive_util.h"
 #include "xla/service/shape_inference.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
+namespace {
+
+bool IsSafeForTreeReduction(const HloComputation* to_apply,
+                            const HloInstruction* initial_value,
+                            PrimitiveType elem_type) {
+  if (to_apply == nullptr || to_apply->num_parameters() != 2 ||
+      to_apply->instruction_count() != 3) {
+    return false;
+  }
+  const HloInstruction* p0 = to_apply->parameter_instruction(0);
+  const HloInstruction* p1 = to_apply->parameter_instruction(1);
+  const HloInstruction* root = to_apply->root_instruction();
+  if (!ShapeUtil::IsScalarWithElementType(p0->shape(), elem_type) ||
+      !ShapeUtil::IsScalarWithElementType(p1->shape(), elem_type) ||
+      !ShapeUtil::IsScalarWithElementType(root->shape(), elem_type) ||
+      root->operand_count() != 2) {
+    return false;
+  }
+  const bool matches_params =
+      (root->operand(0) == p0 && root->operand(1) == p1) ||
+      (root->operand(0) == p1 && root->operand(1) == p0);
+  if (!matches_params) {
+    return false;
+  }
+  const bool is_constant_init =
+      initial_value->opcode() == HloOpcode::kConstant &&
+      ShapeUtil::IsScalarWithElementType(initial_value->shape(), elem_type);
+  const bool is_pred_or_integral =
+      elem_type == PRED || primitive_util::IsIntegralType(elem_type);
+  switch (root->opcode()) {
+    case HloOpcode::kMinimum:
+    case HloOpcode::kMaximum:
+      return !primitive_util::IsComplexType(elem_type);
+    case HloOpcode::kAnd:
+    case HloOpcode::kOr:
+      return is_pred_or_integral;
+    case HloOpcode::kAdd:
+      return elem_type != PRED && elem_type != F8E8M0FNU && is_constant_init &&
+             initial_value->literal().IsZero({});
+    case HloOpcode::kMultiply:
+      return elem_type != PRED && !primitive_util::IsComplexType(elem_type) &&
+             is_constant_init && initial_value->literal().IsAll(1);
+    case HloOpcode::kXor:
+      return is_pred_or_integral && is_constant_init &&
+             initial_value->literal().IsZero({});
+    default:
+      return false;
+  }
+}
+
+}  // namespace
 
 class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
  public:
@@ -48,26 +104,42 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
     if (filter_ && !filter_(hlo)) {
       return absl::OkStatus();
     }
+    if (hlo->operand_count() != 2 || !hlo->shape().IsArray()) {
+      VLOG(1) << "Skipping rewrite for variadic reduction";
+      return absl::OkStatus();
+    }
 
     HloInstruction* reduced_op = hlo->mutable_operand(0);
     HloInstruction* initial_value = hlo->mutable_operand(1);
     const Shape& input_shape = reduced_op->shape();
     const Shape& reduce_shape = hlo->shape();
-
-    if (!reduce_shape.IsArray()) {
-      // TODO(b/210786051): Implement tree reduction rewrite for variadic
-      // reductions on CPU as well.
-      VLOG(1) << "Skipping rewrite for variadic reduction";
+    if (!input_shape.IsArray() || input_shape.is_unbounded_dynamic() ||
+        hlo->dimensions().empty()) {
+      return absl::OkStatus();
+    }
+    const PrimitiveType elem_type = input_shape.element_type();
+    if (reduce_shape.element_type() != elem_type ||
+        !ShapeUtil::IsScalarWithElementType(initial_value->shape(),
+                                            elem_type)) {
       return absl::OkStatus();
     }
 
-    // All of the reduced dimensions is smaller than the window size,
-    // do not perform the rewrite.
-    if (absl::c_all_of(hlo->dimensions(), [&](int64_t reduced_dim) {
-          return input_shape.dimensions(reduced_dim) <= reduce_window_size_;
-        })) {
+    bool has_dim_exceeding_window = false;
+    for (int64_t reduced_dim : hlo->dimensions()) {
+      if (input_shape.is_dynamic_dimension(reduced_dim) ||
+          input_shape.dimensions(reduced_dim) <= 0) {
+        return absl::OkStatus();
+      }
+      if (input_shape.dimensions(reduced_dim) > reduce_window_size_) {
+        has_dim_exceeding_window = true;
+      }
+    }
+    if (!has_dim_exceeding_window) {
       VLOG(1) << "Skipping tree reduction rewrite: all reduced dimensions are "
                  "smaller than the window size.";
+      return absl::OkStatus();
+    }
+    if (!IsSafeForTreeReduction(hlo->to_apply(), initial_value, elem_type)) {
       return absl::OkStatus();
     }
 
@@ -101,17 +173,29 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
     ABSL_ASSIGN_OR_RETURN(Shape intermediate_shape,
                           ShapeInference::InferReduceWindowShape(
                               input_shape, initial_value->shape(), window));
+    if (input_shape.has_layout() &&
+        input_shape.layout().element_size_in_bits() != 0 &&
+        intermediate_shape.has_layout()) {
+      intermediate_shape.mutable_layout()->set_element_size_in_bits(
+          input_shape.layout().element_size_in_bits());
+    }
 
-    HloInstruction* reduce_window =
-        hlo->parent()->AddInstruction(HloInstruction::CreateReduceWindow(
-            intermediate_shape, reduced_op, initial_value, window,
-            hlo->to_apply()));
+    HloInstruction* reduce_window = hlo->parent()->AddInstruction(
+        HloInstruction::CreateReduceWindow(intermediate_shape, reduced_op,
+                                           initial_value, window,
+                                           hlo->to_apply()),
+        &hlo->metadata());
+    for (HloInstruction* control_pred : hlo->control_predecessors()) {
+      ABSL_RETURN_IF_ERROR(control_pred->AddControlDependencyTo(reduce_window));
+    }
 
     std::unique_ptr<HloInstruction> new_output =
         HloInstruction::CreateReduce(reduce_shape, reduce_window, initial_value,
                                      hlo->dimensions(), hlo->to_apply());
 
-    return ReplaceWithNewInstruction(hlo, std::move(new_output));
+    return ReplaceWithNewInstruction(hlo, std::move(new_output),
+                                     /*preserve_sharding=*/false,
+                                     /*relay_control_dependency=*/true);
   }
 
  private:
@@ -122,10 +206,13 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
 absl::StatusOr<bool> TreeReductionRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  ReductionRewriterVisitor visitor(reduce_window_size_, filter_);
+  if (reduce_window_size_ <= 1) {
+    return false;
+  }
   bool changed = false;
-  for (const auto& computation :
+  for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
+    ReductionRewriterVisitor visitor(reduce_window_size_, filter_);
     ABSL_RETURN_IF_ERROR(computation->Accept(&visitor));
     changed |= visitor.changed();
   }
