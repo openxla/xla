@@ -2799,5 +2799,739 @@ TEST_F(DynamicPadderTest, ReplaceSetSizeIgnoresLayout) {
               op::Parameter(0));
 }
 
+TEST_F(ExecutionTest, VariadicDynamicScatterMasksIndicesAndPreservesOperands) {
+  constexpr absl::string_view kVariadicScatter = R"hlo(
+HloModule VariadicScatter
+
+add_pair {
+  a0 = s32[] parameter(0)
+  b0 = s32[] parameter(1)
+  a1 = s32[] parameter(2)
+  b1 = s32[] parameter(3)
+  ROOT t = (s32[], s32[]) tuple(s32[] add(a0, a1), s32[] add(b0, b1))
+}
+
+ENTRY main {
+  op0 = s32[4] parameter(0)
+  op1 = s32[4] parameter(1)
+  idx = s32[4] parameter(2)
+  upd0 = s32[4] parameter(3)
+  upd1 = s32[4] parameter(4)
+  dsz = s32[] parameter(5)
+  idx_d = s32[<=4] set-dimension-size(idx, dsz), dimensions={0}
+  u0_d = s32[<=4] set-dimension-size(upd0, dsz), dimensions={0}
+  u1_d = s32[<=4] set-dimension-size(upd1, dsz), dimensions={0}
+  ROOT sc = (s32[4], s32[4]) scatter(op0, op1, idx_d, u0_d, u1_d),
+    update_window_dims={}, inserted_window_dims={0},
+    scatter_dims_to_operand_dims={0}, index_vector_dim=1,
+    indices_are_sorted=true, unique_indices=true, to_apply=add_pair
+}
+)hlo";
+  auto mod_check = GetHloModule(std::string(kVariadicScatter));
+  ASSERT_OK(DynamicPadder().Run(mod_check.get()).status());
+  const HloInstruction* sc = FindInstruction(mod_check.get(), "sc");
+  ASSERT_NE(sc, nullptr);
+  EXPECT_FALSE(sc->ToString().find("indices_are_sorted=true") !=
+               std::string::npos);
+  EXPECT_TRUE(sc->unique_indices());
+
+  Literal op0 = LiteralUtil::CreateR1<int32_t>({1, 2, 3, 4});
+  Literal op1 = LiteralUtil::CreateR1<int32_t>({10, 20, 30, 40});
+  Literal idx = LiteralUtil::CreateR1<int32_t>({1, 3, 0, 2});
+  Literal u0 = LiteralUtil::CreateR1<int32_t>({100, 300, 999, 888});
+  Literal u1 = LiteralUtil::CreateR1<int32_t>({1000, 3000, 9999, 8888});
+  Literal dsz = LiteralUtil::CreateR0<int32_t>(2);
+  ASSERT_OK_AND_ASSIGN(
+      Literal out, PadAndExecute(GetHloModule(std::string(kVariadicScatter)),
+                                 {&op0, &op1, &idx, &u0, &u1, &dsz}));
+  Literal expected = LiteralUtil::MakeTupleOwned(
+      LiteralUtil::CreateR1<int32_t>({1, 102, 3, 304}),
+      LiteralUtil::CreateR1<int32_t>({10, 1020, 30, 3040}));
+  EXPECT_EQ(out, expected);
+
+  // Dynamic complex scatter_operands[1] must not be padded with MaxValue.
+  constexpr absl::string_view kComplexOperand1 = R"hlo(
+HloModule ComplexVariadicOperand
+
+upd_fn {
+  a0 = c64[] parameter(0)
+  b0 = c64[] parameter(1)
+  a1 = c64[] parameter(2)
+  b1 = c64[] parameter(3)
+  ROOT t = (c64[], c64[]) tuple(a1, b1)
+}
+
+ENTRY main {
+  op0 = c64[4] parameter(0)
+  op1 = c64[4] parameter(1)
+  dsz = s32[] parameter(2)
+  op1_d = c64[<=4] set-dimension-size(op1, dsz), dimensions={0}
+  idx = s32[1] constant({0})
+  u = c64[1] constant({(7, 8)})
+  ROOT sc = (c64[4], c64[<=4]) scatter(op0, op1_d, idx, u, u),
+    update_window_dims={}, inserted_window_dims={0},
+    scatter_dims_to_operand_dims={0}, index_vector_dim=1, to_apply=upd_fn
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto cmod,
+                       ParseAndReturnVerifiedModule(kComplexOperand1));
+  EXPECT_THAT(DynamicPadder().Run(cmod.get()), IsOkAndHolds(true));
+  ASSERT_OK(verifier().Run(cmod.get()).status());
+}
+
+TEST_F(ExecutionTest, NarrowSignedAndUnsignedScatterIndicesOutOfBounds) {
+  const bool run_narrow_exec =
+      test::DeviceIs(test::kCpu) || test::DeviceIs(test::kInterpreter);
+  constexpr absl::string_view kNarrowS8 = R"hlo(
+HloModule NarrowS8Scatter
+
+add_s32 {
+  a = s32[] parameter(0)
+  b = s32[] parameter(1)
+  ROOT s = s32[] add(a, b)
+}
+
+ENTRY main {
+  base = s32[200] broadcast(s32[] constant(0)), dimensions={}
+  idx = s8[4] parameter(0)
+  upd = s32[4] parameter(1)
+  dsz = s32[] parameter(2)
+  idx_d = s8[<=4] set-dimension-size(idx, dsz), dimensions={0}
+  upd_d = s32[<=4] set-dimension-size(upd, dsz), dimensions={0}
+  ROOT sc = s32[200] scatter(base, idx_d, upd_d),
+    update_window_dims={}, inserted_window_dims={0},
+    scatter_dims_to_operand_dims={0}, index_vector_dim=1,
+    indices_are_sorted=true, to_apply=add_s32
+}
+)hlo";
+  auto s8_check = GetHloModule(std::string(kNarrowS8));
+  EXPECT_THAT(DynamicPadder().Run(s8_check.get()), IsOkAndHolds(true));
+  ASSERT_OK(verifier().Run(s8_check.get()).status());
+  const HloInstruction* s8_sc = FindInstruction(s8_check.get(), "sc");
+  ASSERT_NE(s8_sc, nullptr);
+  EXPECT_EQ(s8_sc->ToString().find("indices_are_sorted=true"),
+            std::string::npos);
+  ASSERT_EQ(s8_sc->operand(1)->opcode(), HloOpcode::kSelect);
+  ASSERT_EQ(s8_sc->operand(1)->operand(2)->opcode(), HloOpcode::kBroadcast);
+  EXPECT_EQ(s8_sc->operand(1)->operand(2)->operand(0)->literal(),
+            LiteralUtil::CreateR0<int8_t>(-1));
+  Literal dsz2 = LiteralUtil::CreateR0<int32_t>(2);
+  if (run_narrow_exec) {
+    Literal s8_idx = LiteralUtil::CreateR1<int8_t>({2, 5, 0, 1});
+    Literal s8_upd = LiteralUtil::CreateR1<int32_t>({11, 22, 777, 888});
+    ASSERT_OK_AND_ASSIGN(Literal s8_out,
+                         PadAndExecute(GetHloModule(std::string(kNarrowS8)),
+                                       {&s8_idx, &s8_upd, &dsz2}));
+    EXPECT_EQ(s8_out.Get<int32_t>({2}), 11);
+    EXPECT_EQ(s8_out.Get<int32_t>({5}), 22);
+    EXPECT_EQ(s8_out.Get<int32_t>({127}), 0);
+    EXPECT_EQ(s8_out.Get<int32_t>({0}), 0);
+  }
+
+  // u8 into s32[255] is strictly OOB at 255 and preserves indices_are_sorted.
+  constexpr absl::string_view kSafeU8 = R"hlo(
+HloModule SafeU8Scatter
+
+add_s32 {
+  a = s32[] parameter(0)
+  b = s32[] parameter(1)
+  ROOT s = s32[] add(a, b)
+}
+
+ENTRY main {
+  base = s32[255] broadcast(s32[] constant(0)), dimensions={}
+  idx = u8[3] parameter(0)
+  upd = s32[3] parameter(1)
+  dsz = s32[] parameter(2)
+  idx_d = u8[<=3] set-dimension-size(idx, dsz), dimensions={0}
+  upd_d = s32[<=3] set-dimension-size(upd, dsz), dimensions={0}
+  ROOT sc = s32[255] scatter(base, idx_d, upd_d),
+    update_window_dims={}, inserted_window_dims={0},
+    scatter_dims_to_operand_dims={0}, index_vector_dim=1,
+    indices_are_sorted=true, to_apply=add_s32
+}
+)hlo";
+  auto u8_check = GetHloModule(std::string(kSafeU8));
+  EXPECT_THAT(DynamicPadder().Run(u8_check.get()), IsOkAndHolds(true));
+  ASSERT_OK(verifier().Run(u8_check.get()).status());
+  const HloInstruction* u8_sc = FindInstruction(u8_check.get(), "sc");
+  ASSERT_NE(u8_sc, nullptr);
+  EXPECT_NE(u8_sc->ToString().find("indices_are_sorted=true"),
+            std::string::npos);
+  ASSERT_EQ(u8_sc->operand(1)->opcode(), HloOpcode::kSelect);
+  ASSERT_EQ(u8_sc->operand(1)->operand(2)->opcode(), HloOpcode::kBroadcast);
+  EXPECT_EQ(u8_sc->operand(1)->operand(2)->operand(0)->literal(),
+            LiteralUtil::CreateR0<uint8_t>(255));
+  Literal dsz1 = LiteralUtil::CreateR0<int32_t>(1);
+  if (run_narrow_exec) {
+    Literal u8_idx = LiteralUtil::CreateR1<uint8_t>({3, 0, 254});
+    Literal u8_upd = LiteralUtil::CreateR1<int32_t>({42, 99, 88});
+    ASSERT_OK_AND_ASSIGN(Literal u8_out,
+                         PadAndExecute(GetHloModule(std::string(kSafeU8)),
+                                       {&u8_idx, &u8_upd, &dsz1}));
+    EXPECT_EQ(u8_out.Get<int32_t>({3}), 42);
+    EXPECT_EQ(u8_out.Get<int32_t>({254}), 0);
+  }
+
+  // 2D u8 into s32[300,100] is strictly OOB via second coordinate (255 > 99).
+  constexpr absl::string_view kSafe2DU8 = R"hlo(
+HloModule Safe2DU8Scatter
+
+add_s32 {
+  a = s32[] parameter(0)
+  b = s32[] parameter(1)
+  ROOT s = s32[] add(a, b)
+}
+
+ENTRY main {
+  base = s32[300,100] broadcast(s32[] constant(0)), dimensions={}
+  idx = u8[2,2] constant({{1, 2}, {0, 0}})
+  upd = s32[2] constant({9, 55})
+  dsz = s32[] parameter(0)
+  idx_d = u8[<=2,2] set-dimension-size(idx, dsz), dimensions={0}
+  upd_d = s32[<=2] set-dimension-size(upd, dsz), dimensions={0}
+  ROOT sc = s32[300,100] scatter(base, idx_d, upd_d),
+    update_window_dims={}, inserted_window_dims={0,1},
+    scatter_dims_to_operand_dims={0,1}, index_vector_dim=1, to_apply=add_s32
+}
+)hlo";
+  auto u8_2d_check = GetHloModule(std::string(kSafe2DU8));
+  EXPECT_THAT(DynamicPadder().Run(u8_2d_check.get()), IsOkAndHolds(true));
+  ASSERT_OK(verifier().Run(u8_2d_check.get()).status());
+  if (run_narrow_exec) {
+    ASSERT_OK_AND_ASSIGN(
+        Literal u8_2d,
+        PadAndExecute(GetHloModule(std::string(kSafe2DU8)), {&dsz1}));
+    EXPECT_EQ(u8_2d.Get<int32_t>({1, 2}), 9);
+    EXPECT_EQ(u8_2d.Get<int32_t>({0, 0}), 0);
+  }
+
+  // u8 into s32[256] (where 255 is in bounds), dynamic index_vector_dim, and
+  // empty scatter_dims_to_operand_dims must return Unimplemented.
+  for (absl::string_view bad_hlo : {absl::string_view(R"hlo(
+HloModule InBoundsU8
+add_s32 {
+  ROOT s = s32[] add(s32[] parameter(0), s32[] parameter(1))
+}
+ENTRY main {
+  base = s32[256] parameter(0)
+  dsz = s32[] parameter(3)
+  idx_d = u8[<=2] set-dimension-size(u8[2] parameter(1), dsz), dimensions={0}
+  upd_d = s32[<=2] set-dimension-size(s32[2] parameter(2), dsz), dimensions={0}
+  ROOT sc = s32[256] scatter(base, idx_d, upd_d), update_window_dims={},
+    inserted_window_dims={0}, scatter_dims_to_operand_dims={0},
+    index_vector_dim=1, to_apply=add_s32
+})hlo"),
+                                    absl::string_view(R"hlo(
+HloModule DynIndexVec
+add_s32 {
+  ROOT s = s32[] add(s32[] parameter(0), s32[] parameter(1))
+}
+ENTRY main {
+  base = s32[8,8] parameter(0)
+  dsz = s32[] parameter(3)
+  idx_d = s32[2,<=2] set-dimension-size(s32[2,2] parameter(1), dsz), dimensions={1}
+  ROOT sc = s32[8,8] scatter(base, idx_d, s32[2] parameter(2)),
+    update_window_dims={}, inserted_window_dims={0,1},
+    scatter_dims_to_operand_dims={0,1}, index_vector_dim=1, to_apply=add_s32
+})hlo"),
+                                    absl::string_view(R"hlo(
+HloModule EmptyScatterDims
+add_s32 {
+  ROOT s = s32[] add(s32[] parameter(0), s32[] parameter(1))
+}
+ENTRY main {
+  base = s32[4] parameter(0)
+  dsz = s32[] parameter(3)
+  idx_d = s32[<=2,0] set-dimension-size(s32[2,0] parameter(1), dsz), dimensions={0}
+  upd_d = s32[<=2,4] set-dimension-size(s32[2,4] parameter(2), dsz), dimensions={0}
+  ROOT sc = s32[4] scatter(base, idx_d, upd_d), update_window_dims={1},
+    inserted_window_dims={}, scatter_dims_to_operand_dims={},
+    index_vector_dim=1, to_apply=add_s32
+})hlo")}) {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(bad_hlo));
+    EXPECT_EQ(DynamicPadder().Run(m.get()).status().code(),
+              absl::StatusCode::kUnimplemented);
+  }
+}
+
+TEST_F(ExecutionTest, SelectAndScatterReversedGeAndLeSelectsValidMin) {
+  auto run_sas = [&](absl::string_view ty, absl::string_view cmp_expr,
+                     Literal op, Literal src, Literal init) {
+    const std::string hlo = absl::StrReplaceAll(
+        R"hlo(
+HloModule SasTest
+sel {
+  p0 = $T$[] parameter(0)
+  p1 = $T$[] parameter(1)
+  ROOT c = pred[] $CMP$
+}
+add_fn {
+  ROOT s = $T$[] add($T$[] parameter(0), $T$[] parameter(1))
+}
+ENTRY main {
+  op = $T$[4] parameter(0)
+  src = $T$[1] parameter(1)
+  init = $T$[] parameter(2)
+  dsz = s32[] parameter(3)
+  op_d = $T$[<=4] set-dimension-size(op, dsz), dimensions={0}
+  ROOT r = $T$[<=4] select-and-scatter(op_d, src, init),
+    window={size=4 stride=4}, select=sel, scatter=add_fn
+}
+)hlo",
+        {{"$T$", ty}, {"$CMP$", cmp_expr}});
+    Literal dsz = LiteralUtil::CreateR0<int32_t>(2);
+    return PadAndExecute(GetHloModule(hlo), {&op, &src, &init, &dsz},
+                         /*slice_dynamic_output=*/false);
+  };
+
+  // Reversed GE (argmin), forward LE (argmin), and reversed LE (argmax) on f32
+  // and s32 (where Compare::order() is kTotal).
+  ASSERT_OK_AND_ASSIGN(
+      Literal r_rev_ge,
+      run_sas("f32", "compare(p1, p0), direction=GE",
+              LiteralUtil::CreateR1<float>({3.0f, 7.0f, -100.0f, 1.0f}),
+              LiteralUtil::CreateR1<float>({5.0f}),
+              LiteralUtil::CreateR0<float>(0.0f)));
+  EXPECT_EQ(r_rev_ge.Get<float>({0}), 5.0f);
+  EXPECT_EQ(r_rev_ge.Get<float>({2}), 0.0f);
+
+  ASSERT_OK_AND_ASSIGN(Literal r_fwd_le,
+                       run_sas("s32", "compare(p0, p1), direction=LE",
+                               LiteralUtil::CreateR1<int32_t>({9, 4, -50, 2}),
+                               LiteralUtil::CreateR1<int32_t>({11}),
+                               LiteralUtil::CreateR0<int32_t>(0)));
+  EXPECT_EQ(r_fwd_le.Get<int32_t>({1}), 11);
+  EXPECT_EQ(r_fwd_le.Get<int32_t>({2}), 0);
+
+  ASSERT_OK_AND_ASSIGN(Literal r_rev_le,
+                       run_sas("s32", "compare(p1, p0), direction=LE",
+                               LiteralUtil::CreateR1<int32_t>({4, 9, 999, 2}),
+                               LiteralUtil::CreateR1<int32_t>({13}),
+                               LiteralUtil::CreateR0<int32_t>(0)));
+  EXPECT_EQ(r_rev_le.Get<int32_t>({1}), 13);
+  EXPECT_EQ(r_rev_le.Get<int32_t>({2}), 0);
+
+  // Reflexive compare(p0, p0) GE and float TOTALORDER must be rejected.
+  for (absl::string_view bad_cmp :
+       {"compare(p0, p0), direction=GE",
+        "compare(p0, p1), direction=GE, type=TOTALORDER"}) {
+    const std::string hlo = absl::StrReplaceAll(
+        R"hlo(
+HloModule BadSas
+sel {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT c = pred[] $CMP$
+}
+add_fn {
+  ROOT s = f32[] add(f32[] parameter(0), f32[] parameter(1))
+}
+ENTRY main {
+  op_d = f32[<=4] set-dimension-size(f32[4] parameter(0), s32[] parameter(1)), dimensions={0}
+  ROOT r = f32[<=4] select-and-scatter(op_d, f32[1] constant({1}), f32[] constant(0)),
+    window={size=4 stride=4}, select=sel, scatter=add_fn
+}
+)hlo",
+        {{"$CMP$", bad_cmp}});
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo));
+    EXPECT_EQ(DynamicPadder().Run(m.get()).status().code(),
+              absl::StatusCode::kUnimplemented);
+  }
+}
+
+TEST_F(ExecutionTest, MixedPrecisionAndAuxiliaryOperandDotConvPadding) {
+  constexpr absl::string_view kMixedFloatDot = R"hlo(
+HloModule MixedFloatDot
+ENTRY main {
+  lhs = f32[2,4] parameter(0)
+  rhs = bf16[4,2] parameter(1)
+  dsz = s32[] parameter(2)
+  lhs_d = f32[2,<=4] set-dimension-size(lhs, dsz), dimensions={1}
+  rhs_d = bf16[<=4,2] set-dimension-size(rhs, dsz), dimensions={0}
+  ROOT d = f32[2,2] dot(lhs_d, rhs_d),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto fdot, ParseAndReturnVerifiedModule(kMixedFloatDot));
+  EXPECT_THAT(DynamicPadder().Run(fdot.get()), IsOkAndHolds(true));
+  ASSERT_OK(verifier().Run(fdot.get()).status());
+
+  constexpr absl::string_view kMixedIntDot = R"hlo(
+HloModule MixedIntDot
+ENTRY main {
+  lhs = s8[2,4] constant({{1, 2, 99, 99}, {3, 4, 99, 99}})
+  rhs = s16[4,2] constant({{10, 20}, {30, 40}, {999, 999}, {999, 999}})
+  dsz = s32[] parameter(0)
+  lhs_d = s8[2,<=4] set-dimension-size(lhs, dsz), dimensions={1}
+  rhs_d = s16[<=4,2] set-dimension-size(rhs, dsz), dimensions={0}
+  ROOT d = s32[2,2] dot(lhs_d, rhs_d),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)hlo";
+  auto idot_check = GetHloModule(std::string(kMixedIntDot));
+  EXPECT_THAT(DynamicPadder().Run(idot_check.get()), IsOkAndHolds(true));
+  ASSERT_OK(verifier().Run(idot_check.get()).status());
+  if (test::DeviceIs(test::kCpu) || test::DeviceIs(test::kInterpreter)) {
+    Literal dsz2 = LiteralUtil::CreateR0<int32_t>(2);
+    ASSERT_OK_AND_ASSIGN(
+        Literal idot_out,
+        PadAndExecute(GetHloModule(std::string(kMixedIntDot)), {&dsz2}));
+    EXPECT_EQ(idot_out,
+              LiteralUtil::CreateR2<int32_t>({{70, 100}, {150, 220}}));
+  }
+
+  // F8E8M0FNU has no zero representation and must return Unimplemented.
+  constexpr absl::string_view kE8M0Dot = R"hlo(
+HloModule E8M0Dot
+ENTRY main {
+  dsz = s32[] parameter(2)
+  a = f8e8m0fnu[2,<=4] set-dimension-size(f8e8m0fnu[2,4] parameter(0), dsz), dimensions={1}
+  b = f8e8m0fnu[<=4,2] set-dimension-size(f8e8m0fnu[4,2] parameter(1), dsz), dimensions={0}
+  ROOT d = f32[2,2] dot(a, b),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto e8m0, ParseAndReturnUnverifiedModule(kE8M0Dot));
+  EXPECT_EQ(DynamicPadder().Run(e8m0.get()).status().code(),
+            absl::StatusCode::kUnimplemented);
+
+  // Auxiliary operand >= 2 (e.g. block-scaled dot) must return Unimplemented.
+  constexpr absl::string_view kScaledDot = R"hlo(
+HloModule AuxOperandDot
+ENTRY main {
+  a = f32[2,4] parameter(0)
+  b = f32[4,2] parameter(1)
+  s = f32[<=4,2] set-dimension-size(f32[4,2] parameter(2), s32[] parameter(3)), dimensions={0}
+  ROOT d = f32[2,2] dot(a, b, s, b),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto sdot, ParseAndReturnUnverifiedModule(kScaledDot));
+  EXPECT_EQ(DynamicPadder().Run(sdot.get()).status().code(),
+            absl::StatusCode::kUnimplemented);
+}
+
+TEST_F(DynamicPadderTest,
+       DynamicConvInputGradForwardKernelGradPrecisionAndMixedTypes) {
+  constexpr absl::string_view kInputGrad = R"hlo(
+HloModule DynConvInputGrad
+ENTRY main {
+  sizes = s32[3] constant({1, 3, 1})
+  grad_d = bf16[1,<=4,1] set-dimension-size(bf16[1,4,1] parameter(0), s32[] parameter(2)), dimensions={1}
+  kernel = bf16[2,1,1] parameter(1)
+  ROOT conv = f32[1,4,1] custom-call(sizes, grad_d, kernel),
+    window={size=2 pad=0_1}, dim_labels=b0f_0io->b0f, padding_type=PADDING_SAME,
+    operand_precision={default, high, highest},
+    custom_call_target="DynamicConvolutionInputGrad"
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(kInputGrad));
+  for (HloInstruction* inst : module_->entry_computation()->instructions()) {
+    if (inst->IsCustomCall("DynamicConvolutionInputGrad")) {
+      inst->mutable_precision_config()->set_algorithm(
+          PrecisionConfig::ALG_DOT_BF16_BF16_F32);
+    }
+  }
+  EXPECT_THAT(RunPadder(), IsOkAndHolds(true));
+  ASSERT_OK(verifier().Run(module_.get()).status());
+  const HloInstruction* conv = module_->entry_computation()->root_instruction();
+  ASSERT_EQ(conv->opcode(), HloOpcode::kConvolution);
+  EXPECT_EQ(conv->precision_config().algorithm(),
+            PrecisionConfig::ALG_DOT_BF16_BF16_F32);
+  ASSERT_EQ(conv->precision_config().operand_precision_size(), 2);
+  EXPECT_EQ(conv->precision_config().operand_precision(0),
+            PrecisionConfig::HIGH);
+  EXPECT_EQ(conv->precision_config().operand_precision(1),
+            PrecisionConfig::HIGHEST);
+
+  constexpr absl::string_view kForwardS8ToS32 = R"hlo(
+HloModule DynConvFwdS8
+ENTRY main {
+  in_d = s8[1,<=4,1] set-dimension-size(s8[1,4,1] parameter(0), s32[] parameter(2)), dimensions={1}
+  k = s8[2,1,1] parameter(1)
+  ROOT conv = s32[1,4,1] custom-call(in_d, k),
+    window={size=2 pad=0_1}, dim_labels=b0f_0io->b0f, padding_type=PADDING_SAME,
+    custom_call_target="DynamicConvolutionForward"
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(kForwardS8ToS32));
+  EXPECT_THAT(RunPadder(), IsOkAndHolds(true));
+  ASSERT_OK(verifier().Run(module_.get()).status());
+  EXPECT_EQ(module_->entry_computation()->root_instruction()->opcode(),
+            HloOpcode::kConvolution);
+
+  constexpr absl::string_view kKernelGradMixed = R"hlo(
+HloModule DynConvKernelGrad
+ENTRY main {
+  dsz = s32[] parameter(2)
+  act = bf16[1,<=4,1] set-dimension-size(bf16[1,4,1] parameter(0), dsz), dimensions={1}
+  grd = f16[1,<=4,1] set-dimension-size(f16[1,4,1] parameter(1), dsz), dimensions={1}
+  ROOT conv = f32[1,1,1] custom-call(act, grd),
+    window={size=4 pad=0_0}, dim_labels=f0b_i0o->0bf, padding_type=PADDING_SAME,
+    custom_call_target="DynamicConvolutionKernelGrad"
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(kKernelGradMixed));
+  EXPECT_THAT(DynamicPadder().Run(module_.get()), IsOkAndHolds(true));
+  ASSERT_OK(verifier().Run(module_.get()).status());
+  EXPECT_EQ(module_->entry_computation()->root_instruction()->opcode(),
+            HloOpcode::kConvolution);
+}
+
+TEST_F(ExecutionTest,
+       DynamicVariadicSortAsRootWithShardingControlDepsAndSubByte) {
+  constexpr absl::string_view kVariadicSort = R"hlo(
+HloModule VariadicRootSort
+cmp {
+  k0 = s32[] parameter(0)
+  k1 = s32[] parameter(1)
+  v0 = f32[] parameter(2)
+  v1 = f32[] parameter(3)
+  ROOT lt = pred[] compare(k0, k1), direction=LT
+}
+ENTRY main {
+  keys = s32[4] parameter(0)
+  vals = f32[4] parameter(1)
+  dsz = s32[] parameter(2)
+  kd = s32[<=4] set-dimension-size(keys, dsz), dimensions={0}
+  vd = f32[<=4] set-dimension-size(vals, dsz), dimensions={0}
+  ROOT s = (s32[<=4], f32[<=4]) sort(kd, vd), dimensions={0}, to_apply=cmp
+}
+)hlo";
+  Literal keys = LiteralUtil::CreateR1<int32_t>({30, 10, -99, 5});
+  Literal vals = LiteralUtil::CreateR1<float>({3.0f, 1.0f, 9.0f, 5.0f});
+  Literal dsz = LiteralUtil::CreateR0<int32_t>(2);
+  for (bool slice_out : {false, true}) {
+    if (slice_out && test::DeviceIs(test::kInterpreter)) {
+      DynamicPadderOptions opts;
+      opts.slice_dynamic_output = true;
+      auto sm = GetHloModule(std::string(kVariadicSort));
+      EXPECT_THAT(DynamicPadder(opts).Run(sm.get()), IsOkAndHolds(true));
+      ASSERT_OK(verifier().Run(sm.get()).status());
+      continue;
+    }
+    ASSERT_OK_AND_ASSIGN(Literal out,
+                         PadAndExecute(GetHloModule(std::string(kVariadicSort)),
+                                       {&keys, &vals, &dsz}, slice_out));
+    const auto& tup = out.DecomposeTuple();
+    ASSERT_EQ(tup.size(), 2);
+    EXPECT_EQ(tup[0].Get<int32_t>({0}), 10);
+    EXPECT_EQ(tup[0].Get<int32_t>({1}), 30);
+    EXPECT_EQ(tup[1].Get<float>({0}), 1.0f);
+    EXPECT_EQ(tup[1].Get<float>({1}), 3.0f);
+  }
+
+  // Verify tuple/array sharding (including shard_group), control dependencies,
+  // and sub-byte s4 {:E(4)} layout preservation.
+  constexpr absl::string_view kShardedCtrlSort = R"hlo(
+HloModule ShardedCtrlSort
+cmp_s4 {
+  a = s4[] parameter(0)
+  b = s4[] parameter(1)
+  c = s32[] parameter(2)
+  d = s32[] parameter(3)
+  ROOT lt = pred[] compare(a, b), direction=LT
+}
+cmp_1 {
+  ROOT lt = pred[] compare(s32[] parameter(0), s32[] parameter(1)), direction=LT
+}
+ENTRY main {
+  k = s4[4]{0:E(4)} parameter(0)
+  v = s32[4]{0} parameter(1)
+  dsz = s32[] parameter(2)
+  kd = s4[<=4]{0:E(4)} set-dimension-size(k, dsz), dimensions={0}
+  vd = s32[<=4]{0} set-dimension-size(v, dsz), dimensions={0}
+  s_tup = (s4[<=4]{0:E(4)}, s32[<=4]{0}) sort(kd, vd), dimensions={0},
+    to_apply=cmp_s4, control-predecessors={dsz},
+    sharding={{devices=[2]0,1 shard_as 1}, {replicated}}
+  s_arr = s32[<=4]{0} sort(vd), dimensions={0}, to_apply=cmp_1,
+    control-predecessors={s_tup}, sharding={devices=[2]0,1}
+  ROOT out = ((s4[<=4]{0:E(4)}, s32[<=4]{0}), s32[<=4]{0}) tuple(s_tup, s_arr)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto smod,
+                       ParseAndReturnVerifiedModule(kShardedCtrlSort));
+  EXPECT_THAT(DynamicPadder().Run(smod.get()), IsOkAndHolds(true));
+  ASSERT_OK(verifier().Run(smod.get()).status());
+  for (const HloInstruction* inst : smod->entry_computation()->instructions()) {
+    if (inst->shape().IsArray() && inst->shape().has_layout() &&
+        (inst->shape().element_type() == S32 ||
+         inst->shape().element_type() == PRED)) {
+      EXPECT_EQ(inst->shape().layout().element_size_in_bits(), 0);
+    }
+  }
+}
+
+TEST_F(ExecutionTest, DynamicUpdateSliceRightEdgeClamping1DAnd2D) {
+  constexpr absl::string_view kDus1D = R"hlo(
+HloModule DusRightEdge1D
+ENTRY main {
+  base = s32[5] parameter(0)
+  upd = s32[3] parameter(1)
+  dsz = s32[] parameter(2)
+  start = s32[] parameter(3)
+  upd_d = s32[<=3] set-dimension-size(upd, dsz), dimensions={0}
+  ROOT r = s32[5] dynamic-update-slice(base, upd_d, start)
+}
+)hlo";
+  Literal base = LiteralUtil::CreateR1<int32_t>({10, 20, 30, 40, 50});
+  Literal upd = LiteralUtil::CreateR1<int32_t>({7, 8, 9});
+  auto run_1d = [&](int32_t d, int32_t s) {
+    Literal ld = LiteralUtil::CreateR0<int32_t>(d);
+    Literal ls = LiteralUtil::CreateR0<int32_t>(s);
+    return PadAndExecute(GetHloModule(std::string(kDus1D)),
+                         {&base, &upd, &ld, &ls});
+  };
+  EXPECT_EQ(run_1d(1, 3).value(),
+            LiteralUtil::CreateR1<int32_t>({10, 20, 30, 7, 50}));
+  EXPECT_EQ(run_1d(1, 4).value(),
+            LiteralUtil::CreateR1<int32_t>({10, 20, 30, 40, 7}));
+  EXPECT_EQ(run_1d(1, -2).value(),
+            LiteralUtil::CreateR1<int32_t>({7, 20, 30, 40, 50}));
+  EXPECT_EQ(run_1d(0, 4).value(),
+            LiteralUtil::CreateR1<int32_t>({10, 20, 30, 40, 50}));
+  EXPECT_EQ(run_1d(3, 4).value(),
+            LiteralUtil::CreateR1<int32_t>({10, 20, 7, 8, 9}));
+
+  // U64 start > INT64_MAX clamps to N - d without signed overflow, and dynamic
+  // base clamps to base_dyn - d.
+  constexpr absl::string_view kDusU64DynBase = R"hlo(
+HloModule DusU64DynBase
+ENTRY main {
+  base_d = s32[<=5] set-dimension-size(s32[5] parameter(0), s32[] parameter(3)), dimensions={0}
+  upd_d = s32[<=3] set-dimension-size(s32[3] parameter(1), s32[] parameter(2)), dimensions={0}
+  start = u64[] parameter(4)
+  ROOT r = s32[<=5] dynamic-update-slice(base_d, upd_d, start)
+}
+)hlo";
+  Literal d1 = LiteralUtil::CreateR0<int32_t>(1);
+  Literal b4 = LiteralUtil::CreateR0<int32_t>(4);
+  auto u64_check = GetHloModule(std::string(kDusU64DynBase));
+  EXPECT_THAT(DynamicPadder().Run(u64_check.get()), IsOkAndHolds(true));
+  ASSERT_OK(verifier().Run(u64_check.get()).status());
+  if (test::DeviceIs(test::kCpu) || test::DeviceIs(test::kInterpreter)) {
+    Literal u64_big = LiteralUtil::CreateR0<uint64_t>(uint64_t{1} << 63);
+    ASSERT_OK_AND_ASSIGN(
+        Literal u64_out,
+        PadAndExecute(GetHloModule(std::string(kDusU64DynBase)),
+                      {&base, &upd, &d1, &b4, &u64_big},
+                      /*slice_dynamic_output=*/false));
+    EXPECT_EQ(u64_out, LiteralUtil::CreateR1<int32_t>({10, 20, 30, 7, 50}));
+  }
+
+  // Also test U32 start > INT32_MAX with dynamic base across all backends.
+  constexpr absl::string_view kDusU32DynBase = R"hlo(
+HloModule DusU32DynBase
+ENTRY main {
+  base_d = s32[<=5] set-dimension-size(s32[5] parameter(0), s32[] parameter(3)), dimensions={0}
+  upd_d = s32[<=3] set-dimension-size(s32[3] parameter(1), s32[] parameter(2)), dimensions={0}
+  start = u32[] parameter(4)
+  ROOT r = s32[<=5] dynamic-update-slice(base_d, upd_d, start)
+}
+)hlo";
+  Literal u32_big = LiteralUtil::CreateR0<uint32_t>(uint32_t{1} << 31);
+  ASSERT_OK_AND_ASSIGN(Literal u32_out,
+                       PadAndExecute(GetHloModule(std::string(kDusU32DynBase)),
+                                     {&base, &upd, &d1, &b4, &u32_big},
+                                     /*slice_dynamic_output=*/false));
+  EXPECT_EQ(u32_out, LiteralUtil::CreateR1<int32_t>({10, 20, 30, 7, 50}));
+
+  // 2D partial update and sub-byte s4 {:E(4)} layout verification.
+  constexpr absl::string_view kDus2D = R"hlo(
+HloModule Dus2D
+ENTRY main {
+  base = s32[3,4] constant({{1,2,3,4},{5,6,7,8},{9,10,11,12}})
+  upd = s32[2,3] constant({{91,92,93},{94,95,96}})
+  d0 = s32[] parameter(0)
+  d1 = s32[] parameter(1)
+  upd0 = s32[<=2,3] set-dimension-size(upd, d0), dimensions={0}
+  upd1 = s32[<=2,<=3] set-dimension-size(upd0, d1), dimensions={1}
+  ROOT r = s32[3,4] dynamic-update-slice(base, upd1, s32[] constant(2), s32[] constant(3))
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(
+      Literal out_2d,
+      PadAndExecute(GetHloModule(std::string(kDus2D)), {&d1, &d1}));
+  EXPECT_EQ(out_2d, LiteralUtil::CreateR2<int32_t>(
+                        {{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 91}}));
+
+  constexpr absl::string_view kDusS4 = R"hlo(
+HloModule DusS4
+ENTRY main {
+  base = s4[5]{0:E(4)} parameter(0)
+  upd_d = s4[<=3]{0:E(4)} set-dimension-size(s4[3]{0:E(4)} parameter(1), s32[] parameter(2)), dimensions={0}
+  ROOT r = s4[5]{0:E(4)} dynamic-update-slice(base, upd_d, s4[]{:E(4)} parameter(3))
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto s4_mod, ParseAndReturnVerifiedModule(kDusS4));
+  EXPECT_THAT(DynamicPadder().Run(s4_mod.get()), IsOkAndHolds(true));
+  ASSERT_OK(verifier().Run(s4_mod.get()).status());
+  EXPECT_EQ(s4_mod->entry_computation()
+                ->root_instruction()
+                ->shape()
+                .layout()
+                .element_size_in_bits(),
+            4);
+  for (const HloInstruction* inst :
+       s4_mod->entry_computation()->instructions()) {
+    if (inst->shape().IsArray() && inst->shape().has_layout() &&
+        inst->shape().element_type() != S4) {
+      EXPECT_EQ(inst->shape().layout().element_size_in_bits(), 0);
+    }
+  }
+}
+
+TEST_F(DynamicPadderTest,
+       ZeroBoundDynamicReshapeReverseAndUnboundedGetDimensionSize) {
+  for (absl::string_view ok_hlo : {absl::string_view(R"hlo(
+HloModule ZeroSplit
+ENTRY main {
+  x = f32[<=0] set-dimension-size(f32[0] parameter(0), s32[] constant(0)), dimensions={0}
+  ROOT r = f32[0,<=2] dynamic-reshape(x, s32[] constant(0), s32[] parameter(1))
+})hlo"),
+                                   absl::string_view(R"hlo(
+HloModule ZeroCombine
+ENTRY main {
+  x = f32[0,<=2] set-dimension-size(f32[0,2] parameter(0), s32[] parameter(1)), dimensions={1}
+  ROOT r = f32[<=0] dynamic-reshape(x, s32[] constant(0))
+})hlo"),
+                                   absl::string_view(R"hlo(
+HloModule ZeroFlattenUnflatten
+ENTRY main {
+  x = f32[<=0,2] set-dimension-size(f32[0,2] parameter(0), s32[] constant(0)), dimensions={0}
+  ROOT r = f32[2,<=0] dynamic-reshape(x, s32[] constant(2), s32[] constant(0))
+})hlo"),
+                                   absl::string_view(R"hlo(
+HloModule ZeroReverse
+ENTRY main {
+  x = f32[<=0] set-dimension-size(f32[0] parameter(0), s32[] constant(0)), dimensions={0}
+  ROOT r = f32[<=0] reverse(x), dimensions={0}
+})hlo")}) {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(ok_hlo));
+    ASSERT_OK(DynamicPadder().Run(m.get()).status());
+  }
+
+  // Dynamic reverse bound > INT32_MAX and get-dimension-size on an unbounded
+  // dimension must return Unimplemented without S32 truncation or overflow.
+  ASSERT_OK_AND_ASSIGN(auto huge_rev, ParseAndReturnVerifiedModule(R"hlo(
+HloModule HugeZeroByteReverse
+ENTRY main {
+  x = s32[<=2147483648,0] parameter(0)
+  ROOT r = s32[<=2147483648,0] reverse(x), dimensions={0}
+})hlo"));
+  EXPECT_EQ(DynamicPadder().Run(huge_rev.get()).status().code(),
+            absl::StatusCode::kUnimplemented);
+
+  ASSERT_OK_AND_ASSIGN(auto unbounded_gds, ParseAndReturnUnverifiedModule(R"hlo(
+HloModule UnboundedGetDimSize
+ENTRY main {
+  p = s32[?,0] iota(), iota_dimension=0
+  ROOT g = s32[] get-dimension-size(p), dimensions={0}
+})hlo"));
+  EXPECT_EQ(DynamicPadder().Run(unbounded_gds.get()).status().code(),
+            absl::StatusCode::kUnimplemented);
+}
+
 }  // namespace
 }  // namespace xla

@@ -17,6 +17,7 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <set>
 #include <utility>
 #include <vector>
@@ -49,6 +50,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/literal_util.h"
+#include "xla/primitive_util.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/dynamic_dimension_inference.h"
 #include "xla/service/dynamic_window_utils.h"
@@ -72,13 +74,30 @@ auto* dynamic_padding_gauge = tsl::monitoring::Gauge<bool, 0>::New(
     "/tensorflow/core/use_dynamic_padding_gauge",
     "Tracks if dynamic padder is used.");
 
+absl::StatusOr<HloInstruction*> MakeZeroConstant(HloInstruction* inst,
+                                                 PrimitiveType ptype) {
+  if (ptype == F8E8M0FNU) {
+    return Unimplemented("F8E8M0FNU has no zero pad: %s", inst->ToString());
+  }
+  return inst->AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::Zero(ptype)));
+}
+
+Shape MakeStaticMaskShape(const Shape& shape, PrimitiveType ptype) {
+  Shape out =
+      ShapeUtil::MakeStaticShape(ShapeUtil::ChangeElementType(shape, ptype));
+  if (out.has_layout()) out.mutable_layout()->set_element_size_in_bits(0);
+  return out;
+}
+
 // ChooseIdentityValue looks at the instruction's operand, returns a
 // identity value which, when padded, doesn't change the result of the
 // instruction.
 //
 // nullopt is returned if padding doesn't need to be reset.
-absl::StatusOr<HloInstruction*> ChooseIdentityValue(HloInstruction* inst,
-                                                    int64_t operand_number) {
+absl::StatusOr<HloInstruction*> ChooseIdentityValue(
+    HloInstruction* inst, int64_t operand_number, int64_t input_dim,
+    const DynamicDimensionInference* ddi) {
   // Padding on elementwise operation doesn't affect the result of the effective
   // data.
   if (inst->IsElementwise()) {
@@ -90,19 +109,36 @@ absl::StatusOr<HloInstruction*> ChooseIdentityValue(HloInstruction* inst,
       return inst->mutable_operand(2);
     }
     TF_RET_CHECK(operand_number == 0);
-    HloComputation* select = inst->called_computations()[0];
-
-    if (Match(select->root_instruction(),
-              match::Compare(match::Parameter(), match::Parameter())
-                  .WithComparisonDirection(ComparisonDirection::kGe))) {
-      return inst->AddInstruction(HloInstruction::CreateConstant(
-          LiteralUtil::MinValue(inst->operand(0)->shape().element_type())));
-    } else {
-      return Unimplemented(
-          "Only select and scatter with `max` as select function is "
-          "supported, got %s",
-          select->ToString());
+    const PrimitiveType ptype = inst->operand(0)->shape().element_type();
+    const bool is_fp = primitive_util::IsFloatingPointType(ptype);
+    if (!inst->called_computations().empty() &&
+        (is_fp || primitive_util::IsIntegralType(ptype) || ptype == PRED)) {
+      const HloComputation* select = inst->called_computations()[0];
+      const auto* cmp =
+          DynCast<HloCompareInstruction>(select->root_instruction());
+      if (select->num_parameters() == 2 && cmp != nullptr &&
+          (!is_fp || cmp->order() == Comparison::Order::kPartial)) {
+        const HloInstruction* p0 = select->parameter_instruction(0);
+        const HloInstruction* p1 = select->parameter_instruction(1);
+        const bool fwd = cmp->operand(0) == p0 && cmp->operand(1) == p1;
+        const bool rev = cmp->operand(0) == p1 && cmp->operand(1) == p0;
+        const ComparisonDirection dir = cmp->direction();
+        if ((fwd && dir == ComparisonDirection::kGe) ||
+            (rev && dir == ComparisonDirection::kLe)) {
+          return inst->AddInstruction(
+              HloInstruction::CreateConstant(LiteralUtil::MinValue(ptype)));
+        }
+        if ((fwd && dir == ComparisonDirection::kLe) ||
+            (rev && dir == ComparisonDirection::kGe)) {
+          return inst->AddInstruction(
+              HloInstruction::CreateConstant(LiteralUtil::MaxValue(ptype)));
+        }
+      }
     }
+    return Unimplemented(
+        "Only select and scatter with `min`/`max` (GE/LE) select is "
+        "supported, got %s",
+        inst->ToString());
   }
   switch (inst->opcode()) {
     case HloOpcode::kReduce: {
@@ -126,27 +162,76 @@ absl::StatusOr<HloInstruction*> ChooseIdentityValue(HloInstruction* inst,
 
     case HloOpcode::kConvolution:
     case HloOpcode::kDot: {
-      // Use 0 as padding value for convolution and dot.
-      //
-      // Note that the output type (inst->shape().element_type()) isn't
-      // necessarily the same as the input type (element type of operands).  For
-      // example, a dot can take s8 as input and output s32.
-      PrimitiveType ptype = inst->operand(0)->shape().element_type();
-      return inst->AddInstruction(
-          HloInstruction::CreateConstant(LiteralUtil::Zero(ptype)));
+      if (operand_number >= 2) {
+        return Unimplemented(
+            "Dynamic padding of auxiliary operand %d is unsupported: %s",
+            operand_number, inst->ToString());
+      }
+      return MakeZeroConstant(
+          inst, inst->operand(operand_number)->shape().element_type());
     }
 
     case HloOpcode::kPad:
       return inst->mutable_operand(1);
     case HloOpcode::kScatter: {
-      if (operand_number != 1) {
+      auto* scatter = Cast<HloScatterInstruction>(inst);
+      if (operand_number != scatter->scatter_operand_count()) {
         return nullptr;
       }
-      PrimitiveType indices_ptype =
+      const auto& dnums = scatter->scatter_dimension_numbers();
+      if (input_dim == dnums.index_vector_dim() ||
+          absl::c_linear_search(dnums.scatter_indices_batching_dims(),
+                                input_dim) ||
+          dnums.scatter_dims_to_operand_dims().empty()) {
+        return Unimplemented("Unsupported dynamic scatter_indices dim %d: %s",
+                             input_dim, inst->ToString());
+      }
+      const PrimitiveType ptype =
           inst->operand(operand_number)->shape().element_type();
-
-      return inst->AddInstruction(
-          HloInstruction::CreateConstant(LiteralUtil::MaxValue(indices_ptype)));
+      if (primitive_util::IsSignedIntegralType(ptype)) {
+        scatter->set_indices_are_sorted(false);
+        return inst->AddInstruction(
+            HloInstruction::CreateConstant(LiteralUtil::CreateR0(ptype, -1)));
+      }
+      if (!primitive_util::IsUnsignedIntegralType(ptype)) {
+        return Unimplemented("Unsupported scatter index type: %s",
+                             inst->ToString());
+      }
+      const int bw = primitive_util::BitWidth(ptype);
+      const uint64_t tmax = bw == 64 ? std::numeric_limits<uint64_t>::max()
+                                     : (uint64_t{1} << bw) - 1;
+      const HloInstruction* op0 = scatter->scatter_operands()[0];
+      const HloInstruction* upd0 = scatter->scatter_updates()[0];
+      for (int64_t od : dnums.scatter_dims_to_operand_dims()) {
+        if (absl::c_linear_search(dnums.input_batching_dims(), od) ||
+            op0->shape().is_unbounded_dynamic_dimension(od)) {
+          continue;
+        }
+        int64_t min_win = 1;
+        if (!absl::c_linear_search(dnums.inserted_window_dims(), od)) {
+          int64_t wpos = 0;
+          for (int64_t d = 0; d < od; ++d) {
+            if (!absl::c_linear_search(dnums.inserted_window_dims(), d) &&
+                !absl::c_linear_search(dnums.input_batching_dims(), d)) {
+              ++wpos;
+            }
+          }
+          const int64_t ud = dnums.update_window_dims(wpos);
+          const bool dyn_win =
+              upd0->shape().is_dynamic_dimension(ud) ||
+              (ddi != nullptr && ddi->GetDynamicSize(upd0, {}, ud) != nullptr);
+          min_win = dyn_win ? 0 : upd0->shape().dimensions(ud);
+        }
+        const int64_t op_dim = op0->shape().dimensions(od);
+        if (op_dim < min_win ||
+            tmax > static_cast<uint64_t>(op_dim - min_win)) {
+          return inst->AddInstruction(
+              HloInstruction::CreateConstant(LiteralUtil::MaxValue(ptype)));
+        }
+      }
+      return Unimplemented(
+          "Unsigned scatter index MaxValue may be in bounds: %s",
+          inst->ToString());
     }
     case HloOpcode::kParameter:
     case HloOpcode::kGather:
@@ -207,7 +292,12 @@ absl::StatusOr<bool> ReplaceGetSize(
     dynamic_dimension_inference->ReplaceAllDynamicDimensionUsesWith(
         instr, dynamic_size);
   } else {
-    int32_t size = instr->operand(0)->shape().dimensions(dim);
+    const int64_t raw_size = instr->operand(0)->shape().dimensions(dim);
+    if (raw_size < 0 || raw_size > std::numeric_limits<int32_t>::max()) {
+      return Unimplemented("Unsupported get-dimension-size bound %d: %s",
+                           raw_size, instr->ToString());
+    }
+    int32_t size = static_cast<int32_t>(raw_size);
     HloInstruction* new_instr = computation->AddInstruction(
         HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(size)));
     ABSL_RETURN_IF_ERROR(instr->ReplaceAllUsesWith(new_instr));
@@ -812,8 +902,8 @@ absl::StatusOr<bool> RewriteDynamicReshapeSingleGroup(
 
   if (input_dims.size() == 1) {
     int64_t input_dim = input_dims[0];
-    // Size 1 dimension doesn't need a rewrite.
-    if (operand_shape.dimensions()[input_dim] == 1) {
+    // Size 0 or 1 dimension doesn't need a rewrite.
+    if (operand_shape.dimensions()[input_dim] <= 1) {
       return false;
     }
     // One input dimension is split into multiple output dimensions.
@@ -824,7 +914,7 @@ absl::StatusOr<bool> RewriteDynamicReshapeSingleGroup(
 
   if (output_dims.size() == 1) {
     int64_t output_dim = output_dims[0];
-    if (output_shape.dimensions()[output_dim] == 1) {
+    if (output_shape.dimensions()[output_dim] <= 1) {
       return false;
     }
     // One input dimension is split into multiple output dimensions.
@@ -865,8 +955,8 @@ absl::StatusOr<bool> RewriteReverse(
   for (int64_t reverse_dim : reverse_dims) {
     HloInstruction* dynamic_size =
         dynamic_dimension_inference->GetDynamicSize(reverse, {}, reverse_dim);
-    if (dynamic_size == nullptr) {
-      // Reverse dimension is not dynamic -- no rewrite needed.
+    if (dynamic_size == nullptr || reverse_shape.dimensions(reverse_dim) <= 1) {
+      // Static or size <= 1 reverse dimension needs no rewrite.
       continue;
     }
     dynamic_reverse_dims.insert(reverse_dim);
@@ -884,10 +974,15 @@ absl::StatusOr<bool> RewriteReverse(
   for (int i = 0; i < reverse_shape.dimensions().size(); ++i) {
     auto dimension = padding.add_dimensions();
     if (dynamic_reverse_dims.count(i) > 0) {
+      const int64_t dim_size = reverse_shape.dimensions(i);
+      if (dim_size > std::numeric_limits<int32_t>::max()) {
+        return Unimplemented("Dynamic reverse bound %d exceeds S32: %s",
+                             dim_size, reverse->ToString());
+      }
       dimension->set_edge_padding_low(0);
-      dimension->set_edge_padding_high(reverse_shape.dimensions(i));
+      dimension->set_edge_padding_high(dim_size);
       dimension->set_interior_padding(0);
-      pad_shape.set_dimensions(i, 2 * pad_shape.dimensions(i));
+      pad_shape.set_dimensions(i, 2 * dim_size);
     }
   }
   HloInstruction* cloned_reverse = reverse->AddInstruction(reverse->Clone());
@@ -997,9 +1092,9 @@ absl::StatusOr<bool> RewriteDynamicConvolutionInputGrad(
   TF_RET_CHECK(kernel->shape().is_static());
   auto dnums = custom_call_conv->convolution_dimension_numbers();
   Window window = custom_call_conv->window();
-  HloInstruction* zero =
-      custom_call_conv->AddInstruction(HloInstruction::CreateConstant(
-          LiteralUtil::Zero(custom_call_conv->shape().element_type())));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * zero,
+      MakeZeroConstant(custom_call_conv, grad->shape().element_type()));
   std::vector<HloInstruction*> padding_before(
       dnums.input_spatial_dimensions_size(), nullptr);
   for (int64_t spatial_dim_index = 0;
@@ -1037,7 +1132,7 @@ absl::StatusOr<bool> RewriteDynamicConvolutionInputGrad(
         [&](int64_t dim) { return dnums.input_spatial_dimensions(dim); });
   }
 
-  PrecisionConfig precision_config;
+  PrecisionConfig precision_config = custom_call_conv->precision_config();
   if (custom_call_conv->precision_config().operand_precision_size() == 3) {
     // We are not interested in the precision config of the first operand, which
     // is the input_sizes.
@@ -1050,8 +1145,7 @@ absl::StatusOr<bool> RewriteDynamicConvolutionInputGrad(
           custom_call_conv->shape(), {grad, kernel},
           custom_call_conv->feature_group_count(),
           custom_call_conv->batch_group_count(), window,
-          custom_call_conv->convolution_dimension_numbers(),
-          custom_call_conv->precision_config()));
+          custom_call_conv->convolution_dimension_numbers(), precision_config));
   ABSL_RETURN_IF_ERROR(custom_call_conv->ReplaceAllUsesWith(static_conv));
   ABSL_RETURN_IF_ERROR(dynamic_dimension_inference->ForwardDynamicSize(
       custom_call_conv, static_conv, {}));
@@ -1065,9 +1159,9 @@ absl::StatusOr<bool> RewriteDynamicConvolutionForward(
   HloInstruction* kernel = custom_call_conv->mutable_operand(1);
   Window window = custom_call_conv->window();
   auto dnums = custom_call_conv->convolution_dimension_numbers();
-  HloInstruction* zero =
-      custom_call_conv->AddInstruction(HloInstruction::CreateConstant(
-          LiteralUtil::Zero(custom_call_conv->shape().element_type())));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * zero,
+      MakeZeroConstant(custom_call_conv, input->shape().element_type()));
   std::vector<HloInstruction*> padding_before(
       dnums.input_spatial_dimensions_size(), nullptr);
   for (int64_t spatial_dim_index = 0;
@@ -1126,9 +1220,12 @@ absl::StatusOr<bool> RewriteDynamicConvolutionKernelGrad(
   TF_RET_CHECK(dynamic_dimension_inference->HasDynamicDimension(gradients));
   Window window = custom_call_conv->window();
   auto dnums = custom_call_conv->convolution_dimension_numbers();
-  HloInstruction* zero =
-      custom_call_conv->AddInstruction(HloInstruction::CreateConstant(
-          LiteralUtil::Zero(custom_call_conv->shape().element_type())));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * zero,
+      MakeZeroConstant(custom_call_conv, activations->shape().element_type()));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * grad_zero,
+      MakeZeroConstant(custom_call_conv, gradients->shape().element_type()));
   std::vector<HloInstruction*> padding_before(
       dnums.input_spatial_dimensions_size(), nullptr);
   for (int64_t spatial_dim_index = 0;
@@ -1151,7 +1248,7 @@ absl::StatusOr<bool> RewriteDynamicConvolutionKernelGrad(
             custom_call_conv->mutable_operand(1), {}, kernel_spatial_dim);
     if (gradients_dynamic_size != nullptr) {
       gradients = PadWithScalar(gradients, kernel_spatial_dim,
-                                gradients_dynamic_size, zero);
+                                gradients_dynamic_size, grad_zero);
     }
     if (activations_dynamic_size == nullptr ||
         gradients_dynamic_size == nullptr) {
@@ -1252,8 +1349,10 @@ absl::StatusOr<bool> RewriteDynamicSelectAndScatterSamePadding(
   HloInstruction* input = hlo->mutable_operand(0);
   HloInstruction* source = hlo->mutable_operand(1);
   HloInstruction* init = hlo->mutable_operand(2);
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * input_padding_value,
-                        ChooseIdentityValue(hlo, /*operand_number=*/0));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * input_padding_value,
+      ChooseIdentityValue(hlo, /*operand_number=*/0, /*input_dim=*/-1,
+                          dynamic_dimension_inference));
   int64_t rank = hlo->shape().dimensions().size();
   Window window = hlo->window();
   std::vector<HloInstruction*> padding_before(hlo->shape().dimensions().size(),
@@ -1415,26 +1514,22 @@ absl::StatusOr<bool> RewriteDynamicSort(
     return false;
   }
 
-  Shape operand_shape =
-      ShapeUtil::ChangeElementType(sort->operand(0)->shape(), S32);
-  Shape broadcast_shape = ShapeUtil::MakeStaticShape(operand_shape);
+  Shape broadcast_shape = MakeStaticMaskShape(sort->operand(0)->shape(), S32);
+  Shape pred_shape = ShapeUtil::ChangeElementType(broadcast_shape, PRED);
   HloInstruction* iota = hlo->AddInstruction(
       HloInstruction::CreateIota(broadcast_shape, sort_dim));
   HloInstruction* dynamic_size_broadcasted = hlo->AddInstruction(
       HloInstruction::CreateBroadcast(broadcast_shape, dynamic_size, {}));
   HloInstruction* lt = hlo->AddInstruction(HloInstruction::CreateCompare(
-      ShapeUtil::ChangeElementType(broadcast_shape, PRED), iota,
-      dynamic_size_broadcasted, ComparisonDirection::kLt));
-  sort->AppendOperand(lt);
+      pred_shape, iota, dynamic_size_broadcasted, ComparisonDirection::kLt));
 
   const int64_t param_number_before_rewritten =
       sort->called_computations()[0]->num_parameters();
+  const Shape scalar_pred = ShapeUtil::MakeScalarShape(PRED);
   auto new_param_0 = HloInstruction::CreateParameter(
-      param_number_before_rewritten, ShapeUtil::MakeScalarShape(PRED),
-      "inbound_lhs");
+      param_number_before_rewritten, scalar_pred, "inbound_lhs");
   auto new_param_1 = HloInstruction::CreateParameter(
-      param_number_before_rewritten + 1, ShapeUtil::MakeScalarShape(PRED),
-      "inbound_rhs");
+      param_number_before_rewritten + 1, scalar_pred, "inbound_rhs");
   std::vector<const HloInstruction*> extra_parameters{new_param_0.get(),
                                                       new_param_1.get()};
   HloComputation* sort_comp = sort->GetModule()->AddEmbeddedComputation(
@@ -1444,43 +1539,89 @@ absl::StatusOr<bool> RewriteDynamicSort(
       sort_comp->parameter_instruction(param_number_before_rewritten);
   auto inbound_rhs =
       sort_comp->parameter_instruction(param_number_before_rewritten + 1);
-  sort->ReplaceCalledComputations(
-      [&](HloComputation* comp) { return sort_comp; });
 
-  // inbound_lhs & (sort_comp | !in_bound_rhs)
-  // Select the lhs if it is in bounds and the rhs is out of bounds or the
-  // sort_comp returns true.
-  auto out_of_bound_rhs = sort_comp->AddInstruction(HloInstruction::CreateUnary(
-      ShapeUtil::MakeScalarShape(PRED), HloOpcode::kNot, inbound_rhs));
+  // Select lhs iff it is in bounds and (orig_comp || !inbound_rhs).
+  auto out_of_bound_rhs = sort_comp->AddInstruction(
+      HloInstruction::CreateUnary(scalar_pred, HloOpcode::kNot, inbound_rhs));
   auto sort_comp_or_out_of_bound_rhs =
       sort_comp->AddInstruction(HloInstruction::CreateBinary(
-          ShapeUtil::MakeScalarShape(PRED), HloOpcode::kOr,
-          sort_comp->root_instruction(), out_of_bound_rhs));
+          scalar_pred, HloOpcode::kOr, sort_comp->root_instruction(),
+          out_of_bound_rhs));
+  sort_comp->set_root_instruction(sort_comp->AddInstruction(
+      HloInstruction::CreateBinary(scalar_pred, HloOpcode::kAnd, inbound_lhs,
+                                   sort_comp_or_out_of_bound_rhs)));
 
-  auto new_root = sort_comp->AddInstruction(HloInstruction::CreateBinary(
-      ShapeUtil::MakeScalarShape(PRED), HloOpcode::kAnd, inbound_lhs,
-      sort_comp_or_out_of_bound_rhs));
-  sort_comp->set_root_instruction(new_root);
-  if (sort->shape().IsTuple()) {
-    // For sort that is already tuple, simply add another result to the tuple.
-    *sort->mutable_shape()->add_tuple_shapes() =
-        ShapeUtil::ChangeElementType(operand_shape, PRED);
-  } else {
-    auto sort_users = sort->users();
-    auto sort_clone = hlo->AddInstruction(sort->Clone());
-    *sort_clone->mutable_shape() = ShapeUtil::MakeTupleShape(
-        {sort->shape(), ShapeUtil::ChangeElementType(operand_shape, PRED)});
-    auto rewritten_sort = hlo->AddInstruction(
-        HloInstruction::CreateGetTupleElement(sort->shape(), sort_clone, 0));
-    for (HloInstruction* user : sort_users) {
-      ABSL_RETURN_IF_ERROR(sort->ReplaceUseWith(user, rewritten_sort));
-    }
-    ABSL_RETURN_IF_ERROR(dynamic_dimension_inference->ForwardDynamicSize(
-        sort, rewritten_sort, {}));
-    if (hlo->parent()->root_instruction() == sort) {
-      hlo->parent()->set_root_instruction(rewritten_sort);
+  const int64_t num_values = sort->operand_count();
+  const bool is_tuple = sort->shape().IsTuple();
+  std::vector<HloInstruction*> new_operands(sort->operands().begin(),
+                                            sort->operands().end());
+  new_operands.push_back(lt);
+  std::vector<Shape> sub_shapes;
+  sub_shapes.reserve(num_values + 1);
+  for (int64_t k = 0; k < num_values; ++k) {
+    sub_shapes.push_back(ShapeUtil::MakeStaticShape(
+        is_tuple ? ShapeUtil::GetTupleElementShape(sort->shape(), k)
+                 : sort->shape()));
+  }
+  sub_shapes.push_back(pred_shape);
+  HloInstruction* new_sort = hlo->AddInstruction(HloInstruction::CreateSort(
+      ShapeUtil::MakeTupleShape(sub_shapes), sort_dim, new_operands, sort_comp,
+      sort->is_stable()));
+  new_sort->set_frontend_attributes(sort->frontend_attributes());
+  if (sort->has_sharding()) {
+    const HloSharding& orig_sh = sort->sharding();
+    if (is_tuple && orig_sh.IsTuple() &&
+        orig_sh.tuple_elements().size() == num_values) {
+      std::vector<HloSharding> sh(orig_sh.tuple_elements().begin(),
+                                  orig_sh.tuple_elements().end());
+      sh.push_back(HloSharding(sh[0]).ClearShardGroup());
+      new_sort->set_sharding(HloSharding::Tuple(new_sort->shape(), sh));
+    } else if (!is_tuple && !orig_sh.IsTuple()) {
+      new_sort->set_sharding(HloSharding::Tuple(
+          new_sort->shape(),
+          {orig_sh, HloSharding(orig_sh).ClearShardGroup()}));
     }
   }
+
+  HloInstruction* replacement = nullptr;
+  if (is_tuple) {
+    std::vector<HloInstruction*> gtes(num_values);
+    for (int64_t k = 0; k < num_values; ++k) {
+      gtes[k] = hlo->AddInstruction(
+          HloInstruction::CreateGetTupleElement(sub_shapes[k], new_sort, k));
+      if (new_sort->has_sharding()) {
+        gtes[k]->set_sharding(
+            new_sort->sharding().GetSubSharding(new_sort->shape(), {k}));
+      }
+    }
+    replacement = hlo->AddInstruction(HloInstruction::CreateTuple(gtes));
+    if (new_sort->has_sharding()) replacement->set_sharding(sort->sharding());
+    for (int64_t k = 0; k < num_values; ++k) {
+      for (int64_t d = 0; d < sub_shapes[k].dimensions().size(); ++d) {
+        if (HloInstruction* sz =
+                dynamic_dimension_inference->GetDynamicSize(sort, {k}, d)) {
+          dynamic_dimension_inference->SetDynamicSize(gtes[k], {}, d, sz);
+          dynamic_dimension_inference->SetDynamicSize(replacement, {k}, d, sz);
+        }
+      }
+    }
+  } else {
+    replacement = hlo->AddInstruction(
+        HloInstruction::CreateGetTupleElement(sub_shapes[0], new_sort, 0));
+    if (new_sort->has_sharding()) replacement->set_sharding(sort->sharding());
+    ABSL_RETURN_IF_ERROR(
+        dynamic_dimension_inference->ForwardDynamicSize(sort, replacement, {}));
+  }
+  const std::vector<HloInstruction*> preds(sort->control_predecessors().begin(),
+                                           sort->control_predecessors().end());
+  const std::vector<HloInstruction*> succs(sort->control_successors().begin(),
+                                           sort->control_successors().end());
+  ABSL_RETURN_IF_ERROR(sort->DropAllControlDeps());
+  for (HloInstruction* p : preds)
+    ABSL_RETURN_IF_ERROR(p->AddControlDependencyTo(new_sort));
+  for (HloInstruction* s : succs)
+    ABSL_RETURN_IF_ERROR(replacement->AddControlDependencyTo(s));
+  ABSL_RETURN_IF_ERROR(sort->ReplaceAllUsesWith(replacement));
 
   return true;
 }
@@ -1657,53 +1798,124 @@ absl::StatusOr<bool> RewriteDynamicUpdateSlice(
 
   HloInstruction* update = dus->mutable_operand(1);
   HloInstruction* base = dus->mutable_operand(0);
-  std::vector<HloInstruction*> dynamic_dims_in_partial_update(
-      update->shape().dimensions().size(), nullptr);
+  const int64_t rank = update->shape().dimensions().size();
+  std::vector<HloInstruction*> dynamic_dims(rank, nullptr);
   bool needs_rewrite = false;
-  for (int64_t i = 0; i < update->shape().dimensions().size(); ++i) {
-    if (update->shape().dimensions(i) < base->shape().dimensions(i)) {
-      HloInstruction* dynamic_dim =
-          dynamic_dimension_inference->GetDynamicSize(update, {}, i);
-
-      if (dynamic_dim != nullptr) {
-        dynamic_dims_in_partial_update[i] = dynamic_dim;
+  for (int64_t i = 0; i < rank; ++i) {
+    const int64_t b = update->shape().dimensions(i);
+    const int64_t n = base->shape().dimensions(i);
+    if (b > 0 && b < n) {
+      if (HloInstruction* d =
+              dynamic_dimension_inference->GetDynamicSize(update, {}, i)) {
+        if (b > std::numeric_limits<int32_t>::max()) {
+          return Unimplemented("Dynamic DUS update bound %d exceeds S32: %s", b,
+                               dus->ToString());
+        }
+        dynamic_dims[i] = d;
         needs_rewrite = true;
       }
     }
   }
-
   if (!needs_rewrite) {
     return false;
   }
-  std::vector<HloInstruction*> indices;
-  indices.reserve(dus->operand_count() - 2);
-  for (int64_t i = 2; i < dus->operand_count(); ++i) {
-    indices.push_back(dus->mutable_operand(i));
+  if (dus->operand_count() != 2 + rank ||
+      !ShapeUtil::IsScalar(dus->operand(2)->shape())) {
+    return Unimplemented("Non-scalar DUS start indices unsupported: %s",
+                         dus->ToString());
   }
-  HloInstruction* base_slice =
-      dus->AddInstruction(HloInstruction::CreateDynamicSlice(
-          update->shape(), base, indices, update->shape().dimensions()));
 
-  for (int64_t i = 0; i < dynamic_dims_in_partial_update.size(); ++i) {
-    HloInstruction* dynamic_dim = dynamic_dims_in_partial_update[i];
-    if (dynamic_dim != nullptr) {
-      Shape mask_shape_int = ShapeUtil::ChangeElementType(update->shape(), S32);
-      Shape mask_shape_pred =
-          ShapeUtil::ChangeElementType(update->shape(), PRED);
-      // Generate mask using iota and dynamic_dim.
-      HloInstruction* iota =
-          dus->AddInstruction(HloInstruction::CreateIota(mask_shape_int, i));
-      HloInstruction* broadcast_dim = dus->AddInstruction(
-          HloInstruction::CreateBroadcast(mask_shape_int, dynamic_dim, {}));
-      HloInstruction* pred = dus->AddInstruction(HloInstruction::CreateCompare(
-          mask_shape_pred, iota, broadcast_dim, ComparisonDirection::kLt));
-      // Update `update` to include base.
-      update = dus->AddInstruction(HloInstruction::CreateTernary(
-          update->shape(), HloOpcode::kSelect, pred, update, base_slice));
+  auto add = [&](std::unique_ptr<HloInstruction> h) {
+    return dus->AddInstruction(std::move(h));
+  };
+  auto s32_c = [&](int32_t v) {
+    return add(
+        HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(v)));
+  };
+  auto s64_c = [&](int64_t v) {
+    return add(
+        HloInstruction::CreateConstant(LiteralUtil::CreateR0<int64_t>(v)));
+  };
+  auto bin = [&](const Shape& s, HloOpcode op, HloInstruction* a,
+                 HloInstruction* b) {
+    return add(HloInstruction::CreateBinary(s, op, a, b));
+  };
+  auto cvt = [&](const Shape& s, HloInstruction* x) {
+    return add(HloInstruction::CreateConvert(s, x));
+  };
+  const Shape s32_s = ShapeUtil::MakeScalarShape(S32);
+  const Shape s64_s = ShapeUtil::MakeScalarShape(S64);
+  const Shape u64_s = ShapeUtil::MakeScalarShape(U64);
+  const Shape static_upd = ShapeUtil::MakeStaticShape(update->shape());
+  HloInstruction *c0_s32 = s32_c(0), *c0_s64 = s64_c(0);
+  HloInstruction* pad_val = add(HloInstruction::CreateConstant(
+      LiteralUtil::Zero(static_upd.element_type())));
+
+  std::vector<HloInstruction*> indices(rank), shifts(rank, nullptr);
+  for (int64_t i = 0; i < rank; ++i) {
+    indices[i] = dus->mutable_operand(2 + i);
+    if (dynamic_dims[i] == nullptr) continue;
+    const int64_t b = static_upd.dimensions(i), n = base->shape().dimensions(i);
+    HloInstruction* b_s32 = s32_c(static_cast<int32_t>(b));
+    HloInstruction* d_c = add(HloInstruction::CreateTernary(
+        s32_s, HloOpcode::kClamp, c0_s32, dynamic_dims[i], b_s32));
+    dynamic_dims[i] = d_c;
+    HloInstruction* eff_n = s64_c(n);
+    if (HloInstruction* base_dyn =
+            dynamic_dimension_inference->GetDynamicSize(base, {}, i)) {
+      eff_n = add(HloInstruction::CreateTernary(
+          s64_s, HloOpcode::kClamp, c0_s64, cvt(s64_s, base_dyn), eff_n));
     }
+    HloInstruction* max_s =
+        bin(s64_s, HloOpcode::kMaximum, c0_s64,
+            bin(s64_s, HloOpcode::kSubtract, eff_n, cvt(s64_s, d_c)));
+    const PrimitiveType idx_ty = indices[i]->shape().element_type();
+    HloInstruction* eff_s =
+        primitive_util::IsUnsignedIntegralType(idx_ty)
+            ? cvt(s64_s, bin(u64_s, HloOpcode::kMinimum, cvt(u64_s, indices[i]),
+                             cvt(u64_s, max_s)))
+            : add(HloInstruction::CreateTernary(s64_s, HloOpcode::kClamp,
+                                                c0_s64, cvt(s64_s, indices[i]),
+                                                max_s));
+    HloInstruction* win_s =
+        bin(s64_s, HloOpcode::kMinimum, eff_s, s64_c(n - b));
+    shifts[i] = cvt(s32_s, bin(s64_s, HloOpcode::kSubtract, eff_s, win_s));
+    indices[i] = cvt(ShapeUtil::MakeStaticShape(indices[i]->shape()), win_s);
+    ABSL_RETURN_IF_ERROR(dus->ReplaceOperandWith(2 + i, indices[i]));
+
+    PaddingConfig pad_cfg = MakeNoPaddingConfig(rank);
+    pad_cfg.mutable_dimensions(i)->set_edge_padding_low(b);
+    Shape pad_shape = static_upd;
+    pad_shape.set_dimensions(i, 2 * b);
+    std::vector<HloInstruction*> ds_idx(rank, c0_s32);
+    ds_idx[i] = bin(s32_s, HloOpcode::kSubtract, b_s32, shifts[i]);
+    update = add(HloInstruction::CreateDynamicSlice(
+        static_upd,
+        add(HloInstruction::CreatePad(pad_shape, update, pad_val, pad_cfg)),
+        ds_idx, static_upd.dimensions()));
+  }
+
+  HloInstruction* base_slice = add(HloInstruction::CreateDynamicSlice(
+      static_upd, base, indices, static_upd.dimensions()));
+  const Shape mask_s32 = MakeStaticMaskShape(static_upd, S32);
+  const Shape mask_pred = ShapeUtil::ChangeElementType(mask_s32, PRED);
+  for (int64_t i = 0; i < rank; ++i) {
+    if (dynamic_dims[i] == nullptr) continue;
+    HloInstruction* iota = add(HloInstruction::CreateIota(mask_s32, i));
+    HloInstruction* lo =
+        add(HloInstruction::CreateBroadcast(mask_s32, shifts[i], {}));
+    HloInstruction* hi = add(HloInstruction::CreateBroadcast(
+        mask_s32, bin(s32_s, HloOpcode::kAdd, shifts[i], dynamic_dims[i]), {}));
+    HloInstruction* pred =
+        bin(mask_pred, HloOpcode::kAnd,
+            add(HloInstruction::CreateCompare(mask_pred, iota, lo,
+                                              ComparisonDirection::kGe)),
+            add(HloInstruction::CreateCompare(mask_pred, iota, hi,
+                                              ComparisonDirection::kLt)));
+    update = add(HloInstruction::CreateTernary(static_upd, HloOpcode::kSelect,
+                                               pred, update, base_slice));
   }
   ABSL_RETURN_IF_ERROR(dus->ReplaceOperandWith(1, update));
-
   return true;
 }
 
@@ -1777,6 +1989,9 @@ absl::StatusOr<bool> RewriteDynamicReshape(
   }
 
   if (need_flatten_unflatten) {
+    if (ShapeUtil::IsZeroElementArray(operand->shape())) {
+      return false;
+    }
     VLOG(2) << "Rewrite dynamic reshape to flatten-unflatten pair. "
             << reshape->ToString();
     int64_t num_elements = ShapeUtil::ElementsIn(operand->shape());
@@ -2293,8 +2508,10 @@ absl::StatusOr<bool> DynamicPadder::RunImpl(
             continue;
           }
 
-          ABSL_ASSIGN_OR_RETURN(HloInstruction * identity_value,
-                                ChooseIdentityValue(inst, operand_num));
+          ABSL_ASSIGN_OR_RETURN(
+              HloInstruction * identity_value,
+              ChooseIdentityValue(inst, operand_num, input_dim,
+                                  &dynamic_dimension_inference));
           if (identity_value == nullptr) {
             continue;
           }
