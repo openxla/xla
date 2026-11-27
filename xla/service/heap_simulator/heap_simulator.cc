@@ -482,10 +482,7 @@ absl::Status HeapSimulator::RunComputation(
               // Remove the operand buffer right before sharing (allocating) a
               // new one.
               Free(operand_value, operand_value->instruction());
-              buffers_freed[i].erase(
-                  std::remove(buffers_freed[i].begin(), buffers_freed[i].end(),
-                              operand_value),
-                  buffers_freed[i].end());
+              std::erase(buffers_freed[i], operand_value);
               ShareBuffer(value, operand_value, value->instruction());
               // The live range of the operand buffer is now extended to the end
               // of the current instruction.
