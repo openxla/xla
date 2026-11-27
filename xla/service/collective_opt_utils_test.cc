@@ -517,6 +517,117 @@ TEST_F(FindUniqueDynamicSliceUserFromCollectiveTest,
                    .has_value());
 }
 
+TEST_F(FindUniqueDynamicSliceUserFromCollectiveTest, ElementwiseIsRoot) {
+  // An elementwise operation that is the root of the computation stays live,
+  // so it is not looked through even if the dynamic-slice is its only user.
+  constexpr absl::string_view hlo_string = R"hlo(
+    HloModule test
+    sum {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT add = f32[] add(a, b)
+    }
+    ENTRY main {
+      param = f32[32,10] parameter(0)
+      ar = f32[32,10] all-reduce(param), replica_groups={{0,1}}, to_apply=sum
+      ROOT negated = f32[32,10] negate(ar)
+      zero = s32[] constant(0)
+      replica_id = u32[] replica-id()
+      slice_index = s32[] convert(replica_id)
+      ds = f32[16,10] dynamic-slice(negated, slice_index, zero),
+        dynamic_slice_sizes={16,10}
+    }
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+  HloAllReduceInstruction* ar = Cast<HloAllReduceInstruction>(
+      module->entry_computation()->GetInstructionWithName("ar"));
+  ASSERT_THAT(ar, testing::NotNull());
+
+  EXPECT_FALSE(FindUniqueDynamicSliceUserFromCollective(
+                   ar, /*allow_multiple_users=*/false,
+                   /*allow_intervening_reshape=*/false,
+                   /*allow_intervening_bitcast=*/false,
+                   /*allow_intervening_elementwise=*/true)
+                   .has_value());
+}
+
+TEST_F(FindUniqueDynamicSliceUserFromCollectiveTest,
+       CollectiveIsRootWithElementwiseUser) {
+  // A collective that is the root of the computation stays live, so its
+  // elementwise user is not looked through.
+  constexpr absl::string_view hlo_string = R"hlo(
+    HloModule test
+    sum {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT add = f32[] add(a, b)
+    }
+    ENTRY main {
+      param = f32[32,10] parameter(0)
+      ROOT ar = f32[32,10] all-reduce(param), replica_groups={{0,1}},
+        to_apply=sum
+      negated = f32[32,10] negate(ar)
+      zero = s32[] constant(0)
+      replica_id = u32[] replica-id()
+      slice_index = s32[] convert(replica_id)
+      ds = f32[16,10] dynamic-slice(negated, slice_index, zero),
+        dynamic_slice_sizes={16,10}
+    }
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+  HloAllReduceInstruction* ar = Cast<HloAllReduceInstruction>(
+      module->entry_computation()->GetInstructionWithName("ar"));
+  ASSERT_THAT(ar, testing::NotNull());
+
+  EXPECT_FALSE(FindUniqueDynamicSliceUserFromCollective(
+                   ar, /*allow_multiple_users=*/false,
+                   /*allow_intervening_reshape=*/false,
+                   /*allow_intervening_bitcast=*/false,
+                   /*allow_intervening_elementwise=*/true)
+                   .has_value());
+}
+
+TEST_F(FindUniqueDynamicSliceUserFromCollectiveTest, ElementwiseFusion) {
+  // An elementwise fusion is not looked through: it cannot be re-created with
+  // a different shape, as its fused computation keeps the original shapes.
+  constexpr absl::string_view hlo_string = R"hlo(
+    HloModule test
+    sum {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT add = f32[] add(a, b)
+    }
+    fused_negate {
+      p = f32[32,10] parameter(0)
+      ROOT negate = f32[32,10] negate(p)
+    }
+    ENTRY main {
+      param = f32[32,10] parameter(0)
+      ar = f32[32,10] all-reduce(param), replica_groups={{0,1}}, to_apply=sum
+      negated = f32[32,10] fusion(ar), kind=kLoop, calls=fused_negate
+      zero = s32[] constant(0)
+      replica_id = u32[] replica-id()
+      slice_index = s32[] convert(replica_id)
+      ROOT ds = f32[16,10] dynamic-slice(negated, slice_index, zero),
+        dynamic_slice_sizes={16,10}
+    }
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+  HloAllReduceInstruction* ar = Cast<HloAllReduceInstruction>(
+      module->entry_computation()->GetInstructionWithName("ar"));
+  ASSERT_THAT(ar, testing::NotNull());
+
+  EXPECT_FALSE(FindUniqueDynamicSliceUserFromCollective(
+                   ar, /*allow_multiple_users=*/false,
+                   /*allow_intervening_reshape=*/false,
+                   /*allow_intervening_bitcast=*/false,
+                   /*allow_intervening_elementwise=*/true)
+                   .has_value());
+}
+
 TEST_F(FindUniqueDynamicSliceUserFromCollectiveTest, NoDynamicSlice) {
   constexpr absl::string_view hlo_string = R"(
     HloModule test

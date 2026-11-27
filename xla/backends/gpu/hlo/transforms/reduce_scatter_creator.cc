@@ -37,7 +37,6 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
-#include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
 
@@ -52,13 +51,17 @@ namespace {
 // their output. Returns the last re-created instruction.
 HloInstruction* RecreateElementwiseOnReduceScatter(
     absl::Span<HloInstruction* const> chain, const HloInstruction* ar,
-    HloInstruction* reduce_scatter) {
+    HloInstruction* reduce_scatter, int64_t split_dim) {
   HloComputation* computation = reduce_scatter->parent();
-  // The new shapes get the default layout. This pass runs before layout
-  // assignment, where every shape still has the default layout.
+  // The shape of `instruction` with the split dimension shrunk to the size of
+  // the shard. The instructions in the chain and their scalar broadcasts have
+  // the dimensions of `ar`, so only the split dimension changes. Copying the
+  // shape keeps its layout, such as the element size of sub-byte types.
   auto scattered_shape = [&](const HloInstruction* instruction) {
-    return ShapeUtil::MakeShape(instruction->shape().element_type(),
-                                reduce_scatter->shape().dimensions());
+    Shape shape = instruction->shape();
+    shape.set_dimensions(split_dim,
+                         reduce_scatter->shape().dimensions(split_dim));
+    return shape;
   };
   HloInstruction* result = reduce_scatter;
   const HloInstruction* previous = ar;
@@ -187,7 +190,8 @@ absl::StatusOr<bool> ReduceScatterCreator::RunImpl(
       if (!elementwise.empty()) {
         // If there were intervening copies or elementwise operations, re-create
         // them on the result of the reduce-scatter.
-        result = RecreateElementwiseOnReduceScatter(elementwise, ar, ars);
+        result =
+            RecreateElementwiseOnReduceScatter(elementwise, ar, ars, split_dim);
       } else if (ds->operand(0) != ar) {
         // If there was an intervening reshape, reshape the non-split dimensions
         // to match that existing reshape. Basically we can just reshape the ars

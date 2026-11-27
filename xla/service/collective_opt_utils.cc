@@ -1051,11 +1051,11 @@ Decision CanSliceCommuteWithUser(const HloInstruction* user,
   if (!ShapeUtil::SameDimensions(user->shape(), operand->shape())) {
     return Decision::Forbid("the user changes the dimensions");
   }
-  if (user->opcode() == HloOpcode::kCopy) {
-    return Decision::Allow();
-  }
-  if (!user->IsElementwise()) {
-    return Decision::Forbid("the user is neither a copy nor elementwise");
+  // Check the opcode instead of HloInstruction::IsElementwise(), which also
+  // holds for elementwise fusions. Those cannot be re-created with a different
+  // shape, as their fused computation keeps the original shapes.
+  if (!HloInstruction::IsOpElementwise(user->opcode())) {
+    return Decision::Forbid("the user is not an elementwise operation");
   }
   if (user->OperandIndices(operand).size() != 1) {
     return Decision::Forbid("the user consumes the operand more than once");
@@ -1097,9 +1097,12 @@ std::optional<CollectiveUsers> FindUniqueDynamicSliceUserFromCollective(
 
   CollectiveUsers result;
   if (allow_intervening_elementwise && instruction->user_count() == 1 &&
-      instruction->shape().IsArray() && !instruction->shape().is_dynamic()) {
+      !instruction->IsRoot() && instruction->shape().IsArray() &&
+      !instruction->shape().is_dynamic()) {
     // Walk the chain of single-user copies and elementwise operations that
-    // starts at the collective.
+    // starts at the collective. The collective and the instructions of the
+    // chain are replaced by the caller, so none of them may be the root of
+    // the computation: a root stays live even if its only user is replaced.
     const HloInstruction* operand = instruction;
     while (user->opcode() != HloOpcode::kDynamicSlice) {
       Decision can_commute = CanSliceCommuteWithUser(user, operand);
@@ -1109,10 +1112,10 @@ std::optional<CollectiveUsers> FindUniqueDynamicSliceUserFromCollective(
                 << user->name() << ": " << can_commute.Explain();
         break;
       }
-      if (user->user_count() != 1) {
+      if (user->user_count() != 1 || user->IsRoot()) {
         VLOG(2) << "FindUniqueDynamicSliceUserFromCollective cannot look "
                    "through "
-                << user->name() << ": user count != 1";
+                << user->name() << ": user count != 1 or computation root";
         break;
       }
       result.elementwise.push_back(user);
