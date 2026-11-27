@@ -1732,6 +1732,7 @@ cc_library(
         "//xla/stream_executor/gpu:tma_metadata",
         "//xla/tsl/cuda",  # buildcleaner: keep
         "//xla/tsl/cuda:cudart",  # buildcleaner: keep
+        "//xla/tsl/cuda:nvml",  # buildcleaner: keep
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
