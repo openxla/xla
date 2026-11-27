@@ -74,7 +74,9 @@ cc_library(
     srcs = ["all_reduce_folder.cc"],
     hdrs = ["all_reduce_folder.h"],
     deps = [
+        "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:collective_op_group_mode",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/transforms/collectives:all_reduce_key",
@@ -97,11 +99,15 @@ xla_cc_test(
     srcs = ["all_reduce_folder_test.cc"],
     deps = [
         ":all_reduce_folder",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test",
         "//xla/hlo/utils:hlo_matchers",
+        "//xla/service:hlo_module_config",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",  # build_cleaner: keep
