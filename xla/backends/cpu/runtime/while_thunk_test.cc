@@ -286,5 +286,88 @@ TEST(WhileThunkTest, SequentialExecution) {
   EXPECT_FALSE(large_thunk->body_executor().is_sequential());
 }
 
+class RawByteCondThunk final : public Thunk {
+ public:
+  RawByteCondThunk(std::vector<uint8_t> bytes, BufferAllocation::Slice slice,
+                   bool async)
+      : Thunk(Kind::kKernel, {"raw_cond"}),
+        bytes_(std::move(bytes)),
+        slice_(slice),
+        async_(async) {}
+
+  tsl::AsyncValueRef<ExecuteEvent> Execute(const ExecuteParams& params) final {
+    ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase mem,
+                          params.buffer_allocations->GetDeviceAddress(slice_));
+    const size_t i = step_.fetch_add(1, std::memory_order_relaxed);
+    *static_cast<uint8_t*>(mem.opaque()) = i < bytes_.size() ? bytes_[i] : 0;
+    if (!async_) {
+      return OkExecuteEvent();
+    }
+    auto event = tsl::MakeConstructedAsyncValueRef<ExecuteEvent>();
+    params.intra_op_threadpool->getPool()->Schedule(
+        [event] { event.SetStateConcrete(); });
+    return event;
+  }
+
+  BufferUses buffer_uses() const final {
+    return {BufferUse::Write(slice_, ShapeUtil::MakeShape(PRED, {1}))};
+  }
+
+ private:
+  std::vector<uint8_t> bytes_;
+  std::atomic<size_t> step_{0};
+  BufferAllocation::Slice slice_;
+  bool async_;
+};
+
+class CountBodyThunk final : public Thunk {
+ public:
+  explicit CountBodyThunk(std::atomic<int>* count)
+      : Thunk(Kind::kKernel, {"count_body"}), count_(count) {}
+  tsl::AsyncValueRef<ExecuteEvent> Execute(const ExecuteParams&) final {
+    count_->fetch_add(1, std::memory_order_relaxed);
+    return OkExecuteEvent();
+  }
+  BufferUses buffer_uses() const final { return {}; }
+
+ private:
+  std::atomic<int>* count_;
+};
+
+TEST(WhileThunkTest, RejectsNegativeTripCountAndHandlesNonCanonicalPredBytes) {
+  BufferAllocation alloc(0, 16, 0);
+  BufferAllocation::Slice pred_slice(&alloc, 0, sizeof(uint8_t));
+
+  EXPECT_FALSE(WhileThunk::Create({"neg"}, pred_slice, {}, {},
+                                  /*trip_count=*/-1)
+                   .ok());
+  EXPECT_TRUE(
+      WhileThunk::Create({"zero"}, pred_slice, {}, {}, /*trip_count=*/0).ok());
+
+  tsl::thread::ThreadPool pool(tsl::Env::Default(), "while_pred", 2);
+  Eigen::ThreadPoolDevice device(pool.AsEigenThreadPool(), pool.NumThreads());
+  for (bool async : {false, true}) {
+    uint8_t pred_byte = 0;
+    BufferAllocations allocations(
+        BufferAllocations::Buffers{se::DeviceAddressBase(&pred_byte, 1)});
+    Thunk::ExecuteParams params = {nullptr, &allocations, nullptr, &device};
+    std::atomic<int> trips{0};
+
+    ThunkSequence cond_seq;
+    cond_seq.push_back(std::make_unique<RawByteCondThunk>(
+        std::vector<uint8_t>{0x02, 0x80, 0xFF, 0x00}, pred_slice, async));
+    ThunkSequence body_seq;
+    body_seq.push_back(std::make_unique<CountBodyThunk>(&trips));
+
+    ASSERT_OK_AND_ASSIGN(
+        auto thunk, WhileThunk::Create({"w"}, pred_slice, std::move(cond_seq),
+                                       std::move(body_seq)));
+    auto ev = thunk->Execute(params);
+    tsl::BlockUntilReady(ev);
+    ASSERT_FALSE(ev.IsError());
+    EXPECT_EQ(trips.load(std::memory_order_relaxed), 3) << "async=" << async;
+  }
+}
+
 }  // namespace
 }  // namespace xla::cpu

@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/log/log.h"
 #include "absl/memory/memory.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -76,22 +77,38 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> InfeedThunk::Execute(
 
     // Acquire infeed buffer from the runtime.
     XfeedBuffer* buffer = xfeed->infeed()->BlockingDequeueBuffer();
-    if (buffer->length() != infeed_buffer.slice.size()) {
-      return Internal(
+    if (buffer == nullptr) {
+      return Internal("XLA runtime-managed infeed buffer must not be null");
+    }
+    const int32_t length = buffer->length();
+    void* data = buffer->data();
+    if (length < 0 || length != infeed_buffer.slice.size()) {
+      absl::Status err = Internal(
           "XLA runtime-managed infeed buffer size %d did not match the "
           "infeed operation result buffer size %d",
-          buffer->length(), infeed_buffer.slice.size());
+          length, infeed_buffer.slice.size());
+      xfeed->infeed()->ReleaseCurrentBuffer(length, data, err);
+      return err;
     }
 
     // TODO(ezhulenev): Benchmark multi threaded memcpy and consider add a
     // parallel memcpy that can be reused in Copy thunk.
 
     // Copy data from infeed buffer to the destination.
-    std::memcpy(infeed_data.opaque(), buffer->data(), buffer->length());
+    if (length > 0) {
+      if (data == nullptr || infeed_data.opaque() == nullptr) {
+        absl::Status err = Internal(
+            "XLA runtime-managed infeed buffer data must not be null for size "
+            "%d",
+            length);
+        xfeed->infeed()->ReleaseCurrentBuffer(length, data, err);
+        return err;
+      }
+      std::memcpy(infeed_data.opaque(), data, length);
+    }
 
     // Release infeed buffer back to the runtime.
-    xfeed->infeed()->ReleaseCurrentBuffer(buffer->length(), buffer->data(),
-                                          infeed_buffer.shape);
+    xfeed->infeed()->ReleaseCurrentBuffer(length, data, infeed_buffer.shape);
   }
 
   return OkExecuteEvent();

@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <utility>
@@ -49,7 +50,7 @@ absl::StatusOr<Shape> ShapeForBranchIndexBuffer(
   // https://openxla.org/xla/operation_semantics#conditional
 
   // Branch index is pred[].
-  if (branch_index_buffer.size() == sizeof(bool)) {
+  if (branch_index_buffer.size() == sizeof(uint8_t)) {
     return ShapeUtil::MakeShape(PRED, {1});
   }
 
@@ -67,6 +68,16 @@ absl::StatusOr<Shape> ShapeForBranchIndexBuffer(
 absl::StatusOr<std::unique_ptr<ConditionalThunk>> ConditionalThunk::Create(
     Info info, BufferAllocation::Slice branch_index_buffer,
     std::vector<ThunkSequence> branch_sequences) {
+  if (branch_sequences.empty()) {
+    return InvalidArgument("ConditionalThunk requires at least one branch");
+  }
+  ABSL_ASSIGN_OR_RETURN(Shape shape,
+                        ShapeForBranchIndexBuffer(branch_index_buffer));
+  if (shape.element_type() == PRED && branch_sequences.size() != 2) {
+    return InvalidArgument("PRED ConditionalThunk requires 2 branches, got %d",
+                           branch_sequences.size());
+  }
+
   std::vector<ThunkExecutor> branch_executors;
   branch_executors.reserve(branch_sequences.size());
   for (auto& branch_sequence : branch_sequences) {
@@ -74,9 +85,6 @@ absl::StatusOr<std::unique_ptr<ConditionalThunk>> ConditionalThunk::Create(
                           ThunkExecutor::Create(std::move(branch_sequence)));
     branch_executors.push_back(std::move(branch_executor));
   }
-
-  ABSL_ASSIGN_OR_RETURN(Shape shape,
-                        ShapeForBranchIndexBuffer(branch_index_buffer));
 
   return absl::WrapUnique(
       new ConditionalThunk(std::move(info), std::move(branch_index_buffer),
@@ -105,22 +113,25 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> ConditionalThunk::Execute(
                                 branch_index_data.opaque());
 
   // Default case for out-of-bounds branch index is to execute last branch.
-  auto clamp = [&](int32_t branch_index) -> int32_t {
-    return (branch_index < 0 || branch_index >= branch_executors_.size())
+  auto clamp = [&](int32_t branch_index) -> size_t {
+    return (branch_index < 0 ||
+            static_cast<size_t>(branch_index) >= branch_executors_.size())
                ? branch_executors_.size() - 1
-               : branch_index;
+               : static_cast<size_t>(branch_index);
   };
 
   if (branch_index_buffer_shape_.element_type() == PRED) {
-    bool* pred = reinterpret_cast<bool*>(branch_index_data.opaque());
-    VLOG(3) << "  loaded pred[] branch index: " << *pred;
-    return branch_executors_.at(*pred ? 0 : 1).Execute(params);
+    const bool pred =
+        *static_cast<const uint8_t*>(branch_index_data.opaque()) != 0;
+    VLOG(3) << "  loaded pred[] branch index: " << pred;
+    return branch_executors_.at(pred ? 0 : 1).Execute(params);
   }
 
   if (branch_index_buffer_shape_.element_type() == S32) {
-    int32_t* index = reinterpret_cast<int32_t*>(branch_index_data.opaque());
-    VLOG(3) << "  loaded s32[] branch index: " << *index;
-    return branch_executors_.at(clamp(*index)).Execute(params);
+    int32_t index = 0;
+    std::memcpy(&index, branch_index_data.opaque(), sizeof(index));
+    VLOG(3) << "  loaded s32[] branch index: " << index;
+    return branch_executors_.at(clamp(index)).Execute(params);
   }
 
   return Internal("Unsupported branch index buffer size %d",

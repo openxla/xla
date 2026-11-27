@@ -594,7 +594,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
         CreateBufferAllocationSlice(
             buffer_allocations_[buffer_allocations_.size() - 1]),
         /*batch_size=*/1,
-        /*input_size=*/1,
+        /*input_size=*/2,
         /*k=*/2);
   }
 

@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/backends/cpu/runtime/topk_thunk.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <utility>
 
@@ -30,6 +32,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
@@ -50,6 +53,30 @@ absl::StatusOr<std::unique_ptr<TopKThunk>> TopKThunk::Create(
     Info info, BufferAllocation::Slice values, BufferAllocation::Slice output,
     BufferAllocation::Slice indices, int64_t batch_size, int64_t input_size,
     int64_t k) {
+  static_assert(sizeof(float) == sizeof(int32_t));
+  constexpr int64_t kElemBytes = sizeof(float);
+  constexpr int64_t kMaxElems =
+      std::numeric_limits<int64_t>::max() / kElemBytes;
+  if (batch_size < 0 || input_size < 0 || k < 0 || k > input_size ||
+      input_size > std::numeric_limits<int32_t>::max()) {
+    return InvalidArgument(
+        "Invalid TopK dimensions: batch_size=%d, input_size=%d, k=%d",
+        batch_size, input_size, k);
+  }
+  if (input_size > 0 && batch_size > kMaxElems / input_size) {
+    return InvalidArgument(
+        "TopK byte size overflows int64: batch_size=%d, input_size=%d",
+        batch_size, input_size);
+  }
+  const int64_t values_bytes = batch_size * input_size * kElemBytes;
+  const int64_t out_bytes = batch_size * k * kElemBytes;
+  if (values.size() < values_bytes || output.size() < out_bytes ||
+      indices.size() < out_bytes) {
+    return InvalidArgument(
+        "TopK slice sizes (%d, %d, %d) smaller than required (%d, %d, %d)",
+        values.size(), output.size(), indices.size(), values_bytes, out_bytes,
+        out_bytes);
+  }
   return absl::WrapUnique(new TopKThunk(std::move(info), values, output,
                                         indices, batch_size, input_size, k));
 }
@@ -65,6 +92,16 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> TopKThunk::Execute(
   ABSL_ASSIGN_OR_RETURN(
       se::DeviceAddressBase indices,
       params.buffer_allocations->GetDeviceAddress(indices_buffer_));
+
+  if (batch_size_ == 0 || k_ == 0) {
+    return OkExecuteEvent();
+  }
+  const size_t out_bytes = static_cast<size_t>(batch_size_) *
+                           static_cast<size_t>(k_) * sizeof(float);
+  if (internal::ByteRangesOverlap(output.opaque(), out_bytes, indices.opaque(),
+                                  out_bytes)) {
+    return InvalidArgument("TopK output values and indices must not overlap");
+  }
 
   internal::TopK<float>(batch_size_, input_size_, k_,
                         static_cast<const float*>(values.opaque()),

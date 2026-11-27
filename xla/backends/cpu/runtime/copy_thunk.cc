@@ -51,52 +51,102 @@ limitations under the License.
 #include "xla/util.h"
 
 namespace xla::cpu {
+namespace {
+
+bool IsDenseUntiledByteArray(const Shape& shape) {
+  if (!shape.IsArray() || !shape.has_layout()) {
+    return false;
+  }
+  const auto& layout = shape.layout();
+  const int64_t elem_bits = layout.element_size_in_bits();
+  const int64_t byte_bits =
+      ShapeUtil::ByteSizeOfPrimitiveType(shape.element_type()) * 8;
+  return layout.tiles().empty() &&
+         layout.tail_padding_alignment_in_elements() == 1 &&
+         layout.dynamic_shape_metadata_prefix_bytes() == 0 &&
+         layout.minor_to_major().size() == shape.dimensions().size() &&
+         (elem_bits == 0 || elem_bits == byte_bits) &&
+         ShapeUtil::ByteStrides(shape).has_value();
+}
+
+bool RangesOverlap(const void* a, const void* b, size_t size_in_bytes) {
+  if (size_in_bytes == 0) {
+    return false;
+  }
+  const uintptr_t ua = reinterpret_cast<uintptr_t>(a);
+  const uintptr_t ub = reinterpret_cast<uintptr_t>(b);
+  return (ua < ub ? (ub - ua) : (ua - ub)) < size_in_bytes;
+}
+
+}  // namespace
 
 absl::StatusOr<std::unique_ptr<CopyThunk>> CopyThunk::Create(
     Info info, BufferAllocation::Slice src_buffer, const Shape& src_shape,
     BufferAllocation::Slice dst_buffer, const Shape& dst_shape) {
+  if (!src_shape.IsArray() || !dst_shape.IsArray() || !src_shape.has_layout() ||
+      !dst_shape.has_layout() || src_shape.is_unbounded_dynamic() ||
+      dst_shape.is_unbounded_dynamic()) {
+    return InvalidArgument(
+        "CopyThunk requires bounded array shapes with layouts, got %s and %s",
+        src_shape.ToString(true), dst_shape.ToString(true));
+  }
+  ABSL_RETURN_IF_ERROR(ShapeUtil::ValidateShape(src_shape));
+  ABSL_RETURN_IF_ERROR(ShapeUtil::ValidateShape(dst_shape));
   if (!ShapeUtil::Compatible(src_shape, dst_shape)) {
     return InvalidArgument(
         "Source shape %s must be compatible with destination shape %s",
         src_shape.ToString(true), dst_shape.ToString(true));
   }
+  std::unique_ptr<TransposePlan> transpose_plan;
   if (src_shape != dst_shape) {
-    if (!ShapeUtil::ByteStrides(src_shape).has_value()) {
-      return InvalidArgument("Source shape %s must have valid byte strides",
+    if (!IsDenseUntiledByteArray(src_shape) ||
+        !IsDenseUntiledByteArray(dst_shape)) {
+      return InvalidArgument(
+          "Layout-changing copy requires dense untiled byte layouts, got %s -> "
+          "%s",
+          src_shape.ToString(true), dst_shape.ToString(true));
+    }
+    auto byte_strides = ShapeUtil::ByteStrides(src_shape);
+    if (!byte_strides.has_value()) {
+      return InvalidArgument("Unsupported source layout in CopyThunk: %s",
                              src_shape.ToString(true));
     }
+    TransposePlan::Options options;
+    options.elem_size_in_bytes =
+        ShapeUtil::ByteSizeOfPrimitiveType(src_shape.element_type());
+    options.dims = src_shape.dimensions();
+    options.input_striding = TransposePlan::Striding{*byte_strides};
+    absl::InlinedVector<int64_t, 4> permutation(options.dims.size());
+    absl::c_reverse_copy(dst_shape.layout().minor_to_major(),
+                         permutation.begin());
+    options.permutation = permutation;
+    ABSL_ASSIGN_OR_RETURN(transpose_plan, TransposePlan::Create(options));
+  }
+  const int64_t src_bytes = ShapeUtil::ByteSizeOf(src_shape);
+  const int64_t dst_bytes = ShapeUtil::ByteSizeOf(dst_shape);
+  if (src_bytes != dst_bytes || src_buffer.size() < src_bytes ||
+      dst_buffer.size() < dst_bytes) {
+    return InvalidArgument(
+        "CopyThunk buffer slices (%d, %d) incompatible with shape byte sizes "
+        "(%d, %d)",
+        src_buffer.size(), dst_buffer.size(), src_bytes, dst_bytes);
   }
   return absl::WrapUnique(new CopyThunk(std::move(info), src_buffer, src_shape,
-                                        dst_buffer, dst_shape));
+                                        dst_buffer, dst_shape,
+                                        std::move(transpose_plan)));
 }
 
 CopyThunk::CopyThunk(Info info, BufferAllocation::Slice src_buffer,
                      const Shape& src_shape, BufferAllocation::Slice dst_buffer,
-                     const Shape& dst_shape)
+                     const Shape& dst_shape,
+                     std::unique_ptr<TransposePlan> transpose_plan)
     : Thunk(Kind::kCopy, std::move(info)),
       src_buffer_(src_buffer),
       src_shape_(src_shape),
       dst_buffer_(dst_buffer),
       dst_shape_(dst_shape),
-      parallel_block_params_(ComputeParallelBlockParams(src_shape_)) {
-  if (src_shape_ != dst_shape_) {
-    TransposePlan::Options options;
-    options.elem_size_in_bytes =
-        ShapeUtil::ByteSizeOfPrimitiveType(src_shape_.element_type());
-    options.dims = src_shape_.dimensions();
-
-    auto byte_strides = ShapeUtil::ByteStrides(src_shape_);
-    CHECK(byte_strides.has_value());
-    options.input_striding = TransposePlan::Striding{*byte_strides};
-
-    absl::InlinedVector<int64_t, 4> permutation(options.dims.size());
-    absl::c_reverse_copy(dst_shape_.layout().minor_to_major(),
-                         permutation.begin());
-    options.permutation = permutation;
-
-    transpose_plan_ = TransposePlan::Create(options).value();
-  }
-}
+      parallel_block_params_(ComputeParallelBlockParams(src_shape_)),
+      transpose_plan_(std::move(transpose_plan)) {}
 
 static std::tuple<void*, void*, int64_t> GetBlockCopyParameters(
     const CopyThunk::ParallelBlockParams& params, int64_t block_index,
@@ -176,10 +226,29 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CopyThunk::Execute(
     return OkExecuteEvent();
   }
 
+  const size_t size_in_bytes =
+      static_cast<size_t>(parallel_block_params_.size_in_bytes);
+  const bool overlaps =
+      RangesOverlap(src_data.opaque(), dst_data.opaque(), size_in_bytes);
+
   // Use prepared transpose plan to copy data if copy requires changing layout.
   if (ABSL_PREDICT_FALSE(transpose_plan_)) {
+    if (ABSL_PREDICT_FALSE(overlaps)) {
+      auto scratch = std::make_unique<std::byte[]>(size_in_bytes);
+      transpose_plan_->Execute(src_data.opaque(), scratch.get(),
+                               [](std::function<void()> fn) { fn(); });
+      std::memcpy(dst_data.opaque(), scratch.get(), size_in_bytes);
+      return OkExecuteEvent();
+    }
     transpose_plan_->Execute(src_data.opaque(), dst_data.opaque(),
                              [](std::function<void()> fn) { fn(); });
+    return OkExecuteEvent();
+  }
+
+  if (ABSL_PREDICT_FALSE(overlaps)) {
+    if (src_data.opaque() != dst_data.opaque()) {
+      std::memmove(dst_data.opaque(), src_data.opaque(), size_in_bytes);
+    }
     return OkExecuteEvent();
   }
 

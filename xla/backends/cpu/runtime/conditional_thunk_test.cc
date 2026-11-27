@@ -16,10 +16,12 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/conditional_thunk.h"
 
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <utility>
 #include <vector>
 
+#include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk_testlib.h"
 #include "xla/runtime/buffer_use.h"
@@ -27,6 +29,8 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
@@ -72,6 +76,86 @@ TEST(ConditionalThunkTest, ResourceUses) {
 
   EXPECT_EQ(thunk->resource_uses().size(), 1);
   EXPECT_EQ(thunk->resource_uses()[0], ResourceUse::Read(token));
+}
+
+class RecordBranchThunk final : public Thunk {
+ public:
+  RecordBranchThunk(int id, int* out)
+      : Thunk(Kind::kKernel, {"rec"}), id_(id), out_(out) {}
+  tsl::AsyncValueRef<ExecuteEvent> Execute(const ExecuteParams&) final {
+    *out_ = id_;
+    return OkExecuteEvent();
+  }
+  BufferUses buffer_uses() const final { return {}; }
+
+ private:
+  int id_;
+  int* out_;
+};
+
+TEST(ConditionalThunkTest,
+     ValidatesArityAndHandlesNonCanonicalPredAndMisalignedS32) {
+  BufferAllocation alloc(0, 16, 0);
+  BufferAllocation::Slice pred_slice(&alloc, 0, sizeof(uint8_t));
+  BufferAllocation::Slice misaligned_s32_slice(&alloc, 1, sizeof(int32_t));
+
+  // Reject empty branch list and PRED with != 2 branches.
+  EXPECT_FALSE(ConditionalThunk::Create({"c"}, pred_slice, {}).ok());
+  EXPECT_FALSE(ConditionalThunk::Create({"c"}, misaligned_s32_slice, {}).ok());
+  EXPECT_FALSE(
+      ConditionalThunk::Create({"c"}, pred_slice, std::vector<ThunkSequence>(1))
+          .ok());
+  EXPECT_FALSE(
+      ConditionalThunk::Create({"c"}, pred_slice, std::vector<ThunkSequence>(3))
+          .ok());
+
+  // Non-canonical non-zero PRED bytes (0x02, 0x80, 0xFF) execute branch 0
+  // without invalid-bool UB; 0x00 executes branch 1.
+  alignas(8) uint8_t raw[16] = {};
+  BufferAllocations allocations(
+      BufferAllocations::Buffers{se::DeviceAddressBase(raw, sizeof(raw))});
+  Thunk::ExecuteParams params = {nullptr, &allocations};
+
+  int taken = -1;
+  std::vector<ThunkSequence> pred_branches(2);
+  pred_branches[0].push_back(std::make_unique<RecordBranchThunk>(0, &taken));
+  pred_branches[1].push_back(std::make_unique<RecordBranchThunk>(1, &taken));
+  TF_ASSERT_OK_AND_ASSIGN(auto pred_thunk,
+                          ConditionalThunk::Create({"pred_c"}, pred_slice,
+                                                   std::move(pred_branches)));
+  for (uint8_t b :
+       {uint8_t{0x01}, uint8_t{0x02}, uint8_t{0x80}, uint8_t{0xFF}}) {
+    raw[0] = b;
+    taken = -1;
+    auto ev = pred_thunk->Execute(params);
+    tsl::BlockUntilReady(ev);
+    ASSERT_FALSE(ev.IsError());
+    EXPECT_EQ(taken, 0) << "byte=" << static_cast<int>(b);
+  }
+  raw[0] = 0x00;
+  taken = -1;
+  auto false_ev = pred_thunk->Execute(params);
+  tsl::BlockUntilReady(false_ev);
+  ASSERT_FALSE(false_ev.IsError());
+  EXPECT_EQ(taken, 1);
+
+  // Misaligned S32 index loads cleanly and clamps out-of-range values to last.
+  std::vector<ThunkSequence> s32_branches(3);
+  for (int b = 0; b < 3; ++b) {
+    s32_branches[b].push_back(std::make_unique<RecordBranchThunk>(b, &taken));
+  }
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto s32_thunk, ConditionalThunk::Create({"s32_c"}, misaligned_s32_slice,
+                                               std::move(s32_branches)));
+  for (auto [idx, expected] :
+       std::vector<std::pair<int32_t, int>>{{-5, 2}, {0, 0}, {1, 1}, {99, 2}}) {
+    std::memcpy(raw + 1, &idx, sizeof(idx));
+    taken = -1;
+    auto ev = s32_thunk->Execute(params);
+    tsl::BlockUntilReady(ev);
+    ASSERT_FALSE(ev.IsError());
+    EXPECT_EQ(taken, expected);
+  }
 }
 
 }  // namespace
