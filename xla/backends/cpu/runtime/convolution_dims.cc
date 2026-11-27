@@ -17,16 +17,23 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <tuple>
 
 #include "absl/container/inlined_vector.h"
+#include "absl/numeric/int128.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/layout.h"
+#include "xla/overflow_util.h"
+#include "xla/primitive_util.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -42,16 +49,72 @@ absl::InlinedVector<BufferUse, 4> ConvolutionBufferUses(
 ConvolutionCanonicalDims::Dims::Dims(absl::Span<const int64_t> dims)
     : rank(dims.size()), x(dims[0]), y(dims[1]), z(rank == 3 ? dims[2] : 0) {}
 
-static size_t GetConvolutionRank(const Shape& input_shape) {
+static int64_t GetConvolutionRank(const Shape& input_shape) {
   // Convolution rank is the number of spatial dimensions. Besides spatial
   // dimensions, input shape contains two other dimensions (batch size and the
   // number of channels).
-  return input_shape.dimensions().size() - 2;
+  return static_cast<int64_t>(input_shape.dimensions().size()) - 2;
+}
+
+static absl::Status ValidateDenseArrayShape(const Shape& shape,
+                                            absl::string_view name) {
+  ABSL_RETURN_IF_ERROR(ShapeUtil::ValidateShape(shape));
+  if (!shape.IsArray() || !shape.is_static() || !shape.has_layout()) {
+    return InvalidArgument("ConvolutionThunk: Non-static or non-array %s: %s",
+                           name, shape.ToString(true));
+  }
+  const Layout& l = shape.layout();
+  if (!l.tiles().empty() || !l.split_configs().empty() ||
+      l.tail_padding_alignment_in_elements() != 1 || l.has_physical_shape() ||
+      l.dynamic_shape_metadata_prefix_bytes() != 0 ||
+      (l.element_size_in_bits() != 0 &&
+       l.element_size_in_bits() !=
+           primitive_util::BitWidth(shape.element_type()))) {
+    return InvalidArgument("ConvolutionThunk: Unsupported %s layout: %s", name,
+                           shape.ToString(true));
+  }
+  return absl::OkStatus();
+}
+
+static absl::Status ValidateCanonicalLayout(
+    const Shape& shape, int64_t outer_or_in, absl::Span<const int64_t> spatial,
+    int64_t out_feature, bool batch_first, absl::string_view name) {
+  absl::InlinedVector<int64_t, 5> order;
+  if (batch_first) {
+    order.push_back(outer_or_in);
+  }
+  order.insert(order.end(), spatial.begin(), spatial.end());
+  if (!batch_first) {
+    order.push_back(outer_or_in);
+  }
+  order.push_back(out_feature);
+  const size_t rank = shape.dimensions().size();
+  const absl::Span<const int64_t> m2m = shape.layout().minor_to_major();
+  if (order.size() != rank || m2m.size() != rank) {
+    return InvalidArgument("ConvolutionThunk: Invalid %s dimension numbers",
+                           name);
+  }
+  uint32_t seen = 0;
+  for (size_t i = 0; i < rank; ++i) {
+    const int64_t d = order[i];
+    if (d < 0 || d >= static_cast<int64_t>(rank) ||
+        (seen & (uint32_t{1} << d)) != 0 || m2m[rank - 1 - i] != d) {
+      return InvalidArgument(
+          "ConvolutionThunk: Invalid %s dimensions or layout for %s", name,
+          shape.ToString(true));
+    }
+    seen |= uint32_t{1} << d;
+  }
+  return absl::OkStatus();
 }
 
 static absl::Status ValidateConvolutionShapes(
     const Shape& input_shape, const Shape& kernel_shape,
     const Shape& output_shape, const ConvolutionDimensionNumbers& dnums) {
+  ABSL_RETURN_IF_ERROR(ValidateDenseArrayShape(input_shape, "input"));
+  ABSL_RETURN_IF_ERROR(ValidateDenseArrayShape(kernel_shape, "kernel"));
+  ABSL_RETURN_IF_ERROR(ValidateDenseArrayShape(output_shape, "output"));
+
   // Convolution rank.
   int64_t convolution_rank = GetConvolutionRank(input_shape);
   if (convolution_rank > 3 || convolution_rank < 1) {
@@ -68,6 +131,19 @@ static absl::Status ValidateConvolutionShapes(
         input_shape.dimensions().size(), kernel_shape.dimensions().size(),
         output_shape.dimensions().size());
   }
+
+  ABSL_RETURN_IF_ERROR(
+      ValidateCanonicalLayout(input_shape, dnums.input_batch_dimension(),
+                              dnums.input_spatial_dimensions(),
+                              dnums.input_feature_dimension(), true, "input"));
+  ABSL_RETURN_IF_ERROR(ValidateCanonicalLayout(
+      kernel_shape, dnums.kernel_input_feature_dimension(),
+      dnums.kernel_spatial_dimensions(),
+      dnums.kernel_output_feature_dimension(), false, "kernel"));
+  ABSL_RETURN_IF_ERROR(ValidateCanonicalLayout(
+      output_shape, dnums.output_batch_dimension(),
+      dnums.output_spatial_dimensions(), dnums.output_feature_dimension(), true,
+      "output"));
 
   // Batch size.
   auto input_batch = input_shape.dimensions(dnums.input_batch_dimension());
@@ -110,54 +186,25 @@ absl::StatusOr<ConvolutionCanonicalDims> GetConvolutionCanonicalDims(
     return InvalidArgument("ConvolutionThunk: Unsupported element type (%s)",
                            PrimitiveType_Name(primitive_type));
   }
+  if (slices.kernel_shape.element_type() != primitive_type ||
+      slices.output_shape.element_type() != primitive_type) {
+    return InvalidArgument(
+        "ConvolutionThunk: Element types mismatch (%s vs %s vs %s)",
+        PrimitiveType_Name(primitive_type),
+        PrimitiveType_Name(slices.kernel_shape.element_type()),
+        PrimitiveType_Name(slices.output_shape.element_type()));
+  }
 
-  absl::InlinedVector<int64_t, 2> input_dims;
-  absl::InlinedVector<int64_t, 2> kernel_dims;
-  absl::InlinedVector<int64_t, 2> output_dims;
+  absl::InlinedVector<int64_t, 3> input_dims, kernel_dims, output_dims;
+  absl::InlinedVector<int64_t, 3> strides, padding_before, padding_after;
+  absl::InlinedVector<int64_t, 3> base_dilation, window_dilation;
 
-  // We lower 1D convolutions into calls to the same Eigen function as 2D
-  // convolutions, except that we pretend that the 1D convolution is really
-  // a 2D convolution with the missing dimension set to 1.  We also adjust
-  // the padding, dilation parameters as needed.
-
+  // Lower 1D convolutions into 2D Eigen calls with a leading unit dimension.
   int64_t convolution_rank = GetConvolutionRank(slices.input_shape);
   if (convolution_rank == 1) {
     input_dims.push_back(1);
     kernel_dims.push_back(1);
     output_dims.push_back(1);
-  }
-
-  // Input tensor.
-  int64_t input_batch =
-      slices.input_shape.dimensions(dnums.input_batch_dimension());
-  for (int d : dnums.input_spatial_dimensions()) {
-    input_dims.push_back(slices.input_shape.dimensions(d));
-  }
-  int64_t input_channels =
-      slices.input_shape.dimensions(dnums.input_feature_dimension());
-
-  // Kernel tensor.
-  for (int d : dnums.kernel_spatial_dimensions()) {
-    kernel_dims.push_back(slices.kernel_shape.dimensions(d));
-  }
-  int64_t kernel_channels =
-      slices.kernel_shape.dimensions(dnums.kernel_input_feature_dimension());
-  int64_t kernel_filters =
-      slices.kernel_shape.dimensions(dnums.kernel_output_feature_dimension());
-
-  // Output tensor.
-  for (int d : dnums.output_spatial_dimensions()) {
-    output_dims.push_back(slices.output_shape.dimensions(d));
-  }
-
-  // Extract the window stride for the convolution.
-  absl::InlinedVector<int64_t, 2> strides;
-  absl::InlinedVector<int64_t, 2> padding_before;
-  absl::InlinedVector<int64_t, 2> padding_after;
-  absl::InlinedVector<int64_t, 2> base_dilation;
-  absl::InlinedVector<int64_t, 2> window_dilation;
-
-  if (convolution_rank == 1) {
     strides.push_back(1);
     padding_before.push_back(0);
     padding_after.push_back(0);
@@ -165,7 +212,54 @@ absl::StatusOr<ConvolutionCanonicalDims> GetConvolutionCanonicalDims(
     window_dilation.push_back(1);
   }
 
-  for (const auto& d : window.dimensions()) {
+  int64_t input_batch =
+      slices.input_shape.dimensions(dnums.input_batch_dimension());
+  int64_t input_channels =
+      slices.input_shape.dimensions(dnums.input_feature_dimension());
+  int64_t kernel_channels =
+      slices.kernel_shape.dimensions(dnums.kernel_input_feature_dimension());
+  int64_t kernel_filters =
+      slices.kernel_shape.dimensions(dnums.kernel_output_feature_dimension());
+
+  if (feature_group_count <= 0 || input_channels % feature_group_count != 0 ||
+      input_channels / feature_group_count != kernel_channels ||
+      kernel_filters % feature_group_count != 0) {
+    return InvalidArgument("ConvolutionThunk: Invalid feature_group_count (%d)",
+                           feature_group_count);
+  }
+  if (window.dimensions_size() != convolution_rank) {
+    return InvalidArgument("ConvolutionThunk: Window rank mismatch (%d vs %d)",
+                           window.dimensions_size(), convolution_rank);
+  }
+
+  constexpr absl::int128 kMaxI64 = std::numeric_limits<int64_t>::max();
+  for (int64_t i = 0; i < convolution_rank; ++i) {
+    const WindowDimension& d = window.dimensions(i);
+    const int64_t in_d =
+        slices.input_shape.dimensions(dnums.input_spatial_dimensions(i));
+    const int64_t ker_d =
+        slices.kernel_shape.dimensions(dnums.kernel_spatial_dimensions(i));
+    const int64_t out_d =
+        slices.output_shape.dimensions(dnums.output_spatial_dimensions(i));
+    if (ker_d <= 0 || (d.size() != 0 && d.size() != ker_d) || d.stride() <= 0 ||
+        d.base_dilation() <= 0 || d.window_dilation() <= 0 ||
+        d.window_reversal()) {
+      return InvalidArgument("ConvolutionThunk: Invalid window at dim %d", i);
+    }
+    const absl::int128 dil_base =
+        in_d == 0 ? 0 : absl::int128(in_d - 1) * d.base_dilation() + 1;
+    const absl::int128 dil_win =
+        absl::int128(ker_d - 1) * d.window_dilation() + 1;
+    const absl::int128 padded = dil_base + d.padding_low() + d.padding_high();
+    const absl::int128 expected =
+        padded < dil_win ? 0 : (padded - dil_win) / d.stride() + 1;
+    if (dil_base > kMaxI64 || dil_win > kMaxI64 || expected != out_d) {
+      return InvalidArgument(
+          "ConvolutionThunk: Output spatial dim %d mismatch (%d)", i, out_d);
+    }
+    input_dims.push_back(in_d);
+    kernel_dims.push_back(ker_d);
+    output_dims.push_back(out_d);
     strides.push_back(d.stride());
     padding_before.push_back(d.padding_low());
     padding_after.push_back(d.padding_high());
@@ -173,18 +267,22 @@ absl::StatusOr<ConvolutionCanonicalDims> GetConvolutionCanonicalDims(
     window_dilation.push_back(d.window_dilation());
   }
 
-  auto valid_num_dims = [](absl::Span<const int64_t> xs) {
-    return xs.size() >= 2 && xs.size() <= 3;
+  auto fits_product = [](int64_t acc, absl::Span<const int64_t> dims) {
+    for (int64_t d : dims) {
+      bool overflow = false;
+      std::tie(acc, overflow) = OverflowSafeMultiply(acc, d);
+      if (overflow) {
+        return false;
+      }
+    }
+    return acc <= std::numeric_limits<ptrdiff_t>::max();
   };
+  if (!fits_product(input_batch, output_dims) ||
+      !fits_product(kernel_channels, kernel_dims)) {
+    return InvalidArgument("ConvolutionThunk: Patch dimensions overflow");
+  }
 
-  TF_RET_CHECK(valid_num_dims(input_dims));
-  TF_RET_CHECK(valid_num_dims(kernel_dims));
-  TF_RET_CHECK(valid_num_dims(output_dims));
-  TF_RET_CHECK(valid_num_dims(strides));
-  TF_RET_CHECK(valid_num_dims(padding_before));
-  TF_RET_CHECK(valid_num_dims(padding_after));
-  TF_RET_CHECK(valid_num_dims(base_dilation));
-  TF_RET_CHECK(valid_num_dims(window_dilation));
+  TF_RET_CHECK(input_dims.size() >= 2 && input_dims.size() <= 3);
 
   using Dims = ConvolutionCanonicalDims::Dims;
   return ConvolutionCanonicalDims{

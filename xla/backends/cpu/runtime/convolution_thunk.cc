@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/cpu/runtime/convolution_thunk.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -24,16 +25,16 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "xla/backends/cpu/runtime/convolution_dims.h"
 #include "xla/backends/cpu/runtime/convolution_lib.h"
 #include "xla/backends/cpu/runtime/thunk.h"
-#include "xla/executable_run_options.h"
 #include "xla/primitive_util.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -42,12 +43,35 @@ limitations under the License.
 #include "unsupported/Eigen/CXX11/Tensor"
 
 namespace xla::cpu {
+namespace {
 
-auto MakeRunOptions(const Eigen::ThreadPoolDevice* threadpool) {
-  ExecutableRunOptions run_options;
-  run_options.set_intra_op_thread_pool(threadpool);
-  return run_options;
+absl::StatusOr<int64_t> ValidateSliceBuffer(
+    const BufferAllocation::Slice& slice, const Shape& shape,
+    se::DeviceAddressBase data, size_t alignment, absl::string_view name) {
+  const int64_t bytes = ShapeUtil::ByteSizeOf(shape);
+  if (slice.size() < bytes || data.size() < static_cast<uint64_t>(bytes)) {
+    return InvalidArgument("ConvolutionThunk: %s buffer too small (%d vs %d)",
+                           name, slice.size(), bytes);
+  }
+  if (bytes > 0 && (data.opaque() == nullptr ||
+                    reinterpret_cast<uintptr_t>(data.opaque()) % alignment)) {
+    return InvalidArgument("ConvolutionThunk: %s buffer null or misaligned",
+                           name);
+  }
+  return bytes;
 }
+
+bool RangesOverlap(const void* a, int64_t a_n, const void* b, int64_t b_n) {
+  if (a_n <= 0 || b_n <= 0) {
+    return false;
+  }
+  const auto pa = reinterpret_cast<uintptr_t>(a);
+  const auto pb = reinterpret_cast<uintptr_t>(b);
+  return pa <= pb ? pb - pa < static_cast<uintptr_t>(a_n)
+                  : pa - pb < static_cast<uintptr_t>(b_n);
+}
+
+}  // namespace
 
 absl::StatusOr<std::unique_ptr<ConvolutionThunk>> ConvolutionThunk::Create(
     Info info, Options options, BufferAllocation::Slice input_buffer,
@@ -79,6 +103,9 @@ ConvolutionThunk::ConvolutionThunk(
 
 tsl::AsyncValueRef<Thunk::ExecuteEvent> ConvolutionThunk::Execute(
     const ExecuteParams& params) {
+  if (params.buffer_allocations == nullptr) {
+    return InvalidArgument("ConvolutionThunk: buffer_allocations is null");
+  }
   ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase input_data,
                         params.buffer_allocations->GetDeviceAddress(
                             convolution_slices_.input_buffer));
@@ -88,6 +115,25 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> ConvolutionThunk::Execute(
   ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase output_data,
                         params.buffer_allocations->GetDeviceAddress(
                             convolution_slices_.output_buffer));
+
+  const size_t align =
+      convolution_slices_.input_shape.element_type() == PrimitiveType::F16
+          ? alignof(Eigen::half)
+          : alignof(float);
+  const auto& s = convolution_slices_;
+  ABSL_ASSIGN_OR_RETURN(int64_t in_n,
+                        ValidateSliceBuffer(s.input_buffer, s.input_shape,
+                                            input_data, align, "input"));
+  ABSL_ASSIGN_OR_RETURN(int64_t ker_n,
+                        ValidateSliceBuffer(s.kernel_buffer, s.kernel_shape,
+                                            kernel_data, align, "kernel"));
+  ABSL_ASSIGN_OR_RETURN(int64_t out_n,
+                        ValidateSliceBuffer(s.output_buffer, s.output_shape,
+                                            output_data, align, "output"));
+  if (RangesOverlap(output_data.opaque(), out_n, input_data.opaque(), in_n) ||
+      RangesOverlap(output_data.opaque(), out_n, kernel_data.opaque(), ker_n)) {
+    return InvalidArgument("ConvolutionThunk: output overlaps operand buffer");
+  }
 
   VLOG(3) << absl::StreamFormat("Convolution: %v", convolution_canonical_dims_);
 
@@ -120,41 +166,25 @@ ConvolutionThunk::HandleEigen2DConvolution(const ExecuteParams& params,
                                            se::DeviceAddressBase kernel,
                                            se::DeviceAddressBase output) {
   auto dispatch = [&](auto type_tag) {
-    auto execute_event = tsl::MakeConstructedAsyncValueRef<ExecuteEvent>();
-
     using ScalarType = decltype(type_tag);
+    auto execute_event = tsl::MakeConstructedAsyncValueRef<ExecuteEvent>();
+    const auto& d = convolution_canonical_dims_;
     internal::EigenConv2D(
-        params.intra_op_threadpool, static_cast<ScalarType*>(output.opaque()),
+        options_.multi_threaded ? params.intra_op_threadpool : nullptr,
+        static_cast<ScalarType*>(output.opaque()),
         static_cast<const ScalarType*>(input.opaque()),
-        static_cast<const ScalarType*>(kernel.opaque()),
-        convolution_canonical_dims_.input_batch,
-        convolution_canonical_dims_.input_dims.x,
-        convolution_canonical_dims_.input_dims.y,
-        convolution_canonical_dims_.input_channels,
-        convolution_canonical_dims_.kernel_dims.x,
-        convolution_canonical_dims_.kernel_dims.y,
-        convolution_canonical_dims_.kernel_channels,
-        convolution_canonical_dims_.kernel_filters,
-        convolution_canonical_dims_.output_dims.x,
-        convolution_canonical_dims_.output_dims.y,
-        convolution_canonical_dims_.strides.x,
-        convolution_canonical_dims_.strides.y,
-        convolution_canonical_dims_.padding_before.x,
-        convolution_canonical_dims_.padding_after.x,
-        convolution_canonical_dims_.padding_before.y,
-        convolution_canonical_dims_.padding_after.y,
-        convolution_canonical_dims_.base_dilation.x,
-        convolution_canonical_dims_.base_dilation.y,
-        convolution_canonical_dims_.window_dilation.x,
-        convolution_canonical_dims_.window_dilation.y,
-        convolution_canonical_dims_.feature_group_count,
+        static_cast<const ScalarType*>(kernel.opaque()), d.input_batch,
+        d.input_dims.x, d.input_dims.y, d.input_channels, d.kernel_dims.x,
+        d.kernel_dims.y, d.kernel_channels, d.kernel_filters, d.output_dims.x,
+        d.output_dims.y, d.strides.x, d.strides.y, d.padding_before.x,
+        d.padding_after.x, d.padding_before.y, d.padding_after.y,
+        d.base_dilation.x, d.base_dilation.y, d.window_dilation.x,
+        d.window_dilation.y, d.feature_group_count,
         [execute_event] { execute_event.SetStateConcrete(); });
-
     return execute_event;
   };
 
   PrimitiveType input_type = convolution_slices_.input_shape.element_type();
-
   switch (input_type) {
     case PrimitiveType::F16:
       return dispatch(Eigen::half{});
@@ -172,49 +202,27 @@ ConvolutionThunk::HandleEigen3DConvolution(const ExecuteParams& params,
                                            se::DeviceAddressBase kernel,
                                            se::DeviceAddressBase output) {
   auto dispatch = [&](auto type_tag) {
-    auto execute_event = tsl::MakeConstructedAsyncValueRef<ExecuteEvent>();
-
     using ScalarType = decltype(type_tag);
+    auto execute_event = tsl::MakeConstructedAsyncValueRef<ExecuteEvent>();
+    const auto& d = convolution_canonical_dims_;
     internal::EigenConv3D(
-        params.intra_op_threadpool, static_cast<ScalarType*>(output.opaque()),
+        options_.multi_threaded ? params.intra_op_threadpool : nullptr,
+        static_cast<ScalarType*>(output.opaque()),
         static_cast<const ScalarType*>(input.opaque()),
-        static_cast<const ScalarType*>(kernel.opaque()),
-        convolution_canonical_dims_.input_batch,
-        convolution_canonical_dims_.input_dims.x,
-        convolution_canonical_dims_.input_dims.y,
-        convolution_canonical_dims_.input_dims.z,
-        convolution_canonical_dims_.input_channels,
-        convolution_canonical_dims_.kernel_dims.x,
-        convolution_canonical_dims_.kernel_dims.y,
-        convolution_canonical_dims_.kernel_dims.z,
-        convolution_canonical_dims_.kernel_channels,
-        convolution_canonical_dims_.kernel_filters,
-        convolution_canonical_dims_.output_dims.x,
-        convolution_canonical_dims_.output_dims.y,
-        convolution_canonical_dims_.output_dims.z,
-        convolution_canonical_dims_.strides.x,
-        convolution_canonical_dims_.strides.y,
-        convolution_canonical_dims_.strides.z,
-        convolution_canonical_dims_.padding_before.x,
-        convolution_canonical_dims_.padding_after.x,
-        convolution_canonical_dims_.padding_before.y,
-        convolution_canonical_dims_.padding_after.y,
-        convolution_canonical_dims_.padding_before.z,
-        convolution_canonical_dims_.padding_after.z,
-        convolution_canonical_dims_.base_dilation.x,
-        convolution_canonical_dims_.base_dilation.y,
-        convolution_canonical_dims_.base_dilation.z,
-        convolution_canonical_dims_.window_dilation.x,
-        convolution_canonical_dims_.window_dilation.y,
-        convolution_canonical_dims_.window_dilation.z,
-        convolution_canonical_dims_.feature_group_count,
+        static_cast<const ScalarType*>(kernel.opaque()), d.input_batch,
+        d.input_dims.x, d.input_dims.y, d.input_dims.z, d.input_channels,
+        d.kernel_dims.x, d.kernel_dims.y, d.kernel_dims.z, d.kernel_channels,
+        d.kernel_filters, d.output_dims.x, d.output_dims.y, d.output_dims.z,
+        d.strides.x, d.strides.y, d.strides.z, d.padding_before.x,
+        d.padding_after.x, d.padding_before.y, d.padding_after.y,
+        d.padding_before.z, d.padding_after.z, d.base_dilation.x,
+        d.base_dilation.y, d.base_dilation.z, d.window_dilation.x,
+        d.window_dilation.y, d.window_dilation.z, d.feature_group_count,
         [execute_event] { execute_event.SetStateConcrete(); });
-
     return execute_event;
   };
 
   PrimitiveType input_type = convolution_slices_.input_shape.element_type();
-
   switch (input_type) {
     case PrimitiveType::F16:
       return dispatch(Eigen::half{});
