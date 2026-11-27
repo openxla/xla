@@ -88,11 +88,12 @@ absl::Status RunGemm(const gpu::GemmConfig& config,
                      se::ScratchAllocator* scratch_allocator = nullptr);
 
 // Creates a oneDNN matmul primitive descriptor from a gemm config on the
-// default GPU engine. Used at compile time to size the scratchpad. Callers
-// must convert the epilogue to its SYCL form first
+// engine of the given device. Used at compile time to size the scratchpad.
+// Callers must convert the epilogue to its SYCL form first.
 absl::StatusOr<std::unique_ptr<dnnl::matmul::primitive_desc>>
 CreateMatMulPrimDescFromGemmConfig(const xla::gpu::GemmConfig& config,
-                                   sycl_gemm::GemmBackendEpilogue epilogue);
+                                   sycl_gemm::GemmBackendEpilogue epilogue,
+                                   int device_ordinal);
 absl::StatusOr<dnnl::memory::desc> TransposeLastTwoDims(
     const dnnl::memory::desc& md);
 inline absl::Status TransposeLastTwoDimsIf(bool pred,

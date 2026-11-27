@@ -373,16 +373,6 @@ cc_library(
 )
 
 cc_library(
-    name = "sycl_gemm_workspace_pass",
-    hdrs = ["sycl_gemm_workspace_pass.h"],
-    tags = [
-        "gpu",
-        "oneapi-only",
-    ] + if_google(["avoid_dep"]),
-    deps = ["//xla/backends/gpu/hlo/transforms:sycl_gemm_workspace_pass"],
-)
-
-cc_library(
     name = "layout_assignment",
     hdrs = ["layout_assignment.h"],
     tags = if_google(["avoid_dep"]),
