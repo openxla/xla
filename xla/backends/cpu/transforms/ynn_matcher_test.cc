@@ -232,7 +232,15 @@ TEST_F(YnnReduceTest, ReduceConvert) {
   )");
 }
 
-TEST_F(YnnReduceTest, ConvertReduce) {
+TEST_F(YnnReduceTest, ConvertReduceNotFused) {
+  // A reduce over values that originated as bf16 must NOT be fused into
+  // YNNPACK (https://github.com/openxla/xla/issues/51014): with at least
+  // 4096 reduce outputs, YNNPACK's reduce can return uninitialized memory
+  // (inf/NaN/~1e38) for such reductions, e.g. the bf16->f32 convert feeding
+  // jnp.mean/jnp.sum. IsReduceLikeOpSupportedByYnn therefore rejects a
+  // reduce whose input is a convert from bf16, so the convert and the
+  // reduce stay in plain XLA codegen and no __ynn_fusion is formed.
+  // (This test was ConvertReduce, which asserted the old fused behaviour.)
   const char* hlo_text = R"(
   HloModule convert_reduce
 
@@ -253,9 +261,7 @@ TEST_F(YnnReduceTest, ConvertReduce) {
   MatchOptimizedHlo(hlo_text, R"(
     CHECK: %[[convert:.+]] = {{.+}} convert({{.+}})
     CHECK: ROOT {{.+}} = {{.+}} reduce(%[[convert]], {{.+}})
-    CHECK: ENTRY
-    CHECK: kind=kCustom
-    CHECK: "kind":"__ynn_fusion"
+    CHECK-NOT: __ynn_fusion
   )");
 }
 

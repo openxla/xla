@@ -731,6 +731,73 @@ INSTANTIATE_TEST_SUITE_P(YnnFusionReduceWindowTestInstantiation,
                                            YnnFusionTestParams{"f64", "f64"}),
                          YnnFusionTest::Name);
 
+// Regression test for https://github.com/openxla/xla/issues/51014: a bf16
+// graph with reductions (mean over axis 1, 256x16 = 4096 outputs) fused by
+// YNNPACK returned inf/NaN/~1e38 garbage under jit, varying between calls.
+// The reductions must stay out of the YNN fusion, so the whole computation
+// (two relu layers, each x @ a + mean(x) @ b) must match the reference.
+// Unlike the tests above, this runs the full pipeline (not NoHloPasses) so
+// the fusion is formed by the matcher, as in the reported repro.
+TEST_F(YnnFusionBufferReuseTest, Bf16ReduceFusedWithDots) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule bf16_reduce_fused_with_dots
+
+    %add_f32 {
+      %lhs = f32[] parameter(0)
+      %rhs = f32[] parameter(1)
+      ROOT %add = f32[] add(%lhs, %rhs)
+    }
+
+    ENTRY main {
+      %x0 = bf16[256,8,16] parameter(0)
+      %a0 = bf16[16,16] parameter(1)
+      %b0 = bf16[16,16] parameter(2)
+      %a1 = bf16[16,16] parameter(3)
+      %b1 = bf16[16,16] parameter(4)
+      %zero_bf16 = bf16[] constant(0)
+      %zero_f32 = f32[] constant(0)
+      %eight = f32[] constant(8)
+
+      // Layer 1: x1 = relu(x0 @ a0 + mean(x0, axis=1) @ b0).
+      %x0_f32 = f32[256,8,16] convert(%x0)
+      %sum0 = f32[256,1,16] reduce(%x0_f32, %zero_f32), dimensions={1},
+        to_apply=%add_f32
+      %eight_b0 = f32[256,1,16] broadcast(%eight), dimensions={}
+      %mean0_f32 = f32[256,1,16] divide(%sum0, %eight_b0)
+      %mean0 = bf16[256,1,16] convert(%mean0_f32)
+      %a0_b = bf16[256,16,16] broadcast(%a0), dimensions={1,2}
+      %dot0 = bf16[256,8,16] dot(%x0, %a0_b), lhs_batch_dims={0},
+        rhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_contracting_dims={1}
+      %b0_b = bf16[256,16,16] broadcast(%b0), dimensions={1,2}
+      %mean_dot0 = bf16[256,1,16] dot(%mean0, %b0_b), lhs_batch_dims={0},
+        rhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_contracting_dims={1}
+      %mean_dot0_b = bf16[256,8,16] broadcast(%mean_dot0), dimensions={0,1,2}
+      %add0 = bf16[256,8,16] add(%dot0, %mean_dot0_b)
+      %zero_b0 = bf16[256,8,16] broadcast(%zero_bf16), dimensions={}
+      %x1 = bf16[256,8,16] maximum(%add0, %zero_b0)
+
+      // Layer 2: x2 = relu(x1 @ a1 + mean(x1, axis=1) @ b1).
+      %x1_f32 = f32[256,8,16] convert(%x1)
+      %sum1 = f32[256,1,16] reduce(%x1_f32, %zero_f32), dimensions={1},
+        to_apply=%add_f32
+      %eight_b1 = f32[256,1,16] broadcast(%eight), dimensions={}
+      %mean1_f32 = f32[256,1,16] divide(%sum1, %eight_b1)
+      %mean1 = bf16[256,1,16] convert(%mean1_f32)
+      %a1_b = bf16[256,16,16] broadcast(%a1), dimensions={1,2}
+      %dot1 = bf16[256,8,16] dot(%x1, %a1_b), lhs_batch_dims={0},
+        rhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_contracting_dims={1}
+      %b1_b = bf16[256,16,16] broadcast(%b1), dimensions={1,2}
+      %mean_dot1 = bf16[256,1,16] dot(%mean1, %b1_b), lhs_batch_dims={0},
+        rhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_contracting_dims={1}
+      %mean_dot1_b = bf16[256,8,16] broadcast(%mean_dot1), dimensions={0,1,2}
+      %add1 = bf16[256,8,16] add(%dot1, %mean_dot1_b)
+      %zero_b1 = bf16[256,8,16] broadcast(%zero_bf16), dimensions={}
+      ROOT %x2 = bf16[256,8,16] maximum(%add1, %zero_b1)
+    }
+  )hlo";
+  EXPECT_TRUE(RunAndCompare(kHlo, ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-2}));
+}
+
 template <typename T>
 absl::Span<const T> GetUnaryOpTestInputs() {
   static absl::NoDestructor<std::vector<T>> values{[]() {
