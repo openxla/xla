@@ -47,6 +47,10 @@ class TargetMachineFeatures {
   // explicitly vectorized routines will try to process at once.
   virtual int32_t vectorization_factor_in_bytes() const;
 
+  // Return the size of the largest fixed width vector register in bytes for the
+  // target machine's default subtarget, or 0 if unavailable.
+  virtual int32_t vector_register_byte_size() const;
+
   // Return the size of the largest vector size in bytes.  We need to pass in
   // "function" since llvm functions can contain annotations for specializing
   // them to specific micro-architectures (though currently XLA does not use
@@ -71,6 +75,10 @@ class TargetMachineFeatures {
 
   virtual std::string get_target_feature_string() const;
 
+  // Returns comma separated "+feature" entries for all enabled processor
+  // features, including those implied by the target CPU model.
+  virtual std::string get_enabled_target_features() const;
+
   virtual bool has_avx512bf16() const { return has_avx512bf16_; }
   virtual bool has_avx512fp16() const { return has_avx512fp16_; }
   virtual bool has_amx_fp16() const { return has_amx_fp16_; }
@@ -85,6 +93,8 @@ class TargetMachineFeatures {
       target_transform_info_;
 
   llvm::TargetMachine* target_machine_;
+  std::string enabled_target_features_;
+  int32_t default_vector_register_byte_size_ = 0;
 
   // Store availability of popular features here for efficient checks.
   bool has_avx512bf16_ = false;
