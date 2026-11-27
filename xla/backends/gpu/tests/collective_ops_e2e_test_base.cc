@@ -140,12 +140,6 @@ CollectiveOpsE2ETestBase::ExecuteReplicated(
   CHECK(num_devices == arguments.size() &&
         "expect arguments for each replica and partition");
 
-  // TODO(b/441865120): Use designated initializers this once XLA moves to
-  // C++20.
-  HloRunnerInterface::ReplicatedExecuteOptions options;
-  options.num_devices = num_devices;
-  options.run_hlo_passes = run_hlo_passes;
-
   return test_runner().ExecuteReplicated(
       /*executable_provider=*/
       [&](int64_t) { return executable; },
@@ -155,7 +149,10 @@ CollectiveOpsE2ETestBase::ExecuteReplicated(
       [&](int64_t replica_idx, int64_t argument_idx) -> const Literal* {
         return arguments[replica_idx][argument_idx];
       },
-      std::move(options),
+      HloRunnerInterface::ReplicatedExecuteOptions{
+          .num_devices = num_devices,
+          .run_hlo_passes = run_hlo_passes,
+      },
       /*device_assignment=*/&device_assignment);
 }
 
