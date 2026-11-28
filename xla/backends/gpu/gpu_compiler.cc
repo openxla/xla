@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/gpu_compiler.h"
 
-#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -76,6 +75,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/cubin_custom_kernel_compiler.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/backends/gpu/codegen/gpu_kernel_spec.h"
+#include "xla/backends/gpu/codegen/gpu_kernel_spec.pb.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/cost_model/gpu_hlo_cost_analysis.h"
