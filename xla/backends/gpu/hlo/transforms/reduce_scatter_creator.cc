@@ -19,11 +19,14 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -39,6 +42,74 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+namespace {
+
+// Re-creates `chain`, the copies and elementwise operations between `ar` and
+// the dynamic-slice that was matched as a reduce-scatter, on the result of
+// `reduce_scatter`. Slicing commutes with these operations, so applying them
+// to the shard produced by the reduce-scatter gives the same result as slicing
+// their output. Returns the last re-created instruction.
+HloInstruction* RecreateElementwiseOnReduceScatter(
+    absl::Span<HloInstruction* const> chain, const HloInstruction* ar,
+    HloInstruction* reduce_scatter, int64_t split_dim) {
+  HloComputation* computation = reduce_scatter->parent();
+  // The shape of `instruction` with the split dimension shrunk to the size of
+  // the shard. The instructions in the chain and their scalar broadcasts have
+  // the dimensions of `ar`, so only the split dimension changes. Copying the
+  // shape keeps its layout, such as the element size of sub-byte types.
+  auto scattered_shape = [&](const HloInstruction* instruction) {
+    Shape shape = instruction->shape();
+    shape.set_dimensions(split_dim,
+                         reduce_scatter->shape().dimensions(split_dim));
+    return shape;
+  };
+  HloInstruction* result = reduce_scatter;
+  const HloInstruction* previous = ar;
+  for (HloInstruction* instruction : chain) {
+    std::vector<HloInstruction*> operands;
+    operands.reserve(instruction->operand_count());
+    for (HloInstruction* operand : instruction->operands()) {
+      if (operand == previous) {
+        operands.push_back(result);
+      } else {
+        // Clone the scalar broadcast to keep its metadata.
+        operands.push_back(
+            computation->AddInstruction(operand->CloneWithNewOperands(
+                scattered_shape(operand), {operand->mutable_operand(0)})));
+      }
+    }
+    result = computation->AddInstruction(instruction->CloneWithNewOperands(
+        scattered_shape(instruction), operands));
+    previous = instruction;
+  }
+  return result;
+}
+
+// Removes `chain`, which is dead after its dynamic-slice user was removed,
+// together with the scalar broadcasts that are no longer used.
+absl::Status RemoveElementwiseChain(absl::Span<HloInstruction* const> chain) {
+  for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+    HloInstruction* instruction = *it;
+    HloComputation* computation = instruction->parent();
+    std::vector<HloInstruction*> broadcasts;
+    for (HloInstruction* operand : instruction->operands()) {
+      if (operand->opcode() == HloOpcode::kBroadcast &&
+          !absl::c_linear_search(broadcasts, operand)) {
+        broadcasts.push_back(operand);
+      }
+    }
+    ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(instruction));
+    for (HloInstruction* broadcast : broadcasts) {
+      if (broadcast->IsDead()) {
+        ABSL_RETURN_IF_ERROR(
+            computation->RemoveInstructionAndUnusedOperands(broadcast));
+      }
+    }
+  }
+  return absl::OkStatus();
+}
+
+}  // namespace
 
 absl::StatusOr<bool> ReduceScatterCreator::RunImpl(
     HloModule* module,
@@ -55,10 +126,14 @@ absl::StatusOr<bool> ReduceScatterCreator::RunImpl(
         continue;
       }
       auto* ar = Cast<HloAllReduceInstruction>(instruction);
-      auto ar_spec = MatchReduceScatter(ar, config.num_partitions(),
-                                        config.replica_count(),
-                                        /*allow_multiple_split_dims=*/false,
-                                        /*allow_intervening_reshape=*/true);
+      auto ar_spec = MatchReduceScatter(
+          ar, config.num_partitions(), config.replica_count(),
+          /*allow_multiple_split_dims=*/false,
+          /*allow_intervening_reshape=*/true, /*min_rank=*/1,
+          HloPredicateIsOp<HloOpcode::kPartitionId>,
+          HloPredicateIsOp<HloOpcode::kReplicaId>,
+          /*allow_intervening_bitcast=*/false,
+          /*allow_intervening_elementwise=*/true);
       if (!ar_spec) {
         VLOG(2) << "Cannot match reduce-scatter " << ar->ToString();
         continue;
@@ -108,12 +183,19 @@ absl::StatusOr<bool> ReduceScatterCreator::RunImpl(
       // explicitly preserve the source collective configuration.
       ars->CopyBackendConfigFrom(ar);
 
-      // If there was an intervening reshape, reshape the non-split dimensions
-      // to match that existing reshape. Basically we can just reshape the ars
-      // result to the dynamic slice shape.
+      const std::vector<HloInstruction*>& elementwise =
+          ar_spec->intervening_elementwise;
       HloInstruction* result = ars;
       HloInstruction* reshape = nullptr;
-      if (ds->operand(0) != ar) {
+      if (!elementwise.empty()) {
+        // If there were intervening copies or elementwise operations, re-create
+        // them on the result of the reduce-scatter.
+        result =
+            RecreateElementwiseOnReduceScatter(elementwise, ar, ars, split_dim);
+      } else if (ds->operand(0) != ar) {
+        // If there was an intervening reshape, reshape the non-split dimensions
+        // to match that existing reshape. Basically we can just reshape the ars
+        // result to the dynamic slice shape.
         reshape = ds->mutable_operand(0);
         result = computation->AddInstruction(
             HloInstruction::CreateReshape(ds->shape(), result));
@@ -127,6 +209,7 @@ absl::StatusOr<bool> ReduceScatterCreator::RunImpl(
       if (reshape) {
         ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(reshape));
       }
+      ABSL_RETURN_IF_ERROR(RemoveElementwiseChain(elementwise));
       ABSL_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(ar));
       changed = true;
     }

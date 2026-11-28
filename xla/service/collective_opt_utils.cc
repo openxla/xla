@@ -20,6 +20,7 @@ limitations under the License.
 #include <limits>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/nullability.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
+#include "xla/service/decision.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
@@ -518,7 +520,7 @@ std::optional<ReduceScatterSpec> MatchReduceScatter(
     int64_t num_replicas, bool allow_multiple_split_dims,
     bool allow_intervening_reshape, int64_t min_rank,
     HloPredicate match_partition_id, HloPredicate match_replica_id,
-    bool allow_intervening_bitcast) {
+    bool allow_intervening_bitcast, bool allow_intervening_elementwise) {
   if (ar->opcode() == HloOpcode::kReduceScatter) {
     return SpecFromReduceScatterInstr(
         ar, num_partitions, num_replicas, min_rank, ar->constrain_layout(),
@@ -530,7 +532,8 @@ std::optional<ReduceScatterSpec> MatchReduceScatter(
       ar, num_partitions, num_replicas, allow_multiple_split_dims,
       allow_intervening_reshape, min_rank, match_partition_id, match_replica_id,
       ar->constrain_layout(), ar->use_global_device_ids(), is_cross_module,
-      allow_intervening_bitcast);
+      allow_intervening_bitcast, /*allow_multiple_users=*/false,
+      allow_intervening_elementwise);
   return spec;
 }
 
@@ -1014,10 +1017,75 @@ bool CheckUniformReplicaGroups(const HloChannelInstruction* instruction) {
   });
 }
 
+namespace {
+
+// Decides whether `instruction`, an operand of `user`, is a broadcast of a
+// scalar that can be re-created with a different shape. It has to have the
+// dimensions of `user`: operations such as clamp and select also accept rank-0
+// operands, which are not sliced together with `user`. A broadcast with
+// control dependencies cannot be re-created either, as the new broadcast would
+// not be ordered by them.
+Decision CanRecreateScalarBroadcast(const HloInstruction* instruction,
+                                    const HloInstruction* user) {
+  if (instruction->opcode() != HloOpcode::kBroadcast ||
+      !ShapeUtil::IsScalar(instruction->operand(0)->shape())) {
+    return Decision::Forbid("not a broadcast of a scalar");
+  }
+  if (!ShapeUtil::SameDimensions(instruction->shape(), user->shape())) {
+    return Decision::Forbid(
+        "the scalar broadcast does not have the dimensions of its user");
+  }
+  if (instruction->HasControlDependencies()) {
+    return Decision::Forbid("the scalar broadcast has control dependencies");
+  }
+  return Decision::Allow();
+}
+
+// Decides whether a dynamic-slice of `user` can be replaced by `user` applied
+// to a dynamic-slice of `operand`. This is the case if `user` only applies a
+// per-element function to `operand`: it is either a copy, or an elementwise
+// operation whose remaining operands are all broadcasts of scalars to the
+// dimensions of `user`.
+Decision CanSliceCommuteWithUser(const HloInstruction* user,
+                                 const HloInstruction* operand) {
+  if (user->HasSideEffect()) {
+    return Decision::Forbid("the user has side effects");
+  }
+  if (user->HasControlDependencies()) {
+    return Decision::Forbid("the user has control dependencies");
+  }
+  if (!user->shape().IsArray() || user->shape().is_dynamic()) {
+    return Decision::Forbid("the user does not have a static array shape");
+  }
+  if (!ShapeUtil::SameDimensions(user->shape(), operand->shape())) {
+    return Decision::Forbid("the user changes the dimensions");
+  }
+  // Check the opcode instead of HloInstruction::IsElementwise(), which also
+  // holds for elementwise fusions. Those cannot be re-created with a different
+  // shape, as their fused computation keeps the original shapes.
+  if (!HloInstruction::IsOpElementwise(user->opcode())) {
+    return Decision::Forbid("the user is not an elementwise operation");
+  }
+  if (user->OperandIndices(operand).size() != 1) {
+    return Decision::Forbid("the user consumes the operand more than once");
+  }
+  if (!absl::c_all_of(user->operands(), [&](const HloInstruction* other) {
+        return other == operand ||
+               CanRecreateScalarBroadcast(other, user).IsAllowed();
+      })) {
+    return Decision::Forbid(
+        "another operand of the user is not a scalar broadcast with the "
+        "dimensions of the user and without control dependencies");
+  }
+  return Decision::Allow();
+}
+
+}  // namespace
+
 std::optional<CollectiveUsers> FindUniqueDynamicSliceUserFromCollective(
     const HloChannelInstruction* absl_nonnull instruction,
     bool allow_multiple_users, bool allow_intervening_reshape,
-    bool allow_intervening_bitcast) {
+    bool allow_intervening_bitcast, bool allow_intervening_elementwise) {
   if (instruction->user_count() == 0) {
     VLOG(2) << "FindUniqueDynamicSliceUserFromCollective fails, No users for "
             << instruction->ToString();
@@ -1037,6 +1105,49 @@ std::optional<CollectiveUsers> FindUniqueDynamicSliceUserFromCollective(
   }
 
   CollectiveUsers result;
+  if (allow_intervening_elementwise && instruction->user_count() == 1 &&
+      !instruction->IsRoot() && instruction->shape().IsArray() &&
+      !instruction->shape().is_dynamic()) {
+    // Walk the chain of single-user copies and elementwise operations that
+    // starts at the collective. The collective and the instructions of the
+    // chain are replaced by the caller, so none of them may be the root of
+    // the computation: a root stays live even if its only user is replaced.
+    const HloInstruction* operand = instruction;
+    while (user->opcode() != HloOpcode::kDynamicSlice) {
+      Decision can_commute = CanSliceCommuteWithUser(user, operand);
+      if (can_commute.IsForbidden()) {
+        VLOG(2) << "FindUniqueDynamicSliceUserFromCollective cannot look "
+                   "through "
+                << user->name() << ": " << can_commute.Explain();
+        break;
+      }
+      if (user->user_count() != 1 || user->IsRoot()) {
+        VLOG(2) << "FindUniqueDynamicSliceUserFromCollective cannot look "
+                   "through "
+                << user->name() << ": user count != 1 or computation root";
+        break;
+      }
+      result.elementwise.push_back(user);
+      operand = user;
+      user = user->users().front();
+    }
+    if (!result.elementwise.empty()) {
+      // The chain has to end in a dynamic-slice that slices its last
+      // instruction. A reshape or bitcast after the chain is not supported.
+      if (user->opcode() != HloOpcode::kDynamicSlice ||
+          user->operand(0) != operand ||
+          user->OperandIndices(operand).size() != 1 ||
+          user->HasControlDependencies() || user->shape().is_dynamic()) {
+        VLOG(2) << "FindUniqueDynamicSliceUserFromCollective fails, the "
+                   "elementwise users of "
+                << instruction->name() << " do not end in a dynamic-slice";
+        return std::nullopt;
+      }
+      result.dynamic_slice = user;
+      return result;
+    }
+  }
+
   if (allow_intervening_reshape) {
     if (user->opcode() == HloOpcode::kReshape) {
       if (user->user_count() != 1) {
@@ -1081,7 +1192,8 @@ std::optional<ReduceScatterSpec> MatchWithDynamicSlice(
     bool allow_intervening_reshape, int64_t min_rank,
     HloPredicate match_partition_id, HloPredicate match_replica_id,
     bool is_constrain_layout, bool use_global_device_ids, bool is_cross_module,
-    bool allow_intervening_bitcast, bool allow_multiple_users) {
+    bool allow_intervening_bitcast, bool allow_multiple_users,
+    bool allow_intervening_elementwise) {
   if (!instruction->shape().IsArray() || is_constrain_layout) {
     VLOG(2) << "MatchWithDynamicSlice fails, "
                "Unsupported_collective_or_constrain_layout "
@@ -1110,7 +1222,7 @@ std::optional<ReduceScatterSpec> MatchWithDynamicSlice(
   std::optional<CollectiveUsers> ds_user =
       FindUniqueDynamicSliceUserFromCollective(
           instruction, allow_multiple_users, allow_intervening_reshape,
-          allow_intervening_bitcast);
+          allow_intervening_bitcast, allow_intervening_elementwise);
 
   if (!ds_user.has_value()) {
     VLOG(2)
@@ -1137,6 +1249,7 @@ std::optional<ReduceScatterSpec> MatchWithDynamicSlice(
 
   ReduceScatterSpec spec;
   spec.dynamic_slice = user;
+  spec.intervening_elementwise = std::move(ds_user->elementwise);
   if (!is_cross_module) {
     spec.sharded_replicas = num_replicas;
   } else if (use_global_device_ids) {

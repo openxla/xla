@@ -25,7 +25,11 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// Transforms dynamic-slice(all-reduce) to a reduce-scatter.
+// Transforms dynamic-slice(all-reduce) to a reduce-scatter. Copies and
+// elementwise operations with scalar-broadcast operands between the all-reduce
+// and the dynamic-slice are re-created on the result of the reduce-scatter. A
+// reshape is only supported directly between the all-reduce and the
+// dynamic-slice, not combined with such intermediate operations.
 class ReduceScatterCreator : public HloModulePass {
  public:
   ReduceScatterCreator() = default;
