@@ -16,7 +16,11 @@ limitations under the License.
 #ifndef XLA_HLO_TRANSFORMS_CONDITIONAL_CODE_MOTION_H_
 #define XLA_HLO_TRANSFORMS_CONDITIONAL_CODE_MOTION_H_
 
+#include <cstdint>
+#include <functional>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -101,6 +105,32 @@ class Boundary : public std::vector<HloInstruction*> {
 // module.
 class ConditionalCodeMotion : public HloModulePass {
  public:
+  static constexpr absl::string_view kSunkBoundaryCommunicatorAttr =
+      "_xla_sunk_boundary_communicator";
+  static constexpr absl::string_view kSunkBoundaryRecvRole = "recv";
+  static constexpr absl::string_view kSunkBoundarySendRole = "send";
+
+  // Configuration for sinking a non-selector blocking receive predecessor `P`
+  // and/or immediate outbound send successor `Q` directly into every branch of
+  // a tuple-valued `kConditional` while preserving single-use in-place buffer
+  // aliasing and keeping read-only operands unreturned.
+  struct BoundaryCommunicatorSinkConfig {
+    std::function<bool(const HloInstruction*)> is_boundary_communicator;
+    std::function<double(const HloInstruction*)> estimate_instruction_cost;
+    double min_recv_prologue_cost = 0.0;
+    double min_send_tail_cost = 0.0;
+  };
+
+  // Runs only `TrySinkBoundaryCommunicatorsIntoBranches` on unshared
+  // layout-assigned tuple conditionals.
+  explicit ConditionalCodeMotion(
+      BoundaryCommunicatorSinkConfig boundary_communicator_sink_config)
+      : is_layout_sensitive_(true),
+        pursue_full_conditional_code_motion_(false),
+        search_config_index_(0),
+        boundary_communicator_sink_config_(
+            std::move(boundary_communicator_sink_config)) {}
+
   // If is_layout_sensitive is true, then the hoist process preserves layout
   // during identical comparison. Otherwise, layout is ignored.
   // The search configuration is a single integer but is split into four parts:
@@ -246,7 +276,12 @@ class ConditionalCodeMotion : public HloModulePass {
       HloInstruction* conditional, std::vector<Boundary>& to_move_in);
   absl::StatusOr<bool> MoveOperandInstructionsIn(
       HloInstruction* conditional, std::vector<Boundary>& to_move_in);
+  absl::StatusOr<bool> TrySinkBoundaryCommunicatorsIntoBranches(
+      HloInstruction* conditional);
   void SetDefaultMoveConfig();
+
+  std::optional<BoundaryCommunicatorSinkConfig>
+      boundary_communicator_sink_config_;
 };
 
 // Updates the sharding of an instruction inside a conditional branch (or a

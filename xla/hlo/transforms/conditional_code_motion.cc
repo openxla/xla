@@ -16,9 +16,11 @@ limitations under the License.
 #include "xla/hlo/transforms/conditional_code_motion.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -2453,7 +2455,1085 @@ absl::Status RemoveUnusedBranchOutputs(HloInstruction* conditional) {
   return absl::OkStatus();
 }
 
+struct CommunicatorAliasSpec {
+  HloInstruction* comm = nullptr;
+  // Non-null when `comm` is a `kWhile` whose sole operand is `init_tuple`.
+  HloInstruction* while_init_tuple = nullptr;
+  std::vector<HloInstruction*> raw_operands;
+  // For each raw operand `j`, the aliased tuple output index `k`, or -1 if
+  // read-only (unaliased).
+  std::vector<int64_t> aliased_out_for_op;
+  // For each tuple output `k`, the aliased raw operand index `j`, or -1.
+  std::vector<int64_t> aliased_op_for_out;
+};
+
+// Redirects parent GTEs of loop-invariant tuple slots on a `kWhile` directly to
+// its init tuple operand so sinking never threads invariant passthroughs
+// through the conditional's output tuple.
+absl::Status BypassLoopInvariantWhilePassthroughs(HloInstruction* comm) {
+  if (comm == nullptr || comm->opcode() != HloOpcode::kWhile ||
+      !comm->shape().IsTuple() ||
+      comm->operand(0)->opcode() != HloOpcode::kTuple) {
+    return absl::OkStatus();
+  }
+  HloInstruction* init_tuple = comm->mutable_operand(0);
+  HloComputation* body = comm->while_body();
+  HloInstruction* body_param = body->parameter_instruction(0);
+  HloInstruction* body_root = body->root_instruction();
+  if (body_root->opcode() != HloOpcode::kTuple) {
+    return absl::OkStatus();
+  }
+  const int64_t arity = body_root->operand_count();
+  std::vector<bool> is_passthrough(arity, false);
+  for (int64_t k = 0; k < arity; ++k) {
+    const HloInstruction* out = body_root->operand(k);
+    if (out->opcode() == HloOpcode::kGetTupleElement &&
+        out->operand(0) == body_param && out->tuple_index() == k &&
+        is_passthrough.size() > static_cast<size_t>(k)) {
+      is_passthrough[k] = true;
+    }
+  }
+  HloComputation* parent = comm->parent();
+  const std::vector<HloInstruction*> users(comm->users().begin(),
+                                           comm->users().end());
+  for (HloInstruction* user : users) {
+    if (user->opcode() != HloOpcode::kGetTupleElement) {
+      continue;
+    }
+    const int64_t k = user->tuple_index();
+    if (k >= 0 && k < init_tuple->operand_count() &&
+        is_passthrough.size() > static_cast<size_t>(k) && is_passthrough[k]) {
+      ABSL_RETURN_IF_ERROR(
+          parent->ReplaceInstruction(user, init_tuple->mutable_operand(k)));
+    }
+  }
+  return absl::OkStatus();
+}
+
+std::optional<CommunicatorAliasSpec> ExtractCommunicatorAliasSpec(
+    HloInstruction* comm) {
+  if (comm == nullptr || comm->HasControlDependencies() ||
+      !comm->shape().IsTuple()) {
+    return std::nullopt;
+  }
+  for (const HloInstruction* u : comm->users()) {
+    if (u->opcode() != HloOpcode::kGetTupleElement) {
+      return std::nullopt;
+    }
+  }
+  const int64_t num_outs = comm->shape().tuple_shapes().size();
+  CommunicatorAliasSpec spec;
+  spec.comm = comm;
+  spec.aliased_op_for_out.assign(num_outs, -1);
+
+  if (comm->opcode() == HloOpcode::kCustomCall) {
+    auto* cc = Cast<HloCustomCallInstruction>(comm);
+    const int64_t num_ops = cc->operand_count();
+    spec.raw_operands.reserve(num_ops);
+    for (int64_t j = 0; j < num_ops; ++j) {
+      spec.raw_operands.push_back(cc->mutable_operand(j));
+    }
+    spec.aliased_out_for_op.assign(num_ops, -1);
+    for (const auto& [out_idx, op_alias] : cc->output_to_operand_aliasing()) {
+      const int64_t op_no = op_alias.first;
+      if (out_idx.size() != 1 || !op_alias.second.empty() || out_idx[0] < 0 ||
+          out_idx[0] >= num_outs || op_no < 0 || op_no >= num_ops ||
+          spec.aliased_op_for_out.size() <= static_cast<size_t>(out_idx[0]) ||
+          spec.aliased_out_for_op.size() <= static_cast<size_t>(op_no) ||
+          spec.aliased_op_for_out[out_idx[0]] != -1 ||
+          spec.aliased_out_for_op[op_no] != -1) {
+        return std::nullopt;
+      }
+      spec.aliased_op_for_out[out_idx[0]] = op_no;
+      spec.aliased_out_for_op[op_no] = out_idx[0];
+    }
+    return spec;
+  }
+
+  if (comm->opcode() == HloOpcode::kWhile) {
+    HloInstruction* init = comm->mutable_operand(0);
+    if (init->opcode() != HloOpcode::kTuple || init->user_count() != 1 ||
+        init->HasControlDependencies() || init->operand_count() != num_outs) {
+      return std::nullopt;
+    }
+    HloComputation* body = comm->while_body();
+    HloInstruction* body_param = body->parameter_instruction(0);
+    HloInstruction* body_root = body->root_instruction();
+    if (body_root->opcode() != HloOpcode::kTuple ||
+        body_root->operand_count() != num_outs) {
+      return std::nullopt;
+    }
+    spec.while_init_tuple = init;
+    spec.raw_operands.reserve(num_outs);
+    spec.aliased_out_for_op.assign(num_outs, -1);
+    for (int64_t k = 0; k < num_outs; ++k) {
+      spec.raw_operands.push_back(init->mutable_operand(k));
+      const HloInstruction* out = body_root->operand(k);
+      const bool invariant =
+          (out->opcode() == HloOpcode::kGetTupleElement &&
+           out->operand(0) == body_param && out->tuple_index() == k);
+      if (!invariant &&
+          spec.aliased_out_for_op.size() > static_cast<size_t>(k) &&
+          spec.aliased_op_for_out.size() > static_cast<size_t>(k)) {
+        spec.aliased_out_for_op[k] = k;
+        spec.aliased_op_for_out[k] = k;
+      }
+    }
+    return spec;
+  }
+
+  return std::nullopt;
+}
+
+bool HasExclusiveUseInCommunicator(const HloInstruction* value,
+                                   const CommunicatorAliasSpec& spec) {
+  const HloInstruction* expected_user =
+      spec.while_init_tuple != nullptr ? spec.while_init_tuple : spec.comm;
+  if (value->user_count() != 1 || value->users().front() != expected_user) {
+    return false;
+  }
+  int64_t count = 0;
+  for (const HloInstruction* opnd : spec.raw_operands) {
+    if (opnd == value) {
+      ++count;
+    }
+  }
+  return count == 1;
+}
+
+absl::flat_hash_set<const HloInstruction*> ForwardClosure(
+    absl::Span<const HloInstruction* const> seeds) {
+  absl::flat_hash_set<const HloInstruction*> vis;
+  std::deque<const HloInstruction*> q;
+  for (const HloInstruction* s : seeds) {
+    if (s != nullptr && vis.insert(s).second) {
+      q.push_back(s);
+    }
+  }
+  while (!q.empty()) {
+    const HloInstruction* cur = q.front();
+    q.pop_front();
+    for (const HloInstruction* u : cur->users()) {
+      if (vis.insert(u).second) {
+        q.push_back(u);
+      }
+    }
+    for (const HloInstruction* u : cur->control_successors()) {
+      if (vis.insert(u).second) {
+        q.push_back(u);
+      }
+    }
+  }
+  return vis;
+}
+
+absl::flat_hash_set<const HloInstruction*> BackwardClosure(
+    absl::Span<const HloInstruction* const> seeds) {
+  absl::flat_hash_set<const HloInstruction*> vis;
+  std::deque<const HloInstruction*> q;
+  for (const HloInstruction* s : seeds) {
+    if (s != nullptr && vis.insert(s).second) {
+      q.push_back(s);
+    }
+  }
+  while (!q.empty()) {
+    const HloInstruction* cur = q.front();
+    q.pop_front();
+    for (const HloInstruction* opnd : cur->operands()) {
+      if (vis.insert(opnd).second) {
+        q.push_back(opnd);
+      }
+    }
+    for (const HloInstruction* pred : cur->control_predecessors()) {
+      if (vis.insert(pred).second) {
+        q.push_back(pred);
+      }
+    }
+  }
+  return vis;
+}
+
+HloInstruction* CloneCommunicatorIntoBranch(
+    HloComputation* branch, const CommunicatorAliasSpec& spec,
+    absl::Span<HloInstruction* const> branch_operands, absl::string_view role) {
+  HloInstruction* cloned = nullptr;
+  if (spec.comm->opcode() == HloOpcode::kCustomCall) {
+    cloned = branch->AddInstruction(
+        spec.comm->CloneWithNewOperands(spec.comm->shape(), branch_operands));
+  } else {
+    HloModule* module = branch->parent();
+    HloComputation* cond_clone =
+        module->AddEmbeddedComputation(spec.comm->while_condition()->Clone());
+    HloComputation* body_clone =
+        module->AddEmbeddedComputation(spec.comm->while_body()->Clone());
+    HloInstruction* init =
+        branch->AddInstruction(HloInstruction::CreateTuple(branch_operands));
+    cloned = branch->AddInstruction(HloInstruction::CreateWhile(
+        spec.comm->shape(), cond_clone, body_clone, init));
+    cloned->set_metadata(spec.comm->metadata());
+    cloned->set_frontend_attributes(spec.comm->frontend_attributes());
+  }
+  cloned->add_frontend_attribute(
+      ConditionalCodeMotion::kSunkBoundaryCommunicatorAttr, role);
+  return cloned;
+}
+
+bool IsEligibleTupleConditional(const HloInstruction* conditional) {
+  if (conditional == nullptr ||
+      conditional->opcode() != HloOpcode::kConditional ||
+      conditional->branch_count() < 2 ||
+      conditional->HasControlDependencies() ||
+      !conditional->shape().IsTuple()) {
+    return false;
+  }
+  for (const HloInstruction* u : conditional->users()) {
+    if (u->opcode() != HloOpcode::kGetTupleElement) {
+      return false;
+    }
+  }
+  const int64_t out_arity = conditional->shape().tuple_shapes().size();
+  absl::flat_hash_set<const HloComputation*> seen_branches;
+  for (int b = 0; b < conditional->branch_count(); ++b) {
+    const HloInstruction* arg = conditional->operand(b + 1);
+    const HloComputation* br = conditional->branch_computation(b);
+    if (!seen_branches.insert(br).second ||
+        arg->opcode() != HloOpcode::kTuple || arg->user_count() != 1 ||
+        arg->HasControlDependencies() || br->num_parameters() != 1) {
+      return false;
+    }
+    const HloInstruction* param = br->parameter_instruction(0);
+    if (!param->shape().IsTuple() || param->HasControlDependencies()) {
+      return false;
+    }
+    for (const HloInstruction* u : param->users()) {
+      if (u->opcode() != HloOpcode::kGetTupleElement) {
+        return false;
+      }
+    }
+    const HloInstruction* root = br->root_instruction();
+    if (root->opcode() != HloOpcode::kTuple || root->HasControlDependencies() ||
+        root->operand_count() != out_arity) {
+      return false;
+    }
+  }
+  return true;
+}
+
+double EstimateUntaintedRecvPrologueCost(
+    const HloInstruction* conditional, const HloInstruction* recv_comm,
+    const ConditionalCodeMotion::BoundaryCommunicatorSinkConfig& config) {
+  if (!config.estimate_instruction_cost) {
+    return config.min_recv_prologue_cost;
+  }
+  double best = 0.0;
+  for (int b = 0; b < conditional->branch_count(); ++b) {
+    const HloInstruction* arg = conditional->operand(b + 1);
+    const HloComputation* br = conditional->branch_computation(b);
+    absl::flat_hash_set<int64_t> tainted_slots;
+    for (int64_t s = 0; s < arg->operand_count(); ++s) {
+      const HloInstruction* opnd = arg->operand(s);
+      if (opnd->opcode() == HloOpcode::kBitcast) {
+        opnd = opnd->operand(0);
+      }
+      if (opnd->opcode() == HloOpcode::kGetTupleElement &&
+          opnd->operand(0) == recv_comm) {
+        tainted_slots.insert(s);
+      }
+    }
+    if (tainted_slots.empty()) {
+      continue;
+    }
+    const HloInstruction* param = br->parameter_instruction(0);
+    std::vector<const HloInstruction*> seeds;
+    for (const HloInstruction* u : param->users()) {
+      if (u->opcode() == HloOpcode::kGetTupleElement &&
+          tainted_slots.contains(u->tuple_index())) {
+        seeds.push_back(u);
+      }
+    }
+    const absl::flat_hash_set<const HloInstruction*> tainted =
+        ForwardClosure(seeds);
+    double cost = 0.0;
+    for (const HloInstruction* inst : br->instructions()) {
+      if (tainted.contains(inst) ||
+          inst->frontend_attributes().map().contains(
+              ConditionalCodeMotion::kSunkBoundaryCommunicatorAttr)) {
+        continue;
+      }
+      cost += config.estimate_instruction_cost(inst);
+    }
+    best = std::max(best, cost);
+  }
+  return best;
+}
+
+double EstimateNonPayloadSendTailCost(
+    const HloInstruction* conditional,
+    const absl::flat_hash_set<int64_t>& payload_out_slots,
+    const ConditionalCodeMotion::BoundaryCommunicatorSinkConfig& config) {
+  if (!config.estimate_instruction_cost) {
+    return config.min_send_tail_cost;
+  }
+  double best = 0.0;
+  for (int b = 0; b < conditional->branch_count(); ++b) {
+    const HloComputation* br = conditional->branch_computation(b);
+    const HloInstruction* root = br->root_instruction();
+    std::vector<const HloInstruction*> seeds;
+    for (int64_t s = 0; s < root->operand_count(); ++s) {
+      if (payload_out_slots.contains(s)) {
+        seeds.push_back(root->operand(s));
+      }
+    }
+    const absl::flat_hash_set<const HloInstruction*> needed =
+        BackwardClosure(seeds);
+    double cost = 0.0;
+    for (const HloInstruction* inst : br->instructions()) {
+      if (inst == root || needed.contains(inst) ||
+          inst->frontend_attributes().map().contains(
+              ConditionalCodeMotion::kSunkBoundaryCommunicatorAttr)) {
+        continue;
+      }
+      cost += config.estimate_instruction_cost(inst);
+    }
+    best = std::max(best, cost);
+  }
+  return best;
+}
+
+HloInstruction* FindSendSuccessorCandidate(
+    HloInstruction* conditional,
+    const ConditionalCodeMotion::BoundaryCommunicatorSinkConfig& config) {
+  HloInstruction* found = nullptr;
+  for (HloInstruction* gte : conditional->users()) {
+    if (gte->opcode() != HloOpcode::kGetTupleElement) {
+      continue;
+    }
+    for (HloInstruction* u : gte->users()) {
+      HloInstruction* cand = u;
+      if (cand->opcode() == HloOpcode::kBitcast && cand->user_count() == 1) {
+        cand = cand->users().front();
+      }
+      if (cand->opcode() == HloOpcode::kTuple && cand->user_count() == 1 &&
+          cand->users().front()->opcode() == HloOpcode::kWhile) {
+        cand = cand->users().front();
+      }
+      if (config.is_boundary_communicator(cand)) {
+        if (found != nullptr && found != cand) {
+          return nullptr;
+        }
+        found = cand;
+      }
+    }
+  }
+  return found;
+}
+
+HloInstruction* FindRecvPredecessorCandidate(
+    HloInstruction* conditional,
+    const ConditionalCodeMotion::BoundaryCommunicatorSinkConfig& config) {
+  HloInstruction* found = nullptr;
+  for (int b = 0; b < conditional->branch_count(); ++b) {
+    HloInstruction* arg = conditional->mutable_operand(b + 1);
+    for (int64_t s = 0; s < arg->operand_count(); ++s) {
+      HloInstruction* src = arg->mutable_operand(s);
+      if (src->opcode() == HloOpcode::kBitcast) {
+        src = src->mutable_operand(0);
+      }
+      if (src->opcode() == HloOpcode::kGetTupleElement &&
+          config.is_boundary_communicator(src->operand(0))) {
+        HloInstruction* cand = src->mutable_operand(0);
+        if (found != nullptr && found != cand) {
+          return nullptr;
+        }
+        found = cand;
+      }
+    }
+  }
+  return found;
+}
+
+absl::StatusOr<bool> TrySinkSendSuccessorIntoBranches(
+    HloInstruction* conditional,
+    const ConditionalCodeMotion::BoundaryCommunicatorSinkConfig& config) {
+  HloInstruction* send_comm = FindSendSuccessorCandidate(conditional, config);
+  if (send_comm == nullptr) {
+    return false;
+  }
+  ABSL_RETURN_IF_ERROR(BypassLoopInvariantWhilePassthroughs(send_comm));
+  const std::optional<CommunicatorAliasSpec> spec =
+      ExtractCommunicatorAliasSpec(send_comm);
+  if (!spec.has_value()) {
+    return false;
+  }
+
+  const absl::flat_hash_set<const HloInstruction*> from_cond =
+      ForwardClosure({conditional});
+
+  struct SendOperandBinding {
+    bool from_conditional = false;
+    int64_t cond_out_idx = -1;
+    std::optional<Shape> bitcast_shape;
+    int64_t ext_idx = -1;
+  };
+  const size_t num_q_ops = spec->raw_operands.size();
+  std::vector<SendOperandBinding> bindings(num_q_ops);
+  std::vector<HloInstruction*> ext_operands;
+  std::vector<bool> ext_is_aliased;
+  absl::flat_hash_map<const HloInstruction*, int64_t> unaliased_ext_map;
+  absl::flat_hash_set<int64_t> consumed_aliased_c_outs;
+  absl::flat_hash_set<int64_t> all_payload_c_outs;
+  std::vector<HloInstruction*> dead_bitcasts;
+
+  absl::flat_hash_map<int64_t, std::vector<HloInstruction*>> c_gtes_by_idx;
+  for (HloInstruction* u : conditional->users()) {
+    c_gtes_by_idx[u->tuple_index()].push_back(u);
+  }
+
+  const HloInstruction* direct_user =
+      spec->while_init_tuple != nullptr ? spec->while_init_tuple : spec->comm;
+  for (size_t j = 0; j < num_q_ops; ++j) {
+    HloInstruction* opnd = spec->raw_operands[j];
+    const bool is_aliased = (spec->aliased_out_for_op.size() > j &&
+                             spec->aliased_out_for_op[j] >= 0);
+    if (!from_cond.contains(opnd)) {
+      if (is_aliased) {
+        if (!HasExclusiveUseInCommunicator(opnd, *spec)) {
+          return false;
+        }
+        bindings[j].ext_idx = static_cast<int64_t>(ext_operands.size());
+        ext_operands.push_back(opnd);
+        ext_is_aliased.push_back(true);
+      } else {
+        const auto [it, inserted] = unaliased_ext_map.try_emplace(
+            opnd, static_cast<int64_t>(ext_operands.size()));
+        if (inserted) {
+          ext_operands.push_back(opnd);
+          ext_is_aliased.push_back(false);
+        }
+        bindings[j].ext_idx = it->second;
+      }
+      continue;
+    }
+
+    // Operand derives from `conditional`: require `gte(C, s)` or single-use
+    // `bitcast(gte(C, s))`.
+    std::optional<Shape> bitcast_shape;
+    HloInstruction* gte = opnd;
+    if (opnd->opcode() == HloOpcode::kBitcast) {
+      if (opnd->user_count() != 1 || opnd->users().front() != direct_user ||
+          opnd->HasControlDependencies()) {
+        return false;
+      }
+      bitcast_shape = opnd->shape();
+      dead_bitcasts.push_back(opnd);
+      gte = opnd->mutable_operand(0);
+    }
+    if (gte->opcode() != HloOpcode::kGetTupleElement ||
+        gte->operand(0) != conditional || gte->HasControlDependencies()) {
+      return false;
+    }
+    const int64_t c_idx = gte->tuple_index();
+    all_payload_c_outs.insert(c_idx);
+    if (is_aliased) {
+      if (!consumed_aliased_c_outs.insert(c_idx).second) {
+        return false;
+      }
+      const auto gte_it = c_gtes_by_idx.find(c_idx);
+      if (gte_it == c_gtes_by_idx.end() || gte_it->second.size() != 1) {
+        return false;
+      }
+      const HloInstruction* expected =
+          bitcast_shape.has_value() ? static_cast<const HloInstruction*>(opnd)
+                                    : direct_user;
+      if (gte->user_count() != 1 || gte->users().front() != expected) {
+        return false;
+      }
+      if (!bitcast_shape.has_value()) {
+        int64_t uses_in_q = 0;
+        for (const HloInstruction* r : spec->raw_operands) {
+          if (r == gte) {
+            ++uses_in_q;
+          }
+        }
+        if (uses_in_q != 1) {
+          return false;
+        }
+      }
+    }
+    bindings[j].from_conditional = true;
+    bindings[j].cond_out_idx = c_idx;
+    bindings[j].bitcast_shape = std::move(bitcast_shape);
+  }
+
+  if (all_payload_c_outs.empty()) {
+    return false;
+  }
+
+  const double tail_cost =
+      EstimateNonPayloadSendTailCost(conditional, all_payload_c_outs, config);
+  if (tail_cost < config.min_send_tail_cost) {
+    // Still allow sinking `Q` if it holds exclusive pipe state from a
+    // qualifying receive predecessor `P` that will sink next.
+    HloInstruction* paired_p =
+        FindRecvPredecessorCandidate(conditional, config);
+    bool unlocks_recv = false;
+    if (paired_p != nullptr &&
+        EstimateUntaintedRecvPrologueCost(conditional, paired_p, config) >=
+            config.min_recv_prologue_cost) {
+      for (HloInstruction* ext : ext_operands) {
+        if (ext->opcode() == HloOpcode::kGetTupleElement &&
+            ext->operand(0) == paired_p) {
+          unlocks_recv = true;
+          break;
+        }
+      }
+    }
+    if (!unlocks_recv) {
+      return false;
+    }
+  }
+
+  // Collect live GTEs of `send_comm` by output tuple index.
+  const int64_t num_q_outs = send_comm->shape().tuple_shapes().size();
+  std::vector<std::vector<HloInstruction*>> q_gtes(num_q_outs);
+  std::vector<int64_t> exported_q_outs;
+  for (HloInstruction* u : send_comm->users()) {
+    const int64_t k = u->tuple_index();
+    if (k >= 0 && q_gtes.size() > static_cast<size_t>(k)) {
+      if (q_gtes[k].empty()) {
+        exported_q_outs.push_back(k);
+      }
+      q_gtes[k].push_back(u);
+    }
+  }
+  absl::c_sort(exported_q_outs);
+
+  const int64_t old_out_arity = conditional->shape().tuple_shapes().size();
+  std::vector<int64_t> old_out_to_new(old_out_arity, -1);
+  int64_t next_out = 0;
+  for (int64_t i = 0; i < old_out_arity; ++i) {
+    if (!consumed_aliased_c_outs.contains(i) &&
+        old_out_to_new.size() > static_cast<size_t>(i)) {
+      old_out_to_new[i] = next_out++;
+    }
+  }
+  std::vector<int64_t> q_out_to_new(num_q_outs, -1);
+  for (int64_t k : exported_q_outs) {
+    if (q_out_to_new.size() > static_cast<size_t>(k)) {
+      q_out_to_new[k] = next_out++;
+    }
+  }
+
+  HloComputation* parent = conditional->parent();
+  for (int b = 0; b < conditional->branch_count(); ++b) {
+    HloInstruction* old_arg = conditional->mutable_operand(b + 1);
+    HloComputation* branch = conditional->branch_computation(b);
+    HloInstruction* param = branch->parameter_instruction(0);
+    HloInstruction* old_root = branch->root_instruction();
+
+    // Detect branch param slots directly returned in `old_root` so read-only
+    // external operands never reuse an aliased/returned slot.
+    absl::flat_hash_set<int64_t> returned_param_slots;
+    for (const HloInstruction* r : old_root->operands()) {
+      if (r->opcode() == HloOpcode::kGetTupleElement &&
+          r->operand(0) == param) {
+        returned_param_slots.insert(r->tuple_index());
+      }
+    }
+
+    std::vector<HloInstruction*> new_arg_ops;
+    new_arg_ops.reserve(old_arg->operand_count() + ext_operands.size());
+    for (int64_t s = 0; s < old_arg->operand_count(); ++s) {
+      new_arg_ops.push_back(old_arg->mutable_operand(s));
+    }
+    std::vector<int64_t> ext_to_param_slot(ext_operands.size(), -1);
+    for (size_t e = 0; e < ext_operands.size(); ++e) {
+      HloInstruction* ext = ext_operands[e];
+      int64_t slot = -1;
+      if (ext_is_aliased.size() > e && !ext_is_aliased[e]) {
+        for (int64_t s = 0; s < old_arg->operand_count(); ++s) {
+          if (old_arg->operand(s) == ext && !returned_param_slots.contains(s)) {
+            slot = s;
+            break;
+          }
+        }
+      }
+      if (slot < 0) {
+        slot = static_cast<int64_t>(new_arg_ops.size());
+        new_arg_ops.push_back(ext);
+      }
+      ext_to_param_slot[e] = slot;
+    }
+
+    HloInstruction* new_arg =
+        parent->AddInstruction(HloInstruction::CreateTuple(new_arg_ops));
+    ABSL_RETURN_IF_ERROR(
+        conditional->ReplaceOperandWithDifferentShape(b + 1, new_arg));
+    if (old_arg->user_count() == 0) {
+      ABSL_RETURN_IF_ERROR(parent->RemoveInstruction(old_arg));
+    }
+    *param->mutable_shape() = new_arg->shape();
+    param->clear_sharding();
+
+    absl::flat_hash_map<int64_t, HloInstruction*> ext_gte_cache;
+    std::vector<HloInstruction*> q_ops;
+    q_ops.reserve(num_q_ops);
+    for (size_t j = 0; j < num_q_ops; ++j) {
+      const SendOperandBinding& bind = bindings[j];
+      if (bind.from_conditional) {
+        HloInstruction* val = old_root->mutable_operand(bind.cond_out_idx);
+        if (bind.bitcast_shape.has_value()) {
+          val = branch->AddInstruction(
+              HloInstruction::CreateBitcast(*bind.bitcast_shape, val));
+        }
+        q_ops.push_back(val);
+      } else {
+        const int64_t slot =
+            (bind.ext_idx >= 0 &&
+             ext_to_param_slot.size() > static_cast<size_t>(bind.ext_idx))
+                ? ext_to_param_slot[bind.ext_idx]
+                : 0;
+        HloInstruction*& gte = ext_gte_cache[slot];
+        if (gte == nullptr) {
+          gte = branch->AddInstruction(HloInstruction::CreateGetTupleElement(
+              new_arg->operand(slot)->shape(), param, slot));
+        }
+        q_ops.push_back(gte);
+      }
+    }
+
+    HloInstruction* sunk_q = CloneCommunicatorIntoBranch(
+        branch, *spec, q_ops, ConditionalCodeMotion::kSunkBoundarySendRole);
+
+    std::vector<HloInstruction*> new_root_ops;
+    new_root_ops.reserve(next_out);
+    for (int64_t i = 0; i < old_out_arity; ++i) {
+      if (old_out_to_new.size() > static_cast<size_t>(i) &&
+          old_out_to_new[i] >= 0) {
+        new_root_ops.push_back(old_root->mutable_operand(i));
+      }
+    }
+    for (int64_t k : exported_q_outs) {
+      new_root_ops.push_back(
+          branch->AddInstruction(HloInstruction::CreateGetTupleElement(
+              sunk_q->shape().tuple_shapes(k), sunk_q, k)));
+    }
+    HloInstruction* new_root =
+        branch->AddInstruction(HloInstruction::CreateTuple(new_root_ops));
+    branch->set_root_instruction(new_root, /*accept_different_shape=*/true);
+    if (old_root->user_count() == 0) {
+      ABSL_RETURN_IF_ERROR(branch->RemoveInstruction(old_root));
+    }
+  }
+
+  *conditional->mutable_shape() =
+      conditional->branch_computation(0)->root_instruction()->shape();
+  conditional->clear_sharding();
+  conditional->set_original_value(nullptr);
+
+  // Replace parent uses of `send_comm` GTEs with new `conditional` GTEs before
+  // removing `send_comm`, then remap surviving original `conditional` GTEs.
+  std::vector<HloInstruction*> dead_c_gtes;
+  const std::vector<HloInstruction*> orig_c_users(conditional->users().begin(),
+                                                  conditional->users().end());
+  for (HloInstruction* u : orig_c_users) {
+    const int64_t old_idx = u->tuple_index();
+    if (consumed_aliased_c_outs.contains(old_idx)) {
+      dead_c_gtes.push_back(u);
+    } else if (old_idx >= 0 &&
+               old_out_to_new.size() > static_cast<size_t>(old_idx)) {
+      u->set_tuple_index(old_out_to_new[old_idx]);
+    }
+  }
+  for (int64_t k : exported_q_outs) {
+    if (q_out_to_new.size() <= static_cast<size_t>(k) ||
+        q_gtes.size() <= static_cast<size_t>(k)) {
+      continue;
+    }
+    HloInstruction* new_c_gte =
+        parent->AddInstruction(HloInstruction::CreateGetTupleElement(
+            send_comm->shape().tuple_shapes(k), conditional, q_out_to_new[k]));
+    for (HloInstruction* old_q_gte : q_gtes[k]) {
+      ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(old_q_gte, new_c_gte));
+    }
+  }
+  ABSL_RETURN_IF_ERROR(parent->RemoveInstruction(send_comm));
+  if (spec->while_init_tuple != nullptr &&
+      spec->while_init_tuple->user_count() == 0) {
+    ABSL_RETURN_IF_ERROR(parent->RemoveInstruction(spec->while_init_tuple));
+  }
+  for (HloInstruction* bc : dead_bitcasts) {
+    if (bc->parent() != nullptr && bc->user_count() == 0) {
+      ABSL_RETURN_IF_ERROR(parent->RemoveInstruction(bc));
+    }
+  }
+  for (HloInstruction* gte : dead_c_gtes) {
+    if (gte->parent() != nullptr && gte->user_count() == 0) {
+      ABSL_RETURN_IF_ERROR(parent->RemoveInstruction(gte));
+    }
+  }
+  return true;
+}
+
+absl::StatusOr<bool> TrySinkRecvPredecessorIntoBranches(
+    HloInstruction* conditional,
+    const ConditionalCodeMotion::BoundaryCommunicatorSinkConfig& config) {
+  HloInstruction* recv_comm = FindRecvPredecessorCandidate(conditional, config);
+  if (recv_comm == nullptr) {
+    return false;
+  }
+  ABSL_RETURN_IF_ERROR(BypassLoopInvariantWhilePassthroughs(recv_comm));
+  const std::optional<CommunicatorAliasSpec> spec =
+      ExtractCommunicatorAliasSpec(recv_comm);
+  if (!spec.has_value()) {
+    return false;
+  }
+
+  // Selector and all non-payload inputs of `conditional` must be independent of
+  // `recv_comm`.
+  const absl::flat_hash_set<const HloInstruction*> reaches_cond =
+      BackwardClosure({conditional});
+  if (ForwardClosure({recv_comm}).contains(conditional->operand(0))) {
+    return false;
+  }
+
+  absl::flat_hash_set<const HloInstruction*> branch_arg_tuples;
+  for (int b = 0; b < conditional->branch_count(); ++b) {
+    branch_arg_tuples.insert(conditional->operand(b + 1));
+  }
+
+  const int64_t num_p_outs = recv_comm->shape().tuple_shapes().size();
+  std::vector<std::vector<HloInstruction*>> external_p_gtes(num_p_outs);
+  std::vector<bool> consumed_in_branch(num_p_outs, false);
+  std::vector<HloInstruction*> dead_p_gtes;
+  std::vector<HloInstruction*> dead_bitcasts;
+
+  for (HloInstruction* gte : recv_comm->users()) {
+    if (gte->opcode() != HloOpcode::kGetTupleElement ||
+        gte->HasControlDependencies()) {
+      return false;
+    }
+    const int64_t k = gte->tuple_index();
+    if (k < 0 || k >= num_p_outs) {
+      return false;
+    }
+    bool has_ext_user = false;
+    for (HloInstruction* u : gte->users()) {
+      if (branch_arg_tuples.contains(u)) {
+        consumed_in_branch[k] = true;
+        continue;
+      }
+      if (u->opcode() == HloOpcode::kBitcast && !u->HasControlDependencies() &&
+          u->user_count() == 1 &&
+          branch_arg_tuples.contains(u->users().front())) {
+        consumed_in_branch[k] = true;
+        dead_bitcasts.push_back(u);
+        continue;
+      }
+      // External user must lie strictly after `conditional` (never feed back
+      // into `conditional`).
+      if (reaches_cond.contains(u)) {
+        return false;
+      }
+      has_ext_user = true;
+    }
+    if (has_ext_user) {
+      external_p_gtes[k].push_back(gte);
+    } else {
+      dead_p_gtes.push_back(gte);
+    }
+  }
+  // Never export an aliased output that is also consumed inside a branch.
+  for (int64_t k = 0; k < num_p_outs; ++k) {
+    if (consumed_in_branch.size() > static_cast<size_t>(k) &&
+        external_p_gtes.size() > static_cast<size_t>(k) &&
+        spec->aliased_op_for_out.size() > static_cast<size_t>(k) &&
+        consumed_in_branch[k] && !external_p_gtes[k].empty() &&
+        spec->aliased_op_for_out[k] >= 0) {
+      return false;
+    }
+  }
+
+  // Every aliased output consumed inside a branch must feed at most one slot in
+  // each branch argument tuple to keep in-branch aliasing single-use.
+  for (int b = 0; b < conditional->branch_count(); ++b) {
+    const HloInstruction* arg = conditional->operand(b + 1);
+    absl::flat_hash_set<int64_t> seen_aliased_k;
+    for (const HloInstruction* opnd : arg->operands()) {
+      const HloInstruction* src =
+          opnd->opcode() == HloOpcode::kBitcast ? opnd->operand(0) : opnd;
+      if (src->opcode() == HloOpcode::kGetTupleElement &&
+          src->operand(0) == recv_comm) {
+        const int64_t k = src->tuple_index();
+        if (k >= 0 &&
+            spec->aliased_op_for_out.size() > static_cast<size_t>(k) &&
+            spec->aliased_op_for_out[k] >= 0 &&
+            !seen_aliased_k.insert(k).second) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // Validate `recv_comm` operands: aliased inputs must be exclusive to
+  // `recv_comm` (zero extra copies); unaliased inputs are shared read-only and
+  // never returned from `conditional`.
+  const size_t num_p_ops = spec->raw_operands.size();
+  std::vector<int64_t> p_op_to_input_idx(num_p_ops, -1);
+  std::vector<HloInstruction*> p_inputs;
+  std::vector<bool> p_input_is_aliased;
+  absl::flat_hash_map<const HloInstruction*, int64_t> unaliased_input_map;
+  const absl::flat_hash_set<const HloInstruction*> from_cond =
+      ForwardClosure({conditional});
+  for (size_t j = 0; j < num_p_ops; ++j) {
+    HloInstruction* opnd = spec->raw_operands[j];
+    if (from_cond.contains(opnd)) {
+      return false;
+    }
+    const bool is_aliased = (spec->aliased_out_for_op.size() > j &&
+                             spec->aliased_out_for_op[j] >= 0);
+    if (is_aliased) {
+      if (!HasExclusiveUseInCommunicator(opnd, *spec)) {
+        return false;
+      }
+      p_op_to_input_idx[j] = static_cast<int64_t>(p_inputs.size());
+      p_inputs.push_back(opnd);
+      p_input_is_aliased.push_back(true);
+    } else {
+      const auto [it, inserted] = unaliased_input_map.try_emplace(
+          opnd, static_cast<int64_t>(p_inputs.size()));
+      if (inserted) {
+        p_inputs.push_back(opnd);
+        p_input_is_aliased.push_back(false);
+      }
+      p_op_to_input_idx[j] = it->second;
+    }
+  }
+
+  if (EstimateUntaintedRecvPrologueCost(conditional, recv_comm, config) <
+      config.min_recv_prologue_cost) {
+    return false;
+  }
+
+  std::vector<int64_t> exported_p_outs;
+  for (int64_t k = 0; k < num_p_outs; ++k) {
+    if (external_p_gtes.size() > static_cast<size_t>(k) &&
+        !external_p_gtes[k].empty()) {
+      exported_p_outs.push_back(k);
+    }
+  }
+
+  const int64_t old_out_arity = conditional->shape().tuple_shapes().size();
+  HloComputation* parent = conditional->parent();
+
+  for (int b = 0; b < conditional->branch_count(); ++b) {
+    HloInstruction* old_arg = conditional->mutable_operand(b + 1);
+    HloComputation* branch = conditional->branch_computation(b);
+    HloInstruction* param = branch->parameter_instruction(0);
+    HloInstruction* old_root = branch->root_instruction();
+
+    struct DroppedSlot {
+      int64_t p_out_idx = -1;
+      std::optional<Shape> bitcast_shape;
+    };
+    const int64_t old_arg_arity = old_arg->operand_count();
+    std::vector<int64_t> old_slot_to_new(old_arg_arity, -1);
+    absl::flat_hash_map<int64_t, DroppedSlot> dropped_slots;
+    std::vector<HloInstruction*> new_arg_ops;
+    new_arg_ops.reserve(old_arg_arity + p_inputs.size());
+
+    for (int64_t s = 0; s < old_arg_arity; ++s) {
+      HloInstruction* opnd = old_arg->mutable_operand(s);
+      std::optional<Shape> bc_shape;
+      HloInstruction* src = opnd;
+      if (opnd->opcode() == HloOpcode::kBitcast) {
+        bc_shape = opnd->shape();
+        src = opnd->mutable_operand(0);
+      }
+      if (src->opcode() == HloOpcode::kGetTupleElement &&
+          src->operand(0) == recv_comm) {
+        dropped_slots[s] = DroppedSlot{src->tuple_index(), std::move(bc_shape)};
+      } else {
+        old_slot_to_new[s] = static_cast<int64_t>(new_arg_ops.size());
+        new_arg_ops.push_back(opnd);
+      }
+    }
+
+    absl::flat_hash_set<int64_t> returned_new_param_slots;
+    for (const HloInstruction* r : old_root->operands()) {
+      if (r->opcode() == HloOpcode::kGetTupleElement &&
+          r->operand(0) == param) {
+        const int64_t os = r->tuple_index();
+        if (os >= 0 && old_slot_to_new.size() > static_cast<size_t>(os) &&
+            old_slot_to_new[os] >= 0) {
+          returned_new_param_slots.insert(old_slot_to_new[os]);
+        }
+      }
+    }
+
+    const int64_t kept_arity = static_cast<int64_t>(new_arg_ops.size());
+    std::vector<int64_t> p_input_to_slot(p_inputs.size(), -1);
+    for (size_t e = 0; e < p_inputs.size(); ++e) {
+      HloInstruction* inp = p_inputs[e];
+      int64_t slot = -1;
+      if (p_input_is_aliased.size() > e && !p_input_is_aliased[e]) {
+        for (int64_t ns = 0; ns < kept_arity; ++ns) {
+          if (new_arg_ops.size() > static_cast<size_t>(ns) &&
+              new_arg_ops[ns] == inp &&
+              !returned_new_param_slots.contains(ns)) {
+            slot = ns;
+            break;
+          }
+        }
+      }
+      if (slot < 0) {
+        slot = static_cast<int64_t>(new_arg_ops.size());
+        new_arg_ops.push_back(inp);
+      }
+      p_input_to_slot[e] = slot;
+    }
+
+    HloInstruction* new_arg =
+        parent->AddInstruction(HloInstruction::CreateTuple(new_arg_ops));
+    ABSL_RETURN_IF_ERROR(
+        conditional->ReplaceOperandWithDifferentShape(b + 1, new_arg));
+    if (old_arg->user_count() == 0) {
+      ABSL_RETURN_IF_ERROR(parent->RemoveInstruction(old_arg));
+    }
+
+    const std::vector<HloInstruction*> orig_param_users(param->users().begin(),
+                                                        param->users().end());
+    *param->mutable_shape() = new_arg->shape();
+    param->clear_sharding();
+
+    absl::flat_hash_map<int64_t, HloInstruction*> p_in_gte_cache;
+    std::vector<HloInstruction*> p_branch_ops;
+    p_branch_ops.reserve(num_p_ops);
+    for (size_t j = 0; j < num_p_ops; ++j) {
+      const int64_t inp_idx = p_op_to_input_idx[j];
+      const int64_t slot = (inp_idx >= 0 && p_input_to_slot.size() >
+                                                static_cast<size_t>(inp_idx))
+                               ? p_input_to_slot[inp_idx]
+                               : 0;
+      HloInstruction*& gte = p_in_gte_cache[slot];
+      if (gte == nullptr) {
+        gte = branch->AddInstruction(HloInstruction::CreateGetTupleElement(
+            new_arg->operand(slot)->shape(), param, slot));
+      }
+      p_branch_ops.push_back(gte);
+    }
+
+    HloInstruction* sunk_p = CloneCommunicatorIntoBranch(
+        branch, *spec, p_branch_ops,
+        ConditionalCodeMotion::kSunkBoundaryRecvRole);
+
+    absl::flat_hash_map<int64_t, HloInstruction*> p_out_gte_cache;
+    auto get_p_out = [&](int64_t k) -> HloInstruction* {
+      HloInstruction*& g = p_out_gte_cache[k];
+      if (g == nullptr) {
+        g = branch->AddInstruction(HloInstruction::CreateGetTupleElement(
+            sunk_p->shape().tuple_shapes(k), sunk_p, k));
+      }
+      return g;
+    };
+
+    for (HloInstruction* u : orig_param_users) {
+      const int64_t os = u->tuple_index();
+      const auto drop_it = dropped_slots.find(os);
+      if (drop_it != dropped_slots.end()) {
+        HloInstruction* val = get_p_out(drop_it->second.p_out_idx);
+        if (drop_it->second.bitcast_shape.has_value()) {
+          val = branch->AddInstruction(HloInstruction::CreateBitcast(
+              *drop_it->second.bitcast_shape, val));
+        }
+        ABSL_RETURN_IF_ERROR(branch->ReplaceInstruction(u, val));
+      } else if (os >= 0 && old_slot_to_new.size() > static_cast<size_t>(os) &&
+                 old_slot_to_new[os] >= 0) {
+        u->set_tuple_index(old_slot_to_new[os]);
+      }
+    }
+
+    if (!exported_p_outs.empty()) {
+      std::vector<HloInstruction*> new_root_ops;
+      new_root_ops.reserve(old_out_arity + exported_p_outs.size());
+      for (int64_t i = 0; i < old_out_arity; ++i) {
+        new_root_ops.push_back(old_root->mutable_operand(i));
+      }
+      for (int64_t k : exported_p_outs) {
+        new_root_ops.push_back(get_p_out(k));
+      }
+      HloInstruction* new_root =
+          branch->AddInstruction(HloInstruction::CreateTuple(new_root_ops));
+      branch->set_root_instruction(new_root, /*accept_different_shape=*/true);
+      if (old_root->user_count() == 0) {
+        ABSL_RETURN_IF_ERROR(branch->RemoveInstruction(old_root));
+      }
+    }
+  }
+
+  if (!exported_p_outs.empty()) {
+    *conditional->mutable_shape() =
+        conditional->branch_computation(0)->root_instruction()->shape();
+    conditional->clear_sharding();
+    conditional->set_original_value(nullptr);
+    for (size_t m = 0; m < exported_p_outs.size(); ++m) {
+      const int64_t k = exported_p_outs[m];
+      const int64_t new_c_idx = old_out_arity + static_cast<int64_t>(m);
+      HloInstruction* new_c_gte =
+          parent->AddInstruction(HloInstruction::CreateGetTupleElement(
+              recv_comm->shape().tuple_shapes(k), conditional, new_c_idx));
+      if (external_p_gtes.size() > static_cast<size_t>(k)) {
+        for (HloInstruction* old_p_gte : external_p_gtes[k]) {
+          ABSL_RETURN_IF_ERROR(
+              parent->ReplaceInstruction(old_p_gte, new_c_gte));
+        }
+      }
+    }
+  }
+
+  for (HloInstruction* bc : dead_bitcasts) {
+    if (bc->parent() != nullptr && bc->user_count() == 0) {
+      ABSL_RETURN_IF_ERROR(parent->RemoveInstruction(bc));
+    }
+  }
+  for (HloInstruction* gte : dead_p_gtes) {
+    if (gte->parent() != nullptr && gte->user_count() == 0) {
+      ABSL_RETURN_IF_ERROR(parent->RemoveInstruction(gte));
+    }
+  }
+  ABSL_RETURN_IF_ERROR(parent->RemoveInstruction(recv_comm));
+  if (spec->while_init_tuple != nullptr &&
+      spec->while_init_tuple->user_count() == 0) {
+    ABSL_RETURN_IF_ERROR(parent->RemoveInstruction(spec->while_init_tuple));
+  }
+  return true;
+}
+
 }  // namespace
+
+absl::StatusOr<bool>
+ConditionalCodeMotion::TrySinkBoundaryCommunicatorsIntoBranches(
+    HloInstruction* conditional) {
+  if (!boundary_communicator_sink_config_.has_value() ||
+      !boundary_communicator_sink_config_->is_boundary_communicator ||
+      !IsEligibleTupleConditional(conditional)) {
+    return false;
+  }
+  const BoundaryCommunicatorSinkConfig& cfg =
+      *boundary_communicator_sink_config_;
+  // Sink outbound send `Q` first so any exclusive pipe-state edges `P -> Q`
+  // fold into branch inputs and chain directly `P_b -> Q_b` when `P` sinks.
+  ABSL_ASSIGN_OR_RETURN(const bool sunk_send,
+                        TrySinkSendSuccessorIntoBranches(conditional, cfg));
+  ABSL_ASSIGN_OR_RETURN(const bool sunk_recv,
+                        TrySinkRecvPredecessorIntoBranches(conditional, cfg));
+  if (sunk_send || sunk_recv) {
+    VLOG(1) << "ConditionalCodeMotion sunk boundary communicator(s) into "
+            << conditional->name() << " (recv=" << sunk_recv
+            << ", send=" << sunk_send << ")";
+  }
+  return sunk_send || sunk_recv;
+}
 
 absl::StatusOr<bool> ConditionalCodeMotion::RunImpl(
     HloModule* module,
@@ -2501,6 +3581,26 @@ absl::StatusOr<bool> ConditionalCodeMotion::RunImpl(
         }
       }
     }
+  }
+
+  if (boundary_communicator_sink_config_.has_value()) {
+    for (HloInstruction* conditional : conditional_ops) {
+      bool is_shared = false;
+      for (int i = 0; i < conditional->branch_count(); ++i) {
+        if (conditional_computations[conditional->branch_computation(i)] > 0) {
+          is_shared = true;
+          break;
+        }
+      }
+      if (is_shared) {
+        continue;
+      }
+      ABSL_ASSIGN_OR_RETURN(
+          const bool sunk,
+          TrySinkBoundaryCommunicatorsIntoBranches(conditional));
+      changed |= sunk;
+    }
+    return changed;
   }
 
   int64_t conditional_index = 0;
