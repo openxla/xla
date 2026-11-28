@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/buffer_assignment.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -8783,6 +8784,615 @@ TEST_F(BufferAssignmentTest, PerAllocationHloAccessors) {
   EXPECT_FALSE(assignment->PeakMemoryLogicalBuffers(alloc).empty());
   EXPECT_TRUE(assignment->CrossColorBuffers(alloc).empty());
   EXPECT_FALSE(assignment->MemoryUsageReport(alloc, "").empty());
+}
+
+void ExpectConsistentValueAssignments(const BufferAssignment& assignment) {
+  HloValue::Id max_id = 0;
+  for (const HloValue* value : assignment.dataflow_analysis().values()) {
+    max_id = std::max(max_id, value->id());
+  }
+  std::vector<int> assignment_counts(max_id + 1, 0);
+  for (BufferAllocation::Index index = 0;
+       index < assignment.Allocations().size(); ++index) {
+    const BufferAllocation& alloc = assignment.GetAllocation(index);
+    EXPECT_EQ(alloc.index(), index);
+    const auto& cross_color = assignment.CrossColorBuffers(alloc);
+    const absl::flat_hash_set<const HloValue*> unique_cross_color(
+        cross_color.begin(), cross_color.end());
+    EXPECT_EQ(unique_cross_color.size(), cross_color.size());
+    int64_t mismatched_color_count = 0;
+    absl::c_for_each(
+        assignment.assigned_buffers(alloc), [&](const auto& entry) {
+          const HloValue* value = entry.first;
+          const BufferAllocation::OffsetSize& os = entry.second;
+          ++assignment_counts[value->id()];
+          if (value->color() != alloc.color()) {
+            ++mismatched_color_count;
+            EXPECT_TRUE(unique_cross_color.contains(value));
+          }
+          EXPECT_TRUE(assignment.HasAllocation(*value));
+          EXPECT_EQ(assignment.GetAssignedAllocation(*value).index(), index);
+          EXPECT_GE(os.offset, 0);
+          EXPECT_LE(os.offset + os.size, alloc.size());
+        });
+    EXPECT_EQ(mismatched_color_count, cross_color.size());
+  }
+  for (int count : assignment_counts) {
+    EXPECT_LE(count, 1);
+  }
+}
+
+TEST_F(BufferAssignmentTest, FallbackDestinationColorExceedsLimit) {
+  auto with_space = [](Shape s, int64_t space) {
+    s.mutable_layout()->set_memory_space(space);
+    return s;
+  };
+  constexpr int64_t kSafetyMargin = int64_t{5} << 29;
+  using SeqAlg = buffer_assignment::BufferAssignmentAlgorithmProto;
+  using NonSeqAlg =
+      buffer_assignment::AssignmentAlgorithmForComputationsWithoutOrderingProto;
+
+  // 1. Same non-sequential strategy (FAST_MERGE -> FAST_SPLIT): all color-3
+  // temps borrow into color-1, color-1 exceeds its limit, and uncoupled color-2
+  // stays on its initial FAST_MERGE assignment.
+  {
+    auto builder = HloComputation::Builder(TestName());
+    std::vector<HloInstruction*> sequence;
+    auto add = [&](std::unique_ptr<HloInstruction> inst) {
+      sequence.push_back(builder.AddInstruction(std::move(inst)));
+      return sequence.back();
+    };
+    HloInstruction* param = add(
+        HloInstruction::CreateParameter(0, ShapeUtil::MakeShape(F32, {}), "p"));
+    HloInstruction* chain1 = param;
+    for (int64_t n : {10, 20, 30, 40}) {
+      chain1 = add(HloInstruction::CreateCustomCall(
+          with_space(ShapeUtil::MakeShape(F32, {n}), 1), {chain1}, "dst"));
+    }
+    HloInstruction* done1 = add(HloInstruction::CreateCustomCall(
+        with_space(ShapeUtil::MakeShape(F32, {1}), 0), {chain1}, "done1"));
+    HloInstruction* borrowed = add(HloInstruction::CreateCustomCall(
+        with_space(ShapeUtil::MakeShape(F32, {20}), 3), {done1}, "src"));
+    HloInstruction* chain2 = param;
+    for (int i = 0; i < 502; ++i) {
+      chain2 = add(HloInstruction::CreateCustomCall(
+          with_space(ShapeUtil::MakeShape(F32, {100}), 2), {chain2}, "other"));
+    }
+    add(HloInstruction::CreateCustomCall(
+        with_space(ShapeUtil::MakeShape(F32, {1}), 0), {borrowed, chain2},
+        "root"));
+
+    auto module = CreateNewVerifiedModule();
+    module->AddEntryComputation(builder.Build());
+    HloSchedule schedule(module.get());
+    schedule.set_sequence(module->entry_computation(), sequence);
+    ASSERT_OK(module->set_schedule(schedule));
+
+    BufferAssigner::Options opts;
+    opts.enable_fallback = true;
+    opts.can_use_allocation = BufferAssigner::AllowCrossColorReuse(3, 1);
+    opts.assignment_algorithm_for_computations_without_ordering =
+        NonSeqAlg::FAST_MERGE;
+    opts.buffer_assignment_algorithm = SeqAlg::FAST_MERGE;
+    opts.fallback_algorithm = SeqAlg::FAST_SPLIT;
+    opts.color_memory_limit = [](LogicalBuffer::Color color) -> int64_t {
+      if (color == 1) {
+        return kSafetyMargin + 300;
+      }
+      if (color == 2) {
+        return kSafetyMargin + 900;
+      }
+      return 0;
+    };
+
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<BufferAssignment> assignment,
+        BufferAssigner::Run(
+            module.get(), std::make_unique<SequentialHloOrdering>(schedule),
+            &BufferSizeBytes, &alias_info_,
+            [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+    ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice src_slice,
+                         assignment->GetUniqueSlice(borrowed, {}));
+    EXPECT_EQ(src_slice.allocation()->color(), 1);
+    EXPECT_EQ(src_slice.allocation()->size(), 280);
+    absl::flat_hash_map<LogicalBuffer::Color, int64_t> bytes_by_color;
+    for (const BufferAllocation& alloc : assignment->Allocations()) {
+      bytes_by_color[alloc.color()] += alloc.size();
+    }
+    EXPECT_EQ(bytes_by_color[1], 280);
+    EXPECT_EQ(bytes_by_color[2], 800);
+    EXPECT_EQ(bytes_by_color[3], 0);
+    ExpectConsistentValueAssignments(*assignment);
+    EXPECT_OK(ConvertToProtoAndBack(assignment.get(), module.get()).status());
+  }
+
+  // 2. Cross non-sequential transition ((FAST_MERGE, SPATIAL) ->
+  // (SPATIAL, SPATIAL) -> (SPATIAL, TEMPORAL)).
+  {
+    constexpr absl::string_view kHlo = R"(
+      HloModule CrossNonSeqDstFallback
+      add {
+        x = f32[] parameter(0)
+        y = f32[] parameter(1)
+        ROOT r = f32[] add(x, y)
+      }
+      ENTRY entry {
+        p = f32[] parameter(0)
+        w = f32[200]{0:S(1)} broadcast(p), dimensions={}
+        a = f32[400]{0:S(1)} broadcast(p), dimensions={}
+        a_sum = f32[] reduce(a, p), dimensions={0}, to_apply=add
+        mid = f32[300]{0:S(1)} broadcast(a_sum), dimensions={}
+        w_sum = f32[] reduce(w, p), dimensions={0}, to_apply=add
+        big = f32[500]{0:S(1)} broadcast(w_sum), dimensions={}
+        mid_sum = f32[] reduce(mid, p), dimensions={0}, to_apply=add
+        f1 = f32[] add(mid_sum, mid_sum)
+        f2 = f32[] add(f1, f1)
+        big_sum = f32[] reduce(big, f2), dimensions={0}, to_apply=add
+        borrowed = f32[100]{0:S(3)} broadcast(big_sum), dimensions={}
+        ROOT out = f32[] reduce(borrowed, p), dimensions={0}, to_apply=add
+      }
+    )";
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+    std::vector<HloInstruction*> sequence;
+    for (const char* name :
+         {"p", "w", "a", "a_sum", "mid", "w_sum", "big", "mid_sum", "f1", "f2",
+          "big_sum", "borrowed", "out"}) {
+      sequence.push_back(FindInstruction(module.get(), name));
+    }
+    HloSchedule schedule(module.get());
+    schedule.set_sequence(module->entry_computation(), sequence);
+    ASSERT_OK(schedule.Update());
+
+    BufferAssigner::Options opts;
+    opts.enable_fallback = true;
+    opts.can_use_allocation = BufferAssigner::AllowCrossColorReuse(3, 1);
+    opts.assignment_algorithm_for_computations_without_ordering =
+        NonSeqAlg::FAST_MERGE;
+    opts.buffer_assignment_algorithm = SeqAlg::SPATIAL;
+    opts.color_memory_limit = [](LogicalBuffer::Color color) -> int64_t {
+      return color == 1 ? kSafetyMargin + 3600 : 0;
+    };
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<BufferAssignment> assignment,
+        BufferAssigner::Run(
+            module.get(), std::make_unique<SequentialHloOrdering>(schedule),
+            &BufferSizeBytes, &alias_info_,
+            [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+    const HloInstruction* borrowed = FindInstruction(module.get(), "borrowed");
+    ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice src_slice,
+                         assignment->GetUniqueSlice(borrowed, {}));
+    EXPECT_EQ(src_slice.allocation()->color(), 1);
+    ExpectConsistentValueAssignments(*assignment);
+    EXPECT_OK(ConvertToProtoAndBack(assignment.get(), module.get()).status());
+  }
+}
+
+TEST_F(BufferAssignmentTest, FallbackSourceColorExceedsLimit) {
+  auto with_space = [](Shape s, int64_t space) {
+    s.mutable_layout()->set_memory_space(space);
+    return s;
+  };
+  constexpr int64_t kSafetyMargin = int64_t{5} << 29;
+  using SeqAlg = buffer_assignment::BufferAssignmentAlgorithmProto;
+  using NonSeqAlg =
+      buffer_assignment::AssignmentAlgorithmForComputationsWithoutOrderingProto;
+
+  // Test both a single-gap destination (where HEAD double-assigns into a new
+  // color-3 heap) and a two-gap destination (where HEAD re-borrows into the
+  // second gap and trips DCHECK(!HasAllocation)).
+  for (int64_t dst_elems : {50, 95}) {
+    auto builder = HloComputation::Builder(TestName());
+    std::vector<HloInstruction*> sequence;
+    auto add = [&](std::unique_ptr<HloInstruction> inst) {
+      sequence.push_back(builder.AddInstruction(std::move(inst)));
+      return sequence.back();
+    };
+    HloInstruction* param = add(
+        HloInstruction::CreateParameter(0, ShapeUtil::MakeShape(F32, {}), "p"));
+    HloInstruction* d0 = add(HloInstruction::CreateCustomCall(
+        with_space(ShapeUtil::MakeShape(F32, {dst_elems}), 1), {param}, "d0"));
+    HloInstruction* d0_end = add(HloInstruction::CreateCustomCall(
+        with_space(ShapeUtil::MakeShape(F32, {1}), 0), {d0}, "d0_end"));
+    HloInstruction* borrowed = add(HloInstruction::CreateCustomCall(
+        with_space(ShapeUtil::MakeShape(F32, {45}), 3), {d0_end}, "borrowed"));
+    HloInstruction* b_end = add(HloInstruction::CreateCustomCall(
+        with_space(ShapeUtil::MakeShape(F32, {1}), 0), {borrowed}, "b_end"));
+    HloInstruction* d1 = add(HloInstruction::CreateCustomCall(
+        with_space(ShapeUtil::MakeShape(F32, {dst_elems}), 1), {b_end}, "d1"));
+    HloInstruction* chain3 = b_end;
+    for (int64_t n : {10, 20, 30, 40}) {
+      chain3 = add(HloInstruction::CreateCustomCall(
+          with_space(ShapeUtil::MakeShape(F32, {n}), 3), {chain3}, "src"));
+    }
+    add(HloInstruction::CreateCustomCall(
+        with_space(ShapeUtil::MakeShape(F32, {1}), 0), {d1, chain3}, "root"));
+
+    auto module = CreateNewVerifiedModule();
+    module->AddEntryComputation(builder.Build());
+    HloSchedule schedule(module.get());
+    schedule.set_sequence(module->entry_computation(), sequence);
+    ASSERT_OK(module->set_schedule(schedule));
+
+    BufferAssigner::Options opts;
+    opts.enable_fallback = true;
+    opts.can_use_allocation = BufferAssigner::AllowCrossColorReuse(3, 1);
+    opts.assignment_algorithm_for_computations_without_ordering =
+        NonSeqAlg::FAST_MERGE;
+    opts.buffer_assignment_algorithm = SeqAlg::FAST_MERGE;
+    opts.fallback_algorithm = SeqAlg::FAST_SPLIT;
+    opts.color_memory_limit = [](LogicalBuffer::Color color) -> int64_t {
+      if (color == 1) {
+        return kSafetyMargin + 1000;
+      }
+      if (color == 3) {
+        return kSafetyMargin + 300;
+      }
+      return 0;
+    };
+
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<BufferAssignment> assignment,
+        BufferAssigner::Run(
+            module.get(), std::make_unique<SequentialHloOrdering>(schedule),
+            &BufferSizeBytes, &alias_info_,
+            [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+    ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice borrowed_slice,
+                         assignment->GetUniqueSlice(borrowed, {}));
+    EXPECT_EQ(borrowed_slice.allocation()->color(), 1);
+    ExpectConsistentValueAssignments(*assignment);
+    EXPECT_OK(ConvertToProtoAndBack(assignment.get(), module.get()).status());
+  }
+}
+
+TEST_F(BufferAssignmentTest, FallbackAllStrategiesExceedCoupledColors) {
+  // Strategy 0 (FAST_MERGE): color 1 uses 400 B and color 3 borrows `borrowed`
+  // (360 B) into color 1, leaving only `src_live` (200 B) in color 3 (600 B
+  // joint). Later strategies shrink color 1 to 280 B so `borrowed` no longer
+  // fits and color 3 grows to 360 B (640 B joint). Uncoupled color 2 shrinks
+  // independently from 400 B on FAST_MERGE to 280 B on FAST_SPLIT/SPATIAL.
+  auto with_space = [](Shape s, int64_t space) {
+    s.mutable_layout()->set_memory_space(space);
+    return s;
+  };
+  auto builder = HloComputation::Builder(TestName());
+  std::vector<HloInstruction*> sequence;
+  auto add = [&](std::unique_ptr<HloInstruction> inst) {
+    sequence.push_back(builder.AddInstruction(std::move(inst)));
+    return sequence.back();
+  };
+  HloInstruction* param = add(
+      HloInstruction::CreateParameter(0, ShapeUtil::MakeShape(F32, {}), "p"));
+  HloInstruction* src_live = add(HloInstruction::CreateCustomCall(
+      with_space(ShapeUtil::MakeShape(F32, {50}), 3), {param}, "src_live"));
+  HloInstruction* chain1 = param;
+  for (int64_t n : {10, 20, 30, 40}) {
+    chain1 = add(HloInstruction::CreateCustomCall(
+        with_space(ShapeUtil::MakeShape(F32, {n}), 1), {chain1}, "dst"));
+  }
+  HloInstruction* mid = add(HloInstruction::CreateCustomCall(
+      with_space(ShapeUtil::MakeShape(F32, {1}), 0), {src_live, chain1},
+      "mid"));
+  HloInstruction* borrowed = add(HloInstruction::CreateCustomCall(
+      with_space(ShapeUtil::MakeShape(F32, {90}), 3), {mid}, "borrowed"));
+  HloInstruction* chain2 = param;
+  for (int64_t n : {10, 20, 30, 40}) {
+    chain2 = add(HloInstruction::CreateCustomCall(
+        with_space(ShapeUtil::MakeShape(F32, {n}), 2), {chain2}, "other"));
+  }
+  add(HloInstruction::CreateCustomCall(
+      with_space(ShapeUtil::MakeShape(F32, {1}), 0), {borrowed, chain2},
+      "out"));
+
+  auto module = CreateNewVerifiedModule();
+  module->AddEntryComputation(builder.Build());
+  HloSchedule schedule(module.get());
+  schedule.set_sequence(module->entry_computation(), sequence);
+  ASSERT_OK(module->set_schedule(schedule));
+
+  using SeqAlg = buffer_assignment::BufferAssignmentAlgorithmProto;
+  using NonSeqAlg =
+      buffer_assignment::AssignmentAlgorithmForComputationsWithoutOrderingProto;
+  constexpr int64_t kSafetyMargin = int64_t{5} << 29;
+  BufferAssigner::Options opts;
+  opts.enable_fallback = true;
+  opts.can_use_allocation = BufferAssigner::AllowCrossColorReuse(3, 1);
+  opts.assignment_algorithm_for_computations_without_ordering =
+      NonSeqAlg::FAST_MERGE;
+  opts.buffer_assignment_algorithm = SeqAlg::FAST_MERGE;
+  opts.color_memory_limit = [](LogicalBuffer::Color color) -> int64_t {
+    return (color == 1 || color == 2 || color == 3) ? kSafetyMargin + 100 : 0;
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> assignment,
+      BufferAssigner::Run(
+          module.get(), std::make_unique<SequentialHloOrdering>(schedule),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice borrowed_slice,
+                       assignment->GetUniqueSlice(borrowed, {}));
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice other_slice,
+                       assignment->GetUniqueSlice(chain2, {}));
+  EXPECT_EQ(borrowed_slice.allocation()->color(), 1);
+  EXPECT_EQ(borrowed_slice.allocation()->size(), 400);
+  EXPECT_EQ(other_slice.allocation()->color(), 2);
+  EXPECT_EQ(other_slice.allocation()->size(), 280);
+  ExpectConsistentValueAssignments(*assignment);
+  EXPECT_OK(ConvertToProtoAndBack(assignment.get(), module.get()).status());
+}
+
+TEST_F(BufferAssignmentTest, CrossColorReuseAlignmentAndLiveOutGuard) {
+  constexpr absl::string_view kReuseHlo = R"(
+    HloModule AlignmentCheck, is_scheduled=true
+    ENTRY main {
+      p0 = f32[256]{0} parameter(0)
+      t1_big = f32[256]{0:S(1)} negate(p0)
+      use1 = f32[1]{0} slice(t1_big), slice={[0:1]}
+      t1_hold = f32[3]{0:S(1)} slice(p0), slice={[0:3]}
+      t0 = f32[64]{0} slice(p0), slice={[0:64]}
+      t0_use = f32[1]{0} slice(t0), slice={[0:1]}
+      t1_end = f32[1]{0} slice(t1_hold), slice={[0:1]}
+      ROOT out = (f32[1]{0}, f32[1]{0}, f32[1]{0}) tuple(use1, t0_use, t1_end)
+    }
+  )";
+
+  // 1. Sequential and non-sequential reuse reject buf_align=256 into
+  // alloc_align=64, and allow buf_align=256 into alloc_align=512 at a
+  // 512-byte-aligned offset.
+  for (int64_t alloc_align : {64, 512}) {
+    ASSERT_OK_AND_ASSIGN(auto seq_mod, ParseAndReturnVerifiedModule(kReuseHlo));
+    BufferAssigner::Options seq_opts;
+    seq_opts.can_use_allocation = BufferAssigner::AllowCrossColorReuse(0, 1);
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<BufferAssignment> seq_ba,
+        BufferAssigner::Run(
+            seq_mod.get(),
+            std::make_unique<SequentialHloOrdering>(seq_mod->schedule()),
+            &BufferSizeBytes, &alias_info_,
+            [alloc_align](LogicalBuffer::Color c) -> int64_t {
+              return c == 1 ? alloc_align : 256;
+            },
+            std::move(seq_opts)));
+    ASSERT_OK_AND_ASSIGN(
+        BufferAllocation::Slice t0_slice,
+        seq_ba->GetUniqueSlice(FindInstruction(seq_mod.get(), "t0"), {}));
+    if (alloc_align == 64) {
+      EXPECT_EQ(t0_slice.allocation()->color(), 0);
+    } else {
+      EXPECT_EQ(t0_slice.allocation()->color(), 1);
+      EXPECT_EQ(t0_slice.offset() % 512, 0);
+      EXPECT_EQ(t0_slice.offset() % 256, 0);
+    }
+  }
+
+  constexpr absl::string_view kNonSeqHlo = R"(
+    HloModule NonSeqAlign
+    ENTRY main {
+      p0 = f32[64]{0} parameter(0)
+      t1 = f32[64]{0:S(1)} negate(p0)
+      mid = f32[128]{0} concatenate(t1, t1), dimensions={0}
+      t0 = f32[64]{0} slice(mid), slice={[0:64]}
+      ROOT out = f32[1]{0} slice(t0), slice={[0:1]}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto nonseq_mod,
+                       ParseAndReturnVerifiedModule(kNonSeqHlo));
+  BufferAssigner::Options nonseq_opts;
+  nonseq_opts.buffer_order = BufferAssigner::BufferOrder::kTopological;
+  nonseq_opts.can_use_allocation = BufferAssigner::AllowCrossColorReuse(0, 1);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> nonseq_ba,
+      BufferAssigner::Run(
+          nonseq_mod.get(),
+          std::make_unique<DependencyHloOrdering>(nonseq_mod.get()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color c) -> int64_t { return c == 1 ? 64 : 256; },
+          std::move(nonseq_opts)));
+  EXPECT_EQ(
+      GetAllocation(*nonseq_ba, FindInstruction(nonseq_mod.get(), "t0"), {})
+          .color(),
+      0);
+
+  // 2. Live-out S(0) buffer must not reuse an S(1) temporary allocation under
+  // non-sequential ordering.
+  constexpr absl::string_view kLiveOutHlo = R"(
+    HloModule LiveOutCrossColor
+    ENTRY main {
+      p0 = f32[64]{0} parameter(0)
+      t1 = f32[64]{0:S(1)} negate(p0)
+      mid = f32[128]{0} concatenate(t1, t1), dimensions={0}
+      ROOT out = f32[64]{0} slice(mid), slice={[0:64]}
+    }
+  )";
+  for (auto order : {BufferAssigner::BufferOrder::kTopological,
+                     BufferAssigner::BufferOrder::kLiveRangeStart}) {
+    ASSERT_OK_AND_ASSIGN(auto lo_mod,
+                         ParseAndReturnVerifiedModule(kLiveOutHlo));
+    BufferAssigner::Options lo_opts;
+    lo_opts.buffer_order = order;
+    lo_opts.can_use_allocation = BufferAssigner::AllowCrossColorReuse(0, 1);
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<BufferAssignment> lo_ba,
+        BufferAssigner::Run(
+            lo_mod.get(), std::make_unique<DependencyHloOrdering>(lo_mod.get()),
+            &BufferSizeBytes, &alias_info_,
+            [](LogicalBuffer::Color) { return 64; }, std::move(lo_opts)));
+    EXPECT_EQ(
+        GetAllocation(*lo_ba, FindInstruction(lo_mod.get(), "out"), {}).color(),
+        0);
+    EXPECT_OK(ConvertToProtoAndBack(lo_ba.get(), lo_mod.get()).status());
+  }
+
+  // 3. Under temp_buffer_color=2, a raw color-0 buffer whose alignment exceeds
+  // color 7's alignment is not placed into a color-7 temporary heap.
+  constexpr absl::string_view kTempColorHlo = R"(
+    HloModule TempColorRawZeroGuard, is_scheduled=true
+    ENTRY main {
+      p0 = f32[256]{0} parameter(0)
+      t7 = f32[256]{0:S(7)} negate(p0)
+      use7 = f32[1]{0} slice(t7), slice={[0:1]}
+      t2 = f32[64]{0:S(2)} slice(p0), slice={[0:64]}
+      use2 = f32[1]{0} slice(t2), slice={[0:1]}
+      t0 = f32[64]{0} slice(p0), slice={[0:64]}
+      use0 = f32[1]{0} slice(t0), slice={[0:1]}
+      ROOT out = (f32[1]{0}, f32[1]{0}, f32[1]{0}) tuple(use7, use2, use0)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto tc_mod,
+                       ParseAndReturnVerifiedModule(kTempColorHlo));
+  BufferAssigner::Options tc_opts;
+  tc_opts.temp_buffer_color = 2;
+  tc_opts.can_use_allocation = [](LogicalBuffer::Color buf,
+                                  LogicalBuffer::Color alloc) {
+    return buf == alloc || ((buf == 0 || buf == 2) && alloc == 7);
+  };
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> tc_ba,
+      BufferAssigner::Run(
+          tc_mod.get(),
+          std::make_unique<SequentialHloOrdering>(tc_mod->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color c) -> int64_t { return c == 0 ? 256 : 64; },
+          std::move(tc_opts)));
+  EXPECT_EQ(
+      GetAllocation(*tc_ba, FindInstruction(tc_mod.get(), "t2"), {}).color(),
+      7);
+  EXPECT_EQ(
+      GetAllocation(*tc_ba, FindInstruction(tc_mod.get(), "t0"), {}).color(),
+      2);
+}
+
+TEST_F(
+    BufferAssignmentTest,
+    CrossColorBuffersTracksNonSequentialReuseWithoutTempColorFalsePositives) {
+  constexpr absl::string_view kNonSeqReuse = R"(
+    HloModule NonSeqCrossColorTracking
+    ENTRY main {
+      p0 = f32[64]{0} parameter(0)
+      t1 = f32[64]{0:S(1)} negate(p0)
+      mid = f32[128]{0} concatenate(t1, t1), dimensions={0}
+      t0 = f32[64]{0} slice(mid), slice={[0:64]}
+      ROOT out = f32[1]{0} slice(t0), slice={[0:1]}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto mod, ParseAndReturnVerifiedModule(kNonSeqReuse));
+  BufferAssigner::Options opts;
+  opts.buffer_order = BufferAssigner::BufferOrder::kTopological;
+  opts.can_use_allocation = BufferAssigner::AllowCrossColorReuse(0, 1);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> ba,
+      BufferAssigner::Run(
+          mod.get(), std::make_unique<DependencyHloOrdering>(mod.get()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 64; }, std::move(opts)));
+  const HloInstruction* t1 = FindInstruction(mod.get(), "t1");
+  const HloInstruction* t0 = FindInstruction(mod.get(), "t0");
+  const BufferAllocation& t1_alloc = GetAllocation(*ba, t1, {});
+  const BufferAllocation& t0_alloc = GetAllocation(*ba, t0, {});
+  EXPECT_EQ(t1_alloc.index(), t0_alloc.index());
+  EXPECT_EQ(t1_alloc.color(), 1);
+  const HloValue& t0_val = ba->dataflow_analysis().GetUniqueValueAt(t0, {});
+  EXPECT_THAT(ba->CrossColorBuffers(t1_alloc), ElementsAre(&t0_val));
+  EXPECT_THAT(ba->ToString(),
+              HasSubstr("reused by buffers of a different color:"));
+
+  // Sequential temp_buffer_color remapping leaves CrossColorBuffers empty.
+  constexpr absl::string_view kSeqTempColor = R"(
+    HloModule SeqTempColorNoFalsePositive, is_scheduled=true
+    ENTRY main {
+      p0 = f32[32]{0} parameter(0)
+      a = f32[32]{0} negate(p0)
+      b = f32[32]{0} exponential(a)
+      ROOT out = f32[1]{0} slice(b), slice={[0:1]}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto tc_mod,
+                       ParseAndReturnVerifiedModule(kSeqTempColor));
+  BufferAssigner::Options tc_opts;
+  tc_opts.temp_buffer_color = Layout::kCollectiveMemorySpace;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> tc_ba,
+      BufferAssigner::Run(
+          tc_mod.get(),
+          std::make_unique<SequentialHloOrdering>(tc_mod->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 64; }, std::move(tc_opts)));
+  const BufferAllocation& a_alloc =
+      GetAllocation(*tc_ba, FindInstruction(tc_mod.get(), "a"), {});
+  EXPECT_EQ(a_alloc.color(), Layout::kCollectiveMemorySpace);
+  EXPECT_TRUE(tc_ba->CrossColorBuffers(a_alloc).empty());
+  EXPECT_FALSE(tc_ba->PeakMemoryLogicalBuffers(a_alloc).empty());
+
+  // Recoloring a non-sequential color-0 temp allocation to temp_buffer_color
+  // drops entries whose color matches the final allocation color.
+  constexpr absl::string_view kRecolorPrune = R"(
+    HloModule RecolorPrunesMatchingCrossColor
+    ENTRY main {
+      p0 = f32[64]{0} parameter(0)
+      t0 = f32[64]{0} negate(p0)
+      mid = f32[128]{0} concatenate(t0, t0), dimensions={0}
+      t2 = f32[64]{0:S(2)} slice(mid), slice={[0:64]}
+      ROOT out = f32[1]{0} slice(t2), slice={[0:1]}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto rp_mod,
+                       ParseAndReturnVerifiedModule(kRecolorPrune));
+  BufferAssigner::Options rp_opts;
+  rp_opts.buffer_order = BufferAssigner::BufferOrder::kTopological;
+  rp_opts.temp_buffer_color = 2;
+  rp_opts.can_use_allocation = BufferAssigner::AllowCrossColorReuse(2, 0);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> rp_ba,
+      BufferAssigner::Run(
+          rp_mod.get(), std::make_unique<DependencyHloOrdering>(rp_mod.get()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 64; }, std::move(rp_opts)));
+  const BufferAllocation& rp_alloc =
+      GetAllocation(*rp_ba, FindInstruction(rp_mod.get(), "t2"), {});
+  EXPECT_EQ(rp_alloc.color(), 2);
+  EXPECT_TRUE(rp_ba->CrossColorBuffers(rp_alloc).empty());
+}
+
+TEST_F(BufferAssignmentTest, SortColorsForCanUseAllocationIntermediateColor) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule IntermediateColorTopoSort, is_scheduled=true
+    ENTRY main {
+      p0 = f32[2048]{0} parameter(0)
+      t7 = f32[2048]{0:S(7)} negate(p0)
+      use7 = f32[1]{0} slice(t7), slice={[0:1]}
+      t2 = f32[512]{0:S(2)} slice(p0), slice={[0:512]}
+      use2 = f32[1]{0} slice(t2), slice={[0:1]}
+      t0 = f32[1024]{0} slice(p0), slice={[0:1024]}
+      use0 = f32[1]{0} slice(t0), slice={[0:1]}
+      ROOT out = (f32[1]{0}, f32[1]{0}, f32[1]{0}) tuple(use7, use2, use0)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  BufferAssigner::Options opts;
+  opts.can_use_allocation = BufferAssigner::AllowCrossColorReuse(0, 7);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> assignment,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 64; }, std::move(opts)));
+
+  const HloInstruction* t7 = FindInstruction(module.get(), "t7");
+  const HloInstruction* t2 = FindInstruction(module.get(), "t2");
+  const HloInstruction* t0 = FindInstruction(module.get(), "t0");
+  const BufferAllocation& t7_alloc = GetAllocation(*assignment, t7, {});
+  const BufferAllocation& t2_alloc = GetAllocation(*assignment, t2, {});
+  const BufferAllocation& t0_alloc = GetAllocation(*assignment, t0, {});
+  EXPECT_EQ(t7_alloc.color(), 7);
+  EXPECT_EQ(t0_alloc.index(), t7_alloc.index());
+  EXPECT_EQ(t7_alloc.size(), 2048 * 4);
+  EXPECT_EQ(t2_alloc.color(), 2);
+  EXPECT_NE(t2_alloc.index(), t7_alloc.index());
+  const HloValue& t0_val =
+      assignment->dataflow_analysis().GetUniqueValueAt(t0, {});
+  EXPECT_THAT(assignment->CrossColorBuffers(t7_alloc), ElementsAre(&t0_val));
 }
 }  // namespace
 }  // namespace xla

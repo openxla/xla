@@ -1237,6 +1237,9 @@ absl::Status BufferAssignment::AddAssignment(BufferAllocation* allocation,
     ABSL_RETURN_IF_ERROR(
         AddAssignmentToAllocation(allocation, *buffer_value, offset, size,
                                   GetValueLiveRange(buffer_value->id())));
+    if (buffer_value->color() != allocation->color()) {
+      mutable_values(allocation).cross_color_buffers.push_back(buffer_value);
+    }
     allocation_index_for_value_id_[buffer_value->id()] = allocation->index();
     ++num_assigned_values_;
   }
@@ -1322,6 +1325,14 @@ absl::Status BufferAssignment::CombineTempAllocations(
     for (auto it = first_temp_it; it != allocations_.end(); ++it) {
       if (it->color() == 0) {
         it->set_color(*temp_buffer_color);
+        std::vector<const HloValue*>& cross_color =
+            allocation_values_[it->index()].cross_color_buffers;
+        cross_color.erase(std::remove_if(cross_color.begin(), cross_color.end(),
+                                         [&](const HloValue* value) {
+                                           return value->color() ==
+                                                  *temp_buffer_color;
+                                         }),
+                          cross_color.end());
       }
     }
   }
@@ -1522,6 +1533,20 @@ void BufferAssignment::RestoreStateForColors(
     const absl::flat_hash_set<LogicalBuffer::Color>& colors) {
   DCHECK_EQ(allocations_.size(), allocation_values_.size());
   DCHECK_EQ(state.allocations.size(), state.allocation_values.size());
+#ifndef NDEBUG
+  auto check_cross_color_closure =
+      [&](absl::Span<const BufferAllocation> allocs,
+          absl::Span<const AllocationValues> alloc_vals) {
+        for (size_t i = 0; i < allocs.size(); ++i) {
+          const bool alloc_in_colors = colors.contains(allocs[i].color());
+          for (const HloValue* value : alloc_vals[i].cross_color_buffers) {
+            DCHECK_EQ(colors.contains(value->color()), alloc_in_colors);
+          }
+        }
+      };
+  check_cross_color_closure(allocations_, allocation_values_);
+  check_cross_color_closure(state.allocations, state.allocation_values);
+#endif
   size_t write = 0;
   for (size_t read = 0; read < allocations_.size(); ++read) {
     if (!colors.contains(allocations_[read].color())) {
@@ -2463,12 +2488,14 @@ absl::StatusOr<bool> BufferAssigner::MaybeAssignBuffer(
 
   const auto& new_values = hlo_buffer.values();
   ABSL_ASSIGN_OR_RETURN(BufferValue::Color buffer_color, hlo_buffer.color());
+  const bool buffer_lives_out = assignment->BufferLivesOut(hlo_buffer);
 
   // Input/output allocations are backed by caller-provided or live-out storage,
   // so buffer assignment cannot strengthen their runtime allocation
   // requirements after the fact. Temporary allocations can use the backend's
   // directional color-assignment predicate below.
-  if (allocation->IsInputOrOutput() && buffer_color != allocation->color()) {
+  if ((allocation->IsInputOrOutput() || buffer_lives_out) &&
+      buffer_color != allocation->color()) {
     VLOG(4) << "Cannot assign: input/output allocation has color "
             << allocation->color() << ", but buffer has color " << buffer_color
             << ".";
@@ -2477,14 +2504,12 @@ absl::StatusOr<bool> BufferAssigner::MaybeAssignBuffer(
 
   // This is a storage-compatibility check, not recoloring: the buffer keeps its
   // HLO color even when it can use an allocation with a different color.
-  if (buffer_color != allocation->color() &&
-      !opts_.can_use_allocation(buffer_color, allocation->color())) {
+  if (!CanUseCrossColorAllocation(buffer_color, allocation->color(),
+                                  *assignment)) {
     VLOG(4) << "Can't assign: buffer has color " << buffer_color
             << " and allocation has color " << allocation->color() << ".";
     return false;
   }
-
-  const bool buffer_lives_out = assignment->BufferLivesOut(hlo_buffer);
 
   // If the buffer is live out of the computation then it should only be
   // assigned a buffer which exactly fits the result to avoid wasting memory
@@ -3116,23 +3141,71 @@ BufferAssigner::SplitBuffersByColor(
   return color_map;
 }
 
+bool BufferAssigner::CanUseCrossColorAllocation(
+    LogicalBuffer::Color buffer_color, LogicalBuffer::Color alloc_color,
+    const BufferAssignment& assignment) const {
+  if (buffer_color == alloc_color) {
+    return true;
+  }
+  if (!opts_.can_use_allocation(buffer_color, alloc_color)) {
+    return false;
+  }
+  const int64_t buffer_align = assignment.color_alignment_(buffer_color);
+  const int64_t alloc_align = assignment.color_alignment_(alloc_color);
+  return buffer_align > 0 && alloc_align > 0 && alloc_align % buffer_align == 0;
+}
+
 std::vector<LogicalBuffer::Color> BufferAssigner::SortColorsForCanUseAllocation(
-    absl::Span<const LogicalBuffer::Color> colors) const {
-  std::vector<LogicalBuffer::Color> sorted(colors.begin(), colors.end());
-
-  // If buffers of color A can use allocations of color B (but not the reverse),
-  // process B first so that B's fixed-size heap is materialized and available
-  // for opportunistic reuse before A's buffers are heap-simulated. When the
-  // predicate is symmetric (same group) or unrelated in both directions, fall
-  // back to a stable order by numeric color.
-  absl::c_sort(sorted, [&](LogicalBuffer::Color a, LogicalBuffer::Color b) {
-    const bool a_uses_b = opts_.can_use_allocation(a, b);
-    const bool b_uses_a = opts_.can_use_allocation(b, a);
-    // If the relation is asymmetric, the color that can use the other's
-    // allocations must come later; otherwise fall back to numeric color.
-    return (a_uses_b != b_uses_a) ? b_uses_a : a < b;
-  });
-
+    absl::Span<const LogicalBuffer::Color> colors,
+    const BufferAssignment& assignment) const {
+  std::vector<LogicalBuffer::Color> unique_colors(colors.begin(), colors.end());
+  absl::c_sort(unique_colors);
+  unique_colors.erase(std::unique(unique_colors.begin(), unique_colors.end()),
+                      unique_colors.end());
+  const size_t n = unique_colors.size();
+  std::vector<std::vector<size_t>> dependents(n);
+  std::vector<int64_t> indegree(n, 0);
+  for (size_t i = 0; i < n; ++i) {
+    for (size_t j = i + 1; j < n; ++j) {
+      const bool i_uses_j = CanUseCrossColorAllocation(
+          unique_colors[i], unique_colors[j], assignment);
+      const bool j_uses_i = CanUseCrossColorAllocation(
+          unique_colors[j], unique_colors[i], assignment);
+      if (i_uses_j == j_uses_i) {
+        continue;
+      }
+      if (i_uses_j) {
+        dependents[j].push_back(i);
+        ++indegree[i];
+      } else {
+        dependents[i].push_back(j);
+        ++indegree[j];
+      }
+    }
+  }
+  std::priority_queue<size_t, std::vector<size_t>, std::greater<size_t>> ready;
+  for (size_t i = 0; i < n; ++i) {
+    if (indegree[i] == 0) {
+      ready.push(i);
+    }
+  }
+  std::vector<LogicalBuffer::Color> sorted;
+  sorted.reserve(n);
+  while (!ready.empty()) {
+    const size_t cur = ready.top();
+    ready.pop();
+    sorted.push_back(unique_colors[cur]);
+    for (size_t next : dependents[cur]) {
+      if (--indegree[next] == 0) {
+        ready.push(next);
+      }
+    }
+  }
+  for (size_t i = 0; i < n; ++i) {
+    if (indegree[i] > 0) {
+      sorted.push_back(unique_colors[i]);
+    }
+  }
   return sorted;
 }
 
@@ -3227,7 +3300,8 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
   for (BufferAllocation& allocation : assignment->allocations_) {
     if (allocation.color() != buffer_color &&
         allocation.IsPreallocatedTempBuffer() &&
-        opts_.can_use_allocation(buffer_color, allocation.color())) {
+        CanUseCrossColorAllocation(buffer_color, allocation.color(),
+                                   *assignment)) {
       if (opts_.fixed_offset.has_value() &&
           absl::c_any_of(
               assignment->assigned_buffers(allocation), [&](const auto& entry) {
@@ -3284,7 +3358,12 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
       return values->contains(buffer_value) &&
              (buffer_value->color() == buffer_color ||
               (opts_.temp_buffer_color == buffer_color &&
-               buffer_value->color() == 0)) &&
+               buffer_value->color() == 0 &&
+               absl::c_any_of(destinations,
+                              [&](const BufferAllocation* dest) {
+                                return CanUseCrossColorAllocation(
+                                    0, dest->color(), *assignment);
+                              }))) &&
              live_ranges.contains(buffer_value);
     };
 
@@ -3336,7 +3415,17 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
         blocking.push_back(offset_size);
       }
     }
-    int64_t alignment = assignment->color_alignment_(allocation.color());
+    int64_t buf_align = assignment->color_alignment_(buffer_color);
+    for (const HloValue* value : candidate.hlo_buffer->values()) {
+      if (!CanUseCrossColorAllocation(value->color(), allocation.color(),
+                                      *assignment)) {
+        return std::optional<ReusePlacement>();
+      }
+      buf_align =
+          std::lcm(buf_align, assignment->color_alignment_(value->color()));
+    }
+    const int64_t alignment =
+        std::lcm(assignment->color_alignment_(allocation.color()), buf_align);
     return FindBestFitGap(allocation, candidate.size, alignment,
                           std::move(blocking));
   };
@@ -3358,8 +3447,6 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
           assignment->AddAssignment(allocation, *candidate.hlo_buffer,
                                     placement->offset, candidate.size));
       for (const HloValue* value : candidate.hlo_buffer->values()) {
-        assignment->mutable_values(allocation)
-            .cross_color_buffers.push_back(value);
         values->erase(value);
       }
       VLOG(2) << "Reused temp allocation #" << allocation->index() << " (color "
@@ -3740,7 +3827,7 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
     }
     auto color_map = SplitBuffersByColor(all_buffers_to_assign);
     std::vector<LogicalBuffer::Color> sorted_colors = GetColors(color_map);
-    sorted_colors = SortColorsForCanUseAllocation(sorted_colors);
+    sorted_colors = SortColorsForCanUseAllocation(sorted_colors, *assignment);
 
     for (auto color : sorted_colors) {
       // First try to place this color's buffers into the free space of already-
@@ -4208,38 +4295,168 @@ absl::Status BufferAssigner::RunAssignBuffersWithFallback(
                       absl::flat_hash_set<const HloValue*>>
       cached_buffers_to_assign_sequentially;
 
-  // The lowest memory usage and the assignment with it for each color that
-  // exceeded its memory limit with every strategy so far. Colors are assigned
-  // independently, so each one keeps its own best assignment.
+  // Group colors that can share allocations into undirected connected
+  // components so fallback rollback and snapshot restoration stay atomic.
+  absl::btree_set<LogicalBuffer::Color> known_colors;
+  for (const HloValue* value : assignment->dataflow_analysis().values()) {
+    known_colors.insert(value->color());
+  }
+  if (opts_.preset_assignments) {
+    for (const auto& [color, info] :
+         opts_.preset_assignments->assignment_informations()) {
+      known_colors.insert(color);
+    }
+  }
+  std::vector<absl::btree_set<LogicalBuffer::Color>> color_components;
+  color_components.reserve(known_colors.size());
+  absl::flat_hash_map<LogicalBuffer::Color, size_t> color_to_component;
+  color_to_component.reserve(known_colors.size());
+  auto merge_components = [&](size_t a, size_t b) -> size_t {
+    if (a == b) {
+      return a;
+    }
+    if (a > b) {
+      std::swap(a, b);
+    }
+    for (LogicalBuffer::Color color : color_components[b]) {
+      color_components[a].insert(color);
+      color_to_component[color] = a;
+    }
+    color_components[b].clear();
+    return a;
+  };
+  auto ensure_color = [&](LogicalBuffer::Color color) -> size_t {
+    if (auto it = color_to_component.find(color);
+        it != color_to_component.end()) {
+      return it->second;
+    }
+    size_t comp = color_components.size();
+    color_components.push_back({color});
+    color_to_component.emplace(color, comp);
+    for (LogicalBuffer::Color other : known_colors) {
+      if (other != color &&
+          (CanUseCrossColorAllocation(color, other, *assignment) ||
+           CanUseCrossColorAllocation(other, color, *assignment))) {
+        comp = merge_components(comp, color_to_component.at(other));
+      }
+    }
+    known_colors.insert(color);
+    return comp;
+  };
+  for (LogicalBuffer::Color color : known_colors) {
+    color_to_component.emplace(color, color_components.size());
+    color_components.push_back({color});
+  }
+  for (auto it1 = known_colors.begin(); it1 != known_colors.end(); ++it1) {
+    for (auto it2 = std::next(it1); it2 != known_colors.end(); ++it2) {
+      if (CanUseCrossColorAllocation(*it1, *it2, *assignment) ||
+          CanUseCrossColorAllocation(*it2, *it1, *assignment)) {
+        merge_components(color_to_component.at(*it1),
+                         color_to_component.at(*it2));
+      }
+    }
+  }
+
+  constexpr int64_t kTwoPointFiveGiB = int64_t{5} << 29;
+  auto adjusted_color_limit =
+      [&](LogicalBuffer::Color color) -> std::optional<int64_t> {
+    const int64_t memory_limit = GetMemoryLimit(*assignment, color);
+    if (memory_limit <= 0) {
+      return std::nullopt;
+    }
+    return std::max<int64_t>(0, memory_limit - kTwoPointFiveGiB);
+  };
+  auto saturating_add = [](int64_t a, int64_t b) -> int64_t {
+    if (b > 0 && a > std::numeric_limits<int64_t>::max() - b) {
+      return std::numeric_limits<int64_t>::max();
+    }
+    return a + b;
+  };
+  auto compute_allocated_bytes =
+      [&](absl::Span<const BufferAllocation> allocs) {
+        absl::btree_map<LogicalBuffer::Color, int64_t> bytes_by_color;
+        for (const BufferAllocation& alloc : allocs) {
+          LogicalBuffer::Color color = alloc.color();
+          if (alloc.IsPreallocatedTempBuffer()) {
+            const int64_t alignment = assignment->color_alignment_(color);
+            int64_t& allocated_bytes = bytes_by_color[color];
+            allocated_bytes =
+                RoundUpTo(allocated_bytes, alignment) + alloc.size();
+          } else if (!alloc.is_thread_local()) {
+            bytes_by_color[color] += alloc.size();
+          }
+        }
+        return bytes_by_color;
+      };
+  auto score_component =
+      [&](size_t comp,
+          const absl::btree_map<LogicalBuffer::Color, int64_t>& bytes_by_color,
+          const absl::btree_map<LogicalBuffer::Color, int64_t>& limits_by_color)
+      -> std::pair<int64_t, int64_t> {
+    int64_t excess_bytes = 0;
+    int64_t total_bytes = 0;
+    for (LogicalBuffer::Color color : color_components[comp]) {
+      const auto it = bytes_by_color.find(color);
+      const int64_t bytes = it != bytes_by_color.end() ? it->second : 0;
+      total_bytes = saturating_add(total_bytes, bytes);
+      const auto limit_it = limits_by_color.find(color);
+      if (limit_it != limits_by_color.end() && bytes > limit_it->second) {
+        excess_bytes = saturating_add(excess_bytes, bytes - limit_it->second);
+      }
+    }
+    return {excess_bytes, total_bytes};
+  };
+
+  // Best joint assignment for each coupled color component that exceeded a
+  // memory limit with every strategy so far. Singleton components reduce
+  // identically to single-color minimum memory usage.
   struct BestAssignment {
-    int64_t memory_usage;
+    int64_t excess_bytes;
+    int64_t total_bytes;
     std::shared_ptr<const BufferAssignment::State> snapshot;
   };
-  absl::flat_hash_map<LogicalBuffer::Color, BestAssignment> best_assignments;
+  absl::btree_map<size_t, BestAssignment> best_assignments;
 
   std::optional<absl::flat_hash_set<LogicalBuffer::Color>> active_colors;
 
   // 3. Iterate through the assignment strategies. Return the first result that
-  // fits the limit for all colors, or the best per color if none fits.
+  // fits the limit for all colors, or the best per coupled component if none
+  // fits.
   for (const BufferAssigner::AssignmentStrategy& strategy :
        assignment_strategies) {
     LOG(INFO) << "Trying strategy: " << strategy.non_sequential_algorithm
               << ", " << strategy.sequential_algorithm;
     const absl::flat_hash_set<LogicalBuffer::Color>* colors_to_assign =
         active_colors.has_value() ? &*active_colors : nullptr;
+    absl::flat_hash_map<const HloComputation*,
+                        absl::flat_hash_set<const HloValue*>>
+        filtered_buffers_to_assign_sequentially;
+    const absl::flat_hash_map<const HloComputation*,
+                              absl::flat_hash_set<const HloValue*>>*
+        sequential_buffers_for_run = &cached_buffers_to_assign_sequentially;
 
     if (cached_non_sequential_algorithm == strategy.non_sequential_algorithm) {
       // Reuse the cached AssignBuffersForGlobalComputations result for the
-      // colors that are reassigned.
+      // colors that are reassigned without mutating the cached buffer sets.
       if (colors_to_assign != nullptr) {
         assignment->RestoreStateForColors(
             cached_non_sequential_assignment_state, *colors_to_assign);
-        // NOLINTNEXTLINE : the order of the loop is not important.
-        for (auto& [comp, buffers] : cached_buffers_to_assign_sequentially) {
+        filtered_buffers_to_assign_sequentially.reserve(
+            cached_buffers_to_assign_sequentially.size());
+        for (const HloComputation* comp : global_computations) {
+          auto cache_it = cached_buffers_to_assign_sequentially.find(comp);
+          if (cache_it == cached_buffers_to_assign_sequentially.end()) {
+            continue;
+          }
+          absl::flat_hash_set<const HloValue*>& buffers =
+              filtered_buffers_to_assign_sequentially
+                  .emplace(comp, cache_it->second)
+                  .first->second;
           absl::erase_if(buffers, [&](const HloValue* value) {
             return !colors_to_assign->contains(value->color());
           });
         }
+        sequential_buffers_for_run = &filtered_buffers_to_assign_sequentially;
       } else {
         assignment->RestoreState(cached_non_sequential_assignment_state);
       }
@@ -4267,46 +4484,34 @@ absl::Status BufferAssigner::RunAssignBuffersWithFallback(
     ABSL_RETURN_IF_ERROR(RunAssignBuffers(
         module, global_computations, thread_local_computations, assignment,
         strategy.sequential_algorithm, strategy.non_sequential_algorithm,
-        colors_to_assign, &cached_buffers_to_assign_sequentially));
+        colors_to_assign, sequential_buffers_for_run));
 
-    absl::btree_map<LogicalBuffer::Color, int64_t> allocated_bytes_by_color;
-    for (const BufferAllocation& alloc : assignment->Allocations()) {
-      LogicalBuffer::Color color = alloc.color();
-      if (alloc.IsPreallocatedTempBuffer()) {
-        int64_t alignment = assignment->color_alignment_(color);
-        int64_t& allocated_bytes = allocated_bytes_by_color[color];
-        int64_t base = RoundUpTo(allocated_bytes, alignment);
-        allocated_bytes = base + alloc.size();
-      } else if (!alloc.is_thread_local()) {
-        allocated_bytes_by_color[color] += alloc.size();
-      }
-    }
+    const absl::btree_map<LogicalBuffer::Color, int64_t>
+        allocated_bytes_by_color =
+            compute_allocated_bytes(assignment->Allocations());
 
-    absl::flat_hash_set<LogicalBuffer::Color> fallback_colors;
+    absl::btree_map<LogicalBuffer::Color, int64_t> adjusted_limits_by_color;
+    absl::btree_set<size_t> failed_components;
     for (const auto& [color, total_allocated_bytes] :
          allocated_bytes_by_color) {
-      int64_t memory_limit = GetMemoryLimit(*assignment, color);
-      if (memory_limit > 0) {
-        // Apply a safety margin of 2.5 GiB to the initial memory limit.
-        constexpr int64_t kTwoPointFiveGiB = int64_t{5} << 29;
-        int64_t adjusted_limit =
-            std::max<int64_t>(0, memory_limit - kTwoPointFiveGiB);
-
-        if (total_allocated_bytes > adjusted_limit) {
-          fallback_colors.insert(color);
+      const std::optional<int64_t> adjusted_limit = adjusted_color_limit(color);
+      if (adjusted_limit.has_value()) {
+        adjusted_limits_by_color.emplace(color, *adjusted_limit);
+        if (total_allocated_bytes > *adjusted_limit) {
+          failed_components.insert(ensure_color(color));
           VLOG(1) << "BufferAssignment strategy (non_sequential: "
                   << strategy.non_sequential_algorithm
                   << ", sequential: " << strategy.sequential_algorithm
                   << ") exceeded memory limit for color " << color << " ("
                   << total_allocated_bytes << " bytes vs limit of "
-                  << adjusted_limit << " bytes).";
+                  << *adjusted_limit << " bytes).";
         } else {
           VLOG(1) << "BufferAssignment strategy (non_sequential: "
                   << strategy.non_sequential_algorithm
                   << ", sequential: " << strategy.sequential_algorithm
                   << ") did not exceed memory limit for color " << color << " ("
                   << total_allocated_bytes << " bytes vs limit of "
-                  << adjusted_limit << " bytes).";
+                  << *adjusted_limit << " bytes).";
         }
       } else {
         VLOG(1) << "BufferAssignment strategy (non_sequential: "
@@ -4317,49 +4522,95 @@ absl::Status BufferAssigner::RunAssignBuffersWithFallback(
       }
     }
 
-    if (fallback_colors.empty()) {
+    for (const BufferAllocation& alloc : assignment->Allocations()) {
+      size_t alloc_comp = ensure_color(alloc.color());
+      for (const HloValue* value : assignment->CrossColorBuffers(alloc)) {
+        const size_t val_comp = ensure_color(value->color());
+        if (alloc_comp == val_comp) {
+          continue;
+        }
+        const size_t keep = merge_components(alloc_comp, val_comp);
+        const size_t drop = (keep == alloc_comp) ? val_comp : alloc_comp;
+        if (failed_components.erase(drop) > 0) {
+          failed_components.insert(keep);
+        }
+        std::vector<std::shared_ptr<const BufferAssignment::State>> candidates;
+        if (auto it = best_assignments.find(keep);
+            it != best_assignments.end() && it->second.snapshot != nullptr) {
+          candidates.push_back(it->second.snapshot);
+        }
+        if (auto it = best_assignments.find(drop);
+            it != best_assignments.end() && it->second.snapshot != nullptr) {
+          candidates.push_back(it->second.snapshot);
+        }
+        best_assignments.erase(keep);
+        best_assignments.erase(drop);
+        for (const auto& candidate : candidates) {
+          const auto [exc, tot] = score_component(
+              keep, compute_allocated_bytes(candidate->allocations),
+              adjusted_limits_by_color);
+          auto [it, inserted] = best_assignments.try_emplace(
+              keep, BestAssignment{exc, tot, candidate});
+          if (!inserted &&
+              std::tie(exc, tot) <
+                  std::tie(it->second.excess_bytes, it->second.total_bytes)) {
+            it->second = {exc, tot, candidate};
+          }
+        }
+        alloc_comp = keep;
+      }
+    }
+
+    if (failed_components.empty()) {
       return absl::OkStatus();
     }
-    // The colors that fit now keep this assignment.
+    absl::flat_hash_set<LogicalBuffer::Color> fallback_colors;
+    for (size_t comp : failed_components) {
+      fallback_colors.insert(color_components[comp].begin(),
+                             color_components[comp].end());
+    }
+    // Coupled components that fit now keep this assignment.
     absl::erase_if(best_assignments, [&](const auto& entry) {
-      return !fallback_colors.contains(entry.first);
+      return !failed_components.contains(entry.first);
     });
-    // Record the colors whose memory usage improved, with a snapshot since the
-    // next strategy reassigns them. After the last strategy, the current
-    // assignment is kept, so no snapshot is taken.
+    // Record each failing coupled component whose joint score improved, taking
+    // a snapshot since the next strategy reassigns it. After the last strategy,
+    // the current assignment is kept, so no snapshot is taken.
     const bool is_last_strategy = &strategy == &assignment_strategies.back();
     std::shared_ptr<const BufferAssignment::State> snapshot;
-    for (const auto& [color, memory_usage] : allocated_bytes_by_color) {
-      if (!fallback_colors.contains(color)) {
-        continue;
-      }
-      auto it = best_assignments.find(color);
+    for (size_t comp : failed_components) {
+      const auto [excess_bytes, total_bytes] = score_component(
+          comp, allocated_bytes_by_color, adjusted_limits_by_color);
+      auto it = best_assignments.find(comp);
       if (it != best_assignments.end() &&
-          it->second.memory_usage <= memory_usage) {
+          std::tie(it->second.excess_bytes, it->second.total_bytes) <=
+              std::tie(excess_bytes, total_bytes)) {
         continue;
       }
       if (snapshot == nullptr && !is_last_strategy) {
         snapshot = std::make_shared<const BufferAssignment::State>(
             assignment->GetState());
       }
-      best_assignments[color] = {memory_usage, snapshot};
+      if (it != best_assignments.end()) {
+        it->second = {excess_bytes, total_bytes, snapshot};
+      } else {
+        best_assignments.emplace(
+            comp, BestAssignment{excess_bytes, total_bytes, snapshot});
+      }
     }
     active_colors = std::move(fallback_colors);
   }
 
-  // No strategy fits all colors. Each color that still exceeds its limit gets
-  // its best assignment back, unless it is the current one.
-  std::vector<LogicalBuffer::Color> colors_to_restore;
-  // NOLINTNEXTLINE(*-custom-deterministic-iteration-order)
-  for (const auto& [color, best_assignment] : best_assignments) {
-    if (best_assignment.snapshot != nullptr) {
-      colors_to_restore.push_back(color);
+  // No strategy fits all colors. Each failing coupled component gets its best
+  // joint assignment back atomically, unless it is already the current one.
+  for (const auto& [comp, best_assignment] : best_assignments) {
+    if (best_assignment.snapshot != nullptr &&
+        !color_components[comp].empty()) {
+      const absl::flat_hash_set<LogicalBuffer::Color> component_colors(
+          color_components[comp].begin(), color_components[comp].end());
+      assignment->RestoreStateForColors(*best_assignment.snapshot,
+                                        component_colors);
     }
-  }
-  absl::c_sort(colors_to_restore);
-  for (LogicalBuffer::Color color : colors_to_restore) {
-    assignment->RestoreStateForColors(*best_assignments.at(color).snapshot,
-                                      {color});
   }
   return absl::OkStatus();
 }
