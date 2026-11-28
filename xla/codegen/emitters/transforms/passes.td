@@ -292,12 +292,4 @@ def ExpandIntegerPowerPass : Pass<"xla-expand-integer-power"> {
   ];
 }
 
-def LowerPdlWaitPass : Pass<"xla-lower-pdl-wait", "mlir::ModuleOp"> {
-  let summary = "Lowers xla_gpu.pdl_wait to NVVM griddepcontrol.";
-  let dependentDialects = [
-    "xla::gpu::XlaGpuDialect",
-    "mlir::NVVM::NVVMDialect",
-  ];
-}
-
 #endif  // XLA_CODEGEN_EMITTERS_TRANSFORMS_PASSES_TD_

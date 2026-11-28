@@ -787,7 +787,7 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
   pm.addNestedPass<FuncOp>(emitters::createConvertPureCallOpsPass());
   pm.addPass(createLowerTensorsPass(device.gpu_compute_capability(),
                                     device.l2_cache_size()));
-  pm.addPass(emitters::createLowerPdlWaitPass());
+  pm.addPass(createLowerPdlWaitPass());
   pm.addPass(mlir::createConvertComplexToStandardPass());
   pm.addPass(emitters::createMergePointersToSameSlicePass());
 

@@ -78,7 +78,7 @@ void CreateTritonXlaPipeline(
   pm->addPass(mlir::triton::xla::createTritonXLAExtractInsertToTritonPass(
       extract_insert_options));
   if (enable_pdl) {
-    pm->addPass(emitters::createLowerPdlWaitPass());
+    pm->addPass(createLowerPdlWaitPass());
   }
 
   // Lower affine expressions into arithmetic ops.

@@ -168,6 +168,14 @@ def InsertPDLPass : Pass<"xla-gpu-insert-pdl", "mlir::ModuleOp"> {
   ];
 }
 
+def LowerPdlWaitPass : Pass<"xla-gpu-lower-pdl-wait", "mlir::ModuleOp"> {
+  let summary = "Lowers xla_gpu.pdl_wait to NVVM griddepcontrol.";
+  let dependentDialects = [
+    "xla::gpu::XlaGpuDialect",
+    "mlir::NVVM::NVVMDialect",
+  ];
+}
+
 def PromoteShuffleToDPPPass
     : Pass<"xla-gpu-promote-shuffle-to-dpp", "mlir::ModuleOp"> {
   let summary = "Promotes gpu.shuffle down to DPP/swizzle on AMD GPUs.";

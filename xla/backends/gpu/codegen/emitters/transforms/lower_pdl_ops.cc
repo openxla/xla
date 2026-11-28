@@ -15,20 +15,20 @@ limitations under the License.
 
 #include <utility>
 
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
-#include "xla/codegen/emitters/transforms/passes.h"
+#include "xla/backends/gpu/codegen/emitters/transforms/passes.h"  // IWYU pragma: keep
 
 namespace xla {
-namespace emitters {
+namespace gpu {
 
 #define GEN_PASS_DEF_LOWERPDLWAITPASS
-#include "xla/codegen/emitters/transforms/passes.h.inc"
+#include "xla/backends/gpu/codegen/emitters/transforms/passes.h.inc"
 
 namespace {
 
@@ -72,5 +72,5 @@ class LowerPdlWaitPass : public impl::LowerPdlWaitPassBase<LowerPdlWaitPass> {
 
 }  // namespace
 
-}  // namespace emitters
+}  // namespace gpu
 }  // namespace xla
