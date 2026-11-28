@@ -15,10 +15,10 @@ limitations under the License.
 
 #include "xla/backends/gpu/cost_model/hlo_op_profiles.h"
 
+#include <array>
 #include <memory>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "absl/log/check.h"
 #include "absl/memory/memory.h"
@@ -26,13 +26,13 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/text_format.h"
-#include "tsl/platform/protobuf.h"
 #include "xla/backends/gpu/cost_model/hlo_op_profile.pb.h"
 #include "xla/backends/gpu/cost_model/hlo_op_profiles_data.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace gpu {
@@ -61,13 +61,33 @@ namespace gpu {
 /*static*/ std::string HloOpProfiles::GetDeviceSpecificProfileName(
     const stream_executor::DeviceDescription& device_info) {
   std::string profile_name = GetProfileName(device_info);
+  std::array<absl::string_view, 2> candidates;
   if (profile_name == "sm_100") {
-    CHECK(device_info.name() !=
-          stream_executor::DeviceDescription::kUndefinedString)
-        << "Device name must be set for sm_100 device-specific profiles.";
-    std::vector<std::string> full_name =
-        absl::StrSplit(device_info.name(), ' ');
-    return absl::StrCat(profile_name, "_", full_name.back());
+    candidates = {"GB200", "B200"};
+  } else if (profile_name == "sm_103") {
+    candidates = {"GB300", "B300"};
+  } else {
+    return profile_name;
+  }
+  const auto tokens =
+      absl::StrSplit(device_info.name(), ' ', absl::SkipEmpty());
+  absl::string_view device;
+  for (absl::string_view candidate : candidates) {
+    for (absl::string_view token : tokens) {
+      if (token == candidate) {
+        device = candidate;
+      }
+    }
+  }
+  if (!device.empty()) {
+    absl::StrAppend(&profile_name, "_", device);
+  }
+  absl::string_view previous_token;
+  for (absl::string_view token : tokens) {
+    if (previous_token == "MIG") {
+      absl::StrAppend(&profile_name, "_", token);
+    }
+    previous_token = token;
   }
   return profile_name;
 }
