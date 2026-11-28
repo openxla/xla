@@ -18,7 +18,7 @@ limitations under the License.
 #include <cstdint>
 #include <iterator>
 #include <memory>
-#include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/no_destructor.h"
@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/while_util.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
