@@ -18,6 +18,8 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -26,6 +28,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/casts.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -33,6 +36,8 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
+#include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
 #include "benchmark/benchmark.h"  // IWYU pragma: keep
 #include "tsl/profiler/lib/scoped_memory_debug_annotation.h"
@@ -56,6 +61,7 @@ limitations under the License.
 #include "xla/runtime/device_id.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -626,6 +632,310 @@ TEST(PjRtFulfillAliasRawBufferCallbackTest, EmptyCallableProducesNullHandle) {
                 absl::AnyInvocable<absl::Status(
                     absl::StatusOr<PjRtRawBufferRef>) &&>{}),
             nullptr);
+}
+
+class RendezvousBarrier {
+ public:
+  explicit RendezvousBarrier(int count) : count_(count) {}
+
+  void ArriveAndWait() {
+    absl::MutexLock lock(mu_);
+    --count_;
+    mu_.Await(absl::Condition(+[](int* c) { return *c == 0; }, &count_));
+  }
+
+ private:
+  absl::Mutex mu_;
+  int count_ ABSL_GUARDED_BY(mu_);
+};
+
+TEST(CommonPjRtClientOomSequencerTest, OomSequencerFastPathAllowsConcurrency) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetXlaPjrtCpuClient(CpuClientOptions{}));
+  auto* common_client = absl::down_cast<CommonPjRtClient*>(client.get());
+  ASSERT_FALSE(client->addressable_devices().empty());
+  PjRtDevice* device = client->addressable_devices()[0];
+
+  RendezvousBarrier both_inside(2);
+  absl::Status status1;
+  absl::Status status2;
+
+  auto run_fn = [&](absl::Status* out_status) {
+    *out_status = common_client->RunWithOomRetries(
+        device,
+        [&](int /*attempt*/) {
+          both_inside.ArriveAndWait();
+          return absl::OkStatus();
+        },
+        [](int /*attempts*/, const absl::Status& /*status*/) { return false; });
+  };
+
+  std::unique_ptr<tsl::Thread> t1(tsl::Env::Default()->StartThread(
+      tsl::ThreadOptions(), "oom_fast_1", [&]() { run_fn(&status1); }));
+  std::unique_ptr<tsl::Thread> t2(tsl::Env::Default()->StartThread(
+      tsl::ThreadOptions(), "oom_fast_2", [&]() { run_fn(&status2); }));
+  t1.reset();
+  t2.reset();
+
+  EXPECT_THAT(status1, IsOk());
+  EXPECT_THAT(status2, IsOk());
+}
+
+TEST(CommonPjRtClientOomSequencerTest,
+     OomSequencerSerializesRecoveryAndAvoidsDoubleOom) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetXlaPjrtCpuClient(CpuClientOptions{}));
+  auto* common_client = absl::down_cast<CommonPjRtClient*>(client.get());
+  ASSERT_FALSE(client->addressable_devices().empty());
+  PjRtDevice* device = client->addressable_devices()[0];
+
+  RendezvousBarrier both_initial_failed(2);
+  std::atomic<bool> recovered{false};
+  std::atomic<int> should_retry_calls{0};
+  std::atomic<int> active_should_retry{0};
+  std::atomic<int> max_concurrent_should_retry{0};
+
+  auto run_fn = [&]() -> absl::Status {
+    return common_client->RunWithOomRetries(
+        device,
+        [&](int /*attempt*/) {
+          if (!recovered.load()) {
+            both_initial_failed.ArriveAndWait();
+            return absl::ResourceExhaustedError("simulated OOM");
+          }
+          return absl::OkStatus();
+        },
+        [&](int /*attempts*/, const absl::Status& /*status*/) {
+          const int concurrent = active_should_retry.fetch_add(1) + 1;
+          int prev_max = max_concurrent_should_retry.load();
+          while (concurrent > prev_max &&
+                 !max_concurrent_should_retry.compare_exchange_weak(
+                     prev_max, concurrent)) {
+          }
+          should_retry_calls.fetch_add(1);
+          recovered.store(true);
+          active_should_retry.fetch_sub(1);
+          return true;
+        });
+  };
+
+  absl::Status status1;
+  absl::Status status2;
+  std::unique_ptr<tsl::Thread> t1(tsl::Env::Default()->StartThread(
+      tsl::ThreadOptions(), "oom_ser_1", [&]() { status1 = run_fn(); }));
+  std::unique_ptr<tsl::Thread> t2(tsl::Env::Default()->StartThread(
+      tsl::ThreadOptions(), "oom_ser_2", [&]() { status2 = run_fn(); }));
+  t1.reset();
+  t2.reset();
+
+  EXPECT_THAT(status1, IsOk());
+  EXPECT_THAT(status2, IsOk());
+  EXPECT_EQ(should_retry_calls.load(), 1);
+  EXPECT_EQ(max_concurrent_should_retry.load(), 1);
+}
+
+TEST(CommonPjRtClientOomSequencerTest,
+     OomSequencerBlocksIncomingRequestsWhileUnderOom) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetXlaPjrtCpuClient(CpuClientOptions{}));
+  auto* common_client = absl::down_cast<CommonPjRtClient*>(client.get());
+  ASSERT_FALSE(client->addressable_devices().empty());
+  PjRtDevice* device = client->addressable_devices()[0];
+
+  absl::Notification t1_in_recovery;
+  absl::Notification t2_started;
+  absl::Notification t2_finished;
+  std::atomic<bool> recovered{false};
+  std::atomic<bool> t2_entered_attempt{false};
+  absl::Mutex trace_mu;
+  std::vector<std::string> trace;
+
+  absl::Status status1;
+  absl::Status status2;
+
+  std::unique_ptr<tsl::Thread> t1(tsl::Env::Default()->StartThread(
+      tsl::ThreadOptions(), "oom_blk_1", [&]() {
+        status1 = common_client->RunWithOomRetries(
+            device,
+            [&](int attempt) {
+              if (attempt == 0 && !recovered.load()) {
+                return absl::ResourceExhaustedError("simulated OOM");
+              }
+              EXPECT_FALSE(t2_entered_attempt.load());
+              {
+                absl::MutexLock lock(trace_mu);
+                trace.push_back("t1_retry");
+              }
+              return absl::OkStatus();
+            },
+            [&](int /*attempts*/, const absl::Status& /*status*/) {
+              t1_in_recovery.Notify();
+              t2_started.WaitForNotification();
+              while (!t2_finished.HasBeenNotified() &&
+                     common_client->ActiveOomRequestsForTesting(device) < 2) {
+              }
+              EXPECT_FALSE(t2_finished.HasBeenNotified());
+              EXPECT_FALSE(t2_entered_attempt.load());
+              recovered.store(true);
+              return true;
+            });
+      }));
+
+  t1_in_recovery.WaitForNotification();
+  std::unique_ptr<tsl::Thread> t2(tsl::Env::Default()->StartThread(
+      tsl::ThreadOptions(), "oom_blk_2", [&]() {
+        t2_started.Notify();
+        status2 = common_client->RunWithOomRetries(
+            device,
+            [&](int /*attempt*/) {
+              t2_entered_attempt.store(true);
+              {
+                absl::MutexLock lock(trace_mu);
+                trace.push_back("t2_attempt");
+              }
+              return absl::OkStatus();
+            },
+            [](int /*attempts*/, const absl::Status& /*status*/) {
+              return false;
+            });
+        t2_finished.Notify();
+      }));
+
+  t1.reset();
+  t2.reset();
+
+  EXPECT_THAT(status1, IsOk());
+  EXPECT_THAT(status2, IsOk());
+  EXPECT_TRUE(t2_entered_attempt.load());
+  EXPECT_THAT(trace, ElementsAre("t1_retry", "t2_attempt"));
+}
+
+TEST(CommonPjRtClientOomSequencerTest,
+     OomSequencerSecondThreadRecoversIfStillOomAfterGenerationBump) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetXlaPjrtCpuClient(CpuClientOptions{}));
+  auto* common_client = absl::down_cast<CommonPjRtClient*>(client.get());
+  ASSERT_FALSE(client->addressable_devices().empty());
+  PjRtDevice* device = client->addressable_devices()[0];
+
+  RendezvousBarrier both_initial_attempted(2);
+  std::atomic<int> should_retry_calls{0};
+  std::atomic<int> first_recoverer{-1};
+  std::atomic<int> recovery_step{0};
+  std::array<int, 2> attempt_counts = {0, 0};
+
+  auto run_thread = [&](int id) -> absl::Status {
+    return common_client->RunWithOomRetries(
+        device,
+        [&, id](int /*attempt*/) {
+          ++attempt_counts[id];
+          if (attempt_counts[id] == 1) {
+            both_initial_attempted.ArriveAndWait();
+            return absl::ResourceExhaustedError("initial OOM");
+          }
+          const int step = recovery_step.load();
+          if (step >= 2 || (step == 1 && first_recoverer.load() == id)) {
+            return absl::OkStatus();
+          }
+          return absl::ResourceExhaustedError("still OOM");
+        },
+        [&, id](int /*attempts*/, const absl::Status& /*status*/) {
+          const int call_idx = should_retry_calls.fetch_add(1);
+          if (call_idx == 0) {
+            first_recoverer.store(id);
+            recovery_step.store(1);
+          } else {
+            recovery_step.store(2);
+          }
+          return true;
+        });
+  };
+
+  absl::Status status0;
+  absl::Status status1;
+  std::unique_ptr<tsl::Thread> t0(tsl::Env::Default()->StartThread(
+      tsl::ThreadOptions(), "oom_gen_0", [&]() { status0 = run_thread(0); }));
+  std::unique_ptr<tsl::Thread> t1(tsl::Env::Default()->StartThread(
+      tsl::ThreadOptions(), "oom_gen_1", [&]() { status1 = run_thread(1); }));
+  t0.reset();
+  t1.reset();
+
+  EXPECT_THAT(status0, IsOk());
+  EXPECT_THAT(status1, IsOk());
+  EXPECT_EQ(should_retry_calls.load(), 2);
+  const int winner = first_recoverer.load();
+  ASSERT_TRUE(winner == 0 || winner == 1);
+  const int loser = 1 - winner;
+  EXPECT_EQ(attempt_counts[winner], 2);
+  EXPECT_EQ(attempt_counts[loser], 3);
+}
+
+TEST(CommonPjRtClientOomSequencerTest, OomSequencerTerminatesOnPersistentOom) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetXlaPjrtCpuClient(CpuClientOptions{}));
+  auto* common_client = absl::down_cast<CommonPjRtClient*>(client.get());
+  ASSERT_FALSE(client->addressable_devices().empty());
+  PjRtDevice* device = client->addressable_devices()[0];
+
+  int attempt_calls = 0;
+  int should_retry_calls = 0;
+  absl::Status status = common_client->RunWithOomRetries(
+      device,
+      [&](int /*attempt*/) {
+        ++attempt_calls;
+        return absl::ResourceExhaustedError("persistent OOM");
+      },
+      [&](int attempts, const absl::Status& /*status*/) {
+        ++should_retry_calls;
+        return attempts < 2;
+      });
+
+  EXPECT_THAT(status, StatusIs(absl::StatusCode::kResourceExhausted));
+  EXPECT_EQ(should_retry_calls, 2);
+  EXPECT_EQ(attempt_calls, 2);
+}
+
+TEST(CommonPjRtClientOomSequencerTest, OomSequencerIndependentAcrossDevices) {
+  CpuClientOptions options;
+  options.cpu_device_count = 2;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetXlaPjrtCpuClient(options));
+  auto* common_client = absl::down_cast<CommonPjRtClient*>(client.get());
+  ASSERT_EQ(client->addressable_devices().size(), 2);
+  PjRtDevice* device0 = client->addressable_devices()[0];
+  PjRtDevice* device1 = client->addressable_devices()[1];
+
+  absl::Notification device0_in_recovery;
+  absl::Notification device1_done;
+  absl::Status status0;
+
+  std::unique_ptr<tsl::Thread> t0(tsl::Env::Default()->StartThread(
+      tsl::ThreadOptions(), "oom_ind_0", [&]() {
+        status0 = common_client->RunWithOomRetries(
+            device0,
+            [&](int attempt) {
+              if (attempt == 0) {
+                return absl::ResourceExhaustedError("device0 OOM");
+              }
+              return absl::OkStatus();
+            },
+            [&](int /*attempts*/, const absl::Status& /*status*/) {
+              device0_in_recovery.Notify();
+              device1_done.WaitForNotification();
+              return true;
+            });
+      }));
+
+  device0_in_recovery.WaitForNotification();
+  absl::Status status1 = common_client->RunWithOomRetries(
+      device1, [](int /*attempt*/) { return absl::OkStatus(); },
+      [](int /*attempts*/, const absl::Status& /*status*/) { return false; });
+  device1_done.Notify();
+
+  t0.reset();
+
+  EXPECT_THAT(status0, IsOk());
+  EXPECT_THAT(status1, IsOk());
 }
 
 }  // namespace
