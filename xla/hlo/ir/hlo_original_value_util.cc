@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_original_value_util.h"
 
+#include <cstdint>
 #include <memory>
+#include <utility>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
@@ -23,6 +25,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/utils/pointer_utils.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 
 namespace xla {
@@ -56,6 +59,33 @@ void CopyOriginalValue(const HloInstruction* src_instruction,
   auto cloned_tree = std::make_shared<OriginalValue>(
       original_value->tree(), original_value->call_hierarchy());
   dest_instruction->set_original_value(cloned_tree);
+}
+
+void AppendEmptyElementsToOriginalValue(HloInstruction* instruction) {
+  std::shared_ptr<OriginalValue> old_original_value =
+      instruction->original_value();
+  const Shape& shape = instruction->shape();
+  if (old_original_value == nullptr ||
+      old_original_value->is_synthetic_call() ||
+      !old_original_value->IsTuple() || !shape.IsTuple()) {
+    return;
+  }
+  const int64_t num_old_elements = old_original_value->tree().num_children();
+  if (num_old_elements >= shape.tuple_shapes().size()) {
+    return;
+  }
+  auto new_original_value = std::make_shared<OriginalValue>(
+      shape, old_original_value->call_hierarchy());
+  for (int64_t i = 0; i < num_old_elements; ++i) {
+    if (!new_original_value->mutable_tree()
+             ->CopyCompatibleSubtreeFrom(old_original_value->tree(), {i}, {i})
+             .ok()) {
+      // The existing elements don't match the leading elements of the shape,
+      // so the shape was not widened by appending elements.
+      return;
+    }
+  }
+  instruction->set_original_value(std::move(new_original_value));
 }
 
 void DeduplicateOriginalValues(HloModule* module) {
