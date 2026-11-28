@@ -146,6 +146,7 @@ cc_library(
     srcs = ["defuser.cc"],
     hdrs = ["defuser.h"],
     deps = [
+        "//xla:shape_util",
         "//xla:status_macros",
         "//xla:types",
         "//xla:util",
@@ -176,6 +177,8 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/utils:hlo_matchers",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
     ],
 )
