@@ -24,6 +24,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "xla/primitive_util.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_address.h"
@@ -33,6 +35,7 @@ limitations under the License.
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/xla_data.pb.h"
 
 namespace stream_executor::gpu {
@@ -165,6 +168,302 @@ TEST_F(RocmBlasLtTest, S8S8S32Gemm) {
 TEST_F(RocmBlasLtTest, S8S8F32Gemm) {
   RunGemm<int8_t, float>(blas::ComputationType::kF32,
                          /*skip_if_unsupported=*/true);
+}
+
+TEST_F(RocmBlasLtTest, ConcurrentGetAlgorithmsAndExecuteAcrossPlans) {
+  constexpr int64_t kDim = 32;
+  constexpr size_t kWorkspaceSize = 32 * 1024 * 1024;
+  constexpr int kIterations = 16;
+
+  auto make_config = [](int64_t m, int64_t n, int64_t k) {
+    gpu::MatrixLayout a_layout(xla::F32, m, k,
+                               gpu::MatrixLayout::Order::kColumnMajor);
+    gpu::MatrixLayout b_layout(xla::F32, k, n,
+                               gpu::MatrixLayout::Order::kColumnMajor);
+    gpu::MatrixLayout c_layout(xla::F32, m, n,
+                               gpu::MatrixLayout::Order::kColumnMajor);
+    return gpu::GemmConfig{
+        a_layout,                         // lhs_layout
+        b_layout,                         // rhs_layout
+        c_layout,                         // c_layout
+        c_layout,                         // output_layout
+        {1.0, 0.0},                       // alpha
+        0.0,                              // beta
+        0,                                // compute_precision
+        xla::PrecisionConfig::ALG_UNSET,  // precision_algorithm
+        std::nullopt,                     // algorithm
+        false,                            // grad_x
+        false,                            // grad_y
+        gpu::ScaleMode::kNone,            // scale_mode
+        blas::ComputationType::kF32       // compute_type
+    };
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      auto exec_plan, blas_lt_->GetMatmulPlan(make_config(kDim, kDim, kDim),
+                                              gpu::BlasLt::Epilogue::kDefault));
+  ASSERT_OK_AND_ASSIGN(auto algorithms,
+                       exec_plan->GetAlgorithms(128, kWorkspaceSize));
+  ASSERT_FALSE(algorithms.empty());
+  ASSERT_OK(exec_plan->SetAlgorithm(algorithms[0]));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto query_plan,
+      blas_lt_->GetMatmulPlan(make_config(kDim * 2, kDim * 2, kDim * 2),
+                              gpu::BlasLt::Epilogue::kDefault));
+
+  std::vector<float> h_a(kDim * kDim, 1.0f);
+  std::vector<float> h_b(kDim * kDim, 1.0f);
+  DeviceAddress<float> d_a = executor_->AllocateArray<float>(h_a.size());
+  DeviceAddress<float> d_b = executor_->AllocateArray<float>(h_b.size());
+  DeviceAddress<float> d_c = executor_->AllocateArray<float>(kDim * kDim);
+  DeviceAddressBase workspace = executor_->Allocate(kWorkspaceSize);
+  DeviceAddressHandle a_keep(executor_, d_a);
+  DeviceAddressHandle b_keep(executor_, d_b);
+  DeviceAddressHandle c_keep(executor_, d_c);
+  DeviceAddressHandle workspace_keep(executor_, workspace);
+
+  ASSERT_OK(stream_->Memcpy(&d_a, h_a.data(), h_a.size() * sizeof(float)));
+  ASSERT_OK(stream_->Memcpy(&d_b, h_b.data(), h_b.size() * sizeof(float)));
+  ASSERT_OK(stream_->MemZero(&d_c, kDim * kDim * sizeof(float)));
+  ASSERT_OK(stream_->BlockHostUntilDone());
+
+  gpu::BlasLt::MemoryArgs args{
+      /*a=*/d_a,
+      /*b=*/d_b,
+      /*c=*/d_c,
+      /*d=*/d_c,
+      /*bias=*/DeviceAddressBase{},
+      /*aux=*/DeviceAddressBase{},
+      /*a_scale=*/DeviceAddressBase{},
+      /*b_scale=*/DeviceAddressBase{},
+      /*c_scale=*/DeviceAddressBase{},
+      /*d_scale=*/DeviceAddressBase{},
+      /*d_amax=*/{DeviceAddressBase{}},
+      workspace,
+      /*scratch_allocator=*/nullptr,
+  };
+
+  absl::Status exec_status = absl::OkStatus();
+  absl::Status query_status = absl::OkStatus();
+
+  {
+    std::unique_ptr<tsl::Thread> exec_thread(tsl::Env::Default()->StartThread(
+        tsl::ThreadOptions(), "exec_thread", [&] {
+          for (int i = 0; i < kIterations && exec_status.ok(); ++i) {
+            exec_status =
+                exec_plan->ExecuteOnStream(stream_.get(), args, nullptr);
+          }
+        }));
+    std::unique_ptr<tsl::Thread> query_thread(tsl::Env::Default()->StartThread(
+        tsl::ThreadOptions(), "query_thread", [&] {
+          for (int i = 0; i < kIterations && query_status.ok(); ++i) {
+            absl::StatusOr<std::vector<gpu::BlasLt::MatmulAlgorithm>> algos =
+                query_plan->GetAlgorithms(128, kWorkspaceSize);
+            if (!algos.ok()) {
+              query_status = algos.status();
+            } else if (algos->empty()) {
+              query_status =
+                  absl::InternalError("Expected non-empty algorithms");
+            }
+          }
+        }));
+  }
+
+  ASSERT_OK(exec_status);
+  ASSERT_OK(query_status);
+
+  std::vector<float> h_result(kDim * kDim);
+  ASSERT_OK(
+      stream_->Memcpy(h_result.data(), d_c, h_result.size() * sizeof(float)));
+  ASSERT_OK(stream_->BlockHostUntilDone());
+  for (int64_t i = 0; i < kDim * kDim; ++i) {
+    ASSERT_FLOAT_EQ(h_result[i], static_cast<float>(kDim)) << "at index " << i;
+  }
+}
+
+TEST_F(RocmBlasLtTest, ConcurrentGetAlgorithmsAndExecuteOnSharedPlan) {
+  constexpr int64_t kDim = 32;
+  constexpr size_t kWorkspaceSize = 32 * 1024 * 1024;
+  constexpr int kIterations = 16;
+
+  gpu::MatrixLayout layout(xla::F32, kDim, kDim,
+                           gpu::MatrixLayout::Order::kColumnMajor);
+  gpu::GemmConfig cfg = {
+      layout,                           // lhs_layout
+      layout,                           // rhs_layout
+      layout,                           // c_layout
+      layout,                           // output_layout
+      {1.0, 0.0},                       // alpha
+      0.0,                              // beta
+      0,                                // compute_precision
+      xla::PrecisionConfig::ALG_UNSET,  // precision_algorithm
+      std::nullopt,                     // algorithm
+      false,                            // grad_x
+      false,                            // grad_y
+      gpu::ScaleMode::kNone,            // scale_mode
+      blas::ComputationType::kF32       // compute_type
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      auto shared_plan,
+      blas_lt_->GetMatmulPlan(cfg, gpu::BlasLt::Epilogue::kDefault));
+  ASSERT_OK_AND_ASSIGN(auto algorithms,
+                       shared_plan->GetAlgorithms(128, kWorkspaceSize));
+  ASSERT_FALSE(algorithms.empty());
+  ASSERT_OK(shared_plan->SetAlgorithm(algorithms[0]));
+
+  std::vector<float> h_a(kDim * kDim, 1.0f);
+  std::vector<float> h_b(kDim * kDim, 1.0f);
+  DeviceAddress<float> d_a = executor_->AllocateArray<float>(h_a.size());
+  DeviceAddress<float> d_b = executor_->AllocateArray<float>(h_b.size());
+  DeviceAddress<float> d_c = executor_->AllocateArray<float>(kDim * kDim);
+  DeviceAddressBase workspace = executor_->Allocate(kWorkspaceSize);
+  DeviceAddressHandle a_keep(executor_, d_a);
+  DeviceAddressHandle b_keep(executor_, d_b);
+  DeviceAddressHandle c_keep(executor_, d_c);
+  DeviceAddressHandle workspace_keep(executor_, workspace);
+
+  ASSERT_OK(stream_->Memcpy(&d_a, h_a.data(), h_a.size() * sizeof(float)));
+  ASSERT_OK(stream_->Memcpy(&d_b, h_b.data(), h_b.size() * sizeof(float)));
+  ASSERT_OK(stream_->MemZero(&d_c, kDim * kDim * sizeof(float)));
+  ASSERT_OK(stream_->BlockHostUntilDone());
+
+  gpu::BlasLt::MemoryArgs args{
+      /*a=*/d_a,
+      /*b=*/d_b,
+      /*c=*/d_c,
+      /*d=*/d_c,
+      /*bias=*/DeviceAddressBase{},
+      /*aux=*/DeviceAddressBase{},
+      /*a_scale=*/DeviceAddressBase{},
+      /*b_scale=*/DeviceAddressBase{},
+      /*c_scale=*/DeviceAddressBase{},
+      /*d_scale=*/DeviceAddressBase{},
+      /*d_amax=*/{DeviceAddressBase{}},
+      workspace,
+      /*scratch_allocator=*/nullptr,
+  };
+
+  absl::Status exec_status = absl::OkStatus();
+  absl::Status query_status = absl::OkStatus();
+
+  {
+    std::unique_ptr<tsl::Thread> exec_thread(tsl::Env::Default()->StartThread(
+        tsl::ThreadOptions(), "exec_thread", [&] {
+          for (int i = 0; i < kIterations && exec_status.ok(); ++i) {
+            exec_status =
+                shared_plan->ExecuteOnStream(stream_.get(), args, nullptr);
+          }
+        }));
+    std::unique_ptr<tsl::Thread> query_thread(tsl::Env::Default()->StartThread(
+        tsl::ThreadOptions(), "query_thread", [&] {
+          for (int i = 0; i < kIterations && query_status.ok(); ++i) {
+            absl::StatusOr<std::vector<gpu::BlasLt::MatmulAlgorithm>> algos =
+                shared_plan->GetAlgorithms(128, kWorkspaceSize);
+            if (!algos.ok()) {
+              query_status = algos.status();
+            } else if (algos->empty()) {
+              query_status =
+                  absl::InternalError("Expected non-empty algorithms");
+            }
+          }
+        }));
+  }
+
+  ASSERT_OK(exec_status);
+  ASSERT_OK(query_status);
+
+  std::vector<float> h_result(kDim * kDim);
+  ASSERT_OK(
+      stream_->Memcpy(h_result.data(), d_c, h_result.size() * sizeof(float)));
+  ASSERT_OK(stream_->BlockHostUntilDone());
+  for (int64_t i = 0; i < kDim * kDim; ++i) {
+    ASSERT_FLOAT_EQ(h_result[i], static_cast<float>(kDim)) << "at index " << i;
+  }
+}
+
+TEST_F(RocmBlasLtTest, GroupedMatmulPlanGetAlgorithms) {
+  constexpr uint64_t kDim = 32;
+  constexpr size_t kWorkspaceSize = 32 * 1024 * 1024;
+
+  gpu::GroupedGemmConfig cfg = {
+      /*m=*/kDim,
+      /*n=*/kDim,
+      /*k=*/kDim,
+      /*batch_count=*/1,
+      /*group_count=*/2,
+      /*lhs_leading_dim_stride=*/static_cast<int64_t>(kDim),
+      /*rhs_leading_dim_stride=*/static_cast<int64_t>(kDim),
+      /*c_leading_dim_stride=*/static_cast<int64_t>(kDim),
+      /*output_leading_dim_stride=*/static_cast<int64_t>(kDim),
+      /*trans_a=*/blas::Transpose::kNoTranspose,
+      /*trans_b=*/blas::Transpose::kNoTranspose,
+      /*must_swap_operands=*/false,
+      /*alpha=*/{1.0, 0.0},
+      /*beta=*/0.0,
+      /*type_a=*/blas::DataType::kFloat,
+      /*type_b=*/blas::DataType::kFloat,
+      /*type_c=*/blas::DataType::kFloat,
+      /*type_d=*/blas::DataType::kFloat,
+      /*stride_ragged_dim=*/static_cast<int64_t>(kDim),
+      /*stride_group_dim=*/static_cast<int64_t>(kDim * kDim),
+      /*c_stride_ragged_dim=*/static_cast<int64_t>(kDim),
+      /*output_stride_ragged_dim=*/static_cast<int64_t>(kDim),
+      /*precision_algorithm=*/xla::PrecisionConfig::ALG_UNSET,
+      /*compute_precision=*/0,
+      /*ragged_mode=*/gpu::RaggedDotMode::kRaggedNonContracting,
+      /*compute_type=*/blas::ComputationType::kF32,
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      auto plan, blas_lt_->GetMatmulPlan(cfg, gpu::BlasLt::Epilogue::kDefault));
+  ASSERT_OK_AND_ASSIGN(auto algorithms,
+                       plan->GetAlgorithms(128, kWorkspaceSize));
+  if (algorithms.empty()) {
+    GTEST_SKIP() << "hipBLASLt returned no grouped GEMM algorithms.";
+  }
+  ASSERT_OK(plan->SetAlgorithm(algorithms[0]));
+}
+
+TEST_F(RocmBlasLtTest, BlockScaledGemmGetAlgorithms) {
+  constexpr int64_t kDim = 32;
+  constexpr size_t kWorkspaceSize = 32 * 1024 * 1024;
+
+  // FP8/MX block-scaled GEMMs require row-major LHS and column-major RHS.
+  gpu::MatrixLayout a_layout(xla::F8E4M3FN, kDim, kDim,
+                             gpu::MatrixLayout::Order::kRowMajor);
+  gpu::MatrixLayout b_layout(xla::F8E4M3FN, kDim, kDim,
+                             gpu::MatrixLayout::Order::kColumnMajor);
+  gpu::MatrixLayout c_layout(xla::BF16, kDim, kDim,
+                             gpu::MatrixLayout::Order::kColumnMajor);
+
+  gpu::GemmConfig cfg = {
+      a_layout,                         // lhs_layout
+      b_layout,                         // rhs_layout
+      c_layout,                         // c_layout
+      c_layout,                         // output_layout
+      {1.0, 0.0},                       // alpha
+      0.0,                              // beta
+      0,                                // compute_precision
+      xla::PrecisionConfig::ALG_UNSET,  // precision_algorithm
+      std::nullopt,                     // algorithm
+      false,                            // grad_x
+      false,                            // grad_y
+      gpu::ScaleMode::kBlockScaling,    // scale_mode
+      blas::ComputationType::kF32       // compute_type
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      auto plan, blas_lt_->GetMatmulPlan(cfg, gpu::BlasLt::Epilogue::kDefault));
+  absl::StatusOr<std::vector<gpu::BlasLt::MatmulAlgorithm>> algorithms =
+      plan->GetAlgorithms(128, kWorkspaceSize);
+  if (!algorithms.ok() || algorithms->empty()) {
+    GTEST_SKIP() << "Block-scaled GEMM algorithms unavailable on this SKU: "
+                 << (algorithms.ok() ? "empty algorithm list"
+                                     : algorithms.status().ToString());
+  }
+  ASSERT_OK(plan->SetAlgorithm((*algorithms)[0]));
 }
 
 }  // namespace
