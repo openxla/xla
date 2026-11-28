@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -48,6 +50,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/mlir/utils/error_util.h"
 #include "xla/mosaic/dialect/tpu/tpu_dialect.h"
+#include "xla/mosaic/dialect/tpu/util.h"
 
 namespace mlir::tpu {
 namespace {
@@ -84,7 +87,7 @@ class TpuOpsVerificationTest : public ::testing::Test {
 
   template <typename OpTy>
   absl::Status VerifyOp(OpTy op) {
-    BaseScopedDiagnosticHandler diag(&context_);
+    BaseScopedDiagnosticHandler diag(builder().getContext());
     if (succeeded(verify(op))) {
       return absl::OkStatus();
     }
@@ -3136,6 +3139,331 @@ TEST_F(TpuOpsVerificationTest, ConcatenateOpRankMismatch) {
       builder().getContext(), std::nullopt, ValueRange{vec_1d, vec_2d},
       DictionaryAttr(), higher_rank->getPropertiesStorage(), RegionRange{},
       inferred)));
+}
+
+TEST_F(TpuOpsVerificationTest,
+       GetMainFuncAndCoreTypeAttrRespectExplicitCoreTypeAndNullInputs) {
+  EXPECT_EQ(TPUDialect::GetCoreTypeAttr(nullptr), std::nullopt);
+  EXPECT_THAT(GetMainFunc(ModuleOp(), CoreType::kTc),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+
+  // SC-only @main must not be returned when querying for kTc.
+  auto sc_mod = Create<ModuleOp>();
+  {
+    OpBuilder::InsertionGuard g(builder());
+    builder().setInsertionPointToStart(sc_mod.getBody());
+    auto fn = func::FuncOp::create(builder(), "main",
+                                   builder().getFunctionType({}, {}));
+    fn->setAttr(
+        TPUDialect::GetCoreTypeKey(),
+        CoreTypeAttr::get(builder().getContext(), CoreType::kScScalarSubcore));
+  }
+  EXPECT_THAT(GetMainFunc(sc_mod, CoreType::kTc),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  auto sc_main = GetMainFunc(sc_mod, CoreType::kScScalarSubcore);
+  ASSERT_THAT(sc_main, absl_testing::IsOk());
+  EXPECT_EQ(sc_main->getName(), "main");
+
+  // Malformed non-CoreTypeAttr tpu.core_type on @main must also reject kTc.
+  auto bad_mod = Create<ModuleOp>();
+  {
+    OpBuilder::InsertionGuard g(builder());
+    builder().setInsertionPointToStart(bad_mod.getBody());
+    auto fn = func::FuncOp::create(builder(), "main",
+                                   builder().getFunctionType({}, {}));
+    fn->setAttr(TPUDialect::GetCoreTypeKey(), builder().getStringAttr("tc"));
+  }
+  EXPECT_THAT(GetMainFunc(bad_mod, CoreType::kTc),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+
+  // Unannotated @main still resolves to kTc for backwards compatibility.
+  auto tc_mod = Create<ModuleOp>();
+  {
+    OpBuilder::InsertionGuard g(builder());
+    builder().setInsertionPointToStart(tc_mod.getBody());
+    func::FuncOp::create(builder(), "main", builder().getFunctionType({}, {}));
+  }
+  auto tc_main = GetMainFunc(tc_mod, CoreType::kTc);
+  ASSERT_THAT(tc_main, absl_testing::IsOk());
+  EXPECT_EQ(tc_main->getName(), "main");
+}
+
+TEST_F(TpuOpsVerificationTest,
+       GetMemRefTypeUnwrapsChainedAndCyclicEraseLayoutAndPreservesCoreType) {
+  auto layout =
+      TiledLayoutAttr::get(builder().getContext(), {xla::Tile({8, 128})},
+                           /*tile_strides=*/{128, 1});
+  auto sc_vmem = MemorySpaceAttr::get(
+      builder().getContext(), MemorySpace::kVmem, CoreType::kScVectorSubcore);
+  auto orig_ty = MemRefType::get({8, 128}, i32(), layout, sc_vmem);
+  auto mid_ty = MemRefType::get({8, 128}, i32(), AffineMap(), sc_vmem);
+  auto bare_ty = MemRefType::get({8, 128}, i32());
+  Value base = Create<memref::AllocaOp>(orig_ty).getMemref();
+  auto e1 = Create<EraseLayoutOp>(mid_ty, base);
+  auto e2 = Create<EraseLayoutOp>(bare_ty, e1.getResult());
+  EXPECT_EQ(getMemRefType(e2.getResult()), orig_ty);
+
+  // Cycle in unreachable/unverified IR terminates without hanging.
+  auto cyc = Create<EraseLayoutOp>(bare_ty, base);
+  cyc->setOperand(0, cyc.getResult());
+  EXPECT_EQ(getMemRefType(cyc.getResult()), bare_ty);
+  cyc->setOperand(0, base);
+
+  // getRefCoreType sees through EraseLayoutOp when checking semaphore core.
+  auto sc_sem_space =
+      MemorySpaceAttr::get(builder().getContext(), MemorySpace::kSemaphoreMem,
+                           CoreType::kScScalarSubcore);
+  auto sem_ty = MemRefType::get({}, SemaphoreType::get(builder().getContext()),
+                                nullptr, sc_sem_space);
+  auto bare_sem_ty =
+      MemRefType::get({}, SemaphoreType::get(builder().getContext()));
+  Value sc_sem = Create<AllocaSemaphoreOp>(sem_ty).getResult();
+  Value erased_sem = Create<EraseLayoutOp>(bare_sem_ty, sc_sem).getResult();
+  Value amount = Create<arith::ConstantIntOp>(1, 32).getResult();
+  auto sig = Create<SemaphoreSignalOp>(erased_sem, amount,
+                                       /*device_id=*/nullptr,
+                                       /*core_id=*/nullptr);
+  EXPECT_THAT(VerifyOp(sig),
+              StatusIs(_, HasSubstr("Target core type (sc_scalar_subcore) must "
+                                    "match source core type (tc)")));
+}
+
+TEST_F(TpuOpsVerificationTest,
+       MightCommunicateBetweenChipsDetectsRemoteWaitDmaOpsAndNull) {
+  EXPECT_EQ(mightCommunicateBetweenChips(nullptr),
+            std::make_pair(false, false));
+
+  Value sem = AllocaDMASemaphore();
+  Value src = AllocaI32({8, 128}, MemorySpace::kVmem);
+  Value dst = AllocaI32({8, 128}, MemorySpace::kVmem);
+  Value dev = Create<arith::ConstantIntOp>(1, 32).getResult();
+
+  auto local_w2 = Create<WaitDMA2Op>(sem, src, dst);
+  EXPECT_EQ(mightCommunicateBetweenChips(local_w2),
+            std::make_pair(false, false));
+
+  auto remote_w2 = Create<WaitDMA2Op>(sem, src, dst, dev, /*core_id=*/nullptr);
+  EXPECT_EQ(mightCommunicateBetweenChips(remote_w2),
+            std::make_pair(true, false));
+
+  auto remote_w1 = Create<WaitDMAOp>(
+      src, /*source_semaphore=*/sem, dst, /*target_semaphore=*/nullptr, dev,
+      /*core_id=*/nullptr, /*subcore_id=*/nullptr, /*priority=*/0,
+      /*strict_ordering=*/false, /*wait_target=*/false);
+  EXPECT_EQ(mightCommunicateBetweenChips(remote_w1),
+            std::make_pair(true, false));
+
+  MLIRContext* ctx = builder().getContext();
+  auto mod = Create<ModuleOp>();
+  {
+    OpBuilder::InsertionGuard g(builder());
+    builder().setInsertionPointToStart(mod.getBody());
+    auto fn =
+        func::FuncOp::create(builder(), "k", builder().getFunctionType({}, {}));
+    builder().setInsertionPointToStart(fn.addEntryBlock());
+    Value s = AllocaSemaphoreOp::create(
+                  builder(), GetMemRefType({}, DMASemaphoreType::get(ctx),
+                                           MemorySpace::kSemaphoreMem))
+                  .getResult();
+    Value m = memref::AllocaOp::create(
+                  builder(), GetMemRefType({8, 128}, i32(), MemorySpace::kVmem))
+                  .getMemref();
+    Value d = arith::ConstantIntOp::create(builder(), 1, 32).getResult();
+    WaitDMA2Op::create(builder(), s, m, m, d, /*core_id=*/nullptr);
+    GetBarrierSemaphoreOp::create(
+        builder(),
+        GetMemRefType({}, SemaphoreType::get(ctx), MemorySpace::kSemaphoreMem));
+    func::ReturnOp::create(builder());
+  }
+  EXPECT_EQ(mightCommunicateBetweenChips(mod), std::make_pair(true, true));
+}
+
+TEST_F(TpuOpsVerificationTest,
+       CrossCoreScVectorSubcoreIdAndWaitDmaVerification) {
+  auto sc_vec_sem_space =
+      MemorySpaceAttr::get(builder().getContext(), MemorySpace::kSemaphoreMem,
+                           CoreType::kScVectorSubcore);
+  Value sc_vec_sem =
+      Create<AllocaSemaphoreOp>(
+          MemRefType::get({}, SemaphoreType::get(builder().getContext()),
+                          nullptr, sc_vec_sem_space))
+          .getResult();
+  Value sc_vec_dma_sem =
+      Create<AllocaSemaphoreOp>(
+          MemRefType::get({}, DMASemaphoreType::get(builder().getContext()),
+                          nullptr, sc_vec_sem_space))
+          .getResult();
+  Value tc_dma_sem = AllocaDMASemaphore();
+  Value src = AllocaI32({8, 128}, MemorySpace::kHbm);
+  Value dst = AllocaI32({8, 128}, MemorySpace::kVmem);
+  Value f32_dst =
+      Create<memref::AllocaOp>(
+          GetMemRefType({8, 128}, builder().getF32Type(), MemorySpace::kVmem))
+          .getMemref();
+  Value one = Create<arith::ConstantIntOp>(1, 32).getResult();
+  Value core_id = Create<arith::ConstantIntOp>(0, 32).getResult();
+  Value subcore_id = Create<arith::ConstantIntOp>(0, 32).getResult();
+
+  // Cross-core signal/DMA to kScVectorSubcore requires subcore_id.
+  EXPECT_THAT(VerifyOp(Create<SemaphoreSignalOp>(sc_vec_sem, one,
+                                                 /*device_id=*/nullptr, core_id,
+                                                 /*subcore_id=*/nullptr)),
+              StatusIs(_, HasSubstr("Subcore id must be specified")));
+  EXPECT_THAT(VerifyOp(Create<SemaphoreSignalOp>(
+                  sc_vec_sem, one, /*device_id=*/nullptr, core_id, subcore_id)),
+              absl_testing::IsOk());
+  EXPECT_THAT(VerifyOp(Create<EnqueueDMAOp>(
+                  src, tc_dma_sem, dst, sc_vec_dma_sem, /*device_id=*/nullptr,
+                  core_id, /*subcore_id=*/nullptr, /*priority=*/0,
+                  /*strict_ordering=*/false)),
+              StatusIs(_, HasSubstr("Subcore id must be specified")));
+  EXPECT_THAT(VerifyOp(Create<EnqueueDMAOp>(
+                  src, tc_dma_sem, dst, sc_vec_dma_sem, /*device_id=*/nullptr,
+                  core_id, subcore_id, /*priority=*/0,
+                  /*strict_ordering=*/false)),
+              absl_testing::IsOk());
+  EXPECT_THAT(VerifyOp(Create<WaitDMAOp>(
+                  src, tc_dma_sem, dst, sc_vec_dma_sem, /*device_id=*/nullptr,
+                  core_id, /*subcore_id=*/nullptr, /*priority=*/0,
+                  /*strict_ordering=*/false, /*wait_target=*/false)),
+              StatusIs(_, HasSubstr("Subcore id must be specified")));
+
+  // WaitDMA2Op rejects element mismatch and TC strict_ordering, while allowing
+  // distinct shapes and unannotated memory spaces on TC.
+  EXPECT_THAT(VerifyOp(Create<WaitDMA2Op>(tc_dma_sem, src, f32_dst)),
+              StatusIs(_, HasSubstr("element type mismatch")));
+  EXPECT_THAT(
+      VerifyOp(Create<WaitDMA2Op>(tc_dma_sem, src, dst, /*device_id=*/nullptr,
+                                  /*core_id=*/nullptr,
+                                  /*strict_ordering=*/true)),
+      StatusIs(_, HasSubstr("Strict ordering is only supported")));
+  Value unannotated_wide = AllocaI32({16, 128}, std::nullopt);
+  EXPECT_THAT(VerifyOp(Create<WaitDMA2Op>(tc_dma_sem, unannotated_wide, dst)),
+              absl_testing::IsOk());
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       SparseCoreWaitDma2RemoteWaitDmaAndCoreIdVerification) {
+  Value sem = AllocaDMASemaphore();
+  Value vmem = AllocaI32({8, 128}, MemorySpace::kVmem);
+  Value hbm = AllocaI32({8, 128}, MemorySpace::kHbm);
+  Value bare = AllocaI32({8, 128}, std::nullopt);
+  Value dev = Create<arith::ConstantIntOp>(1, 32).getResult();
+
+  // Same-core kScVectorSubcore signal without subcore_id remains valid.
+  Value reg_sem = AllocaSemaphore();
+  EXPECT_THAT(VerifyOp(Create<SemaphoreSignalOp>(reg_sem, dev, dev,
+                                                 /*core_id=*/nullptr)),
+              absl_testing::IsOk());
+
+  // WaitDMA2Op requires memory spaces on SC and accepts strict_ordering.
+  EXPECT_THAT(VerifyOp(Create<WaitDMA2Op>(sem, bare, vmem)),
+              StatusIs(_, HasSubstr("Source memory space must be provided")));
+  EXPECT_THAT(VerifyOp(Create<WaitDMA2Op>(sem, vmem, bare)),
+              StatusIs(_, HasSubstr("Target memory space must be provided")));
+  EXPECT_THAT(VerifyOp(Create<WaitDMA2Op>(sem, hbm, vmem, /*device_id=*/nullptr,
+                                          /*core_id=*/nullptr,
+                                          /*strict_ordering=*/true)),
+              absl_testing::IsOk());
+
+  // Remote SC WaitDMAOp requires the awaited semaphore (both wait_target arms).
+  EXPECT_THAT(VerifyOp(Create<WaitDMAOp>(
+                  vmem, /*source_semaphore=*/nullptr, hbm,
+                  /*target_semaphore=*/nullptr, dev, /*core_id=*/nullptr,
+                  /*subcore_id=*/nullptr, /*priority=*/0,
+                  /*strict_ordering=*/false, /*wait_target=*/false)),
+              StatusIs(_, HasSubstr("The awaited semaphore must be provided")));
+  EXPECT_THAT(VerifyOp(Create<WaitDMAOp>(
+                  vmem, /*source_semaphore=*/sem, hbm,
+                  /*target_semaphore=*/nullptr, dev, /*core_id=*/nullptr,
+                  /*subcore_id=*/nullptr, /*priority=*/0,
+                  /*strict_ordering=*/false, /*wait_target=*/true)),
+              StatusIs(_, HasSubstr("The awaited semaphore must be provided")));
+
+  // CoreIdOp and SubcoreIdOp emit diagnostics under any dimension_semantics.
+  auto core_op = Create<CoreIdOp>(i32());
+  auto subcore_op = Create<SubcoreIdOp>(i32());
+  EXPECT_THAT(VerifyOp(core_op), absl_testing::IsOk());
+  EXPECT_THAT(VerifyOp(subcore_op), absl_testing::IsOk());
+  auto fn = core_op->getParentOfType<func::FuncOp>();
+  fn->setAttr("dimension_semantics", builder().getArrayAttr({}));
+  EXPECT_THAT(VerifyOp(core_op), StatusIs(_, HasSubstr("dimension_semantics")));
+  EXPECT_THAT(VerifyOp(subcore_op),
+              StatusIs(_, HasSubstr("dimension_semantics")));
+  fn->setAttr("dimension_semantics", builder().getStringAttr("parallel"));
+  EXPECT_THAT(VerifyOp(core_op), StatusIs(_, HasSubstr("dimension_semantics")));
+  EXPECT_THAT(VerifyOp(subcore_op),
+              StatusIs(_, HasSubstr("dimension_semantics")));
+}
+
+TEST_F(TpuOpsVerificationTest, FetchAndAddSyncIssuingCoreAndTpuAssertMacros) {
+  auto sc_vec_smem = MemorySpaceAttr::get(
+      builder().getContext(), MemorySpace::kSmem, CoreType::kScVectorSubcore);
+  Value sc_base = Create<memref::AllocaOp>(
+                      MemRefType::get({4}, i32(), nullptr, sc_vec_smem))
+                      .getMemref();
+  Value tc_base = AllocaI32({4}, MemorySpace::kSmem);
+  Value zero = Create<arith::ConstantIntOp>(0, 32).getResult();
+  Value one = Create<arith::ConstantIntOp>(1, 32).getResult();
+
+  // Unannotated TC base keeps target-core error; TC -> sc_vector_subcore base
+  // rejects kTc issuing core; SC scalar -> sc_vector_subcore base succeeds.
+  EXPECT_THAT(VerifyOp(Create<FetchAndAddSyncOp>(i32(), tc_base,
+                                                 ValueRange{zero}, one, zero)),
+              StatusIs(_, HasSubstr("Only SC vector subcore is supported, got "
+                                    "tc")));
+  EXPECT_THAT(VerifyOp(Create<FetchAndAddSyncOp>(i32(), sc_base,
+                                                 ValueRange{zero}, one, zero)),
+              StatusIs(_, HasSubstr("Unsupported issuing core type: tc")));
+
+  auto sc_fn =
+      Create<func::FuncOp>("sc_scalar", builder().getFunctionType({}, {}));
+  sc_fn->setAttr(
+      TPUDialect::GetCoreTypeKey(),
+      CoreTypeAttr::get(builder().getContext(), CoreType::kScScalarSubcore));
+  {
+    OpBuilder::InsertionGuard g(builder());
+    builder().setInsertionPointToStart(sc_fn.addEntryBlock());
+    auto faa = FetchAndAddSyncOp::create(builder(), i32(), sc_base,
+                                         ValueRange{zero}, one, zero);
+    EXPECT_THAT(VerifyOp(faa), absl_testing::IsOk());
+  }
+
+  // TPU_ASSERT_LOC returns failure (including inside unbraced if/else), and
+  // TPU_ASSERT_EQ_LOC evaluates lhs/rhs once while keeping temporaries alive.
+  Location loc = builder().getUnknownLoc();
+  auto check_assert = [&](bool gate, bool cond) -> LogicalResult {
+    if (gate)
+      TPU_ASSERT_LOC(loc, cond);
+    else
+      return failure();
+    return success();
+  };
+  {
+    BaseScopedDiagnosticHandler diag(builder().getContext());
+    EXPECT_TRUE(failed(check_assert(true, false)));
+    EXPECT_THAT(diag.ConsumeStatus(),
+                StatusIs(_, HasSubstr("Internal error: assert failed")));
+  }
+  EXPECT_TRUE(succeeded(check_assert(true, true)));
+
+  int lhs_evals = 0;
+  int rhs_evals = 0;
+  auto check_cmp = [&](int expected) -> LogicalResult {
+    TPU_ASSERT_EQ_LOC(loc, (++lhs_evals, std::vector<int>{7}.front()),
+                      (++rhs_evals, std::vector<int>{expected}.front()));
+    return success();
+  };
+  {
+    BaseScopedDiagnosticHandler diag(builder().getContext());
+    EXPECT_TRUE(failed(check_cmp(9)));
+    EXPECT_THAT(diag.ConsumeStatus(), StatusIs(_, HasSubstr("(7 vs. 9)")));
+  }
+  EXPECT_EQ(lhs_evals, 1);
+  EXPECT_EQ(rhs_evals, 1);
+  EXPECT_TRUE(succeeded(check_cmp(7)));
+  EXPECT_EQ(lhs_evals, 2);
+  EXPECT_EQ(rhs_evals, 2);
 }
 
 }  // namespace

@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/TypeSwitch.h"          // IWYU pragma: keep.
 #include "mlir/Dialect/Arith/IR/Arith.h"  // IWYU pragma: keep.
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -75,6 +76,9 @@ void TPUDialect::initialize() {
 
 /* static */ std::optional<CoreType> TPUDialect::GetCoreTypeAttr(
     Operation* op) {
+  if (op == nullptr) {
+    return std::nullopt;
+  }
   Attribute attr = op->getAttr(GetCoreTypeKey());
   if (attr == nullptr) {
     // For backwards compatibility we assume that the "main" function without
@@ -114,6 +118,9 @@ CoreType GetCoreTypeOfParentOp(Operation& op) {
 }
 
 absl::StatusOr<func::FuncOp> GetMainFunc(ModuleOp module, CoreType core_type) {
+  if (!module) {
+    return absl::InvalidArgumentError("Module must not be null");
+  }
   func::FuncOp result = nullptr;
   for (auto func_op : module.getOps<func::FuncOp>()) {
     if (!func_op->hasAttr(TPUDialect::GetMainKey())) {
@@ -154,7 +161,8 @@ absl::StatusOr<func::FuncOp> GetMainFunc(ModuleOp module, CoreType core_type) {
     return absl::InvalidArgumentError(absl::StrFormat(
         "No function with tpu.core_type = %v found", core_type));
   }
-  if (auto main_func = module.lookupSymbol<func::FuncOp>("main")) {
+  if (auto main_func = module.lookupSymbol<func::FuncOp>("main");
+      main_func && !main_func->hasAttr(TPUDialect::GetCoreTypeKey())) {
     return main_func;
   }
   return absl::InvalidArgumentError(absl::StrFormat(
@@ -194,8 +202,14 @@ LogicalResult MemorySpaceAttr::verify(
 }
 
 MemRefType getMemRefType(Value value) {
-  if (auto erase_op = value.getDefiningOp<tpu::EraseLayoutOp>()) {
+  CHECK(value);
+  llvm::SmallPtrSet<Value, 4> visited;
+  while (auto erase_op = value.getDefiningOp<tpu::EraseLayoutOp>()) {
+    if (!visited.insert(value).second) {
+      break;
+    }
     value = erase_op.getOperand();
+    CHECK(value);
   }
   return cast<MemRefType>(value.getType());
 }
@@ -222,13 +236,20 @@ void analyzeCrossChipCommunication(mlir::Operation* op,
     state->has_communication |= dma.getDeviceId() != nullptr;
   } else if (auto signal = dyn_cast<tpu::SemaphoreSignalOp>(op)) {
     state->has_communication |= signal.getDeviceId() != nullptr;
+  } else if (auto wait2 = dyn_cast<tpu::WaitDMA2Op>(op)) {
+    state->has_communication |= wait2.getDeviceId() != nullptr;
+  } else if (auto wait = dyn_cast<tpu::WaitDMAOp>(op)) {
+    state->has_communication |= wait.getDeviceId() != nullptr;
   } else if (auto barrier = dyn_cast<tpu::GetBarrierSemaphoreOp>(op)) {
     state->has_custom_barrier = true;
   }
+  if (*state) {
+    return;
+  }
   for (Region& region : op->getRegions()) {
     for (Block& block : region.getBlocks()) {
-      for (Operation& op : block.getOperations()) {
-        analyzeCrossChipCommunication(&op, state);
+      for (Operation& nested_op : block.getOperations()) {
+        analyzeCrossChipCommunication(&nested_op, state);
         if (*state) {
           return;
         }
@@ -240,6 +261,9 @@ void analyzeCrossChipCommunication(mlir::Operation* op,
 }  // namespace
 
 std::pair<bool, bool> mightCommunicateBetweenChips(mlir::Operation* op) {
+  if (op == nullptr) {
+    return {false, false};
+  }
   CommsAnalysisState state;
   analyzeCrossChipCommunication(op, &state);
   return std::make_pair(state.has_communication, state.has_custom_barrier);
