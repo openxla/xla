@@ -15,9 +15,11 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/all_gather_pad_ds_simplifier.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -38,6 +40,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/layout.h"
 #include "xla/literal_util.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/collective_opt_utils.h"
@@ -49,22 +52,47 @@ limitations under the License.
 namespace xla {
 namespace {
 
+bool IsStaticArray(const Shape& shape) {
+  return shape.IsArray() && shape.is_static();
+}
+
 // Validates initial properties of the HloPadInstruction.
 bool ValidateInitialPadProperties(const HloPadInstruction& pad,
                                   const Shape& ds_shape,
                                   const Shape& ag_shape) {
-  // 1. Check if the padding value is a zero constant.
-  if (pad.padding_value() == nullptr ||
-      pad.padding_value()->opcode() != HloOpcode::kConstant ||
-      !pad.padding_value()->literal().IsZero({})) {
-    VLOG(2) << "Pad value is not a zero constant: " << pad.ToString()
-            << " value: " << pad.padding_value()->ToString();
+  // 1. Check if the padding value is a scalar zero constant with a literal.
+  const HloInstruction* pad_value = pad.padding_value();
+  if (pad.operand_count() != 2 || pad.operand(0) == nullptr ||
+      pad_value == nullptr || pad_value->opcode() != HloOpcode::kConstant ||
+      !Cast<HloConstantInstruction>(pad_value)->HasLiteral() ||
+      !ShapeUtil::IsScalar(pad_value->shape()) ||
+      !pad_value->literal().IsZero({})) {
+    VLOG(2) << "Pad value is not a scalar zero constant: " << pad.ToString()
+            << " value: "
+            << (pad_value == nullptr ? "<null>" : pad_value->ToString());
     return false;
   }
 
-  // 2. Check if the padding config dimension size matches the ag/ds shapes.
-  if (pad.padding_config().dimensions_size() != ag_shape.dimensions().size() ||
-      pad.padding_config().dimensions_size() != ds_shape.dimensions().size()) {
+  // 2. Check static array shapes, matching element types, and matching ranks.
+  const Shape& pad_shape = pad.shape();
+  const Shape& operand_shape = pad.operand(0)->shape();
+  const PrimitiveType element_type = pad_shape.element_type();
+  if (!IsStaticArray(pad_shape) || !IsStaticArray(operand_shape) ||
+      !IsStaticArray(ds_shape) || !IsStaticArray(ag_shape) ||
+      pad_value->shape().element_type() != element_type ||
+      operand_shape.element_type() != element_type ||
+      ag_shape.element_type() != element_type ||
+      ds_shape.element_type() != element_type) {
+    VLOG(2) << "Unsupported shape or element type in pad pattern: "
+            << pad.ToString();
+    return false;
+  }
+
+  const int64_t config_rank = pad.padding_config().dimensions_size();
+  if (config_rank != pad_shape.dimensions().size() ||
+      config_rank != operand_shape.dimensions().size() ||
+      config_rank != ag_shape.dimensions().size() ||
+      config_rank != ds_shape.dimensions().size()) {
     VLOG(2) << "pad dimension size mismatches the ag/ds dimension size: "
             << pad.ToString();
     return false;
@@ -76,18 +104,28 @@ bool ValidateInitialPadProperties(const HloPadInstruction& pad,
 std::optional<OffsetSpec> ProcessSplitDimensionPadding(
     const HloPadInstruction& pad,
     const PaddingConfig::PaddingConfigDimension& padding_dim, int64_t dim) {
-  const bool has_low_padding = padding_dim.edge_padding_low() != 0;
-  const bool has_high_padding = padding_dim.edge_padding_high() != 0;
-
-  if (!has_low_padding && !has_high_padding) {
-    VLOG(2) << "Do not support no padding on the split dim: " << dim
+  const int64_t low_pad = padding_dim.edge_padding_low();
+  const int64_t high_pad = padding_dim.edge_padding_high();
+  if (low_pad < 0 || high_pad < 0) {
+    VLOG(2) << "Negative edge padding is not supported on split dim: " << dim
             << " pad:" << pad.ToString();
     return std::nullopt;
   }
-  if (has_low_padding && has_high_padding) {
-    VLOG(2) << "Do not support pad has both low and high edge padding on "
-               "the split dim: "
-            << dim << " pad:" << pad.ToString();
+  const bool has_low_padding = low_pad > 0;
+  const bool has_high_padding = high_pad > 0;
+  if (has_low_padding == has_high_padding) {
+    VLOG(2) << "Split dim must have padding on exactly one edge: " << dim
+            << " pad:" << pad.ToString();
+    return std::nullopt;
+  }
+
+  const int64_t operand_dim = pad.operand(0)->shape().dimensions(dim);
+  const int64_t pad_dim = pad.shape().dimensions(dim);
+  const int64_t edge_pad = has_low_padding ? low_pad : high_pad;
+  if (operand_dim < 0 || pad_dim < operand_dim ||
+      pad_dim - operand_dim != edge_pad) {
+    VLOG(2) << "Inconsistent split dim padding extent on dim " << dim
+            << " pad:" << pad.ToString();
     return std::nullopt;
   }
 
@@ -95,13 +133,10 @@ std::optional<OffsetSpec> ProcessSplitDimensionPadding(
   valid_pad_spec.split_dim = dim;
   if (has_low_padding) {
     valid_pad_spec.start_offset = 0;
-    valid_pad_spec.end_offset = padding_dim.edge_padding_low();
+    valid_pad_spec.end_offset = low_pad;
   } else {
-    CHECK(has_high_padding);
-    valid_pad_spec.start_offset = pad.operand(0)->shape().dimensions(dim);
-    valid_pad_spec.end_offset = pad.operand(0)->shape().dimensions(dim) +
-                                padding_dim.edge_padding_high();
-    CHECK_EQ(valid_pad_spec.end_offset, pad.shape().dimensions(dim));
+    valid_pad_spec.start_offset = operand_dim;
+    valid_pad_spec.end_offset = pad_dim;
   }
   return valid_pad_spec;
 }
@@ -112,7 +147,8 @@ bool ProcessNonSplitDimensionPadding(
     const PaddingConfig::PaddingConfigDimension& padding_dim, int64_t dim) {
   const bool has_low_padding = padding_dim.edge_padding_low() != 0;
   const bool has_high_padding = padding_dim.edge_padding_high() != 0;
-  if (has_low_padding || has_high_padding) {
+  if (has_low_padding || has_high_padding ||
+      pad.shape().dimensions(dim) != pad.operand(0)->shape().dimensions(dim)) {
     VLOG(2) << "Pad has edge padding on non-split dim " << dim << ": "
             << pad.ToString();
     return false;
@@ -126,10 +162,10 @@ std::optional<OffsetSpec> ExtractValidPadSpec(const HloPadInstruction& pad,
                                               const Shape& ds_shape,
                                               const Shape& ag_shape,
                                               int64_t split_dim) {
-  if (!ValidateInitialPadProperties(pad, ds_shape, ag_shape)) {
+  if (!ValidateInitialPadProperties(pad, ds_shape, ag_shape) || split_dim < 0 ||
+      split_dim >= pad.padding_config().dimensions_size()) {
     return std::nullopt;
   }
-  CHECK_LT(split_dim, pad.padding_config().dimensions_size());
 
   std::optional<OffsetSpec> valid_pad_spec;
 
@@ -184,6 +220,9 @@ std::optional<OffsetToIdMap::const_iterator> GetPartitionIdForOffset(
 
 HloInstruction* AddPredInstrBasedOnPartitionIdAndList(
     HloComputation* computation, absl::Span<const int64_t> select_list) {
+  if (computation == nullptr || select_list.empty()) {
+    return nullptr;
+  }
   HloInstruction* const_list =
       computation->AddInstruction(HloInstruction::CreateConstant(
           LiteralUtil::CreateR1<int64_t>(select_list)));
@@ -229,29 +268,35 @@ std::optional<OffsetSpec> ExtractAllGatherOffsetSpec(
     const OffsetSpec& valid_pad_spec, const Shape& pad_shape,
     const Shape& ag_shape) {
   OffsetSpec ag_offset_spec;
-  // [valid_pad_spec.start_offset, valid_pad_spec.end_offset] belongs to [0,
-  // pad_shape.dimensions(valid_pad_spec.split_dim)].
-  int64_t ag_low_edge = valid_pad_spec.start_offset - 0;
-  int64_t ag_high_edge = pad_shape.dimensions(valid_pad_spec.split_dim) -
-                         valid_pad_spec.end_offset;
+  const int64_t split_dim = valid_pad_spec.split_dim;
+  const int64_t pad_dim = pad_shape.dimensions(split_dim);
+  if (valid_pad_spec.start_offset < 0 ||
+      valid_pad_spec.end_offset < valid_pad_spec.start_offset ||
+      valid_pad_spec.end_offset > pad_dim) {
+    return std::nullopt;
+  }
+  int64_t ag_low_edge = valid_pad_spec.start_offset;
+  int64_t ag_high_edge = pad_dim - valid_pad_spec.end_offset;
   if (ag_low_edge == 0) {
-    if (ag_high_edge != ag_shape.dimensions(valid_pad_spec.split_dim)) {
+    if (ag_high_edge != ag_shape.dimensions(split_dim)) {
       VLOG(2) << "invalid shape between ag: " << ag_shape.ToString()
-              << "and  pad: " << pad_shape.ToString();
+              << " and pad: " << pad_shape.ToString();
       return std::nullopt;
     }
     ag_offset_spec.start_offset = valid_pad_spec.end_offset;
-    ag_offset_spec.end_offset = pad_shape.dimensions(valid_pad_spec.split_dim);
-    ag_offset_spec.split_dim = valid_pad_spec.split_dim;
+    ag_offset_spec.end_offset = pad_dim;
+    ag_offset_spec.split_dim = split_dim;
   } else if (ag_high_edge == 0) {
-    if (ag_low_edge != ag_shape.dimensions(valid_pad_spec.split_dim)) {
+    if (ag_low_edge != ag_shape.dimensions(split_dim)) {
       VLOG(2) << "invalid shape between ag: " << ag_shape.ToString()
-              << "and  pad: " << pad_shape.ToString();
+              << " and pad: " << pad_shape.ToString();
       return std::nullopt;
     }
     ag_offset_spec.start_offset = 0;
     ag_offset_spec.end_offset = valid_pad_spec.start_offset;
-    ag_offset_spec.split_dim = valid_pad_spec.split_dim;
+    ag_offset_spec.split_dim = split_dim;
+  } else {
+    return std::nullopt;
   }
   return ag_offset_spec;
 }
@@ -264,126 +309,68 @@ std::optional<OffsetSpec> ExtractAllGatherOffsetSpec(
 // `ag_offset_spec.start_offset` to reflect their absolute positions
 // in the padded tensor.
 std::optional<OffsetToIdMap> GenerateOffsettedAgMap(
-    const OffsetToIdMap& ag_map, const OffsetSpec& ag_offset_spec) {
+    const OffsetToIdMap& ag_map, const OffsetSpec& ag_offset_spec,
+    int64_t ag_shard_size) {
+  const int64_t ag_extent =
+      ag_offset_spec.end_offset - ag_offset_spec.start_offset;
+  if (ag_shard_size <= 0 || ag_extent < ag_shard_size) {
+    return std::nullopt;
+  }
+  DCHECK_GT(ag_shard_size, 0);
   OffsetToIdMap ag_offsetted_map;
   for (const auto& [offset, partition_id] : ag_map) {
-    ag_offsetted_map[offset + ag_offset_spec.start_offset] = partition_id;
-  }
-  for (const auto& [ag_offsetted_offset, partition_id] : ag_offsetted_map) {
-    if (ag_offsetted_offset >= ag_offset_spec.end_offset ||
-        ag_offsetted_offset < ag_offset_spec.start_offset) {
-      VLOG(2) << "ag_offsetted_offset: " << ag_offsetted_offset
-              << " is not in the range of ag_offset_spec: "
+    if (offset < 0 || offset > ag_extent - ag_shard_size) {
+      VLOG(2) << "ag offset: " << offset
+              << " is out of range of ag_offset_spec: "
               << ag_offset_spec.ToString();
+      return std::nullopt;
+    }
+    if (!ag_offsetted_map
+             .try_emplace(ag_offset_spec.start_offset + offset, partition_id)
+             .second) {
       return std::nullopt;
     }
   }
   return ag_offsetted_map;
 }
 
-// Identifies the target partition/offset in the dynamic-slice for
-// all-gather.
-// Given the offset-to-partition-id maps for both dynamic-slice (ds_map) and
-// the offsetted all-gather (ag_offsetted_map), this function determines which
-// partition within the dynamic-slice result the all-gather data belongs to.
-//
-// It checks that all shards of the all-gather map to the *same* partition
-// in the dynamic-slice.
-//
-// Returns a pair containing the start offset and partition ID of the target
-// partition in the dynamic-slice map. If the all-gather shards map to
-// different dynamic-slice partitions, or if the map is empty, it returns
-// std::nullopt.
-//
-// Example:
-//   ds_map: {0:0, 24:1, 48:2, 72:3} (Offsets in the large padded tensor).
-//   ag_offsetted_map: {88:0, 90:1, 92:2, 94:3} (Offsets of AG shards in the
-//   large padded tensor). Since all offsets in ag_offsetted_map (88-95) fall
-//   within the range [72, 96) of partition 3 in ds_map, this function would
-//   return {72, 3}.
-std::optional<std::pair<int64_t, int64_t>> IdentifyTargetPartition(
-    const OffsetToIdMap& ds_map, const OffsetToIdMap& ag_offsetted_map) {
-  if (ag_offsetted_map.empty() || ds_map.empty()) {
-    VLOG(2) << "The all-gather or dynamic-slice offset map is empty.";
-    return std::nullopt;
-  }
+enum class SlotKind { kPad, kLocalShard, kRemotePermute };
 
-  int64_t target_partition_id = -1;
-  int64_t target_partition_offset = -1;
+struct SliceSlot {
+  SlotKind kind;
+  int64_t split_size;
+  std::pair<int64_t, int64_t> source_target;
+};
 
-  for (const auto& [ag_offset, ag_partition_id] : ag_offsetted_map) {
-    std::optional<OffsetToIdMap::const_iterator> ds_partition_it =
-        GetPartitionIdForOffset(ds_map, ag_offset);
-
-    if (!ds_partition_it.has_value()) {
-      VLOG(2) << "All-gather offset " << ag_offset
-              << " is out of the range of the dynamic-slice map.";
-      return std::nullopt;
-    }
-
-    const int64_t current_ds_offset = (*ds_partition_it)->first;
-    const int64_t current_ds_partition_id = (*ds_partition_it)->second;
-
-    if (target_partition_id == -1) {
-      // First element, initialize the target partition.
-      target_partition_id = current_ds_partition_id;
-      target_partition_offset = current_ds_offset;
-    } else if (target_partition_id != current_ds_partition_id) {
-      // Consistency check: all all-gather shards must map to the same
-      // dynamic-slice partition.
-      VLOG(2) << "All-gather offset " << ag_offset << " maps to partition "
-              << current_ds_partition_id << " (offset " << current_ds_offset
-              << "), but previous shards mapped to partition "
-              << target_partition_id << " (offset " << target_partition_offset
-              << ").";
-      return std::nullopt;
-    }
-  }
-  return std::make_pair(target_partition_offset, target_partition_id);
-}
-
-// Generates an instruction that broadcasts a zero literal to a specified shape.
-//
-// The output instruction will have the same shape as the given `ds_instr`,
-// except for the `split_dim`, where the size is set to the given `size`.
-// The element type is taken from `ds_instr`.
-//
-// Example:
-//   ds_instr.shape() = f32[10, 20]
-//   split_dim = 1
-//   size = 5
-//   Returns a broadcast of a zero scalar to a shape of f32[10, 5].
+// Generates a broadcast of `pad`'s scalar zero literal (preserving signed zero
+// bits and `ds_instr`'s layout) with `split_dim` resized to `size`.
 HloInstruction* CreateBroadcastConstant(HloComputation* computation,
                                         const HloInstruction& ds_instr,
+                                        const HloPadInstruction& pad,
                                         int64_t split_dim, int64_t size) {
-  Shape new_shape = ds_instr.shape();
   if (size <= 0) {
     VLOG(2) << "Size of the split dimension must be positive, but got " << size;
     return nullptr;
   }
+  Shape new_shape = ds_instr.shape();
   new_shape.set_dimensions(split_dim, size);
 
-  HloInstruction* zero =
-      computation->AddInstruction(HloInstruction::CreateConstant(
-          LiteralUtil::Zero(new_shape.element_type())));
-  // Broadcast the zero scalar to the target shape.
-  HloInstruction* broadcast = computation->AddInstruction(
+  HloInstruction* zero = computation->AddInstruction(
+      HloInstruction::CreateConstant(pad.padding_value()->literal().Clone()));
+  return computation->AddInstruction(
       HloInstruction::CreateBroadcast(new_shape, zero, {}));
-  return broadcast;
 }
 
 // Checks if the total size of operands along the split dimension matches the
 // target shape and creates a concatenate instruction.
-//
-// The function verifies that the sum of the sizes of the `operands` along
-// the `split_dim` equals the size of the `split_dim` in the target `shape`.
-// If they match, it adds a new concatenate instruction to the computation
-// and returns it. Otherwise, it returns nullptr.
 HloInstruction* CheckSizeAndConcatenate(
     HloComputation* computation, absl::Span<HloInstruction* const> operands,
     const Shape& shape, int64_t split_dim) {
   int64_t total_split_dim_size = 0;
   for (HloInstruction* operand : operands) {
+    if (operand == nullptr) {
+      return nullptr;
+    }
     VLOG(10) << "CheckSizeAndConcatenate operand: " << operand->ToString();
     total_split_dim_size += operand->shape().dimensions(split_dim);
   }
@@ -399,159 +386,157 @@ HloInstruction* CheckSizeAndConcatenate(
       HloInstruction::CreateConcatenate(shape, operands, split_dim));
 }
 
-// Creates a new CollectivePermute instruction by adding new source-target pairs
-// to an existing CollectivePermute instruction.
-HloInstruction* AddCollectivePermuteWithNewSourceTargetPair(
-    HloCollectivePermuteInstruction* cp,
-    absl::Span<const std::pair<int64_t, int64_t>> new_source_target_pairs) {
-  std::vector<std::pair<int64_t, int64_t>> combined_pairs(
-      new_source_target_pairs.begin(), new_source_target_pairs.end());
-  combined_pairs.insert(combined_pairs.end(), cp->source_target_pairs().begin(),
-                        cp->source_target_pairs().end());
-
-  HloInstruction* combined =
-      cp->parent()->AddInstruction(HloInstruction::CreateCollectivePermute(
-          cp->shape(), cp->mutable_operand(0), combined_pairs,
-          cp->channel_id()));
-  CopyCollectiveGroupKey(*cp, *combined);
-  return combined;
-}
-
-// Processes a single replica group to generate the necessary HLO instructions.
-//
-// This function identifies the target partition within the dynamic-slice window
-// for the AllGather data of the current replica group. It then builds a
-// vector of HLO instructions, including CollectivePermutes to fetch remote data
-// shards, the local AllGather operand, and zero padding where necessary, to
-// construct the slice for this replica group.
-//
-// Returns a vector of HLO instructions if successful, or std::nullopt if any
-// validation fails or the configuration is unsupported.
-// The target_partition_id is an output parameter.
-std::optional<std::vector<HloInstruction*>> ProcessReplicaGroup(
+// Validates a single replica group and produces a declarative slice plan
+// without mutating the computation.
+std::optional<std::vector<SliceSlot>> ProcessReplicaGroup(
     const OffsetToIdMap& ds_map, const OffsetToIdMap& ag_map,
-    const OffsetSpec& ag_offset_spec, HloComputation* computation,
-    HloDynamicSliceInstruction& ds, HloAllGatherInstruction& ag,
-    int64_t split_dim, int64_t& target_partition_id) {
+    const OffsetSpec& ag_offset_spec, const HloDynamicSliceInstruction& ds,
+    const HloPadInstruction& pad, const HloAllGatherInstruction& ag,
+    int64_t split_dim, int64_t num_partitions,
+    std::vector<bool>& seen_ag_partitions, size_t& total_ag_participants,
+    int64_t& target_partition_id) {
+  const int64_t pad_dim = pad.shape().dimensions(split_dim);
   const int64_t ds_result_size = ds.shape().dimensions(split_dim);
+  const int64_t ag_result_size = ag.shape().dimensions(split_dim);
   const int64_t ag_shard_size = ag.operand(0)->shape().dimensions(split_dim);
+  if (ds_map.empty() || ag_map.empty() || ds_map.size() != ag_map.size() ||
+      ag_shard_size <= 0 || pad_dim < ds_result_size ||
+      ds_result_size < ag_result_size || ag_result_size % ag_shard_size != 0 ||
+      static_cast<int64_t>(ag_map.size()) != ag_result_size / ag_shard_size) {
+    return std::nullopt;
+  }
+
+  std::vector<bool> in_group(num_partitions, false);
+  for (const auto& [offset, pid] : ag_map) {
+    if (pid < 0 || pid >= num_partitions || seen_ag_partitions[pid]) {
+      return std::nullopt;
+    }
+    seen_ag_partitions[pid] = true;
+    in_group[pid] = true;
+    ++total_ag_participants;
+  }
 
   std::optional<OffsetToIdMap> ag_offsetted_map =
-      GenerateOffsettedAgMap(ag_map, ag_offset_spec);
+      GenerateOffsettedAgMap(ag_map, ag_offset_spec, ag_shard_size);
   if (!ag_offsetted_map.has_value()) {
-    VLOG(2) << "No valid ag offsetted map found for ag offset spec: "
-            << ag_offset_spec.ToString();
     return std::nullopt;
   }
-
-  std::optional<std::pair<int64_t, int64_t>> target_partition =
-      IdentifyTargetPartition(ds_map, *ag_offsetted_map);
-  if (!target_partition.has_value()) {
-    VLOG(2) << "No valid target partition found for ag offset spec: "
-            << ag_offset_spec.ToString();
-    return std::nullopt;
-  }
-
-  target_partition_id = target_partition->second;
-  const int64_t target_partition_offset = target_partition->first;
-
-  std::vector<HloInstruction*> new_instrs_per_rg;
-  int64_t start_offset = target_partition_offset;
-  int64_t end_offset = target_partition_offset + ds_result_size;
-
-  if (ag_offsetted_map->rbegin()->first + ag_shard_size > end_offset) {
-    VLOG(2) << "ag_offsetted_map.rbegin()->first + ag_shard_size: "
-            << ag_offsetted_map->rbegin()->first + ag_shard_size
-            << " is out of range of end_offset: " << end_offset;
-    return std::nullopt;
-  }
-
-  // Add zero padding at the beginning if necessary.
-  OffsetToIdMap::iterator iter = ag_offsetted_map->begin();
-  if (iter->first < start_offset) {
-    return std::nullopt;
-  }
-  if (iter->first > start_offset) {
-    new_instrs_per_rg.push_back(CreateBroadcastConstant(
-        computation, ds, split_dim, iter->first - start_offset));
-  }
-
-  // Add instructions for each all-gather shard: if the shard is not on the
-  // target partition, insert a collective permute; otherwise, use the all-
-  // gather operand directly.
-  while (iter != ag_offsetted_map->end()) {
-    if (iter->first >= end_offset) {
-      VLOG(2) << "ag iter offset: " << iter->first
-              << " is out of range of end_offset: " << end_offset;
+  const int64_t ag_start = ag_offset_spec.start_offset;
+  const int64_t ag_end = ag_offset_spec.end_offset;
+  int64_t expected_ag_offset = ag_start;
+  for (const auto& [ag_offset, pid] : *ag_offsetted_map) {
+    if (ag_offset != expected_ag_offset) {
       return std::nullopt;
     }
-
-    if (iter->second != target_partition_id) {
-      // Insert collective permute from iter->second to target_partition_id.
-      HloInstruction* cp =
-          computation->AddInstruction(HloInstruction::CreateCollectivePermute(
-              ag.operand(0)->shape(), ag.mutable_operand(0),
-              {{iter->second, target_partition_id}}, ag.channel_id()));
-      CopyCollectiveGroupKey(ag, *cp);
-      new_instrs_per_rg.push_back(cp);
-    } else {
-      new_instrs_per_rg.push_back(ag.mutable_operand(0));
-    }
-    ++iter;
+    expected_ag_offset += ag_shard_size;
   }
-
-  // Add zero padding at the end if necessary.
-  int64_t ag_end_offset =
-      std::prev(ag_offsetted_map->end())->first + ag_shard_size;
-  if (ag_end_offset < end_offset) {
-    new_instrs_per_rg.push_back(CreateBroadcastConstant(
-        computation, ds, split_dim, end_offset - ag_end_offset));
-  }
-  for (const HloInstruction* instr : new_instrs_per_rg) {
-    VLOG(10) << "new_instrs_per_rg added: " << instr->ToString();
-  }
-  return new_instrs_per_rg;
-}
-
-// Condenses the instruction lists generated for each replica group into a
-// single list of instructions.
-//
-// This function takes a list of instruction lists (one for each replica group)
-// and merges them. It ensures that the instruction lists are compatible (same
-// size and matching opcodes). CollectivePermute instructions are combined by
-// merging their source-target pairs.
-//
-// Returns a single vector of HloInstructions if successful, or std::nullopt if
-// the lists cannot be condensed (e.g., size or opcode mismatches).
-std::optional<std::vector<HloInstruction*>> CondenseInstructionLists(
-    absl::Span<const std::vector<HloInstruction*>> new_instrs_list) {
-  if (new_instrs_list.empty()) {
-    VLOG(2) << "No instructions generated for any replica group.";
+  if (expected_ag_offset != ag_end) {
     return std::nullopt;
   }
-  std::vector<HloInstruction*> final_instrs = new_instrs_list[0];
 
-  for (size_t rg_idx = 1; rg_idx < new_instrs_list.size(); ++rg_idx) {
-    const std::vector<HloInstruction*>& appending_instrs =
-        new_instrs_list[rg_idx];
-    if (final_instrs.size() != appending_instrs.size()) {
-      VLOG(2) << "final_instrs.size(): " << final_instrs.size()
-              << " != appending_instrs.size(): " << appending_instrs.size();
+  // Clamp every partition's DynamicSlice start to [0, pad_dim - ds_result_size]
+  // and require a single target partition covering [ag_start, ag_end), with all
+  // non-target partitions strictly disjoint from [ag_start, ag_end).
+  const int64_t max_start = pad_dim - ds_result_size;
+  target_partition_id = -1;
+  int64_t start_offset = 0;
+  std::vector<bool> seen_ds(num_partitions, false);
+  for (const auto& [raw_offset, pid] : ds_map) {
+    if (pid < 0 || pid >= num_partitions || !in_group[pid] || seen_ds[pid]) {
       return std::nullopt;
     }
-    for (size_t i = 0; i < final_instrs.size(); ++i) {
-      if (final_instrs[i]->opcode() != appending_instrs[i]->opcode()) {
-        VLOG(2) << "Opcode mismatch: final_instrs[i]: between "
-                << final_instrs[i]->ToString() << " and appending_instrs[i]: "
-                << appending_instrs[i]->ToString();
+    seen_ds[pid] = true;
+    const int64_t clamped_start =
+        std::clamp<int64_t>(raw_offset, int64_t{0}, max_start);
+    const int64_t clamped_end = clamped_start + ds_result_size;
+    if (clamped_start < ag_end && ag_start < clamped_end) {
+      if (target_partition_id != -1 || clamped_start > ag_start ||
+          clamped_end < ag_end) {
         return std::nullopt;
       }
-      if (final_instrs[i]->opcode() == HloOpcode::kCollectivePermute) {
-        HloCollectivePermuteInstruction* cp =
-            Cast<HloCollectivePermuteInstruction>(appending_instrs[i]);
-        final_instrs[i] = AddCollectivePermuteWithNewSourceTargetPair(
-            Cast<HloCollectivePermuteInstruction>(final_instrs[i]),
-            cp->source_target_pairs());
+      target_partition_id = pid;
+      start_offset = clamped_start;
+    }
+  }
+  if (target_partition_id == -1) {
+    return std::nullopt;
+  }
+
+  const int64_t end_offset = start_offset + ds_result_size;
+  std::vector<SliceSlot> slots;
+  slots.reserve(ag_offsetted_map->size() + 2);
+  if (ag_start > start_offset) {
+    slots.push_back({SlotKind::kPad, ag_start - start_offset, {0, 0}});
+  }
+  for (const auto& [ag_offset, pid] : *ag_offsetted_map) {
+    if (pid != target_partition_id) {
+      slots.push_back({SlotKind::kRemotePermute,
+                       ag_shard_size,
+                       {pid, target_partition_id}});
+    } else {
+      slots.push_back({SlotKind::kLocalShard, ag_shard_size, {0, 0}});
+    }
+  }
+  if (ag_end < end_offset) {
+    slots.push_back({SlotKind::kPad, end_offset - ag_end, {0, 0}});
+  }
+  return slots;
+}
+
+// Validates that every replica group produced an identical (kind, split_size)
+// slot layout and materializes the condensed HLO operands once.
+std::optional<std::vector<HloInstruction*>> CondenseSliceSlots(
+    absl::Span<const std::vector<SliceSlot>> group_slots,
+    HloComputation* computation, const HloDynamicSliceInstruction& ds,
+    const HloPadInstruction& pad, HloAllGatherInstruction& ag,
+    int64_t split_dim) {
+  if (group_slots.empty() || group_slots[0].empty()) {
+    return std::nullopt;
+  }
+  const size_t num_groups = group_slots.size();
+  const size_t num_slots = group_slots[0].size();
+  for (size_t rg_idx = 1; rg_idx < num_groups; ++rg_idx) {
+    if (group_slots[rg_idx].size() != num_slots) {
+      return std::nullopt;
+    }
+    for (size_t i = 0; i < num_slots; ++i) {
+      if (group_slots[rg_idx][i].kind != group_slots[0][i].kind ||
+          group_slots[rg_idx][i].split_size != group_slots[0][i].split_size) {
+        return std::nullopt;
+      }
+    }
+  }
+
+  std::vector<HloInstruction*> final_instrs;
+  final_instrs.reserve(num_slots);
+  for (size_t i = 0; i < num_slots; ++i) {
+    const SliceSlot& spec = group_slots[0][i];
+    switch (spec.kind) {
+      case SlotKind::kPad: {
+        HloInstruction* pad_bcast = CreateBroadcastConstant(
+            computation, ds, pad, split_dim, spec.split_size);
+        if (pad_bcast == nullptr) {
+          return std::nullopt;
+        }
+        final_instrs.push_back(pad_bcast);
+        break;
+      }
+      case SlotKind::kLocalShard:
+        final_instrs.push_back(ag.mutable_operand(0));
+        break;
+      case SlotKind::kRemotePermute: {
+        std::vector<std::pair<int64_t, int64_t>> pairs;
+        pairs.reserve(num_groups);
+        for (size_t rg_idx = num_groups; rg_idx-- > 0;) {
+          pairs.push_back(group_slots[rg_idx][i].source_target);
+        }
+        HloInstruction* cp =
+            computation->AddInstruction(HloInstruction::CreateCollectivePermute(
+                ag.operand(0)->shape(), ag.mutable_operand(0), pairs,
+                ag.channel_id()));
+        CopyCollectiveGroupKey(ag, *cp);
+        final_instrs.push_back(cp);
+        break;
       }
     }
   }
@@ -559,17 +544,11 @@ std::optional<std::vector<HloInstruction*>> CondenseInstructionLists(
 }
 
 // Creates the final Concatenate and Select instructions.
-//
-// This function takes the condensed list of instructions, concatenates them,
-// and then uses a predicate based on the partition ID to select either the
-// concatenated result or a zero-filled tensor.
-//
-// Returns the final Select instruction if successful, or std::nullopt
-// otherwise.
 std::optional<HloInstruction*> CreateFinalConcatAndSelect(
     HloComputation* computation, absl::Span<HloInstruction* const> final_instrs,
-    HloDynamicSliceInstruction& ds, int64_t split_dim,
-    absl::Span<const int64_t> selection_list, int64_t ds_result_size) {
+    HloDynamicSliceInstruction& ds, const HloPadInstruction& pad,
+    int64_t split_dim, absl::Span<const int64_t> selection_list,
+    int64_t ds_result_size) {
   HloInstruction* concat =
       CheckSizeAndConcatenate(computation, final_instrs, ds.shape(), split_dim);
   if (concat == nullptr) {
@@ -585,7 +564,7 @@ std::optional<HloInstruction*> CreateFinalConcatAndSelect(
   }
 
   HloInstruction* zero_filled =
-      CreateBroadcastConstant(computation, ds, split_dim, ds_result_size);
+      CreateBroadcastConstant(computation, ds, pad, split_dim, ds_result_size);
   if (zero_filled == nullptr) {
     VLOG(2) << "No valid zero_filled instruction generated.";
     return std::nullopt;
@@ -595,108 +574,73 @@ std::optional<HloInstruction*> CreateFinalConcatAndSelect(
       ds.shape(), HloOpcode::kSelect, pred, concat, zero_filled));
 }
 
-// Replaces a DynamicSlice(Pad(AllGather)) pattern with a more efficient
-// sequence of HLOs, primarily using CollectivePermute and Concatenate.
-//
-// Purpose:
-// This function aims to optimize the case where a sharded AllGather result is
-// padded and then sliced by DynamicSlice. Instead of materializing the large
-// padded tensor, it constructs the result for the current partition's slice
-// by directly permuting the necessary data from other partitions.
-//
-// Workflow:
-// 1. Initial Validation: Checks for size compatibility and valid partition
-// specs.
-// 2. Per-Replica Group Processing: For each replica group:
-//    a. Identify Target Partition: Determines which partition's DynamicSlice
-//       window the AllGather data falls into.
-//    b. Build Instruction List: Generates HLOs to form the slice. This
-//    involves:
-//       - CollectivePermute: To fetch data shards from remote partitions.
-//       - AllGather Operand: To use the local shard data.
-//       - Zero Padding: To fill gaps at the start or end of the slice if the
-//         AllGather data doesn't perfectly align.
-// 3. Condense Instruction Lists: Merges the instruction lists from each replica
-//    group. For CollectivePermute instructions, source-target pairs are
-//    combined.
-// 4. Final HLO Generation: Constructs the final set of instructions:
-//    a. Concatenate: Assembles the (potentially permuted) data shards and
-//       padding into the shape of the DynamicSlice output.
-//    b. Predicate: Creates a predicate based on the current partition ID to
-//       determine if this partition is the target for the AllGather data.
-//    c. Select: Uses the predicate to either output the concatenated data (if
-//       it's the target partition) or a zero-filled tensor of the same shape.
+// Replaces a validated DynamicSlice(Pad(AllGather)) pattern with
+// CollectivePermute, Concatenate, and Select instructions.
 std::optional<HloInstruction*> InsertCollectivePermuteInstrSet(
     const PartitionOffsetSpec& ds_offset_partition_spec,
     const PartitionOffsetSpec& ag_offset_partition_spec,
     const OffsetSpec& ag_offset_spec, HloDynamicSliceInstruction& ds,
-    HloAllGatherInstruction& ag, int64_t split_dim) {
-  // Section 1: Initial Validation and Setup.
+    const HloPadInstruction& pad, HloAllGatherInstruction& ag,
+    int64_t split_dim, int64_t num_partitions) {
   const int64_t ds_result_size = ds.shape().dimensions(split_dim);
   const int64_t ag_result_size = ag.shape().dimensions(split_dim);
   HloComputation* computation = ds.parent();
 
-  // Validate the ag shard can fit into a single ds partition.
-  if (ds_result_size < ag_result_size) {
-    VLOG(2) << "ds_result_size(" << ds_result_size << ") < ag_result_size("
-            << ag_result_size << ").";
-    return std::nullopt;
-  }
-  if (ds_offset_partition_spec.per_replica_group_offsets.size() !=
+  if (num_partitions <= 1 || ds_result_size <= 0 ||
+      ds_result_size < ag_result_size ||
+      ds_offset_partition_spec.per_replica_group_offsets.size() !=
           ag_offset_partition_spec.per_replica_group_offsets.size() ||
       ds_offset_partition_spec.per_replica_group_offsets.empty()) {
-    VLOG(2)
-        << "ds_offset_partition_spec or ag_offset_partition_spec is not valid.";
     return std::nullopt;
   }
 
-  std::vector<int64_t> selection_list;
-  selection_list.resize(ag.replica_groups().size() *
-                        ag.replica_groups()[0].replica_ids_size());
-  std::vector<std::vector<HloInstruction*>> new_instrs_list;
+  const size_t num_groups =
+      ds_offset_partition_spec.per_replica_group_offsets.size();
+  std::vector<int64_t> selection_list(num_partitions, 0);
+  std::vector<bool> seen_ag_partitions(num_partitions, false);
+  size_t total_ag_participants = 0;
+  std::vector<std::vector<SliceSlot>> group_slots;
+  group_slots.reserve(num_groups);
 
-  // Section 2: Per-Replica Group Processing.
-  for (int64_t rg_idx = 0;
-       rg_idx < ds_offset_partition_spec.per_replica_group_offsets.size();
-       ++rg_idx) {
+  for (size_t rg_idx = 0; rg_idx < num_groups; ++rg_idx) {
     const OffsetToIdMap& ds_map =
         ds_offset_partition_spec.per_replica_group_offsets[rg_idx];
     const OffsetToIdMap& ag_map =
         ag_offset_partition_spec.per_replica_group_offsets[rg_idx];
 
     int64_t target_partition_id = -1;
-    std::optional<std::vector<HloInstruction*>> new_instrs_per_rg =
-        ProcessReplicaGroup(ds_map, ag_map, ag_offset_spec, computation, ds, ag,
-                            split_dim, target_partition_id);
-
-    if (!new_instrs_per_rg.has_value()) {
+    std::optional<std::vector<SliceSlot>> slots = ProcessReplicaGroup(
+        ds_map, ag_map, ag_offset_spec, ds, pad, ag, split_dim, num_partitions,
+        seen_ag_partitions, total_ag_participants, target_partition_id);
+    if (!slots.has_value() || target_partition_id < 0 ||
+        target_partition_id >= num_partitions ||
+        selection_list[target_partition_id] != 0) {
       VLOG(2) << "Failed to process replica group " << rg_idx;
       return std::nullopt;
     }
-    if (target_partition_id >= selection_list.size()) {
-      VLOG(2) << "target_partition_id: " << target_partition_id
-              << " is out of range of selection_list: "
-              << selection_list.size();
-      return std::nullopt;
-    }
-    // Select the concatenate result on target partition only.
     selection_list[target_partition_id] = 1;
-    new_instrs_list.push_back(std::move(*new_instrs_per_rg));
+    group_slots.push_back(std::move(*slots));
   }
 
-  // Section 3: Condense Instruction Lists from Replica Groups.
-  // Only one instruction set will be used, all other instruction sets will
-  // be discarded in following passes.
-  std::optional<std::vector<HloInstruction*>> final_instrs_optional =
-      CondenseInstructionLists(new_instrs_list);
-  if (!final_instrs_optional.has_value()) {
-    VLOG(2) << "Failed to condense instruction lists.";
+  // Non-participating partitions produce +0.0 from AllGather, which differs
+  // from a negative-zero pad literal inside the AllGather slice window.
+  if (total_ag_participants < static_cast<size_t>(num_partitions) &&
+      !pad.padding_value()->literal().Equal(
+          LiteralUtil::Zero(ds.shape().element_type()),
+          /*layout_sensitive=*/false)) {
     return std::nullopt;
   }
 
-  // Section 4: Create Final Concatenation and Selection.
+  std::optional<std::vector<HloInstruction*>> final_instrs_optional =
+      CondenseSliceSlots(group_slots, computation, ds, pad, ag, split_dim);
+  if (!final_instrs_optional.has_value()) {
+    VLOG(2) << "Failed to condense slice slots.";
+    return std::nullopt;
+  }
+
   return CreateFinalConcatAndSelect(computation, *final_instrs_optional, ds,
-                                    split_dim, selection_list, ds_result_size);
+                                    pad, split_dim, selection_list,
+                                    ds_result_size);
 }
 
 // Checks if the partition IDs within each replica group in the
@@ -707,6 +651,9 @@ bool IsAscendingPartitionId(const PartitionOffsetSpec& offset_spec) {
     return false;
   }
   for (const OffsetToIdMap& rg_map : offset_spec.per_replica_group_offsets) {
+    if (rg_map.empty()) {
+      return false;
+    }
     OffsetToIdMap::const_iterator iter = rg_map.begin();
     int64_t prev_id = iter->second;
 
@@ -717,6 +664,145 @@ bool IsAscendingPartitionId(const PartitionOffsetSpec& offset_spec) {
         return false;
       }
       prev_id = iter->second;
+    }
+  }
+  return true;
+}
+
+bool HasMatchingLayoutAttrs(const Shape& a, const Shape& b) {
+  const int64_t a_space = a.has_layout() ? a.layout().memory_space() : 0;
+  const int64_t b_space = b.has_layout() ? b.layout().memory_space() : 0;
+  const int64_t a_bits = a.has_layout() ? a.layout().element_size_in_bits() : 0;
+  const int64_t b_bits = b.has_layout() ? b.layout().element_size_in_bits() : 0;
+  return a_space == b_space && a_bits == b_bits;
+}
+
+const HloInstruction* StripSameTypeIndexWrappers(const HloInstruction* hlo) {
+  while (hlo->opcode() == HloOpcode::kBitcast ||
+         hlo->opcode() == HloOpcode::kReshape ||
+         hlo->opcode() == HloOpcode::kCopy) {
+    if (hlo->shape().element_type() !=
+        hlo->operand(0)->shape().element_type()) {
+      return nullptr;
+    }
+    hlo = hlo->operand(0);
+  }
+  return hlo;
+}
+
+std::optional<int64_t> ResolveValidatedIndex(const HloInstruction* hlo,
+                                             int64_t partition_id) {
+  hlo = StripSameTypeIndexWrappers(hlo);
+  if (hlo == nullptr) {
+    return std::nullopt;
+  }
+  if (hlo->opcode() == HloOpcode::kPartitionId) {
+    return partition_id;
+  }
+  if (hlo->opcode() != HloOpcode::kDynamicSlice || hlo->operand_count() != 2 ||
+      hlo->dynamic_slice_sizes().size() != 1 ||
+      hlo->dynamic_slice_sizes()[0] != 1) {
+    return std::nullopt;
+  }
+  const HloInstruction* table = hlo->operand(0);
+  const PrimitiveType ty = table->shape().element_type();
+  if (!IsStaticArray(table->shape()) ||
+      table->shape().dimensions().size() != 1 || (ty != S32 && ty != U32)) {
+    return std::nullopt;
+  }
+  std::optional<int64_t> idx =
+      ResolveValidatedIndex(hlo->operand(1), partition_id);
+  if (!idx.has_value() || *idx < 0 || *idx >= table->shape().dimensions(0)) {
+    return std::nullopt;
+  }
+  if (table->opcode() == HloOpcode::kIota) {
+    return *idx;
+  }
+  if (table->opcode() == HloOpcode::kConstant &&
+      Cast<HloConstantInstruction>(table)->HasLiteral()) {
+    return table->literal().GetIntegralAsS64({*idx});
+  }
+  return std::nullopt;
+}
+
+// Rejects zero-multiplier kMultiply, type-changing kBitcast, out-of-bounds
+// (clamped) kIota/kConstant table lookups, and S32/U32 modular multiply wrap.
+bool ValidateDsOffsetIndexExpr(const HloAllGatherInstruction& all_gather,
+                               const HloInstruction* offset_hlo,
+                               int64_t split_dim_size, int64_t num_partitions) {
+  if (split_dim_size <= 0 || all_gather.replica_groups().empty()) {
+    return false;
+  }
+  offset_hlo = StripSameTypeIndexWrappers(offset_hlo);
+  if (offset_hlo == nullptr) {
+    return false;
+  }
+  const PrimitiveType idx_ty = offset_hlo->shape().element_type();
+  if (idx_ty != S32 && idx_ty != U32) {
+    return false;
+  }
+  const int64_t idx_min =
+      idx_ty == U32 ? int64_t{0}
+                    : static_cast<int64_t>(std::numeric_limits<int32_t>::min());
+  const int64_t idx_max =
+      idx_ty == U32 ? static_cast<int64_t>(std::numeric_limits<uint32_t>::max())
+                    : static_cast<int64_t>(std::numeric_limits<int32_t>::max());
+
+  int64_t multiplier = 1;
+  const HloInstruction* lookup_hlo = offset_hlo;
+  if (offset_hlo->opcode() == HloOpcode::kMultiply) {
+    if (!ShapeUtil::IsEffectiveScalar(offset_hlo->shape())) {
+      return false;
+    }
+    const int const_idx = offset_hlo->operand(0)->IsConstant()   ? 0
+                          : offset_hlo->operand(1)->IsConstant() ? 1
+                                                                 : -1;
+    if (const_idx < 0) {
+      return false;
+    }
+    const HloInstruction* c = offset_hlo->operand(const_idx);
+    if (!Cast<HloConstantInstruction>(c)->HasLiteral() ||
+        !ShapeUtil::IsEffectiveScalar(c->shape()) ||
+        c->shape().element_type() != idx_ty) {
+      return false;
+    }
+    std::vector<int64_t> zero_index(c->shape().dimensions().size(), 0);
+    std::optional<int64_t> mult = c->literal().GetIntegralAsS64(zero_index);
+    if (!mult.has_value() || *mult == 0 || *mult < idx_min || *mult > idx_max ||
+        split_dim_size % *mult != 0) {
+      return false;
+    }
+    multiplier = *mult;
+    lookup_hlo = offset_hlo->operand(1 - const_idx);
+  }
+
+  const int64_t split_dim = all_gather.all_gather_dimension();
+  const int64_t ag_shard_size =
+      all_gather.operand(0)->shape().dimensions(split_dim);
+  const int64_t ag_result_size = all_gather.shape().dimensions(split_dim);
+  if (ag_shard_size <= 0 || ag_result_size % ag_shard_size != 0) {
+    return false;
+  }
+  const int64_t expected_group_size = ag_result_size / ag_shard_size;
+  for (const auto& group : all_gather.replica_groups()) {
+    if (group.replica_ids().empty() ||
+        group.replica_ids_size() != expected_group_size) {
+      return false;
+    }
+    for (int64_t pid : group.replica_ids()) {
+      if (pid < 0 || pid >= num_partitions) {
+        return false;
+      }
+      std::optional<int64_t> raw = ResolveValidatedIndex(lookup_hlo, pid);
+      if (!raw.has_value() || *raw < idx_min || *raw > idx_max) {
+        return false;
+      }
+      if ((*raw > 0 && multiplier > 0 && *raw > idx_max / multiplier) ||
+          (*raw > 0 && multiplier < 0 && multiplier < idx_min / *raw) ||
+          (*raw < 0 && multiplier > 0 && *raw < idx_min / multiplier) ||
+          (*raw < 0 && multiplier < 0 && *raw < idx_max / multiplier)) {
+        return false;
+      }
     }
   }
   return true;
@@ -734,17 +820,14 @@ std::optional<PatternMatchResult> MatchDynamicSlicePadAllGather(
   HloDynamicSliceInstruction* dynamic_slice =
       Cast<HloDynamicSliceInstruction>(dynamic_slice_hlo);
 
-  // TODO(wfelix): remove the module access and pass config through the callers.
   const HloModuleConfig& config = dynamic_slice->GetModule()->config();
-  // Match the module level scope.
-  if (config.num_partitions() <= 1 || config.replica_count() > 1) {
+  if (config.num_partitions() <= 1 || config.replica_count() != 1) {
     VLOG(2) << "Do not match module with num_partitions: "
             << config.num_partitions()
             << " and replica_count: " << config.replica_count();
     return std::nullopt;
   }
 
-  // Match the pattern: dynamic-slice(pad(all-gather)).
   HloInstruction* pad_hlo = nullptr;
   HloInstruction* ag_hlo = nullptr;
   if (!MatchDsPadAllGather(dynamic_slice, &pad_hlo, &ag_hlo)) {
@@ -752,12 +835,23 @@ std::optional<PatternMatchResult> MatchDynamicSlicePadAllGather(
             << dynamic_slice->ToString();
     return std::nullopt;
   }
-  CHECK_EQ(pad_hlo->opcode(), HloOpcode::kPad);
-  CHECK_EQ(ag_hlo->opcode(), HloOpcode::kAllGather);
+  auto* pad = Cast<HloPadInstruction>(pad_hlo);
+  auto* ag = Cast<HloAllGatherInstruction>(ag_hlo);
+  if (ag->operand_count() != 1 || ag->constrain_layout() ||
+      pad->HasControlDependencies() || ag->HasControlDependencies()) {
+    return std::nullopt;
+  }
+  const Shape& ds_shape = dynamic_slice->shape();
+  const Shape& op_shape = ag->operand(0)->shape();
+  if (!IsStaticArray(ds_shape) || !IsStaticArray(pad->shape()) ||
+      !IsStaticArray(ag->shape()) || !IsStaticArray(op_shape) ||
+      op_shape.element_type() != ds_shape.element_type() ||
+      !HasMatchingLayoutAttrs(op_shape, ds_shape)) {
+    return std::nullopt;
+  }
 
   // Match all-gather for kFlattenedID collective mode.
   absl::StatusOr<CollectiveOpGroupMode> mode = GetCollectiveOpGroupMode(ag_hlo);
-
   if (!mode.ok() ||
       *mode != CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID) {
     VLOG(2) << "AG does not use global device ids or channel id "
@@ -765,31 +859,50 @@ std::optional<PatternMatchResult> MatchDynamicSlicePadAllGather(
     return std::nullopt;
   }
 
-  return PatternMatchResult{dynamic_slice, Cast<HloPadInstruction>(pad_hlo),
-                            Cast<HloAllGatherInstruction>(ag_hlo)};
+  return PatternMatchResult{dynamic_slice, pad, ag};
 }
 
 std::optional<SplitDimSpec> ExtractAndValidateSplitDim(
     const HloDynamicSliceInstruction& dynamic_slice,
-    const HloAllGatherInstruction& all_gather) {
-  // Extract and validate the split dimension all partitions from the dynamic
-  // slice.
+    const HloPadInstruction& pad, const HloAllGatherInstruction& all_gather) {
+  const Shape& ds_shape = dynamic_slice.shape();
+  const Shape& pad_shape = pad.shape();
+  const Shape& ag_shape = all_gather.shape();
+  const Shape& op_shape = all_gather.operand(0)->shape();
+  const int64_t rank = ds_shape.dimensions().size();
+  if (pad_shape.dimensions().size() != rank ||
+      ag_shape.dimensions().size() != rank ||
+      op_shape.dimensions().size() != rank ||
+      dynamic_slice.operand_count() != rank + 1 ||
+      dynamic_slice.dynamic_slice_sizes().size() != rank) {
+    return std::nullopt;
+  }
   std::optional<SplitDimSpec> split_dim_spec =
-      ExtractSplitDimSpec(dynamic_slice, /*allow_multiple_split_dims*/ false);
-
-  // Match split dimension check:
-  //  1. the split dim is unique.
-  //  2. the split dim is the same as the all gather dim.
+      ExtractSplitDimSpec(dynamic_slice, /*allow_multiple_split_dims=*/false);
   if (!split_dim_spec.has_value() || split_dim_spec->split_dims.size() != 1 ||
-      split_dim_spec->split_dim != all_gather.all_gather_dimension()) {
+      split_dim_spec->split_dim < 0 || split_dim_spec->split_dim >= rank ||
+      split_dim_spec->split_dim != all_gather.all_gather_dimension() ||
+      split_dim_spec->split_dim_size <= 0) {
     VLOG(2) << "In dynamic-slice(pad(ag)), ds split dim mismatch "
             << dynamic_slice.ToString()
             << " or all-gather: " << all_gather.ToString();
     return std::nullopt;
   }
-  VLOG(10) << "Identified split dim for dynamic-slice "
-           << split_dim_spec->split_dim
-           << " with split_dim_size: " << split_dim_spec->split_dim_size;
+  const int64_t split_dim = split_dim_spec->split_dim;
+  for (int64_t dim = 0; dim < rank; ++dim) {
+    if (dim == split_dim) {
+      if (pad_shape.dimensions(dim) < ds_shape.dimensions(dim) ||
+          ds_shape.dimensions(dim) < ag_shape.dimensions(dim)) {
+        return std::nullopt;
+      }
+      continue;
+    }
+    if (ds_shape.dimensions(dim) != pad_shape.dimensions(dim) ||
+        pad_shape.dimensions(dim) != ag_shape.dimensions(dim) ||
+        ag_shape.dimensions(dim) != op_shape.dimensions(dim)) {
+      return std::nullopt;
+    }
+  }
   return split_dim_spec;
 }
 
@@ -843,11 +956,11 @@ std::optional<OffsetToIdMaps> ExtractAndValidateOffsetToIdMaps(
     const HloDynamicSliceInstruction& dynamic_slice,
     const HloAllGatherInstruction& all_gather, const HloModuleConfig& config,
     int64_t split_dim, int64_t split_dim_size) {
-  // dynamic-slice result should be larger than the all-gather result.
   if (dynamic_slice.shape().dimensions(split_dim) <
-      all_gather.shape().dimensions(split_dim)) {
-    VLOG(2) << "dynamic-slice result size is smaller than all-gather result "
-               "size.";
+          all_gather.shape().dimensions(split_dim) ||
+      !ValidateDsOffsetIndexExpr(all_gather,
+                                 dynamic_slice.operand(split_dim + 1),
+                                 split_dim_size, config.num_partitions())) {
     return std::nullopt;
   }
 
@@ -908,7 +1021,7 @@ absl::Status AllGatherPadDsSimplifierVisitor::HandleDynamicSlice(
 
   // Extract and Validate Split Dimension.
   std::optional<SplitDimSpec> split_dim_spec =
-      ExtractAndValidateSplitDim(*dynamic_slice, *all_gather);
+      ExtractAndValidateSplitDim(*dynamic_slice, *pad, *all_gather);
   if (!split_dim_spec.has_value()) {
     return absl::OkStatus();
   }
@@ -934,9 +1047,9 @@ absl::Status AllGatherPadDsSimplifierVisitor::HandleDynamicSlice(
   const PartitionOffsetSpec& ag_offset_spec = offset_maps->ag_spec;
 
   // HLO Generation.
-  std::optional<HloInstruction*> selected =
-      InsertCollectivePermuteInstrSet(ds_offset_spec, ag_offset_spec, ag_spec,
-                                      *dynamic_slice, *all_gather, split_dim);
+  std::optional<HloInstruction*> selected = InsertCollectivePermuteInstrSet(
+      ds_offset_spec, ag_offset_spec, ag_spec, *dynamic_slice, *pad,
+      *all_gather, split_dim, config.num_partitions());
 
   if (!selected.has_value() || *selected == nullptr) {
     VLOG(2) << "No valid selected found from dynamic_slice: "
