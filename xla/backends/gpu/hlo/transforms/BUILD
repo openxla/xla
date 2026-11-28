@@ -1589,6 +1589,65 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "dot_bf16_demotion",
+    srcs = ["dot_bf16_demotion.cc"],
+    hdrs = ["dot_bf16_demotion.h"],
+    deps = [
+        ":dot_operand_converter",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/analysis:hlo_dataflow_analysis",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service:call_graph",
+        "//xla/service:hlo_value",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:tensor_float_32_hdr_lib",
+    ] + if_static(["@tsl//tsl/platform:tensor_float_32_utils"]),
+)
+
+xla_test(
+    name = "dot_bf16_demotion_test",
+    srcs = ["dot_bf16_demotion_test.cc"],
+    backends = [
+        "a100",
+        "p100",
+        "v100",
+        "b200",
+        AMD_GPU_ANY_BACKEND,
+    ],
+    deps = [
+        ":dot_bf16_demotion",
+        ":dot_operand_converter",
+        "//xla:error_spec",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:tensor_float_32_hdr_lib",
+    ] + if_static(["@tsl//tsl/platform:tensor_float_32_utils"]),
+)
+
+cc_library(
     name = "dot_operand_converter",
     srcs = ["dot_operand_converter.cc"],
     hdrs = ["dot_operand_converter.h"],

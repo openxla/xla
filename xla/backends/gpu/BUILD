@@ -147,6 +147,7 @@ cc_library(
         "//xla/backends/gpu/hlo/transforms:cublas_pad_for_gemms",
         "//xla/backends/gpu/hlo/transforms:deviceless_estimate_cub_sort_scratch_size",
         "//xla/backends/gpu/hlo/transforms:dot_algorithm_rewriter",
+        "//xla/backends/gpu/hlo/transforms:dot_bf16_demotion",
         "//xla/backends/gpu/hlo/transforms:dot_operand_converter",
         "//xla/backends/gpu/hlo/transforms:dot_strength_reduction",
         "//xla/backends/gpu/hlo/transforms:double_buffer_loop_unrolling",

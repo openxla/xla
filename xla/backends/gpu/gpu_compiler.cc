@@ -112,6 +112,7 @@ limitations under the License.
 #include "xla/backends/gpu/hlo/transforms/cublas_pad_for_gemms.h"
 #include "xla/backends/gpu/hlo/transforms/deviceless_estimate_cub_sort_scratch_size.h"
 #include "xla/backends/gpu/hlo/transforms/dot_algorithm_rewriter.h"
+#include "xla/backends/gpu/hlo/transforms/dot_bf16_demotion.h"
 #include "xla/backends/gpu/hlo/transforms/dot_operand_converter.h"
 #include "xla/backends/gpu/hlo/transforms/dot_strength_reduction.h"
 #include "xla/backends/gpu/hlo/transforms/double_buffer_loop_unrolling.h"
@@ -1028,6 +1029,10 @@ absl::Status RunOptimizationPasses(
     pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/false);
     pipeline.AddPass<HloDCE>();
   }();
+
+  // Losslessly demote TF32-eligible F32 dots with BF16-exact operands after
+  // HloCSE/HloDCE/ConditionalSimplifier and before DotMerger.
+  pipeline.AddPass<DotBf16Demotion>(gpu_version);
 
   // Do not merge dots when they are assigned different stream ids.
   std::function<int64_t(const HloInstruction* dot)> queue_id =
