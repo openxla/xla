@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -32,6 +33,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/runtime/all_reduce.h"
+#include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/gpu_constants.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/core/collectives/reduction_kind.h"
@@ -41,6 +43,7 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
+#include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
@@ -56,7 +59,9 @@ namespace {
 using ::absl_testing::IsOkAndHolds;
 using ::absl_testing::StatusIs;
 using ::stream_executor::gpu::AllReduceStrategy;
+using ::testing::_;
 using ::testing::AllOf;
+using ::testing::ElementsAre;
 using ::testing::Field;
 using ::testing::HasSubstr;
 
@@ -254,6 +259,66 @@ TEST_F(BuildAllReduceInfoTest, SupportsUniformMultiGroup) {
                                   HloOpcode::kAdd, {{0, 1}, {2, 3}}),
               IsOkAndHolds(Field(&AllReduceInfo::all_reduce_strategy,
                                  AllReduceStrategy::kOneShot)));
+}
+
+TEST_F(BuildAllReduceInfoTest, CreateAllReduceKernelSpecScratchSizes) {
+  ASSERT_OK_AND_ASSIGN(GpuTopology topology,
+                       GetGpuTopologyForPlatform("nvidia_h100", 1, 1, 8));
+  auto create_spec = [&](absl::string_view type, absl::string_view shape,
+                         absl::string_view backend_config =
+                             "") -> absl::StatusOr<CollectiveKernelSpec> {
+    constexpr absl::string_view kModuleStr = R"(
+    HloModule test
+    apply_op {
+      x = %1$s[] parameter(0)
+      y = %1$s[] parameter(1)
+      ROOT apply_op = %1$s[] add(x, y)
+    }
+    ENTRY test_computation {
+      param_0 = %1$s[%2$s] parameter(0)
+      ROOT all-reduce = %1$s[%2$s] all-reduce(param_0), to_apply=apply_op,
+          replica_groups={{0,1,2,3,4,5,6,7}}%3$s
+    })";
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<HloModule> module,
+        ParseAndReturnVerifiedModule(
+            absl::StrFormat(kModuleStr, type, shape, backend_config), 8));
+    const auto* ar = Cast<HloAllReduceInstruction>(
+        FindInstruction(module.get(), HloOpcode::kAllReduce));
+    return CreateAllReduceKernelSpec(topology, ar, LaunchDimensions(64, 512),
+                                     SymmetricMemoryType::kLoadStoreAccessible,
+                                     /*device_assignment=*/nullptr);
+  };
+  auto has_remote_buffer = [](int64_t size_bytes, uint32_t sync_increment) {
+    return IsOkAndHolds(AllOf(
+        Field(&CollectiveKernelSpec::codegen_config,
+              Field(&CollectiveCodegenConfig::sync_count_increment,
+                    sync_increment)),
+        Field(&CollectiveKernelSpec::scratch_buffers,
+              ElementsAre(
+                  _, AllOf(Field(&ScratchBufferSpec::size_bytes, size_bytes),
+                           Field(&ScratchBufferSpec::should_double_buffer,
+                                 true))))));
+  };
+  // One-shot (unaligned): 4 B F32 across 8 devices -> 8 aligned 256 B slots.
+  EXPECT_THAT(create_spec("f32", "1"),
+              has_remote_buffer(8 * kXlaAllocatedBufferAlignBytes, 1));
+  // One-shot: 256 KiB BF16 across 8 devices -> 8 aligned slots = 2 MiB.
+  EXPECT_THAT(create_spec("bf16", "131072"),
+              has_remote_buffer(2 * 1024 * 1024, 1));
+  // Two-shot: 512 KiB F32 across 8 devices -> 1 aligned slot = 512 KiB.
+  EXPECT_THAT(create_spec("f32", "131072"), has_remote_buffer(512 * 1024, 2));
+  // Explicit backend_config strategy overrides size heuristic.
+  EXPECT_THAT(
+      create_spec(
+          "f32", "131072",
+          R"(, backend_config={"collective_backend_config":{"kernel_strategy":"KERNEL_STRATEGY_TRITON_ONE_SHOT"}})"),
+      has_remote_buffer(4 * 1024 * 1024, 1));
+  EXPECT_THAT(
+      create_spec(
+          "bf16", "131072",
+          R"(, backend_config={"collective_backend_config":{"kernel_strategy":"KERNEL_STRATEGY_TRITON_TWO_SHOT"}})"),
+      has_remote_buffer(256 * 1024, 2));
 }
 
 }  // namespace

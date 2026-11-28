@@ -36,11 +36,11 @@ limitations under the License.
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/device_assignment.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/shape_util.h"
@@ -263,6 +263,21 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllReduceKernelSpec(
       const AllReduceInfo all_reduce_info,
       BuildAllReduceInfo(/*is_multimem_enabled=*/false, gpu_topology,
                          all_reduce, device_assignment));
+  AllReduceStrategy strategy = all_reduce_info.all_reduce_strategy;
+  if (absl::StatusOr<GpuBackendConfig> gpu_config =
+          all_reduce->backend_config<GpuBackendConfig>();
+      gpu_config.ok()) {
+    switch (gpu_config->collective_backend_config().kernel_strategy()) {
+      case CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_ONE_SHOT:
+        strategy = AllReduceStrategy::kOneShot;
+        break;
+      case CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_TWO_SHOT:
+        strategy = AllReduceStrategy::kTwoShot;
+        break;
+      default:
+        break;
+    }
+  }
   const int64_t input_size_bytes =
       all_reduce_info.num_elements *
       primitive_util::ByteWidth(all_reduce_info.element_type);
@@ -270,7 +285,12 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllReduceKernelSpec(
       all_reduce_info.num_devices * launch_dimensions.num_blocks();
   const int64_t signal_size = xla::RoundUpTo<uint64_t>(
       num_signal_flags * sizeof(int32_t), kXlaAllocatedBufferAlignBytes);
+  // One-shot pushes into one aligned slot per sender rank; two-shot stages one
+  // local copy per rank.
+  const int64_t num_slots =
+      strategy == AllReduceStrategy::kOneShot ? all_reduce_info.num_devices : 1;
   const int64_t remote_size =
+      num_slots *
       xla::RoundUpTo<uint64_t>(input_size_bytes, kXlaAllocatedBufferAlignBytes);
 
   CollectiveKernelSpec kernel_spec = {
@@ -288,8 +308,7 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllReduceKernelSpec(
            {KernelArgType::kScratchBuffer, /*index=*/1},  // scratch buffers
            {KernelArgType::kScratchBuffer, /*index=*/0},  // signal buffers
            {KernelArgType::kRuntimeRank}},
-          /* .sync_count_increment = */ 1 +
-              static_cast<uint32_t>(all_reduce_info.all_reduce_strategy)},
+          /* .sync_count_increment = */ 1 + static_cast<uint32_t>(strategy)},
       /* .scratch_buffers= */
       {{signal_size, /*requires_multimem=*/false,  // Signal buffers
         symmetric_memory_type,

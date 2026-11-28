@@ -319,6 +319,8 @@ xtile.entry_func @all_reduce_one_shot(%input: memref<65536xf32>, %output: memref
   // CHECK: xtile.extract
   // CHECK: xtile.select_buffer %{{.*}}[%{{.*}}] offset %{{.*}} : memref<2xi64> -> memref<65536xf32>
   // CHECK: xtile.insert {{.*}} : tensor<65536xf32> -> memref<65536xf32>
+  // CHECK: xtile.select_buffer %{{.*}}[%{{.*}}] offset %{{.*}} : memref<2xi64> -> memref<65536xf32>
+  // CHECK: xtile.insert {{.*}} : tensor<65536xf32> -> memref<65536xf32>
   // CHECK: triton_xla.block_barrier
   // CHECK: xtile.select_buffer %{{.*}}[%{{.*}}] offset %{{.*}} : memref<2xi64> -> memref<65536xf32>
   // CHECK: xtile.extract {{.*}} : memref<65536xf32> -> tensor<65536xf32>
@@ -335,14 +337,31 @@ xtile.entry_func @all_reduce_one_shot(%input: memref<65536xf32>, %output: memref
 }
 
 // CHECK-LABEL: xtile.entry_func @all_reduce_one_shot_scalar_i1(
+// CHECK-SAME: %{{[a-zA-Z0-9_]+}}: memref<i1>, %{{[a-zA-Z0-9_]+}}: memref<i1>, %[[REMOTE:[a-zA-Z0-9_]+]]: memref<2xi64>, %{{[a-zA-Z0-9_]+}}: memref<2xi64>, %[[RANK_IDX:[a-zA-Z0-9_]+]]: index
 xtile.entry_func @all_reduce_one_shot_scalar_i1(%input: memref<i1>, %output: memref<i1>, %remote_input_buffer: memref<2xi64>, %signal_buffer: memref<2xi64>, %device_rank: index, %tile_id: index) attributes {has_rank, has_signal_buffer, num_scratch_buffers = 1 : i32} {
   %tile = xtile.extract %input[] [] [] : memref<i1> -> tensor<i1>
+  // CHECK-DAG: %[[C256:.*]] = arith.constant 256 : i64
+  // CHECK-DAG: %[[C512:.*]] = arith.constant 512 : i64
   // CHECK: %[[IN_TILE:.*]] = xtile.extract %{{.*}}[] [] [] : memref<i1> -> tensor<i1>
-  // CHECK: %[[REMOTE_COPY:.*]] = xtile.select_buffer %{{.*}}[%{{.*}}] offset %{{.*}} : memref<2xi64> -> memref<i1>
-  // CHECK: xtile.insert %[[IN_TILE]] into %[[REMOTE_COPY]][] [] [] : tensor<i1> -> memref<i1>
+  // CHECK: %[[BUF_OFFSET:.*]] = arith.muli %{{.*}}, %[[C512]] : i64
+  // CHECK: %[[SLOT_OFFSET:.*]] = arith.muli %{{.*}}, %[[C256]] : i64
+  // CHECK: %[[WRITE_OFFSET:.*]] = arith.addi %[[BUF_OFFSET]], %[[SLOT_OFFSET]] : i64
+  // CHECK: %[[PEER_RANK:.*]] = arith.remui %{{.*}}, %{{.*}} : i32
+  // CHECK-DAG: %[[PEER_IDX:.*]] = arith.index_cast %[[PEER_RANK]] : i32 to index
+  // CHECK-DAG: %[[PEER_WRITE_IDX:.*]] = arith.index_cast %[[WRITE_OFFSET]] : i64 to index
+  // CHECK: %[[PEER_COPY:.*]] = xtile.select_buffer %[[REMOTE]][%[[PEER_IDX]]] offset %[[PEER_WRITE_IDX]] : memref<2xi64> -> memref<i1>
+  // CHECK: xtile.insert %[[IN_TILE]] into %[[PEER_COPY]][] [] [] : tensor<i1> -> memref<i1>
+  // CHECK: %[[LOCAL_WRITE_IDX:.*]] = arith.index_cast %[[WRITE_OFFSET]] : i64 to index
+  // CHECK: %[[LOCAL_COPY:.*]] = xtile.select_buffer %[[REMOTE]][%[[RANK_IDX]]] offset %[[LOCAL_WRITE_IDX]] : memref<2xi64> -> memref<i1>
+  // CHECK: xtile.insert %[[IN_TILE]] into %[[LOCAL_COPY]][] [] [] : tensor<i1> -> memref<i1>
   // CHECK: triton_xla.block_barrier
-  // CHECK: %[[R0:.*]] = xtile.extract %{{.*}}[] [] [] : memref<i1> -> tensor<i1>
-  // CHECK: %[[R1:.*]] = xtile.extract %{{.*}}[] [] [] : memref<i1> -> tensor<i1>
+  // CHECK: %[[R0_OFFSET_IDX:.*]] = arith.index_cast %[[BUF_OFFSET]] : i64 to index
+  // CHECK: %[[SLOT0:.*]] = xtile.select_buffer %[[REMOTE]][%[[RANK_IDX]]] offset %[[R0_OFFSET_IDX]] : memref<2xi64> -> memref<i1>
+  // CHECK: %[[R0:.*]] = xtile.extract %[[SLOT0]][] [] [] : memref<i1> -> tensor<i1>
+  // CHECK: %[[R1_OFFSET:.*]] = arith.addi %[[BUF_OFFSET]], %[[C256]] : i64
+  // CHECK: %[[R1_OFFSET_IDX:.*]] = arith.index_cast %[[R1_OFFSET]] : i64 to index
+  // CHECK: %[[SLOT1:.*]] = xtile.select_buffer %[[REMOTE]][%[[RANK_IDX]]] offset %[[R1_OFFSET_IDX]] : memref<2xi64> -> memref<i1>
+  // CHECK: %[[R1:.*]] = xtile.extract %[[SLOT1]][] [] [] : memref<i1> -> tensor<i1>
   // CHECK: %[[OR:.*]] = arith.ori %[[R0]], %[[R1]] : tensor<i1>
   // CHECK: xtile.insert %[[OR]] into %{{.*}}[] [] [] : tensor<i1> -> memref<i1>
   %all_reduce = "stablehlo.all_reduce"(%tile) <{replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>}> ({
@@ -398,11 +417,67 @@ xtile.entry_func @all_reduce_two_shot_i1(%input: memref<1024xi1>, %output: memre
   xtile.return
 }
 
-// CHECK-LABEL: xtile.entry_func @all_reduce_one_shot_2d
+// CHECK-LABEL: xtile.entry_func @all_reduce_one_shot_2d(
+// CHECK-SAME: %[[INPUT:[a-zA-Z0-9_]+]]: memref<1024x2xf32>, %[[OUTPUT:[a-zA-Z0-9_]+]]: memref<1024x2xf32>, %[[REMOTE:[a-zA-Z0-9_]+]]: memref<4xi64>, %{{[a-zA-Z0-9_]+}}: memref<4xi64>, %[[RANK_IDX:[a-zA-Z0-9_]+]]: index
 xtile.entry_func @all_reduce_one_shot_2d(%input: memref<1024x2xf32>, %output: memref<1024x2xf32>, %remote_input_buffer: memref<4xi64>, %signal_buffer: memref<4xi64>, %device_rank: index, %tile_id: index) attributes {has_rank, has_signal_buffer, num_scratch_buffers = 1 : i32} {
   %cst_0 = arith.constant 0 : index
-  %tile = xtile.extract %input[%cst_0, %tile_id][1024, 2][1, 1] : memref<1024x2xf32> -> tensor<1024x2xf32>
+  // CHECK-DAG: %[[C1:.*]] = arith.constant 1 : i32
+  // CHECK-DAG: %[[C2:.*]] = arith.constant 2 : i32
+  // CHECK-DAG: %[[C3:.*]] = arith.constant 3 : i32
+  // CHECK-DAG: %[[C4:.*]] = arith.constant 4 : i32
+  // CHECK-DAG: %[[C2048:.*]] = arith.constant 2048 : i64
+  // CHECK-DAG: %[[C4096:.*]] = arith.constant 4096 : i64
+  // CHECK-DAG: %[[C6144:.*]] = arith.constant 6144 : i64
+  // CHECK-DAG: %[[C8192:.*]] = arith.constant 8192 : i64
+  // CHECK: %[[IN_TILE:.*]] = xtile.extract %[[INPUT]]
+  // CHECK: %[[RANK:.*]] = arith.index_cast %[[RANK_IDX]] : index to i32
+  // CHECK: %[[BUF_OFFSET:.*]] = arith.muli %{{.*}}, %[[C8192]] : i64
+  // CHECK: %[[SLOT_OFFSET:.*]] = arith.muli %{{.*}}, %[[C2048]] : i64
+  // CHECK: %[[WRITE_OFFSET:.*]] = arith.addi %[[BUF_OFFSET]], %[[SLOT_OFFSET]] : i64
+  // Push to rotated peers (rank + 1, + 2, + 3) % 4, then local rank.
+  // CHECK: %[[S1:.*]] = arith.addi %[[RANK]], %[[C1]] : i32
+  // CHECK: %[[P1:.*]] = arith.remui %[[S1]], %[[C4]] : i32
+  // CHECK-DAG: %[[P1_IDX:.*]] = arith.index_cast %[[P1]] : i32 to index
+  // CHECK-DAG: %[[W1_IDX:.*]] = arith.index_cast %[[WRITE_OFFSET]] : i64 to index
+  // CHECK: %[[M1:.*]] = xtile.select_buffer %[[REMOTE]][%[[P1_IDX]]] offset %[[W1_IDX]] : memref<4xi64> -> memref<1024x2xf32>
+  // CHECK: xtile.insert %[[IN_TILE]] into %[[M1]]
+  // CHECK: %[[S2:.*]] = arith.addi %[[RANK]], %[[C2]] : i32
+  // CHECK: %[[P2:.*]] = arith.remui %[[S2]], %[[C4]] : i32
+  // CHECK-DAG: %[[P2_IDX:.*]] = arith.index_cast %[[P2]] : i32 to index
+  // CHECK-DAG: %[[W2_IDX:.*]] = arith.index_cast %[[WRITE_OFFSET]] : i64 to index
+  // CHECK: %[[M2:.*]] = xtile.select_buffer %[[REMOTE]][%[[P2_IDX]]] offset %[[W2_IDX]] : memref<4xi64> -> memref<1024x2xf32>
+  // CHECK: xtile.insert %[[IN_TILE]] into %[[M2]]
+  // CHECK: %[[S3:.*]] = arith.addi %[[RANK]], %[[C3]] : i32
+  // CHECK: %[[P3:.*]] = arith.remui %[[S3]], %[[C4]] : i32
+  // CHECK-DAG: %[[P3_IDX:.*]] = arith.index_cast %[[P3]] : i32 to index
+  // CHECK-DAG: %[[W3_IDX:.*]] = arith.index_cast %[[WRITE_OFFSET]] : i64 to index
+  // CHECK: %[[M3:.*]] = xtile.select_buffer %[[REMOTE]][%[[P3_IDX]]] offset %[[W3_IDX]] : memref<4xi64> -> memref<1024x2xf32>
+  // CHECK: xtile.insert %[[IN_TILE]] into %[[M3]]
+  // CHECK: %[[WL_IDX:.*]] = arith.index_cast %[[WRITE_OFFSET]] : i64 to index
+  // CHECK: %[[ML:.*]] = xtile.select_buffer %[[REMOTE]][%[[RANK_IDX]]] offset %[[WL_IDX]] : memref<4xi64> -> memref<1024x2xf32>
+  // CHECK: xtile.insert %[[IN_TILE]] into %[[ML]]
   // CHECK: triton_xla.block_barrier
+  // Reduce slots 0..3 from local rank's symmetric buffer in rank order.
+  // CHECK: %[[R0_IDX:.*]] = arith.index_cast %[[BUF_OFFSET]] : i64 to index
+  // CHECK: %[[B0:.*]] = xtile.select_buffer %[[REMOTE]][%[[RANK_IDX]]] offset %[[R0_IDX]] : memref<4xi64> -> memref<1024x2xf32>
+  // CHECK: %[[T0:.*]] = xtile.extract %[[B0]]
+  // CHECK: %[[R1_I64:.*]] = arith.addi %[[BUF_OFFSET]], %[[C2048]] : i64
+  // CHECK: %[[R1_IDX:.*]] = arith.index_cast %[[R1_I64]] : i64 to index
+  // CHECK: %[[B1:.*]] = xtile.select_buffer %[[REMOTE]][%[[RANK_IDX]]] offset %[[R1_IDX]] : memref<4xi64> -> memref<1024x2xf32>
+  // CHECK: %[[T1:.*]] = xtile.extract %[[B1]]
+  // CHECK: %[[ACC1:.*]] = arith.addf %[[T0]], %[[T1]] : tensor<1024x2xf32>
+  // CHECK: %[[R2_I64:.*]] = arith.addi %[[BUF_OFFSET]], %[[C4096]] : i64
+  // CHECK: %[[R2_IDX:.*]] = arith.index_cast %[[R2_I64]] : i64 to index
+  // CHECK: %[[B2:.*]] = xtile.select_buffer %[[REMOTE]][%[[RANK_IDX]]] offset %[[R2_IDX]] : memref<4xi64> -> memref<1024x2xf32>
+  // CHECK: %[[T2:.*]] = xtile.extract %[[B2]]
+  // CHECK: %[[ACC2:.*]] = arith.addf %[[ACC1]], %[[T2]] : tensor<1024x2xf32>
+  // CHECK: %[[R3_I64:.*]] = arith.addi %[[BUF_OFFSET]], %[[C6144]] : i64
+  // CHECK: %[[R3_IDX:.*]] = arith.index_cast %[[R3_I64]] : i64 to index
+  // CHECK: %[[B3:.*]] = xtile.select_buffer %[[REMOTE]][%[[RANK_IDX]]] offset %[[R3_IDX]] : memref<4xi64> -> memref<1024x2xf32>
+  // CHECK: %[[T3:.*]] = xtile.extract %[[B3]]
+  // CHECK: %[[ACC3:.*]] = arith.addf %[[ACC2]], %[[T3]] : tensor<1024x2xf32>
+  // CHECK: xtile.insert %[[ACC3]] into %[[OUTPUT]]
+  %tile = xtile.extract %input[%cst_0, %tile_id][1024, 2][1, 1] : memref<1024x2xf32> -> tensor<1024x2xf32>
   %all_reduce = "stablehlo.all_reduce"(%tile) <{replica_groups = dense<[[0, 1, 2, 3]]> : tensor<1x4xi64>}> ({
     ^bb0(%arg7: tensor<f32>, %arg8: tensor<f32>):
       %4 = arith.addf %arg7, %arg8 : tensor<f32>
