@@ -118,6 +118,15 @@ TEST(DumpTest, GetDumpSubdirPath) {
   EXPECT_THAT(tsl::Env::Default()->IsDirectory(dump_subdir), IsOk());
 }
 
+TEST(DumpTest, GetDumpSubdirPathSanitizesModuleName) {
+  const std::string temp_dir = tsl::testing::TmpDir();
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::string dump_subdir,
+      pjrt::GetDumpSubdirPath(temp_dir, "/../../../../../tmp/evil", 0));
+  EXPECT_THAT(dump_subdir, HasSubstr("_.._.._.._.._.._tmp_evil"));
+  EXPECT_THAT(tsl::Env::Default()->IsDirectory(dump_subdir), IsOk());
+}
+
 TEST(DumpTest, GetDumpSubdirPathEmptyPath) {
   TF_ASSERT_OK_AND_ASSIGN(std::string dump_subdir,
                           pjrt::GetDumpSubdirPath("", "my_module", 0));
