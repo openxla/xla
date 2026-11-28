@@ -519,13 +519,15 @@ absl::StatusOr<DeviceAssignment> DevicesToDeviceAssignment(
 class PjRtStreamExecutorRawLoadedExecutable : public PjRtRawLoadedExecutable {
  public:
   PjRtStreamExecutorRawLoadedExecutable(
-      int replica, int partition, RunId run_id, LocalDeviceId local_device_id,
+      int replica, int partition, size_t host_callback_idx, RunId run_id,
+      LocalDeviceId local_device_id,
       std::shared_ptr<const DeviceAssignment> device_assignment,
       std::shared_ptr<LocalExecutable> executable,
       tsl::AsyncValueRef<StreamExecutorExecutable> se_executable,
       PjRtStreamExecutorRawClient* raw_client)
       : replica_(replica),
         partition_(partition),
+        host_callback_idx_(host_callback_idx),
         run_id_(run_id),
         local_device_id_(local_device_id),
         device_assignment_(std::move(device_assignment)),
@@ -543,6 +545,8 @@ class PjRtStreamExecutorRawLoadedExecutable : public PjRtRawLoadedExecutable {
  private:
   int replica_;
   int partition_;
+  // Index of this device in the send and recv callbacks of ExecuteOptions.
+  size_t host_callback_idx_;
   RunId run_id_;
   LocalDeviceId local_device_id_;
   std::shared_ptr<const DeviceAssignment> device_assignment_;

@@ -399,6 +399,66 @@ ENTRY main {
   EXPECT_FALSE(run_options->incarnations().has_value());
 }
 
+TEST(StreamExecutorGpuClientTest, ExecuteShardedUsesCallbacksOfItsDevice) {
+  static constexpr absl::string_view kSendProgram = R"(
+    HloModule Send
+
+    ENTRY main() -> f32[2] {
+      in_chain = token[] after-all()
+      data = f32[2] constant({2, 3})
+      send = (f32[2], u32[], token[]) send(data, in_chain),
+        channel_id=1,
+        is_host_transfer=true,
+        frontend_attributes={
+          _xla_host_transfer_handler_name="undef",
+          _xla_host_transfer_rendezvous="undef"
+        }
+      send-done = token[] send-done(send), channel_id=1, is_host_transfer=true
+      ROOT result = f32[2] add(data, data)
+    })";
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetStreamExecutorGpuClient(GetTestGpuClientOptions(2)));
+  ASSERT_GE(client->addressable_devices().size(), 2);
+  CompileOptions compile_options;
+  compile_options.executable_build_options.set_num_replicas(2);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> executable,
+      CompileExecutable(kSendProgram, *client, compile_options));
+
+  // Runs replica 1 alone, so that its replica (1) is not its index (0) in the
+  // callbacks.
+  PjRtDevice* device = nullptr;
+  ASSERT_OK_AND_ASSIGN(auto logical_ids,
+                       executable->addressable_device_logical_ids());
+  for (int i = 0; i < logical_ids.size(); ++i) {
+    if (logical_ids[i].replica == 1) {
+      device = executable->addressable_devices()[i];
+    }
+  }
+  ASSERT_NE(device, nullptr);
+
+  std::vector<float> sent;
+  SendCallback send_callback = {
+      /*channel_id=*/1,
+      [&](const PjRtTransferMetadata&, PjRtChunk chunk, int64_t, bool) {
+        const float* data = reinterpret_cast<const float*>(chunk.data());
+        sent.assign(data, data + 2);
+        return absl::OkStatus();
+      }};
+  std::vector<std::vector<SendCallback>> send_callbacks = {{send_callback}};
+  std::vector<std::vector<RecvCallback>> recv_callbacks = {{}};
+  ExecuteOptions options;
+  options.send_callbacks = send_callbacks;
+  options.recv_callbacks = recv_callbacks;
+
+  ASSERT_OK_AND_ASSIGN(auto results,
+                       executable->ExecuteSharded({}, device, options));
+  ASSERT_EQ(results.size(), 1);
+  ASSERT_OK_AND_ASSIGN(auto literal, results[0]->ToLiteral().Await());
+  EXPECT_THAT(literal->data<float>(), ElementsAreArray({4.0f, 6.0f}));
+  EXPECT_THAT(sent, ElementsAreArray({2.0f, 3.0f}));
+}
+
 TEST(StreamExecutorGpuClientTest, DistributedInit) {
   auto kv_store = std::make_shared<InMemoryKeyValueStore>();
   tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "DistributeInit", 4);
