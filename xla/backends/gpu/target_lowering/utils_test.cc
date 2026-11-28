@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/backends/gpu/target_lowering/utils.h"
 
+#include <gtest/gtest.h>
+
 #include "tsl/platform/test.h"
 
 namespace xla {
