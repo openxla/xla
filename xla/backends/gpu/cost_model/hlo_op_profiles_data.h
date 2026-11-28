@@ -2670,6 +2670,48 @@ inline constexpr char kDeviceHloOpProfiles[] = R"pb(
     value {
       entries {
         instruction {
+          opcode: "erf"
+          shape { element_type: F32 }
+        }
+        clock_cycles: 166
+      }
+      entries {
+        instruction {
+          opcode: "erf"
+          shape { element_type: F16 }
+        }
+        clock_cycles: 162
+      }
+      entries {
+        instruction {
+          opcode: "logistic"
+          shape { element_type: F32 }
+        }
+        clock_cycles: 178
+      }
+      entries {
+        instruction {
+          opcode: "logistic"
+          shape { element_type: F16 }
+        }
+        clock_cycles: 221
+      }
+      entries {
+        instruction {
+          opcode: "maximum"
+          shape { element_type: F32 }
+        }
+        clock_cycles: 7
+      }
+      entries {
+        instruction {
+          opcode: "maximum"
+          shape { element_type: F16 }
+        }
+        clock_cycles: 3
+      }
+      entries {
+        instruction {
           opcode: "divide"
           shape { element_type: S8 }
         }
@@ -2855,7 +2897,7 @@ inline constexpr char kDeviceHloOpProfiles[] = R"pb(
           opcode: "exponential"
           shape { element_type: F16 }
         }
-        clock_cycles: 102
+        clock_cycles: 106
       }
       entries {
         instruction {
@@ -2904,7 +2946,7 @@ inline constexpr char kDeviceHloOpProfiles[] = R"pb(
           opcode: "tanh"
           shape { element_type: F16 }
         }
-        clock_cycles: 502
+        clock_cycles: 146
       }
       entries {
         instruction {
@@ -2967,7 +3009,7 @@ inline constexpr char kDeviceHloOpProfiles[] = R"pb(
           opcode: "exponential"
           shape { element_type: F32 }
         }
-        clock_cycles: 79
+        clock_cycles: 87
       }
       entries {
         instruction {
@@ -3016,7 +3058,7 @@ inline constexpr char kDeviceHloOpProfiles[] = R"pb(
           opcode: "tanh"
           shape { element_type: F32 }
         }
-        clock_cycles: 467
+        clock_cycles: 138
       }
       entries {
         instruction {
@@ -3037,14 +3079,14 @@ inline constexpr char kDeviceHloOpProfiles[] = R"pb(
           opcode: "divide"
           shape { element_type: F32 }
         }
-        clock_cycles: 19
+        clock_cycles: 23
       }
       entries {
         instruction {
           opcode: "multiply"
           shape { element_type: F32 }
         }
-        clock_cycles: 3
+        clock_cycles: 7
       }
       entries {
         instruction {
@@ -3956,6 +3998,104 @@ inline constexpr char kDeviceHloOpProfiles[] = R"pb(
     value {
       entries {
         instruction {
+          opcode: "erf"
+          shape { element_type: F32 }
+        }
+        clock_cycles: 214
+      }
+      entries {
+        instruction {
+          opcode: "erf"
+          shape { element_type: F16 }
+        }
+        clock_cycles: 211
+      }
+      entries {
+        instruction {
+          opcode: "logistic"
+          shape { element_type: F32 }
+        }
+        clock_cycles: 228
+      }
+      entries {
+        instruction {
+          opcode: "logistic"
+          shape { element_type: F16 }
+        }
+        clock_cycles: 284
+      }
+      entries {
+        instruction {
+          opcode: "exponential"
+          shape { element_type: F32 }
+        }
+        clock_cycles: 109
+      }
+      entries {
+        instruction {
+          opcode: "exponential"
+          shape { element_type: F16 }
+        }
+        clock_cycles: 138
+      }
+      entries {
+        instruction {
+          opcode: "divide"
+          shape { element_type: F32 }
+        }
+        clock_cycles: 31
+      }
+      entries {
+        instruction {
+          opcode: "divide"
+          shape { element_type: F16 }
+        }
+        clock_cycles: 59
+      }
+      entries {
+        instruction {
+          opcode: "maximum"
+          shape { element_type: F32 }
+        }
+        clock_cycles: 8
+      }
+      entries {
+        instruction {
+          opcode: "maximum"
+          shape { element_type: F16 }
+        }
+        clock_cycles: 8
+      }
+      entries {
+        instruction {
+          opcode: "multiply"
+          shape { element_type: F32 }
+        }
+        clock_cycles: 8
+      }
+      entries {
+        instruction {
+          opcode: "multiply"
+          shape { element_type: F16 }
+        }
+        clock_cycles: 8
+      }
+      entries {
+        instruction {
+          opcode: "add"
+          shape { element_type: F32 }
+        }
+        clock_cycles: 8
+      }
+      entries {
+        instruction {
+          opcode: "add"
+          shape { element_type: F16 }
+        }
+        clock_cycles: 8
+      }
+      entries {
+        instruction {
           opcode: "divide"
           shape { element_type: S8 }
         }
@@ -4050,7 +4190,7 @@ inline constexpr char kDeviceHloOpProfiles[] = R"pb(
           opcode: "tanh"
           shape { element_type: F16 }
         }
-        clock_cycles: 499
+        clock_cycles: 166
       }
       entries {
         instruction {
@@ -4064,7 +4204,7 @@ inline constexpr char kDeviceHloOpProfiles[] = R"pb(
           opcode: "tanh"
           shape { element_type: F32 }
         }
-        clock_cycles: 504
+        clock_cycles: 177
       }
       entries {
         instruction {
