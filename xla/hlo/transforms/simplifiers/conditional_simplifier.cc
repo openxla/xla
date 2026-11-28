@@ -531,6 +531,30 @@ absl::StatusOr<bool> ConditionalSimplifier::TryRemoveConditional(
       case HloOpcode::kSlice:
       case HloOpcode::kTuple:
         return false;
+      // Elementwise but expensive. Replacing the conditional with a select
+      // runs both branches, so these would be computed even when their
+      // branch is not taken.
+      case HloOpcode::kAcos:
+      case HloOpcode::kAcosh:
+      case HloOpcode::kAsin:
+      case HloOpcode::kAsinh:
+      case HloOpcode::kAtan2:
+      case HloOpcode::kAtanh:
+      case HloOpcode::kCbrt:
+      case HloOpcode::kCosh:
+      case HloOpcode::kErf:
+      case HloOpcode::kExp:
+      case HloOpcode::kExp2:
+      case HloOpcode::kExpm1:
+      case HloOpcode::kLog:
+      case HloOpcode::kLog1p:
+      case HloOpcode::kLog2:
+      case HloOpcode::kLogistic:
+      case HloOpcode::kPower:
+      case HloOpcode::kRsqrt:
+      case HloOpcode::kSqrt:
+      case HloOpcode::kTanh:
+        return true;
       default:
         return !hlo->IsElementwise();
     }

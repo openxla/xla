@@ -121,6 +121,71 @@ TEST_F(ConditionalSimplifierTest, BranchGetsInlined) {
                  op::Add(op::Parameter(0), op::Constant())));
 }
 
+TEST_F(ConditionalSimplifierTest,
+       DoesNotReplaceExpensiveElementwiseBranchesWithSelect) {
+  auto module = CreateNewVerifiedModule();
+
+  const Shape array_shape = ShapeUtil::MakeShape(F32, {8});
+
+  HloComputation* true_computation;
+  {
+    HloComputation::Builder builder("true_computation");
+
+    HloInstruction* value =
+        builder.AddInstruction(HloInstruction::CreateParameter(
+            0, array_shape, "true_param"));
+
+    // A single expensive elementwise operation should keep the conditional.
+    value = builder.AddInstruction(
+        HloInstruction::CreateUnary(array_shape, HloOpcode::kExp, value));
+
+    true_computation =
+        module->AddEmbeddedComputation(builder.Build(value));
+  }
+
+  HloComputation* false_computation;
+  {
+    HloComputation::Builder builder("false_computation");
+
+    HloInstruction* parameter =
+        builder.AddInstruction(HloInstruction::CreateParameter(
+            0, array_shape, "false_param"));
+
+    // Non-empty but inexpensive elementwise branch.
+    HloInstruction* result =
+        builder.AddInstruction(HloInstruction::CreateUnary(
+            array_shape, HloOpcode::kNegate, parameter));
+
+    false_computation =
+        module->AddEmbeddedComputation(builder.Build(result));
+  }
+
+  HloComputation::Builder entry_builder("entry");
+
+  HloInstruction* predicate =
+      entry_builder.AddInstruction(HloInstruction::CreateParameter(
+          0, ShapeUtil::MakeShape(PRED, {}), "predicate"));
+
+  HloInstruction* true_operand =
+      entry_builder.AddInstruction(HloInstruction::CreateParameter(
+          1, array_shape, "true_operand"));
+
+  HloInstruction* false_operand =
+      entry_builder.AddInstruction(HloInstruction::CreateParameter(
+          2, array_shape, "false_operand"));
+
+  HloInstruction* conditional =
+      entry_builder.AddInstruction(HloInstruction::CreateConditional(
+          array_shape, predicate, true_operand, true_computation,
+          false_operand, false_computation));
+
+  HloComputation* entry =
+      module->AddEntryComputation(entry_builder.Build(conditional));
+
+  EXPECT_FALSE(ConditionalSimplifier().Run(module.get()).value());
+  EXPECT_EQ(entry->root_instruction()->opcode(), HloOpcode::kConditional);
+}
+
 TEST_F(ConditionalSimplifierTest, RespectsUninlineableAttribute) {
   absl::string_view hlo_string = R"(
 HloModule RespectsUninlineableAttribute
