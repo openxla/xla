@@ -1192,9 +1192,9 @@ struct OpVerifiers : private DialectBindings {
     return verifyLoadOp(op);
   }
 
-  template <typename VectorLoadIdxOpT>
-  static LogicalResult verifyVectorLoadIdxOp(VectorLoadIdxOpT op) {
-    VectorType value_ty = op.getResult().getType();
+  template <typename IndexedOpT>
+  static LogicalResult verifyIndexedVectorIndices(IndexedOpT op,
+                                                  VectorType value_ty) {
     MemRefType ref_ty = op.getBase().getType();
     if (llvm::size(op.getIndices()) != ref_ty.getRank()) {
       return op.emitOpError(
@@ -1210,30 +1210,41 @@ struct OpVerifiers : private DialectBindings {
                << value_ty.getShape() << " elements in indices. Got "
                << index_ty.getShape() << " in index #" << i << ".";
       }
+    }
+    return success();
+  }
+
+  template <typename VectorLoadIdxOpT>
+  static LogicalResult verifyVectorLoadIdxOp(VectorLoadIdxOpT op) {
+    if (failed(verifyIndexedVectorIndices(op, op.getResult().getType()))) {
+      return failure();
     }
     return verifyLoadOp(op);
   }
 
   template <typename VectorStoreIdxOpT>
   static LogicalResult verifyVectorStoreIdxOp(VectorStoreIdxOpT op) {
-    VectorType value_ty = op.getValueToStore().getType();
-    MemRefType ref_ty = op.getBase().getType();
-    if (llvm::size(op.getIndices()) != ref_ty.getRank()) {
-      return op.emitOpError(
-                 "Expected one index vector for each dimension of the base "
-                 "memref with dimension: ")
-             << ref_ty.getRank() << ". Got: " << llvm::size(op.getIndices())
-             << ".";
-    }
-    for (const auto [i, index] : llvm::enumerate(op.getIndices())) {
-      VectorType index_ty = llvm::cast<VectorType>(index.getType());
-      if (index_ty.getShape() != value_ty.getShape()) {
-        return op.emitOpError("Expected ")
-               << value_ty.getShape() << " elements in indices. Got "
-               << index_ty.getShape() << " in index #" << i << ".";
-      }
+    if (failed(
+            verifyIndexedVectorIndices(op, op.getValueToStore().getType()))) {
+      return failure();
     }
     return verifyStoreOp(op);
+  }
+
+  template <typename VectorLoadStoreIdxAddOpT>
+  static LogicalResult verifyVectorLoadStoreIdxAddOp(
+      VectorLoadStoreIdxAddOpT op) {
+    VectorType value_ty = op.getResult().getType();
+    if (failed(verifyIndexedVectorIndices(op, value_ty))) {
+      return failure();
+    }
+    if (op.getMask() &&
+        op.getMask().getType().getShape() != value_ty.getShape()) {
+      return op.emitOpError("Expected mask shape to match result shape: (")
+             << value_ty.getShape() << "). Got: ("
+             << op.getMask().getType().getShape() << ").";
+    }
+    return verifyLoadOp(op);
   }
 
   template <typename ReinterpretCastOpT>
