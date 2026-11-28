@@ -19,9 +19,16 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <limits>
+#include <string>
+#include <tuple>
+#include <utility>
 
+#include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
@@ -661,6 +668,595 @@ TEST_F(TripCountAnnotatorTest, OverwritesPrePopulatedBackendConfig) {
                 known_trip_count { n: 10 }
                 known_init_step { init: 0 step: 1 }
               )pb"));
+}
+
+std::string MakeCountedLoopHlo(absl::string_view ty, absl::string_view init,
+                               absl::string_view bound, absl::string_view step,
+                               absl::string_view dir, bool indvar_on_lhs) {
+  const absl::string_view cmp_lhs = indvar_on_lhs ? "i" : "bound";
+  const absl::string_view cmp_rhs = indvar_on_lhs ? "bound" : "i";
+  return absl::StrFormat(
+      R"hlo(
+    HloModule counted_loop
+    Body {
+      param = (%1$s[]) parameter(0)
+      i = %1$s[] get-tuple-element(param), index=0
+      st = %1$s[] constant(%4$s)
+      next = %1$s[] add(i, st)
+      ROOT tuple = (%1$s[]) tuple(next)
+    }
+    Cond {
+      param = (%1$s[]) parameter(0)
+      i = %1$s[] get-tuple-element(param), index=0
+      bound = %1$s[] constant(%3$s)
+      ROOT done = pred[] compare(%6$s, %7$s), direction=%5$s
+    }
+    ENTRY main {
+      init = %1$s[] constant(%2$s)
+      init_tuple = (%1$s[]) tuple(init)
+      while_loop = (%1$s[]) while(init_tuple), condition=Cond, body=Body
+      ROOT out = %1$s[] get-tuple-element(while_loop), index=0
+    })hlo",
+      ty, init, bound, step, dir, cmp_lhs, cmp_rhs);
+}
+
+std::string MakeSelfAffineDynVarHlo(absl::string_view ty,
+                                    absl::string_view c_init,
+                                    absl::string_view c_update_body,
+                                    int64_t trip_count) {
+  return absl::StrFormat(
+      R"hlo(
+    HloModule self_affine
+    Body {
+      param = (s32[], %1$s[], f32[20,8]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      c = %1$s[] get-tuple-element(param), index=1
+      buf = f32[20,8] get-tuple-element(param), index=2
+      one = s32[] constant(1)
+      zero = %1$s[] constant(0)
+      i_next = s32[] add(i, one)
+      %3$s
+      to_host = f32[20,8] custom-call(buf), custom_call_target="MoveToHost"
+      slice = f32[1,8] dynamic-slice(to_host, c, zero), dynamic_slice_sizes={1,8}
+      to_dev = f32[1,8] custom-call(slice), custom_call_target="MoveToDevice"
+      next_buf = f32[20,8] dynamic-update-slice(buf, to_dev, c, zero)
+      ROOT tuple = (s32[], %1$s[], f32[20,8]) tuple(i_next, c_next, next_buf)
+    }
+    Cond {
+      param = (s32[], %1$s[], f32[20,8]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      lim = s32[] constant(%4$d)
+      ROOT done = pred[] compare(i, lim), direction=LT
+    }
+    ENTRY main {
+      i0 = s32[] constant(0)
+      c0 = %1$s[] constant(%2$s)
+      buf0 = f32[20,8] parameter(0)
+      init = (s32[], %1$s[], f32[20,8]) tuple(i0, c0, buf0)
+      ROOT w = (s32[], %1$s[], f32[20,8]) while(init), condition=Cond, body=Body
+    })hlo",
+      ty, c_init, c_update_body, trip_count);
+}
+
+TEST_F(TripCountAnnotatorTest, ZeroTripForwardSignedLoop) {
+  struct Case {
+    const char* init;
+    const char* bound;
+    const char* step;
+    int32_t expected_init;
+  };
+  for (const Case& c : {Case{"5", "4", "1", 5}, Case{"8", "5", "2", 8},
+                        Case{"100", "1", "1", 100}}) {
+    ASSERT_OK_AND_ASSIGN(auto m,
+                         ParseAndReturnVerifiedModule(MakeCountedLoopHlo(
+                             "s32", c.init, c.bound, c.step, "LT", true)));
+    WhileLoopTripCountAnnotator pass;
+    ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+    EXPECT_TRUE(changed);
+
+    HloInstruction* while_op =
+        m->entry_computation()->GetInstructionWithName("while_loop");
+    ASSERT_OK_AND_ASSIGN(auto config,
+                         while_op->backend_config<WhileLoopBackendConfig>());
+    ASSERT_TRUE(config.has_known_trip_count());
+    EXPECT_EQ(config.known_trip_count().n(), 0);
+    EXPECT_FALSE(config.has_known_init_step());
+
+    const HloInstruction* root = m->entry_computation()->root_instruction();
+    ASSERT_EQ(root->opcode(), HloOpcode::kConstant);
+    EXPECT_EQ(root->literal().Get<int32_t>({}), c.expected_init);
+  }
+}
+
+TEST_F(TripCountAnnotatorTest, ZeroTripNarrowAndUnsignedConstantValueWrap) {
+  // u32: i=0, i<0, step=1 and i=5, i<1, step=20.
+  for (const auto& [init_str, bound_str, step_str, want] :
+       {std::tuple{"0", "0", "1", uint32_t{0}},
+        std::tuple{"5", "1", "20", uint32_t{5}}}) {
+    ASSERT_OK_AND_ASSIGN(
+        auto m, ParseAndReturnVerifiedModule(MakeCountedLoopHlo(
+                    "u32", init_str, bound_str, step_str, "LT", true)));
+    WhileLoopTripCountAnnotator pass;
+    ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+    EXPECT_TRUE(changed);
+    ASSERT_OK_AND_ASSIGN(auto cfg,
+                         m->entry_computation()
+                             ->GetInstructionWithName("while_loop")
+                             ->backend_config<WhileLoopBackendConfig>());
+    ASSERT_TRUE(cfg.has_known_trip_count());
+    EXPECT_EQ(cfg.known_trip_count().n(), 0);
+    EXPECT_FALSE(cfg.has_known_init_step());
+    ASSERT_EQ(m->entry_computation()->root_instruction()->opcode(),
+              HloOpcode::kConstant);
+    EXPECT_EQ(
+        m->entry_computation()->root_instruction()->literal().Get<uint32_t>({}),
+        want);
+  }
+
+  // s32: i=0, i<INT32_MIN, step=1.
+  {
+    ASSERT_OK_AND_ASSIGN(auto m,
+                         ParseAndReturnVerifiedModule(MakeCountedLoopHlo(
+                             "s32", "0", "-2147483648", "1", "LT", true)));
+    WhileLoopTripCountAnnotator pass;
+    ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+    EXPECT_TRUE(changed);
+    ASSERT_OK_AND_ASSIGN(auto cfg,
+                         m->entry_computation()
+                             ->GetInstructionWithName("while_loop")
+                             ->backend_config<WhileLoopBackendConfig>());
+    ASSERT_TRUE(cfg.has_known_trip_count());
+    EXPECT_EQ(cfg.known_trip_count().n(), 0);
+    EXPECT_FALSE(cfg.has_known_init_step());
+    ASSERT_EQ(m->entry_computation()->root_instruction()->opcode(),
+              HloOpcode::kConstant);
+    EXPECT_EQ(
+        m->entry_computation()->root_instruction()->literal().Get<int32_t>({}),
+        0);
+  }
+
+  // s8: i=0, i<-120, step=20.
+  {
+    ASSERT_OK_AND_ASSIGN(
+        auto m, ParseAndReturnVerifiedModule(
+                    MakeCountedLoopHlo("s8", "0", "-120", "20", "LT", true)));
+    WhileLoopTripCountAnnotator pass;
+    ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+    EXPECT_TRUE(changed);
+    ASSERT_OK_AND_ASSIGN(auto cfg,
+                         m->entry_computation()
+                             ->GetInstructionWithName("while_loop")
+                             ->backend_config<WhileLoopBackendConfig>());
+    ASSERT_TRUE(cfg.has_known_trip_count());
+    EXPECT_EQ(cfg.known_trip_count().n(), 0);
+    EXPECT_FALSE(cfg.has_known_init_step());
+    ASSERT_EQ(m->entry_computation()->root_instruction()->opcode(),
+              HloOpcode::kConstant);
+    EXPECT_EQ(
+        m->entry_computation()->root_instruction()->literal().Get<int8_t>({}),
+        0);
+  }
+
+  // Valid swapped-operand forward loop: s32 i=0; 1000000 > i; i += 1.
+  {
+    ASSERT_OK_AND_ASSIGN(auto m,
+                         ParseAndReturnVerifiedModule(MakeCountedLoopHlo(
+                             "s32", "0", "1000000", "1", "GT", false)));
+    WhileLoopTripCountAnnotator pass;
+    ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+    EXPECT_TRUE(changed);
+    ASSERT_OK_AND_ASSIGN(auto cfg,
+                         m->entry_computation()
+                             ->GetInstructionWithName("while_loop")
+                             ->backend_config<WhileLoopBackendConfig>());
+    EXPECT_EQ(cfg.known_trip_count().n(), 1000000);
+    EXPECT_EQ(cfg.known_init_step().init(), 0);
+    EXPECT_EQ(cfg.known_init_step().step(), 1);
+    ASSERT_EQ(m->entry_computation()->root_instruction()->opcode(),
+              HloOpcode::kConstant);
+    EXPECT_EQ(
+        m->entry_computation()->root_instruction()->literal().Get<int32_t>({}),
+        1000000);
+  }
+}
+
+TEST_F(TripCountAnnotatorTest, ReversedConditionLoopSafety) {
+  // s32: i=5, i>=3, step=1 runs until signed overflow; no static trip count.
+  {
+    ASSERT_OK_AND_ASSIGN(
+        auto m, ParseAndReturnVerifiedModule(
+                    MakeCountedLoopHlo("s32", "5", "3", "1", "GE", true)));
+    WhileLoopTripCountAnnotator pass;
+    ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+    EXPECT_TRUE(changed);
+    ASSERT_OK_AND_ASSIGN(auto cfg,
+                         m->entry_computation()
+                             ->GetInstructionWithName("while_loop")
+                             ->backend_config<WhileLoopBackendConfig>());
+    EXPECT_FALSE(cfg.has_known_trip_count());
+    EXPECT_FALSE(cfg.has_known_init_step());
+    EXPECT_EQ(m->entry_computation()->root_instruction()->opcode(),
+              HloOpcode::kGetTupleElement);
+  }
+
+  // s32: i=0, i>42, step=1 exits on iteration 0 with value 0 (not 42).
+  {
+    ASSERT_OK_AND_ASSIGN(
+        auto m, ParseAndReturnVerifiedModule(
+                    MakeCountedLoopHlo("s32", "0", "42", "1", "GT", true)));
+    WhileLoopTripCountAnnotator pass;
+    ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+    EXPECT_TRUE(changed);
+    ASSERT_OK_AND_ASSIGN(auto cfg,
+                         m->entry_computation()
+                             ->GetInstructionWithName("while_loop")
+                             ->backend_config<WhileLoopBackendConfig>());
+    ASSERT_TRUE(cfg.has_known_trip_count());
+    EXPECT_EQ(cfg.known_trip_count().n(), 0);
+    EXPECT_FALSE(cfg.has_known_init_step());
+    ASSERT_EQ(m->entry_computation()->root_instruction()->opcode(),
+              HloOpcode::kConstant);
+    EXPECT_EQ(
+        m->entry_computation()->root_instruction()->literal().Get<int32_t>({}),
+        0);
+  }
+}
+
+TEST_F(TripCountAnnotatorTest, S64BoundaryLoops) {
+  // s64: i=0, i<INT64_MAX, step=1 executes INT64_MAX trips, ending at
+  // INT64_MAX.
+  {
+    ASSERT_OK_AND_ASSIGN(
+        auto m, ParseAndReturnVerifiedModule(MakeCountedLoopHlo(
+                    "s64", "0", "9223372036854775807", "1", "LT", true)));
+    WhileLoopTripCountAnnotator pass;
+    ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+    EXPECT_TRUE(changed);
+    ASSERT_OK_AND_ASSIGN(auto cfg,
+                         m->entry_computation()
+                             ->GetInstructionWithName("while_loop")
+                             ->backend_config<WhileLoopBackendConfig>());
+    EXPECT_EQ(cfg.known_trip_count().n(), std::numeric_limits<int64_t>::max());
+    EXPECT_EQ(cfg.known_init_step().init(), 0);
+    EXPECT_EQ(cfg.known_init_step().step(), 1);
+    ASSERT_EQ(m->entry_computation()->root_instruction()->opcode(),
+              HloOpcode::kConstant);
+    EXPECT_EQ(
+        m->entry_computation()->root_instruction()->literal().Get<int64_t>({}),
+        std::numeric_limits<int64_t>::max());
+  }
+
+  // Wrapping s64 loops leave known_trip_count unset without signed overflow.
+  for (const auto& [bound_str, step_str] :
+       {std::pair{"9223372036854775806", "2"},
+        std::pair{"9223372036854775807", "1"}}) {
+    ASSERT_OK_AND_ASSIGN(auto m,
+                         ParseAndReturnVerifiedModule(MakeCountedLoopHlo(
+                             "s64", "0", bound_str, step_str, "LE", true)));
+    WhileLoopTripCountAnnotator pass;
+    ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+    EXPECT_TRUE(changed);
+    ASSERT_OK_AND_ASSIGN(auto cfg,
+                         m->entry_computation()
+                             ->GetInstructionWithName("while_loop")
+                             ->backend_config<WhileLoopBackendConfig>());
+    EXPECT_FALSE(cfg.has_known_trip_count());
+    EXPECT_FALSE(cfg.has_known_init_step());
+    EXPECT_EQ(m->entry_computation()->root_instruction()->opcode(),
+              HloOpcode::kGetTupleElement);
+  }
+}
+
+TEST_F(TripCountAnnotatorTest, DecomposeLinearAndLaggedS64NoUbsan) {
+  // subtract(c, INT64_MIN) and add(add(c, INT64_MAX), 1) with 3 trips wrap at
+  // k=2 and must not trigger signed int64_t overflow.
+  for (absl::string_view update :
+       {absl::string_view{"k = s64[] constant(-9223372036854775808)\n"
+                          "c_next = s64[] subtract(c, k)"},
+        absl::string_view{"kmax = s64[] constant(9223372036854775807)\n"
+                          "k1 = s64[] constant(1)\n"
+                          "t = s64[] add(c, kmax)\n"
+                          "c_next = s64[] add(t, k1)"}}) {
+    ASSERT_OK_AND_ASSIGN(auto m,
+                         ParseAndReturnVerifiedModule(
+                             MakeSelfAffineDynVarHlo("s64", "0", update, 3)));
+    WhileLoopTripCountAnnotator pass;
+    ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+    EXPECT_TRUE(changed);
+    ASSERT_OK_AND_ASSIGN(auto cfg,
+                         m->entry_computation()
+                             ->root_instruction()
+                             ->backend_config<WhileLoopBackendConfig>());
+    ASSERT_EQ(cfg.dynamic_variables_size(), 1);
+    EXPECT_FALSE(cfg.dynamic_variables(0).has_init());
+    EXPECT_FALSE(cfg.dynamic_variables(0).has_step());
+  }
+
+  // Lagged s64 copy with primary_init=2, primary_step=1, add(i, INT64_MAX).
+  constexpr absl::string_view kLaggedS64 = R"hlo(
+    HloModule lagged_s64
+    Body {
+      param = (s64[], s64[], f32[20,8]) parameter(0)
+      i = s64[] get-tuple-element(param), index=0
+      shadow = s64[] get-tuple-element(param), index=1
+      buf = f32[20,8] get-tuple-element(param), index=2
+      one = s64[] constant(1)
+      zero = s64[] constant(0)
+      kmax = s64[] constant(9223372036854775807)
+      i_next = s64[] add(i, one)
+      s_next = s64[] add(i, kmax)
+      to_host = f32[20,8] custom-call(buf), custom_call_target="MoveToHost"
+      slice = f32[1,8] dynamic-slice(to_host, shadow, zero), dynamic_slice_sizes={1,8}
+      to_dev = f32[1,8] custom-call(slice), custom_call_target="MoveToDevice"
+      next_buf = f32[20,8] dynamic-update-slice(buf, to_dev, shadow, zero)
+      ROOT tuple = (s64[], s64[], f32[20,8]) tuple(i_next, s_next, next_buf)
+    }
+    Cond {
+      param = (s64[], s64[], f32[20,8]) parameter(0)
+      i = s64[] get-tuple-element(param), index=0
+      lim = s64[] constant(5)
+      ROOT done = pred[] compare(i, lim), direction=LT
+    }
+    ENTRY main {
+      i0 = s64[] constant(2)
+      s0 = s64[] constant(0)
+      buf0 = f32[20,8] parameter(0)
+      init = (s64[], s64[], f32[20,8]) tuple(i0, s0, buf0)
+      ROOT w = (s64[], s64[], f32[20,8]) while(init), condition=Cond, body=Body
+    })hlo";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kLaggedS64));
+  WhileLoopTripCountAnnotator pass;
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(auto cfg,
+                       m->entry_computation()
+                           ->root_instruction()
+                           ->backend_config<WhileLoopBackendConfig>());
+  ASSERT_EQ(cfg.dynamic_variables_size(), 1);
+  EXPECT_FALSE(cfg.dynamic_variables(0).has_init());
+  EXPECT_FALSE(cfg.dynamic_variables(0).has_step());
+}
+
+TEST_F(TripCountAnnotatorTest, NarrowAndUnsignedDynamicVariables) {
+  // Wrapping updates leave dynamic_variables init/step unset.
+  struct RejectCase {
+    const char* ty;
+    const char* init;
+    const char* body;
+  };
+  for (const RejectCase& rc : {
+           RejectCase{"s32", "0",
+                      "k = s32[] constant(1500000000)\n"
+                      "t = s32[] add(c, k)\n"
+                      "c_next = s32[] add(t, k)"},
+           RejectCase{"s32", "1000000000",
+                      "k = s32[] constant(1500000000)\n"
+                      "c_next = s32[] add(c, k)"},
+           RejectCase{"u64", "0",
+                      "k = u64[] constant(9223372036854775807)\n"
+                      "c_next = u64[] add(c, k)"},
+       }) {
+    ASSERT_OK_AND_ASSIGN(
+        auto m, ParseAndReturnVerifiedModule(
+                    MakeSelfAffineDynVarHlo(rc.ty, rc.init, rc.body, 3)));
+    WhileLoopTripCountAnnotator pass;
+    ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+    EXPECT_TRUE(changed);
+    ASSERT_OK_AND_ASSIGN(auto cfg,
+                         m->entry_computation()
+                             ->root_instruction()
+                             ->backend_config<WhileLoopBackendConfig>());
+    ASSERT_EQ(cfg.dynamic_variables_size(), 1);
+    EXPECT_FALSE(cfg.dynamic_variables(0).has_init());
+    EXPECT_FALSE(cfg.dynamic_variables(0).has_step());
+  }
+
+  // S8 lagged copy wrapping mid-loop (i=100..104, shadow=126, add(i, 27)).
+  constexpr absl::string_view kS8Lagged = R"hlo(
+    HloModule s8_lagged
+    Body {
+      param = (s8[], s8[], f32[20,8]) parameter(0)
+      i = s8[] get-tuple-element(param), index=0
+      shadow = s8[] get-tuple-element(param), index=1
+      buf = f32[20,8] get-tuple-element(param), index=2
+      one = s8[] constant(1)
+      zero = s8[] constant(0)
+      d = s8[] constant(27)
+      i_next = s8[] add(i, one)
+      s_next = s8[] add(i, d)
+      to_host = f32[20,8] custom-call(buf), custom_call_target="MoveToHost"
+      slice = f32[1,8] dynamic-slice(to_host, shadow, zero), dynamic_slice_sizes={1,8}
+      to_dev = f32[1,8] custom-call(slice), custom_call_target="MoveToDevice"
+      next_buf = f32[20,8] dynamic-update-slice(buf, to_dev, shadow, zero)
+      ROOT tuple = (s8[], s8[], f32[20,8]) tuple(i_next, s_next, next_buf)
+    }
+    Cond {
+      param = (s8[], s8[], f32[20,8]) parameter(0)
+      i = s8[] get-tuple-element(param), index=0
+      lim = s8[] constant(105)
+      ROOT done = pred[] compare(i, lim), direction=LT
+    }
+    ENTRY main {
+      i0 = s8[] constant(100)
+      s0 = s8[] constant(126)
+      buf0 = f32[20,8] parameter(0)
+      init = (s8[], s8[], f32[20,8]) tuple(i0, s0, buf0)
+      ROOT w = (s8[], s8[], f32[20,8]) while(init), condition=Cond, body=Body
+    })hlo";
+  {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kS8Lagged));
+    WhileLoopTripCountAnnotator pass;
+    ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+    EXPECT_TRUE(changed);
+    ASSERT_OK_AND_ASSIGN(auto cfg,
+                         m->entry_computation()
+                             ->root_instruction()
+                             ->backend_config<WhileLoopBackendConfig>());
+    ASSERT_EQ(cfg.dynamic_variables_size(), 1);
+    EXPECT_FALSE(cfg.dynamic_variables(0).has_init());
+    EXPECT_FALSE(cfg.dynamic_variables(0).has_step());
+  }
+
+  // U32 countdown add(c, 0xFFFFFFFF), U64 countdown add(c, UINT64_MAX), and
+  // wrapped-to-1 S32 update (2147483647 + 2147483647 + 3 == 1 mod 2^32).
+  struct AcceptCase {
+    const char* ty;
+    const char* init;
+    const char* body;
+    int64_t trips;
+    int64_t want_init;
+    int64_t want_step;
+  };
+  for (const AcceptCase& ac : {
+           AcceptCase{"u32", "10",
+                      "m1 = u32[] constant(4294967295)\n"
+                      "c_next = u32[] add(c, m1)",
+                      5, 10, -1},
+           AcceptCase{"u64", "10",
+                      "m1 = u64[] constant(18446744073709551615)\n"
+                      "c_next = u64[] add(c, m1)",
+                      5, 10, -1},
+           AcceptCase{"s32", "0",
+                      "kmax = s32[] constant(2147483647)\n"
+                      "k3 = s32[] constant(3)\n"
+                      "t1 = s32[] add(c, kmax)\n"
+                      "t2 = s32[] add(t1, kmax)\n"
+                      "c_next = s32[] add(t2, k3)",
+                      10, 0, 1},
+       }) {
+    ASSERT_OK_AND_ASSIGN(auto m,
+                         ParseAndReturnVerifiedModule(MakeSelfAffineDynVarHlo(
+                             ac.ty, ac.init, ac.body, ac.trips)));
+    WhileLoopTripCountAnnotator pass;
+    ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+    EXPECT_TRUE(changed);
+    ASSERT_OK_AND_ASSIGN(auto cfg,
+                         m->entry_computation()
+                             ->root_instruction()
+                             ->backend_config<WhileLoopBackendConfig>());
+    ASSERT_EQ(cfg.dynamic_variables_size(), 1);
+    EXPECT_EQ(cfg.dynamic_variables(0).init(), ac.want_init);
+    EXPECT_EQ(cfg.dynamic_variables(0).step(), ac.want_step);
+  }
+}
+
+TEST_F(TripCountAnnotatorTest,
+       ForwardedGtePreservesControlDepsLayoutAndSharding) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule gte_attrs
+    Body {
+      param = (s32[], s32[]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      v = s32[] get-tuple-element(param), index=1
+      one = s32[] constant(1)
+      i_next = s32[] add(i, one)
+      ROOT tuple = (s32[], s32[]) tuple(i_next, v)
+    }
+    Cond {
+      param = (s32[], s32[]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      lim = s32[] constant(6)
+      ROOT done = pred[] compare(i, lim), direction=LT
+    }
+    ENTRY main {
+      p = s32[] parameter(0)
+      i0 = s32[] constant(0)
+      init = (s32[], s32[]) tuple(i0, p)
+      w = (s32[], s32[]) while(init), condition=Cond, body=Body
+      gte_pred = s32[] get-tuple-element(w), index=0, control-predecessors={p}
+      gte_succ = s32[] get-tuple-element(w), index=0
+      sink = s32[] add(p, i0), control-predecessors={gte_succ}
+      gte_clean = s32[]{:S(1)} get-tuple-element(w), index=0,
+        sharding={replicated}, metadata={op_name="indvar_meta"},
+        frontend_attributes={keep_attr="1", _xla_compute_type="host"}
+      sum1 = s32[] add(gte_pred, gte_succ)
+      sum2 = s32[] add(sum1, sink)
+      ROOT out = s32[] add(sum2, gte_clean)
+    })hlo";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kHlo));
+  WhileLoopTripCountAnnotator pass;
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, m.get()));
+  EXPECT_TRUE(changed);
+
+  HloComputation* entry = m->entry_computation();
+  EXPECT_NE(entry->GetInstructionWithName("gte_pred"), nullptr);
+  EXPECT_NE(entry->GetInstructionWithName("gte_succ"), nullptr);
+  EXPECT_EQ(entry->GetInstructionWithName("gte_clean"), nullptr);
+
+  const HloInstruction* forwarded = entry->root_instruction()->operand(1);
+  ASSERT_EQ(forwarded->opcode(), HloOpcode::kConstant);
+  EXPECT_EQ(forwarded->literal().Get<int32_t>({}), 6);
+  ASSERT_TRUE(forwarded->shape().has_layout());
+  EXPECT_EQ(forwarded->shape().layout().memory_space(), 1);
+  ASSERT_TRUE(forwarded->has_sharding());
+  EXPECT_EQ(forwarded->sharding(), HloSharding::Replicate());
+  EXPECT_EQ(forwarded->metadata().op_name(), "indvar_meta");
+  EXPECT_EQ(forwarded->get_frontend_attribute("keep_attr"), "1");
+  EXPECT_FALSE(
+      forwarded->get_frontend_attribute("_xla_compute_type").has_value());
+}
+
+TEST_F(TripCountAnnotatorTest, SecondRunIsIdempotent) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule idempotent
+    Body {
+      param = (s32[], s32[]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      v = s32[] get-tuple-element(param), index=1
+      one = s32[] constant(1)
+      i_next = s32[] add(i, one)
+      ROOT tuple = (s32[], s32[]) tuple(i_next, v)
+    }
+    Cond {
+      param = (s32[], s32[]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      lim = s32[] constant(4)
+      ROOT done = pred[] compare(i, lim), direction=LT
+    }
+    ENTRY main {
+      p = s32[] parameter(0)
+      i0 = s32[] constant(0)
+      init = (s32[], s32[]) tuple(i0, p)
+      w = (s32[], s32[]) while(init), condition=Cond, body=Body
+      gte_fwd = s32[] get-tuple-element(w), index=0
+      gte_dead = s32[] get-tuple-element(w), index=0
+      gte_ctrl = s32[] get-tuple-element(w), index=0, control-predecessors={p}
+      ROOT out = s32[] add(gte_fwd, gte_ctrl)
+    })hlo";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kHlo));
+  WhileLoopTripCountAnnotator pass;
+  ASSERT_OK_AND_ASSIGN(bool changed1, RunHloPass(&pass, m.get()));
+  EXPECT_TRUE(changed1);
+  const int64_t count_after_first = m->entry_computation()->instruction_count();
+
+  ASSERT_OK_AND_ASSIGN(bool changed2, RunHloPass(&pass, m.get()));
+  EXPECT_FALSE(changed2);
+  EXPECT_EQ(m->entry_computation()->instruction_count(), count_after_first);
+
+  // Also check pure-annotation loop with no GTE users.
+  constexpr absl::string_view kPureHlo = R"hlo(
+    HloModule idempotent_pure
+    Body {
+      param = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      one = s32[] constant(1)
+      ROOT tuple = (s32[]) tuple(s32[] add(i, one))
+    }
+    Cond {
+      param = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(param), index=0
+      lim = s32[] constant(8)
+      ROOT done = pred[] compare(i, lim), direction=LT
+    }
+    ENTRY main {
+      init = (s32[]) tuple(s32[] constant(0))
+      ROOT w = (s32[]) while(init), condition=Cond, body=Body
+    })hlo";
+  ASSERT_OK_AND_ASSIGN(auto m2, ParseAndReturnVerifiedModule(kPureHlo));
+  ASSERT_OK_AND_ASSIGN(bool pure_changed1, RunHloPass(&pass, m2.get()));
+  EXPECT_TRUE(pure_changed1);
+  ASSERT_OK_AND_ASSIGN(bool pure_changed2, RunHloPass(&pass, m2.get()));
+  EXPECT_FALSE(pure_changed2);
 }
 
 }  // namespace
