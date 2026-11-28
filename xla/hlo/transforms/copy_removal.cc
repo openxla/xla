@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/frontend_attributes.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
@@ -47,6 +48,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/transforms/copy_insertion.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/layout.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_value.h"
@@ -60,12 +63,34 @@ namespace xla {
 namespace {
 
 struct InstructionInfo {
-  HloInstruction* value_definition = nullptr;
+  absl::InlinedVector<HloInstruction*, 1> value_definitions;
   bool is_definition = false;
   // True if this entry represents a computation root position, whose live range
   // extends until the computation exits.
   bool is_root_position = false;
 };
+
+bool HasDisjointReadWriteRegions(const HloInstruction* instruction) {
+  if (frontend::HasDisjointReadWriteRegionsAttr(instruction)) {
+    return true;
+  }
+  if (instruction->IsAsynchronous()) {
+    const HloInstruction* wrapped = instruction->async_wrapped_instruction();
+    if (wrapped != nullptr &&
+        frontend::HasDisjointReadWriteRegionsAttr(wrapped)) {
+      return true;
+    }
+  }
+  if (instruction->parent() != nullptr) {
+    for (const HloInstruction* caller :
+         instruction->parent()->caller_instructions(HloOpcode::kWhile)) {
+      if (frontend::HasDisjointReadWriteRegionsAttr(caller)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
 
 using InstructionEntry = std::pair<HloInstruction*, InstructionInfo>;
 using ComputationRegion = std::vector<InstructionEntry>;
@@ -148,11 +173,13 @@ struct RegionRelation {
 class RelativeLocationAnalysis {
  public:
   RelativeLocationAnalysis(HloOrdering* ordering, const AliasInfo* alias_info,
-                           const HloDataflowAnalysis* dataflow)
+                           const HloDataflowAnalysis* dataflow,
+                           HloInstruction* elided_copy)
       : ordering_(ordering),
         pred_ordering_(dynamic_cast<PredecessorHloOrdering*>(ordering)),
         alias_info_(alias_info),
-        dataflow_(dataflow) {
+        dataflow_(dataflow),
+        elided_copy_(elided_copy) {
     CHECK_NE(dataflow_, nullptr);
   }
 
@@ -250,26 +277,26 @@ class RelativeLocationAnalysis {
       return;
     }
     CHECK_NE(pred_ordering_, nullptr);
-    using CompUpdates =
-        absl::flat_hash_map<const HloInstruction*,
-                            absl::flat_hash_set<const HloInstruction*>>;
-    std::vector<std::pair<HloComputation*, CompUpdates>> updates;
+    using EdgeList =
+        std::vector<std::pair<const HloInstruction*, const HloInstruction*>>;
+    std::vector<std::pair<HloComputation*, EdgeList>> updates;
     absl::flat_hash_map<HloComputation*, size_t> comp_index;
     for (const auto& [succ, preds] : ctrl_deps_) {
+      DCHECK_NE(succ, elided_copy_);
       HloComputation* comp = succ->parent();
       auto [it, inserted] = comp_index.try_emplace(comp, updates.size());
       if (inserted) {
-        updates.emplace_back(comp, CompUpdates{});
+        updates.emplace_back(comp, EdgeList{});
       }
-      auto& succ_preds = updates[it->second].second[succ];
+      EdgeList& comp_edges = updates[it->second].second;
       for (HloInstruction* pred : preds) {
+        DCHECK_NE(pred, elided_copy_);
         CHECK_OK(pred->AddControlDependencyTo(succ));
-        succ_preds.insert(pred);
+        comp_edges.emplace_back(pred, succ);
       }
     }
-    for (auto& [comp, comp_updates] : updates) {
-      pred_ordering_->reachability_map(comp).UpdateMultipleInstructions(
-          std::move(comp_updates));
+    for (auto& [comp, comp_edges] : updates) {
+      pred_ordering_->reachability_map(comp).AddReachabilityEdges(comp_edges);
     }
     for (const auto& [succ, preds] : ctrl_deps_) {
       for (HloInstruction* pred : preds) {
@@ -294,7 +321,6 @@ class RelativeLocationAnalysis {
   std::pair<RuntimeOrder, bool> CompareEntries(const InstructionEntry& entry1,
                                                const InstructionEntry& entry2,
                                                bool instr2_can_modify) {
-    HloInstruction* def = entry1.second.value_definition;
     HloInstruction* use = entry1.first;
     HloInstruction* instr2 = entry2.first;
     RuntimeOrder order = ComputeRuntimeOrdering(instr2, use);
@@ -318,29 +344,101 @@ class RelativeLocationAnalysis {
     }
     const bool forced_intercept = order != kAfterEnd && order != kNoOverlap &&
                                   AlwaysForceIntercept(instr2);
-    if (def == nullptr || !instr2_can_modify) {
+    if (entry1.second.value_definitions.empty() || !instr2_can_modify) {
       return {order, forced_intercept};
     }
-    if (def->opcode() == HloOpcode::kParameter &&
-        use == use->parent()->root_instruction()) {
-      return {order, true};
-    }
-    // Writes inside a while body do not intercept an outer def/use chain.
-    if (use->parent() == def->parent() &&
-        ((def->opcode() == HloOpcode::kWhile &&
-          instr2->parent() == def->while_body() && order == kBeforeStart) ||
-         (use->opcode() == HloOpcode::kWhile &&
-          instr2->parent() == use->while_body() &&
-          ComputeRuntimeOrdering(def, instr2) == kBeforeStart))) {
-      return {order, false};
-    }
-    if (!forced_intercept && (order == kBeforeStart || order == kUnordered)) {
-      RuntimeOrder def_order = ComputeRuntimeOrdering(instr2, def);
-      if (def_order == kAfterEnd || def_order == kUnordered) {
+    for (HloInstruction* def : entry1.second.value_definitions) {
+      if (def->opcode() == HloOpcode::kParameter &&
+          use == use->parent()->root_instruction()) {
         return {order, true};
+      }
+      // Writes inside a while body do not intercept an outer def/use chain.
+      if (use->parent() == def->parent() &&
+          ((def->opcode() == HloOpcode::kWhile &&
+            instr2->parent() == def->while_body() && order == kBeforeStart) ||
+           (use->opcode() == HloOpcode::kWhile &&
+            instr2->parent() == use->while_body() &&
+            ComputeRuntimeOrdering(def, instr2) == kBeforeStart))) {
+        continue;
+      }
+      if (!forced_intercept && (order == kBeforeStart || order == kUnordered)) {
+        RuntimeOrder def_order = ComputeRuntimeOrdering(instr2, def);
+        if (def_order == kAfterEnd || def_order == kUnordered) {
+          return {order, true};
+        }
       }
     }
     return {order, forced_intercept};
+  }
+
+  // Redirects control dependency endpoints off `elided_copy_` onto its
+  // surviving operand, users, and control neighbors so removing `elided_copy_`
+  // does not drop an ordering constraint that suppressed downstream edges.
+  bool ForEachResolvedEdge(
+      HloInstruction* pred, HloInstruction* succ,
+      absl::FunctionRef<bool(HloInstruction*, HloInstruction*)> visitor) const {
+    if (succ == elided_copy_) {
+      if (!visitor(pred, elided_copy_)) {
+        return false;
+      }
+      if (elided_copy_->users().empty() &&
+          elided_copy_->control_successors().empty()) {
+        return false;
+      }
+      const HloReachabilityMap& rmap =
+          pred_ordering_->reachability_map(elided_copy_->parent());
+      absl::InlinedVector<HloInstruction*, 4> targets;
+      targets.reserve(elided_copy_->users().size() +
+                      elided_copy_->control_successors().size());
+      for (HloInstruction* user : elided_copy_->users()) {
+        targets.push_back(user);
+      }
+      for (HloInstruction* ctrl_succ : elided_copy_->control_successors()) {
+        if (!absl::c_linear_search(targets, ctrl_succ)) {
+          targets.push_back(ctrl_succ);
+        }
+      }
+      // Visit earlier consumers first so `RecordForcedOrder` skips downstream
+      // consumers already covered transitively.
+      absl::c_sort(targets,
+                   [&](const HloInstruction* a, const HloInstruction* b) {
+                     return rmap.GetIndex(a) < rmap.GetIndex(b);
+                   });
+      for (HloInstruction* target : targets) {
+        if (!visitor(pred, target)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (pred == elided_copy_) {
+      if (elided_copy_ == elided_copy_->parent()->root_instruction()) {
+        return false;
+      }
+      const HloReachabilityMap& rmap =
+          pred_ordering_->reachability_map(elided_copy_->parent());
+      absl::InlinedVector<HloInstruction*, 4> sources;
+      sources.reserve(1 + elided_copy_->control_predecessors().size());
+      sources.push_back(elided_copy_->mutable_operand(0));
+      for (HloInstruction* ctrl_pred : elided_copy_->control_predecessors()) {
+        if (!absl::c_linear_search(sources, ctrl_pred)) {
+          sources.push_back(ctrl_pred);
+        }
+      }
+      // Visit deeper predecessors first so `RecordForcedOrder` skips ancestors
+      // that already reach `succ` through a deeper source.
+      absl::c_sort(sources,
+                   [&](const HloInstruction* a, const HloInstruction* b) {
+                     return rmap.GetIndex(a) > rmap.GetIndex(b);
+                   });
+      for (HloInstruction* source : sources) {
+        if (!visitor(source, succ)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    return visitor(pred, succ);
   }
 
   bool ForceRuntimeOrder(
@@ -380,14 +478,22 @@ class RelativeLocationAnalysis {
           });
     };
     for (HloInstruction* instr1 : unordered_ops) {
-      if (!can_order(instr2_first ? instr2 : instr1,
-                     instr2_first ? instr1 : instr2)) {
+      HloInstruction* pred = instr2_first ? instr2 : instr1;
+      HloInstruction* succ = instr2_first ? instr1 : instr2;
+      if (!ForEachResolvedEdge(pred, succ, can_order)) {
         return false;
       }
     }
     for (HloInstruction* instr1 : unordered_ops) {
-      RecordForcedOrder(instr2_first ? instr2 : instr1,
-                        instr2_first ? instr1 : instr2);
+      HloInstruction* pred = instr2_first ? instr2 : instr1;
+      HloInstruction* succ = instr2_first ? instr1 : instr2;
+      ForEachResolvedEdge(pred, succ,
+                          [this](HloInstruction* p, HloInstruction* s) {
+                            if (s != elided_copy_) {
+                              RecordForcedOrder(p, s);
+                            }
+                            return true;
+                          });
     }
     return true;
   }
@@ -411,7 +517,7 @@ class RelativeLocationAnalysis {
     }
     if (instr->opcode() == HloOpcode::kCopy) {
       const InstructionInfo* info = FindInstruction(region, instr);
-      return !(info != nullptr && info->value_definition != nullptr &&
+      return !(info != nullptr && !info->value_definitions.empty() &&
                ShapeUtil::Equal(instr->shape(), instr->operand(0)->shape()));
     }
     switch (instr->opcode()) {
@@ -533,6 +639,8 @@ class RelativeLocationAnalysis {
   // Non-owning, non-null pointer to the dataflow analysis used to resolve value
   // sets for passthrough and in-place instructions.
   const HloDataflowAnalysis* dataflow_;
+  // The copy instruction currently being evaluated for elision.
+  HloInstruction* elided_copy_;
   absl::flat_hash_map<InstructionPair, RuntimeOrder> saved_relations_;
   HloInstructionMap<std::vector<HloInstruction*>> ctrl_deps_;
   absl::flat_hash_map<const HloComputation*, std::vector<ForcedTarget>>
@@ -779,10 +887,33 @@ bool CopyRemover::TryElideCopy(
       }
     }
   };
+  auto dest_substitution_breaks_range = [&](const ValueNode* def_range) {
+    for (const HloUse* use : dest->uses) {
+      if (IsViewUse(use) || use->instruction == copy) {
+        continue;
+      }
+      const ValueNode* p = def_range;
+      do {
+        if (p != dest && use->instruction == p->value->defining_instruction() &&
+            SubstitutionBreaksSharing(copy, *use, *p->value)) {
+          return true;
+        }
+        p = p->next;
+      } while (p != def_range);
+    }
+    return false;
+  };
   auto can_merge = [&](ValueNode* before1, ValueNode* after1,
                        ValueNode* before2, ValueNode* after2,
                        bool dest_spliced_into_src) {
     if (all_before(before1, after1) && all_before(before2, after2)) {
+      if (dest_substitution_breaks_range(src) ||
+          (!SameBuffer(src->value, dest->value) &&
+           dest_substitution_breaks_range(dest))) {
+        VLOG(2) << copy->name()
+                << " substitution would invalidate in-place sharing.";
+        return false;
+      }
       if (insert_post_scheduling_control_dependencies) {
         add_control_deps(before1, after1);
         add_control_deps(before2, after2);
@@ -794,7 +925,8 @@ bool CopyRemover::TryElideCopy(
       VLOG(2) << copy->name() << " copies a broadcast and is not ordered.";
       return false;
     }
-    if (ValuesInterfere(src, dest, dest_spliced_into_src)) {
+    if (ValuesInterfere(src, dest, dest_spliced_into_src,
+                        dest->value->defining_instruction())) {
       VLOG(2) << copy->name() << " rejected by region interference analysis.";
       return false;
     }
@@ -951,8 +1083,214 @@ void CopyRemover::SpliceAfter(ValueNode* head, ValueNode* insert_after) {
   head->prev = insert_after;
 }
 
+bool CopyRemover::SubstitutionBreaksSharing(const HloInstruction* copy,
+                                            const HloUse& use,
+                                            const HloValue& value) const {
+  HloInstruction* user = value.defining_instruction();
+  if (use.instruction != user ||
+      use.instruction->IsCustomCall(kPinCustomCallTarget) ||
+      ((use.instruction->opcode() == HloOpcode::kAsyncUpdate ||
+        use.instruction->opcode() == HloOpcode::kAsyncDone) &&
+       use.operand_number == 0)) {
+    return false;
+  }
+  // Account for replacing `copy` with `copy->operand(0)` at `use`, which can
+  // introduce a shared constant operand, extra users for `kSort`, or multiple
+  // operand slots reading the same underlying producer.
+  const HloInstruction* copy_operand = copy->operand(0);
+  const HloInstruction* unwrapped = copy_operand;
+  bool single_user_after_elision =
+      copy_operand->users().size() == 1 && copy->users().size() == 1;
+  while (dataflow_.IsPassthrough(unwrapped)) {
+    unwrapped = unwrapped->operand(0);
+    single_user_after_elision &= unwrapped->users().size() == 1;
+  }
+  if (unwrapped->opcode() == HloOpcode::kConstant) {
+    return true;
+  }
+  if (user->opcode() == HloOpcode::kSort && !single_user_after_elision) {
+    return true;
+  }
+  if (dataflow_.IsPassthrough(user) ||
+      hlo_query::IsChangeTilingCopyFusion(user) ||
+      hlo_query::IsChangeTilingCopyFusion(unwrapped) ||
+      HasDisjointReadWriteRegions(user) ||
+      user->opcode() == HloOpcode::kWhile ||
+      user->opcode() == HloOpcode::kConditional ||
+      (user->opcode() == HloOpcode::kFusion && !user->IsCustomFusion())) {
+    return false;
+  }
+  int64_t shared_slots = 0;
+  for (int64_t i = 0; i < user->operand_count(); ++i) {
+    const HloInstruction* op_i =
+        (i == use.operand_number || user->operand(i) == copy)
+            ? unwrapped
+            : dataflow_.UnwrapPassthrough(user->operand(i));
+    if (op_i == unwrapped) {
+      ++shared_slots;
+    }
+  }
+  return shared_slots > 1;
+}
+
+bool CopyRemover::CanShareSameInstructionBuffer(const HloInstruction* copy,
+                                                const ValueNode* use_node,
+                                                const HloUse& use,
+                                                const HloValue& value) const {
+  HloInstruction* user = value.defining_instruction();
+  HloInstruction* use_instr = use.instruction;
+  if (use_instr->IsCustomCall(kPinCustomCallTarget)) {
+    return true;
+  }
+  if (use_instr->IsAsynchronous() &&
+      user->parent() == use_instr->async_wrapped_computation()) {
+    HloInstruction* operand = nullptr;
+    ShapeIndex operand_index;
+    if (use_instr->opcode() == HloOpcode::kAsyncStart) {
+      operand = use_instr->async_wrapped_computation()->parameter_instruction(
+          use.operand_number);
+      operand_index = use.operand_index;
+    } else {
+      CHECK_GT(use.operand_index.size(), 1);
+      operand = use_instr->async_wrapped_computation()->parameter_instruction(
+          use.operand_index.at(1));
+      operand_index = ShapeIndex(absl::MakeSpan(use.operand_index)
+                                     .subspan(2, use.operand_index.size() - 2));
+    }
+    return dataflow_.CanShareOperandBufferWithUser(
+        operand, operand_index, user, value.defining_index(), alias_info_);
+  }
+  if (use_instr != user) {
+    return true;
+  }
+  if ((use_instr->opcode() == HloOpcode::kAsyncUpdate ||
+       use_instr->opcode() == HloOpcode::kAsyncDone) &&
+      use.operand_number == 0) {
+    return true;
+  }
+  HloInstruction* operand = use_instr->mutable_operand(use.operand_number);
+  if (!dataflow_.CanShareOperandBufferWithUser(operand, use.operand_index, user,
+                                               value.defining_index(),
+                                               alias_info_)) {
+    return false;
+  }
+  if (use_node->value->defining_instruction() == copy &&
+      SubstitutionBreaksSharing(copy, use, value)) {
+    return false;
+  }
+  return true;
+}
+
+bool CopyRemover::HasIllegalSameInstructionSharing(
+    const HloInstruction* copy, const ValueNode* src,
+    const ValueNode* dest) const {
+  auto use_violates_def_range =
+      [this, copy, dest](
+          const ValueNode* use_node, const HloUse& use,
+          const ValueNode* def_range,
+          const absl::flat_hash_map<const HloInstruction*,
+                                    absl::InlinedVector<const HloValue*, 1>>*
+              def_map,
+          absl::Span<const HloValue* const> async_defs) {
+        if (IsViewUse(&use) || use.instruction == copy) {
+          return false;
+        }
+        const HloInstruction* use_instr = use.instruction;
+        if (def_map == nullptr) {
+          const ValueNode* p = def_range;
+          do {
+            if (p != dest && !CanShareSameInstructionBuffer(copy, use_node, use,
+                                                            *p->value)) {
+              return true;
+            }
+            p = p->next;
+          } while (p != def_range);
+          return false;
+        }
+        if (auto it = def_map->find(use_instr); it != def_map->end()) {
+          for (const HloValue* val : it->second) {
+            if (!CanShareSameInstructionBuffer(copy, use_node, use, *val)) {
+              return true;
+            }
+          }
+        }
+        if (use_instr->IsAsynchronous()) {
+          for (const HloValue* val : async_defs) {
+            if (!CanShareSameInstructionBuffer(copy, use_node, use, *val)) {
+              return true;
+            }
+          }
+        }
+        return false;
+      };
+
+  auto check_ranges = [&](const ValueNode* use_range,
+                          const ValueNode* def_range, bool only_dest_uses) {
+    constexpr int64_t kLinearScanThreshold = 4;
+    int64_t def_count = 0;
+    ForEachValueInRange(def_range, [&](const ValueNode* n) {
+      if (n != dest) {
+        ++def_count;
+      }
+    });
+    if (def_count == 0) {
+      return false;
+    }
+    std::optional<absl::flat_hash_map<const HloInstruction*,
+                                      absl::InlinedVector<const HloValue*, 1>>>
+        def_map;
+    absl::InlinedVector<const HloValue*, 2> async_defs;
+    if (def_count > kLinearScanThreshold) {
+      def_map.emplace();
+      def_map->reserve(def_count);
+      ForEachValueInRange(def_range, [&](const ValueNode* n) {
+        if (n == dest) {
+          return;
+        }
+        const HloValue* val = n->value;
+        const HloInstruction* def_instr = val->defining_instruction();
+        (*def_map)[def_instr].push_back(val);
+        if (def_instr->parent()->IsAsyncComputation()) {
+          async_defs.push_back(val);
+        }
+      });
+    }
+    const auto* map_ptr = def_map.has_value() ? &*def_map : nullptr;
+    if (only_dest_uses) {
+      for (const HloUse* use : dest->uses) {
+        if (use_violates_def_range(dest, *use, def_range, map_ptr,
+                                   async_defs)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    const ValueNode* p = use_range;
+    do {
+      for (const HloUse* use : p->uses) {
+        if (use_violates_def_range(p, *use, def_range, map_ptr, async_defs)) {
+          return true;
+        }
+      }
+      p = p->next;
+    } while (p != use_range);
+    return false;
+  };
+
+  if (SameBuffer(src->value, dest->value)) {
+    return check_ranges(dest, src, /*only_dest_uses=*/true);
+  }
+  return check_ranges(src, dest, /*only_dest_uses=*/false) ||
+         check_ranges(dest, src, /*only_dest_uses=*/false) ||
+         check_ranges(dest, dest, /*only_dest_uses=*/true);
+}
+
 bool CopyRemover::ValuesInterfere(const ValueNode* src, const ValueNode* dest,
-                                  bool dest_spliced_into_src) {
+                                  bool dest_spliced_into_src,
+                                  HloInstruction* elided_copy) {
+  if (HasIllegalSameInstructionSharing(elided_copy, src, dest)) {
+    return true;
+  }
   auto build_regions = [this](const ValueNode* start) {
     LiveRangeRegions regions;
     auto find_or_add_comp =
@@ -967,16 +1305,19 @@ bool CopyRemover::ValuesInterfere(const ValueNode* src, const ValueNode* dest,
     };
     ForEachValueInRange(start, [&](const ValueNode* node) {
       HloInstruction* def = node->value->instruction();
-      find_or_add_comp(def->parent()).push_back({def, {nullptr, true}});
+      find_or_add_comp(def->parent()).push_back({def, {{}, true}});
       for (const HloUse* use : node->uses) {
         find_or_add_comp(use->instruction->parent())
-            .push_back({use->instruction, {def, false}});
+            .push_back({use->instruction, {{def}, false}});
       }
       for (HloInstruction* root_instr : node->root_positions) {
+        InstructionInfo info;
+        if (root_instr != def) {
+          info.value_definitions.push_back(def);
+        }
+        info.is_root_position = true;
         find_or_add_comp(root_instr->parent())
-            .push_back({root_instr,
-                        {root_instr != def ? def : nullptr, false,
-                         /*is_root_position=*/true}});
+            .push_back({root_instr, std::move(info)});
       }
     });
     absl::c_sort(regions, [](const auto& a, const auto& b) {
@@ -994,13 +1335,15 @@ bool CopyRemover::ValuesInterfere(const ValueNode* src, const ValueNode* dest,
               instrs[i].second.is_definition;
           instrs[out - 1].second.is_root_position |=
               instrs[i].second.is_root_position;
-          if (instrs[i].second.value_definition != nullptr) {
-            instrs[out - 1].second.value_definition =
-                instrs[i].second.value_definition;
+          for (HloInstruction* def : instrs[i].second.value_definitions) {
+            if (!absl::c_linear_search(instrs[out - 1].second.value_definitions,
+                                       def)) {
+              instrs[out - 1].second.value_definitions.push_back(def);
+            }
           }
         } else {
           if (out != i) {
-            instrs[out] = instrs[i];
+            instrs[out] = std::move(instrs[i]);
           }
           ++out;
         }
@@ -1027,7 +1370,8 @@ bool CopyRemover::ValuesInterfere(const ValueNode* src, const ValueNode* dest,
   auto same_buffer = [this](const HloValue* a, const HloValue* b) {
     return SameBuffer(a, b);
   };
-  RelativeLocationAnalysis analysis(ordering_, alias_info_, &dataflow_);
+  RelativeLocationAnalysis analysis(ordering_, alias_info_, &dataflow_,
+                                    elided_copy);
   RegionRelation r1 =
       analysis.Analyze(src_regions, dest_regions, src->value, same_buffer,
                        [&](RegionRelation r) { return interferes(r, {}); });

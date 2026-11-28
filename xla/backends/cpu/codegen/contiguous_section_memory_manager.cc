@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <system_error>  // NOLINT
 
@@ -27,10 +28,30 @@ limitations under the License.
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/Memory.h"
 #include "llvm/Support/Process.h"
+#include "xla/backends/cpu/codegen/page_committed_memory.h"
 #include "xla/util.h"
 
 namespace xla::cpu {
 namespace {
+
+std::optional<PageProtection> ToPageProtection(unsigned flags) {
+  switch (flags & llvm::sys::Memory::MF_RWE_MASK) {
+    case llvm::sys::Memory::MF_READ:
+      return PageProtection::kReadOnly;
+    case llvm::sys::Memory::MF_WRITE:
+    case llvm::sys::Memory::MF_READ | llvm::sys::Memory::MF_WRITE:
+      return PageProtection::kReadWrite;
+    case llvm::sys::Memory::MF_READ | llvm::sys::Memory::MF_EXEC:
+      return PageProtection::kReadExecute;
+    case llvm::sys::Memory::MF_READ | llvm::sys::Memory::MF_WRITE |
+        llvm::sys::Memory::MF_EXEC:
+      return PageProtection::kReadWriteExecute;
+    case llvm::sys::Memory::MF_EXEC:
+      return PageProtection::kExecuteOnly;
+    default:
+      return std::nullopt;
+  }
+}
 
 class DefaultMemoryMapper final
     : public llvm::SectionMemoryManager::MemoryMapper {
@@ -39,16 +60,38 @@ class DefaultMemoryMapper final
       llvm::SectionMemoryManager::AllocationPurpose purpose, size_t num_bytes,
       const llvm::sys::MemoryBlock* const near_block, unsigned flags,
       std::error_code& error_code) override {
+    if (UsesPageCommittedMemory() && near_block == nullptr &&
+        (flags & llvm::sys::Memory::MF_HUGE_HINT) == 0) {
+      if (std::optional<PageProtection> prot = ToPageProtection(flags)) {
+        PageCommittedBlock block =
+            AllocatePageCommittedMemory(num_bytes, *prot, error_code);
+        return llvm::sys::MemoryBlock(block.base, block.size);
+      }
+    }
     return llvm::sys::Memory::allocateMappedMemory(num_bytes, near_block, flags,
                                                    error_code);
   }
 
   std::error_code protectMappedMemory(const llvm::sys::MemoryBlock& block,
                                       unsigned flags) override {
+    if (UsesPageCommittedMemory()) {
+      if (std::optional<PageProtection> prot = ToPageProtection(flags)) {
+        return ProtectPageCommittedMemory(block.base(), block.allocatedSize(),
+                                          *prot);
+      }
+    }
     return llvm::sys::Memory::protectMappedMemory(block, flags);
   }
 
   std::error_code releaseMappedMemory(llvm::sys::MemoryBlock& m) override {
+    if (UsesPageCommittedMemory()) {
+      PageCommittedBlock block{m.base(), m.allocatedSize()};
+      std::error_code ec = ReleasePageCommittedMemory(block);
+      if (!ec) {
+        m = llvm::sys::MemoryBlock();
+      }
+      return ec;
+    }
     return llvm::sys::Memory::releaseMappedMemory(m);
   }
 };
@@ -83,19 +126,27 @@ void ContiguousSectionMemoryManager::reserveAllocationSpace(
   CHECK_EQ(allocation_.allocatedSize(), 0);
 
   static const size_t page_size = llvm::sys::Process::getPageSizeEstimate();
-  const size_t code_align_val = std::max<size_t>(code_align.value(), page_size);
-  const size_t ro_data_align_val =
-      std::max<size_t>(ro_data_align.value(), page_size);
-  const size_t rw_data_align_val =
-      std::max<size_t>(rw_data_align.value(), page_size);
+  CHECK(page_size != 0 && (page_size & (page_size - 1)) == 0);
+  auto section_align = [](uintptr_t size, llvm::Align align) -> size_t {
+    return size > 0 ? std::max<size_t>(align.value(), page_size) : page_size;
+  };
+  const size_t code_align_val = section_align(code_size, code_align);
+  const size_t ro_data_align_val = section_align(ro_data_size, ro_data_align);
+  const size_t rw_data_align_val = section_align(rw_data_size, rw_data_align);
 
-  code_size = RoundUpTo<uintptr_t>(code_size, code_align_val);
-  ro_data_size = RoundUpTo<uintptr_t>(ro_data_size, ro_data_align_val);
-  rw_data_size = RoundUpTo<uintptr_t>(rw_data_size, rw_data_align_val);
+  code_size = RoundUpTo<uintptr_t>(code_size, page_size);
+  ro_data_size = RoundUpTo<uintptr_t>(ro_data_size, page_size);
+  rw_data_size = RoundUpTo<uintptr_t>(rw_data_size, page_size);
 
-  const uintptr_t total_size = code_size + ro_data_size + rw_data_size +
-                               code_align_val + ro_data_align_val +
-                               rw_data_align_val;
+  // `allocateMappedMemory` returns a page aligned base and each section size is
+  // a multiple of `page_size`, so aligning a non-empty section to `align_val`
+  // consumes at most `align_val - page_size` bytes of padding.
+  const uintptr_t total_size =
+      code_size + ro_data_size + rw_data_size + (code_align_val - page_size) +
+      (ro_data_align_val - page_size) + (rw_data_align_val - page_size);
+  if (total_size == 0) {
+    return;
+  }
 
   std::error_code ec;
   allocation_ = mmapper_->allocateMappedMemory(
@@ -107,6 +158,7 @@ void ContiguousSectionMemoryManager::reserveAllocationSpace(
   }
 
   const auto base = reinterpret_cast<std::uintptr_t>(allocation_.base());
+  CHECK_EQ(base % page_size, 0);
   const uintptr_t code_start = RoundUpTo<uintptr_t>(base, code_align_val);
   code_block_ = code_free_ =
       llvm::sys::MemoryBlock(reinterpret_cast<void*>(code_start), code_size);
@@ -118,6 +170,7 @@ void ContiguousSectionMemoryManager::reserveAllocationSpace(
 
   const uintptr_t rw_data_start =
       RoundUpTo<uintptr_t>(ro_data_start + ro_data_size, rw_data_align_val);
+  CHECK_LE(rw_data_start + rw_data_size, base + allocation_.allocatedSize());
   rw_data_block_ = rw_data_free_ = llvm::sys::MemoryBlock(
       reinterpret_cast<void*>(rw_data_start), rw_data_size);
 }
@@ -157,25 +210,31 @@ uint8_t* ContiguousSectionMemoryManager::Allocate(
 bool ContiguousSectionMemoryManager::finalizeMemory(std::string* err_msg) {
   std::error_code ec;
 
-  ec = mmapper_->protectMappedMemory(
-      code_block_, llvm::sys::Memory::MF_READ | llvm::sys::Memory::MF_EXEC);
-  if (ec) {
-    if (err_msg) {
-      *err_msg = ec.message();
+  if (code_block_.allocatedSize() > 0) {
+    ec = mmapper_->protectMappedMemory(
+        code_block_, llvm::sys::Memory::MF_READ | llvm::sys::Memory::MF_EXEC);
+    if (ec) {
+      if (err_msg) {
+        *err_msg = ec.message();
+      }
+      return true;
     }
-    return true;
   }
-  ec =
-      mmapper_->protectMappedMemory(ro_data_block_, llvm::sys::Memory::MF_READ);
-  if (ec) {
-    if (err_msg) {
-      *err_msg = ec.message();
+  if (ro_data_block_.allocatedSize() > 0) {
+    ec = mmapper_->protectMappedMemory(ro_data_block_,
+                                       llvm::sys::Memory::MF_READ);
+    if (ec) {
+      if (err_msg) {
+        *err_msg = ec.message();
+      }
+      return true;
     }
-    return true;
   }
 
-  llvm::sys::Memory::InvalidateInstructionCache(code_block_.base(),
-                                                code_block_.allocatedSize());
+  if (code_block_.allocatedSize() > 0) {
+    llvm::sys::Memory::InvalidateInstructionCache(code_block_.base(),
+                                                  code_block_.allocatedSize());
+  }
   return false;
 }
 

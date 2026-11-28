@@ -19,15 +19,21 @@ limitations under the License.
 #include <Windows.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <process.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <map>
+#include <memory>
+#include <utility>
 #undef ERROR
 
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "absl/base/attributes.h"
@@ -49,38 +55,78 @@ namespace {
 
 ABSL_CONST_INIT static absl::Mutex name_mutex(absl::kConstInit);
 
-std::map<std::thread::id, string>& GetThreadNameRegistry()
+std::map<DWORD, string>& GetThreadNameRegistry()
     TF_EXCLUSIVE_LOCKS_REQUIRED(name_mutex) {
-  static auto* const thread_name_registry =
-      new std::map<std::thread::id, string>();
+  static auto* const thread_name_registry = new std::map<DWORD, string>();
   return *thread_name_registry;
 }
 
-class StdThread : public Thread {
+// Uses _beginthreadex instead of std::thread so `thread_options.stack_size` is
+// honored as a virtual stack reservation without committing all stack pages
+// upfront.
+class WindowsThread : public Thread {
  public:
-  // thread_options is ignored.
-  StdThread(const ThreadOptions& thread_options, const string& name,
-            absl::AnyInvocable<void()> fn, bool detached = false)
-      : detached_(detached), thread_(std::move(fn)) {
-    if (detached) {
-      thread_.detach();
+  WindowsThread(const ThreadOptions& thread_options, const string& name,
+                absl::AnyInvocable<void()> fn, bool detached = false) {
+    auto* params = new ThreadParams{name, std::move(fn)};
+    unsigned stack_size = 0;
+    unsigned init_flag = 0;
+    if (thread_options.stack_size != 0) {
+      constexpr size_t kMaxStackSize =
+          static_cast<size_t>((std::numeric_limits<unsigned>::max)());
+      stack_size = static_cast<unsigned>(
+          (std::min)(thread_options.stack_size, kMaxStackSize));
+      init_flag = STACK_SIZE_PARAM_IS_A_RESERVATION;
     }
-    absl::MutexLock l(name_mutex);
-    GetThreadNameRegistry().emplace(thread_.get_id(), name);
+    uintptr_t raw_handle =
+        _beginthreadex(/*security=*/nullptr, stack_size, &ThreadFn, params,
+                       init_flag, /*thrdaddr=*/nullptr);
+    if (raw_handle == 0) {
+      const int err = errno;
+      delete params;
+      LOG(FATAL) << "Thread " << name
+                 << " creation via _beginthreadex() failed with errno " << err;
+    }
+    HANDLE handle = reinterpret_cast<HANDLE>(raw_handle);
+    if (detached) {
+      CloseHandle(handle);
+    } else {
+      handle_ = handle;
+    }
   }
 
-  ~StdThread() override {
-    std::thread::id thread_id = thread_.get_id();
-    if (!detached_) {
-      thread_.join();
+  ~WindowsThread() override {
+    if (handle_ != NULL) {
+      const DWORD wait_result = WaitForSingleObject(handle_, INFINITE);
+      CHECK_EQ(wait_result, WAIT_OBJECT_0)
+          << "WaitForSingleObject failed with error " << ::GetLastError();
+      CloseHandle(handle_);
     }
-    absl::MutexLock l(name_mutex);
-    GetThreadNameRegistry().erase(thread_id);
   }
 
  private:
-  bool detached_;
-  std::thread thread_;
+  struct ThreadParams {
+    string name;
+    absl::AnyInvocable<void()> fn;
+  };
+
+  static unsigned __stdcall ThreadFn(void* params_arg) {
+    std::unique_ptr<ThreadParams> params(
+        static_cast<ThreadParams*>(params_arg));
+    const DWORD thread_id = ::GetCurrentThreadId();
+    {
+      absl::MutexLock l(name_mutex);
+      GetThreadNameRegistry().emplace(thread_id, params->name);
+    }
+    std::move(params->fn)();
+    {
+      absl::MutexLock l(name_mutex);
+      GetThreadNameRegistry().erase(thread_id);
+    }
+    return 0;
+  }
+
+  HANDLE handle_ = NULL;
 };
 
 class WindowsEnv : public Env {
@@ -113,14 +159,14 @@ class WindowsEnv : public Env {
 
   Thread* StartThread(const ThreadOptions& thread_options, const string& name,
                       absl::AnyInvocable<void()> fn) override {
-    return new StdThread(thread_options, name, std::move(fn));
+    return new WindowsThread(thread_options, name, std::move(fn));
   }
 
   void StartDetachedThread(const ThreadOptions& thread_options,
                            const string& name,
                            absl::AnyInvocable<void()> fn) override {
-    StdThread detached_thread(thread_options, name, std::move(fn),
-                              /*detached=*/true);
+    WindowsThread detached_thread(thread_options, name, std::move(fn),
+                                  /*detached=*/true);
   }
 
   int64_t GetCurrentThreadId() override {
@@ -129,7 +175,7 @@ class WindowsEnv : public Env {
 
   bool GetCurrentThreadName(string* name) override {
     absl::MutexLock l(name_mutex);
-    auto thread_name = GetThreadNameRegistry().find(std::this_thread::get_id());
+    auto thread_name = GetThreadNameRegistry().find(::GetCurrentThreadId());
     if (thread_name != GetThreadNameRegistry().end()) {
       *name = thread_name->second;
       return true;
