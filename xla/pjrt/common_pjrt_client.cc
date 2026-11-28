@@ -42,6 +42,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
@@ -1899,6 +1900,86 @@ CommonPjRtClient::CreateUninitializedBuffer(const Shape& shape,
       auto output_buffer,
       DefineBuffer(std::move(device_shape), memory_space, raw_buffer,
                    {std::move(definition_event)}));
+  return output_buffer;
+}
+
+absl::StatusOr<std::unique_ptr<PjRtBuffer>>
+CommonPjRtClient::CreateBufferFromExternalWrite(
+    const Shape& shape, PjRtMemorySpace* memory_space,
+    absl::FunctionRef<Future<>(PjRtRawBufferRef raw, Future<> allocated)> cb) {
+  if (!shape.IsArray()) {
+    return InvalidArgument(
+        "CommonPjRtClient::CreateBufferFromExternalWrite only supports array "
+        "shapes: %s",
+        shape.ToString());
+  }
+  if (memory_space == nullptr || memory_space->client() != this) {
+    return InvalidArgument(
+        "CreateBufferFromExternalWrite requires a memory space attached to "
+        "this client");
+  }
+  ABSL_ASSIGN_OR_RETURN(
+      Shape device_shape,
+      MakeDefaultShapeForMemorySpace(
+          memory_space, shape, shape.has_layout() ? &shape.layout() : nullptr));
+  if (RequiresRuntimeShapeMetadata(device_shape, memory_space)) {
+    return InvalidArgument(
+        "Dynamic shapes with runtime metadata are not supported in "
+        "CommonPjRtClient::CreateBufferFromExternalWrite: %s",
+        device_shape.ToString());
+  }
+  ABSL_ASSIGN_OR_RETURN(int64_t on_device_bytes_count,
+                        GetOnDeviceBytesCount(memory_space, device_shape));
+  ABSL_ASSIGN_OR_RETURN(PjRtRawBufferRef raw_buffer,
+                        AllocateRawBuffer(memory_space, on_device_bytes_count,
+                                          /*retry_on_oom=*/true,
+                                          /*allocate_after=*/{}));
+  ABSL_ASSIGN_OR_RETURN(PjRtDeviceEventRef allocation_event,
+                        raw_buffer->MakeAllocationReadyEvent());
+  PjRtDeviceEventPromiseRef definition_event_promise;
+  PjRtDeviceEventRef definition_event;
+  ABSL_ASSIGN_OR_RETURN(
+      std::tie(definition_event_promise, definition_event),
+      CreateLinkedEventPromise(memory_space, "CreateBufferFromExternalWrite"));
+  if (event_tracking_enabled()) {
+    AddEventDependencies(memory_space, definition_event_promise.event(),
+                         absl::MakeConstSpan(&allocation_event, 1));
+  }
+  // The memory may still be in use by earlier device work until
+  // `allocation_event` is ready, so the external write must wait for it.
+  Future<> allocated = MakeTrackedReadyFuture(allocation_event.ptr(),
+                                              memory_space, "CommonPjRtClient",
+                                              "CreateBufferFromExternalWrite");
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<PjRtBuffer> output_buffer,
+      DefineBuffer(std::move(device_shape), memory_space, raw_buffer,
+                   {std::move(definition_event)}));
+
+  Future<> write_done = cb(raw_buffer, std::move(allocated));
+  // Keep the memory alive until the external write has finished, even if the
+  // returned buffer is deleted first.
+  write_done.OnReady(
+      [raw_buffer = std::move(raw_buffer),
+       allocation_event = std::move(allocation_event),
+       definition_event_promise =
+           std::move(definition_event_promise)](absl::Status status) mutable {
+        if (!status.ok()) {
+          definition_event_promise.SetError(std::move(status));
+          return;
+        }
+        PjRtDeviceEventPtr alloc_ptr = allocation_event.ptr();
+        alloc_ptr.AndThen([raw_buffer = std::move(raw_buffer),
+                           allocation_event = std::move(allocation_event),
+                           definition_event_promise =
+                               std::move(definition_event_promise)]() mutable {
+          if (std::optional<absl::Status> error =
+                  allocation_event.GetErrorIfPresent()) {
+            definition_event_promise.SetError(*std::move(error));
+          } else {
+            definition_event_promise.SetReady();
+          }
+        });
+      });
   return output_buffer;
 }
 
@@ -5793,6 +5874,56 @@ Future<> CommonPjRtBufferImpl::CopyRawToHostFuture(Future<void*> dst,
   return absl::down_cast<CommonPjRtClient*>(memory_space()->client())
       ->MakeTrackedReadyFuture(usage_event.ptr(), memory_space(),
                                "CommonPjRtBuffer", "CopyRawToHostFuture");
+}
+
+Future<> CommonPjRtBufferImpl::UseBuffer(
+    absl::FunctionRef<Future<>(PjRtRawBufferRef raw, Future<> defined)> cb) {
+  if (!on_device_shape().IsArray()) {
+    return InvalidArgument("UseBuffer only supports array buffers: %s",
+                           on_device_shape().ToString());
+  }
+  ScopedHold device_buffer = GetBufferWithHold(ScopedHold::kUsage);
+  if (!device_buffer.ok()) {
+    return InvalidArgument("UseBuffer called on deleted or donated buffer: %s",
+                           device_buffer.status().ToString());
+  }
+  PjRtRawBufferRef raw_buffer = device_buffer.buffer()->raw_buffer();
+  Future<> defined = device_buffer.buffer()->GetReadyFuture(memory_space());
+  if (!raw_buffer) {
+    // A buffer without a raw buffer may be an error buffer whose error is not
+    // known yet, so report that error if there is one.
+    return defined.Map([]() -> absl::Status {
+      return InvalidArgument(
+          "UseBuffer called on a buffer without a raw buffer");
+    });
+  }
+
+  CommonPjRtClient* buf_client = client();
+  PjRtDeviceEventPromiseRef usage_event_promise;
+  PjRtDeviceEventRef usage_event;
+  ABSL_ASSIGN_OR_RETURN(
+      std::tie(usage_event_promise, usage_event),
+      buf_client->CreateLinkedEventPromise(memory_space(), "UseBuffer"));
+  if (buf_client->event_tracking_enabled()) {
+    buf_client->AddEventDependencies(
+        memory_space(), usage_event_promise.event(),
+        device_buffer.buffer()->definition_events());
+  }
+  device_buffer.ConvertUsageHold(usage_event);
+
+  Future<> access_done = cb(raw_buffer, std::move(defined));
+  // Keep the memory alive until the external access has finished.
+  access_done.OnReady([raw_buffer = std::move(raw_buffer),
+                       usage_event_promise = std::move(usage_event_promise)](
+                          absl::Status status) mutable {
+    if (status.ok()) {
+      usage_event_promise.SetReady();
+    } else {
+      usage_event_promise.SetError(std::move(status));
+    }
+  });
+  return buf_client->MakeTrackedReadyFuture(usage_event.ptr(), memory_space(),
+                                            "CommonPjRtBuffer", "UseBuffer");
 }
 
 absl::StatusOr<Shape> CommonPjRtBufferImpl::logical_on_device_shape() {

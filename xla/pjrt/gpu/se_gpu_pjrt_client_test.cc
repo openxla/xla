@@ -3422,6 +3422,109 @@ TEST(StreamExecutorGpuClientTest, ComputeSynchronizedAllocatorRace) {
   TF_EXPECT_OK(client->DmaUnmap(host_dma_ptr));
 }
 
+// An external write into a new buffer must wait for `allocated`, because the
+// allocator can return memory that an earlier computation is still reading.
+TEST(StreamExecutorGpuClientTest,
+     CreateBufferFromExternalWriteWaitsForEarlierComputation) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
+  PjRtDevice* const device = client->addressable_devices()[0];
+  auto* raw_client = absl::down_cast<CommonPjRtClient*>(client.get())
+                         ->raw_client()
+                         ->down_cast<PjRtStreamExecutorRawClient>();
+  TF_ASSERT_OK_AND_ASSIGN(
+      LocalDeviceState * local_device_state,
+      raw_client->GetLocalDeviceState(device->local_device_id()));
+
+  std::unique_ptr<PjRtBuffer> w;
+  {
+    TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                            CompileExecutable(kInitMatrixProgram, *client));
+    std::vector<std::vector<PjRtBuffer*>> input_ptrs = {{}};
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto results,
+        executable->Execute(absl::MakeSpan(input_ptrs), ExecuteOptions()));
+    w = std::move(results[0][0]);
+  }
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CompileExecutable(kSlowCheckProgram, *client));
+
+  constexpr size_t kWriteSize = 4 * 1024;
+  auto* host_ptr = static_cast<int32_t*>(tsl::port::AlignedMalloc(
+      kWriteSize, static_cast<std::align_val_t>(1024)));
+  absl::Cleanup free_host_ptr = [host_ptr] {
+    tsl::port::AlignedFree(host_ptr);
+  };
+  memset(host_ptr, 0, kWriteSize);
+  Shape shape =
+      ShapeUtil::MakeShape(S32, {static_cast<int64_t>(kWriteSize * 1024)});
+
+  void* last_device_ptr = nullptr;
+  bool memory_reused = false;
+  std::vector<std::unique_ptr<PjRtBuffer>> check_results;
+  for (int32_t i = 0; i < 10; ++i) {
+    PjRtRawBufferRef raw;
+    Future<> allocated;
+    auto [write_promise, write_done] = MakePromise<>();
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PjRtBuffer> buffer,
+        client->CreateBufferFromExternalWrite(
+            shape, device->memory_spaces()[0],
+            [&, write_done = std::move(write_done)](
+                PjRtRawBufferRef raw_arg,
+                Future<> allocated_arg) mutable -> Future<> {
+              raw = std::move(raw_arg);
+              allocated = std::move(allocated_arg);
+              return std::move(write_done);
+            }));
+    void* device_ptr = raw->OpaqueDeviceMemoryDataPointer();
+    if (device_ptr == last_device_ptr) {
+      memory_reused = true;
+    }
+    last_device_ptr = device_ptr;
+
+    // Write to the device memory on a separate stream, like an external engine
+    // does. Nothing in PJRT orders this write against earlier device work, so
+    // the writer waits for `allocated` first.
+    TF_ASSERT_OK(allocated.Await());
+    {
+      host_ptr[0] = i;
+      std::unique_ptr<se::Stream> stream =
+          local_device_state->BorrowStreamFromPool();
+      se::DeviceAddressBase dst(device_ptr, kWriteSize);
+      TF_ASSERT_OK(stream->Memcpy(&dst, host_ptr, kWriteSize));
+      TF_ASSERT_OK(stream->BlockHostUntilDone());
+      local_device_state->ReturnStreamToPool(std::move(stream));
+    }
+    write_promise.Set();
+    TF_ASSERT_OK(buffer->GetReadyFuture().Await());
+
+    // The slow computation reads `buffer` at its end. `buffer` is freed at the
+    // end of this iteration, while the computation is still running, so the
+    // next iteration can get the same memory.
+    std::vector<std::vector<PjRtBuffer*>> input_ptrs = {
+        {w.get(), buffer.get()}};
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto results,
+        executable->Execute(absl::MakeSpan(input_ptrs), ExecuteOptions()));
+    w = std::move(results[0][0]);
+    check_results.push_back(std::move(results[0][1]));
+  }
+
+  std::vector<int32_t> expected;
+  std::vector<int32_t> actual;
+  for (int32_t i = 0; i < static_cast<int32_t>(check_results.size()); ++i) {
+    TF_ASSERT_OK_AND_ASSIGN(auto literal,
+                            check_results[i]->ToLiteral().Await());
+    expected.push_back(i);
+    actual.push_back(literal->data<int32_t>()[0]);
+  }
+  // Each computation read the value that was written for it.
+  EXPECT_EQ(expected, actual);
+  // The check above only means something if the memory was reused.
+  EXPECT_TRUE(memory_reused);
+}
+
 TEST(StreamExecutorGpuClientTest, EventCaching) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));

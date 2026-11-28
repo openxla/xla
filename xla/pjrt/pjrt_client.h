@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -62,6 +63,7 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/lib/gtl/int_type.h"
 #include "xla/tsl/platform/errors.h"
@@ -81,7 +83,10 @@ class PjRtClient;
 class PjRtDevice;
 class PjRtLoadedExecutable;
 class PjRtExecutableForwarder;
+class PjRtRawBufferInterface;
 struct CompileOptions;
+
+using PjRtRawBufferRef = tsl::RCReference<PjRtRawBufferInterface>;
 
 typedef absl::AnyInvocable<absl::Status(absl::StatusOr<PjRtBuffer*>)>
     PjRtFulfillAliasBufferCallback;
@@ -742,6 +747,24 @@ class PjRtClient {
         "CreateUninitializedBuffer is not supported.");
   }
 
+  // Allocates a new buffer in `memory_space` and lets an external engine (e.g.
+  // a NIC or storage controller) write its contents.
+  //
+  // `cb` is invoked before this function returns. It receives the newly
+  // allocated raw buffer and `allocated`, which becomes ready when the memory
+  // may be written. `cb` must not block: it orders its write after `allocated`
+  // and returns a future that defines the returned `PjRtBuffer`: downstream
+  // consumers wait for it, and an error poisons the buffer. Complete that
+  // future with OK only if the entire buffer was written; a short, rejected, or
+  // cancelled write must complete with an error, and only after the external
+  // writer has stopped touching the memory. If `cb` calls
+  // `raw->AcquireExternalDmaAccess()`, it must hold that access until the
+  // external write is finished.
+  virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>>
+  CreateBufferFromExternalWrite(
+      const Shape& shape, PjRtMemorySpace* memory_space,
+      absl::FunctionRef<Future<>(PjRtRawBufferRef raw, Future<> allocated)> cb);
+
   // Creates a buffer that is an alias of another buffer. The alias buffer
   // is initially uninitialized and must be fulfilled later.
   virtual absl::StatusOr<
@@ -1275,6 +1298,24 @@ class PjRtBuffer {
   // an UNIMPLEMENTED error.
   virtual Future<> CopyRawToHostFuture(Future<void*> dst, int64_t offset,
                                        int64_t transfer_size);
+
+  // Reads this buffer from outside PJRT (e.g. with an external DMA engine).
+  //
+  // `cb` is invoked before this function returns. It receives the underlying
+  // raw buffer and `defined`, which becomes ready when this buffer's definition
+  // completes. `cb` must not block: it orders its read after `defined` and
+  // returns a future that resolves when the external access has finished (or
+  // carries its error, only after the external reader has stopped touching the
+  // memory). If `cb` calls `raw->AcquireExternalDmaAccess()`, it must hold that
+  // access until the read is finished.
+  //
+  // Until the future returned by `cb` resolves, the backing allocation stays
+  // alive and a donating `Execute()` or `Delete()` on this buffer waits for it.
+  // Returns a future that resolves with the same status as `cb`'s future, or an
+  // error without invoking `cb` if the access cannot start (e.g. the buffer is
+  // deleted or the backend does not support raw-buffer access).
+  virtual Future<> UseBuffer(
+      absl::FunctionRef<Future<>(PjRtRawBufferRef raw, Future<> defined)> cb);
 
   // Drops the buffer's reference to its associated device memory, leaving the
   // buffer in an invalid state. The memory will be freed lazily when all async

@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <utility>
@@ -36,6 +37,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "benchmark/benchmark.h"  // IWYU pragma: keep
 #include "tsl/profiler/lib/scoped_memory_debug_annotation.h"
+#include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -456,6 +458,277 @@ TEST(CommonPjRtClientExecuteTest,
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> out3,
                        results[3]->ToLiteral().Await());
   EXPECT_THAT(out3->data<int32_t>(), ElementsAre(5, 6));
+}
+
+TEST(ExternalBufferAccessTest, CreateBufferFromExternalWriteWaitsForFuture) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetXlaPjrtCpuClient(CpuClientOptions{}));
+  PjRtDevice* device = client->addressable_devices()[0];
+  ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * memory_space,
+                       device->default_memory_space());
+
+  constexpr absl::string_view kAddOne = R"hlo(
+    HloModule add_one
+    ENTRY main {
+      p0 = s32[4]{0} parameter(0)
+      c = s32[4]{0} constant({1, 2, 3, 4})
+      ROOT out = s32[4]{0} add(p0, c)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnUnverifiedModule(kAddOne, {}));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(XlaComputation(hlo_module->ToProto()),
+                             CompileOptions{}));
+
+  auto [write_promise, write_future] = MakePromise<>();
+  PjRtRawBufferRef captured_raw;
+  Future<> captured_allocated;
+  Shape shape = ShapeUtil::MakeShape(S32, {4});
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->CreateBufferFromExternalWrite(
+          shape, memory_space,
+          [&, write_future = std::move(write_future)](
+              PjRtRawBufferRef raw, Future<> allocated) mutable -> Future<> {
+            captured_raw = std::move(raw);
+            captured_allocated = std::move(allocated);
+            return std::move(write_future);
+          }));
+  ASSERT_NE(captured_raw, nullptr);
+  // The external writer waits for `allocated` before it writes.
+  EXPECT_OK(captured_allocated.Await());
+  EXPECT_FALSE(buffer->GetReadyFuture().IsReady());
+
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<PjRtBuffer>> results,
+      executable->ExecuteSharded({buffer.get()}, device, ExecuteOptions{}));
+  ASSERT_EQ(results.size(), 1);
+  Future<std::shared_ptr<Literal>> out_future = results[0]->ToLiteral();
+  EXPECT_FALSE(out_future.IsReady());
+
+  const int32_t kSrc[4] = {10, 20, 30, 40};
+  EXPECT_THAT(
+      captured_raw->CopyRawHostToDevice(kSrc, /*offset=*/0, sizeof(kSrc))
+          .Await(),
+      IsOk());
+  write_promise.Set();
+
+  EXPECT_THAT(buffer->GetReadyFuture().Await(), IsOk());
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> out, out_future.Await());
+  EXPECT_THAT(out->data<int32_t>(), ElementsAre(11, 22, 33, 44));
+}
+
+TEST(ExternalBufferAccessTest, CreateBufferFromExternalWriteErrorPoisons) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetXlaPjrtCpuClient(CpuClientOptions{}));
+  PjRtDevice* device = client->addressable_devices()[0];
+  ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * memory_space,
+                       device->default_memory_space());
+
+  auto [write_promise, write_future] = MakePromise<>();
+  Shape shape = ShapeUtil::MakeShape(S32, {4});
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> buffer,
+                       client->CreateBufferFromExternalWrite(
+                           shape, memory_space,
+                           [write_future = std::move(write_future)](
+                               PjRtRawBufferRef, Future<>) mutable {
+                             return std::move(write_future);
+                           }));
+
+  Future<> ready = buffer->GetReadyFuture();
+  EXPECT_FALSE(ready.IsReady());
+  write_promise.Set(absl::UnavailableError("short external write"));
+  EXPECT_THAT(ready.Await(), StatusIs(absl::StatusCode::kUnavailable));
+}
+
+TEST(ExternalBufferAccessTest,
+     CreateBufferFromExternalWriteKeepsMemoryUntilWriteCompletes) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetXlaPjrtCpuClient(CpuClientOptions{}));
+  PjRtDevice* device = client->addressable_devices()[0];
+  ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * memory_space,
+                       device->default_memory_space());
+
+  auto [write_promise, write_future] = MakePromise<>();
+  void* raw_host_ptr = nullptr;
+  Shape shape = ShapeUtil::MakeShape(S32, {4});
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->CreateBufferFromExternalWrite(
+          shape, memory_space,
+          [&, write_future = std::move(write_future)](
+              PjRtRawBufferRef raw, Future<>) mutable -> Future<> {
+            raw_host_ptr = raw->GetHostPointer();
+            return std::move(write_future);
+          }));
+  ASSERT_NE(raw_host_ptr, nullptr);
+
+  // Deleting the PjRtBuffer while the external write is still in flight must
+  // not free the underlying allocation until write_future resolves.
+  buffer->Delete();
+  const int32_t kSrc[4] = {1, 2, 3, 4};
+  std::memcpy(raw_host_ptr, kSrc, sizeof(kSrc));
+  write_promise.Set();
+}
+
+TEST(ExternalBufferAccessTest,
+     UseBufferWaitsForDefinitionAndDelaysDonatingExecute) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetXlaPjrtCpuClient(CpuClientOptions{}));
+  PjRtDevice* device = client->addressable_devices()[0];
+  ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * memory_space,
+                       device->default_memory_space());
+
+  constexpr absl::string_view kDonatingAdd = R"hlo(
+    HloModule donating_add, input_output_alias={ {}: (0, {}, must-alias) }
+    ENTRY main {
+      p0 = s32[4]{0} parameter(0)
+      c = s32[4]{0} constant({1, 1, 1, 1})
+      ROOT out = s32[4]{0} add(p0, c)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnUnverifiedModule(kDonatingAdd, {}));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(XlaComputation(hlo_module->ToProto()),
+                             CompileOptions{}));
+
+  auto [def_promise, def_future] = MakePromise<>();
+  PjRtRawBufferRef src_raw;
+  Shape shape = ShapeUtil::MakeShape(S32, {4});
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> src,
+                       client->CreateBufferFromExternalWrite(
+                           shape, memory_space,
+                           [&, def_future = std::move(def_future)](
+                               PjRtRawBufferRef raw, Future<>) mutable {
+                             src_raw = std::move(raw);
+                             return std::move(def_future);
+                           }));
+
+  auto [read_promise, read_future] = MakePromise<>();
+  auto [copied_promise, copied_future] = MakePromise<>();
+  int32_t observed[4] = {0, 0, 0, 0};
+  Future<> use_done = src->UseBuffer(
+      [&, read_future = std::move(read_future),
+       copied_promise = std::move(copied_promise)](
+          PjRtRawBufferRef raw, Future<> defined) mutable -> Future<> {
+        EXPECT_FALSE(defined.IsReady());
+        defined.OnReady([&, raw = std::move(raw),
+                         copied_promise = std::move(copied_promise)](
+                            absl::Status s) mutable {
+          ASSERT_THAT(s, IsOk());
+          ASSERT_THAT(
+              raw->CopyRawDeviceToHost(observed, /*offset=*/0, sizeof(observed))
+                  .Await(),
+              IsOk());
+          copied_promise.Set();
+        });
+        return std::move(read_future);
+      });
+
+  // Enqueue an in-place donating Execute() while UseBuffer is still active.
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<PjRtBuffer>> donated_out,
+      executable->ExecuteSharded({src.get()}, device, ExecuteOptions{}));
+  EXPECT_TRUE(src->IsDeleted());
+  EXPECT_FALSE(donated_out[0]->GetReadyFuture().IsReady());
+
+  // Complete src's definition: UseBuffer's `defined` fires and sees the
+  // pre-donation contents, while the donating Execute() still waits for
+  // `read_future`.
+  const int32_t kInitial[4] = {10, 20, 30, 40};
+  ASSERT_THAT(
+      src_raw->CopyRawHostToDevice(kInitial, /*offset=*/0, sizeof(kInitial))
+          .Await(),
+      IsOk());
+  def_promise.Set();
+  ASSERT_THAT(copied_future.Await(), IsOk());
+  EXPECT_THAT(observed, ElementsAre(10, 20, 30, 40));
+  EXPECT_FALSE(donated_out[0]->GetReadyFuture().IsReady());
+
+  // Finishing the external read unblocks the donating Execute(), even if the
+  // external read itself reports an error.
+  read_promise.Set(absl::DataLossError("transient transport error"));
+  EXPECT_THAT(use_done.Await(), StatusIs(absl::StatusCode::kDataLoss));
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> final_out,
+                       donated_out[0]->ToLiteral().Await());
+  EXPECT_THAT(final_out->data<int32_t>(), ElementsAre(11, 21, 31, 41));
+}
+
+TEST(ExternalBufferAccessTest, UseBufferKeepsMemoryAcrossDelete) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetXlaPjrtCpuClient(CpuClientOptions{}));
+  PjRtDevice* device = client->addressable_devices()[0];
+  ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * memory_space,
+                       device->default_memory_space());
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->BufferFromHostLiteral(
+          LiteralUtil::CreateR1<int32_t>({7, 8, 9, 10}), memory_space));
+
+  auto [read_promise, read_future] = MakePromise<>();
+  const void* raw_host_ptr = nullptr;
+  Future<> use_done = buffer->UseBuffer(
+      [&, read_future = std::move(read_future)](
+          PjRtRawBufferRef raw, Future<> defined) mutable -> Future<> {
+        EXPECT_THAT(defined.Await(), IsOk());
+        raw_host_ptr = raw->GetHostPointer();
+        return std::move(read_future);
+      });
+  ASSERT_NE(raw_host_ptr, nullptr);
+
+  // Drop the PjRtBuffer before reading through the raw pointer.
+  buffer->Delete();
+  int32_t copied[4] = {0, 0, 0, 0};
+  std::memcpy(copied, raw_host_ptr, sizeof(copied));
+  EXPECT_THAT(copied, ElementsAre(7, 8, 9, 10));
+
+  read_promise.Set();
+  EXPECT_THAT(use_done.Await(), IsOk());
+}
+
+TEST(ExternalBufferAccessTest, UseBufferOnDeletedBufferSkipsCallback) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetXlaPjrtCpuClient(CpuClientOptions{}));
+  PjRtDevice* device = client->addressable_devices()[0];
+  ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * memory_space,
+                       device->default_memory_space());
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->BufferFromHostLiteral(LiteralUtil::CreateR1<int32_t>({1, 2}),
+                                    memory_space));
+  buffer->Delete();
+
+  bool called = false;
+  Future<> use_done =
+      buffer->UseBuffer([&](PjRtRawBufferRef, Future<>) -> Future<> {
+        called = true;
+        return Future<>(absl::OkStatus());
+      });
+  EXPECT_FALSE(called);
+  EXPECT_THAT(use_done.Await(), StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(ExternalBufferAccessTest,
+     CreateBufferFromExternalWriteRejectsNonArrayShape) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetXlaPjrtCpuClient(CpuClientOptions{}));
+  PjRtDevice* device = client->addressable_devices()[0];
+  ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * memory_space,
+                       device->default_memory_space());
+
+  bool called = false;
+  EXPECT_THAT(client->CreateBufferFromExternalWrite(
+                  ShapeUtil::MakeTokenShape(), memory_space,
+                  [&](PjRtRawBufferRef, Future<>) -> Future<> {
+                    called = true;
+                    return absl::OkStatus();
+                  }),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_FALSE(called);
 }
 
 // NOLINTBEGIN(misc-include-cleaner): benchmark/benchmark.h is the public

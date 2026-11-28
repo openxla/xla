@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -264,6 +265,19 @@ Future<> PjRtBuffer::CopyRawToHostFuture(Future<void*> dst, int64_t offset,
                                          int64_t transfer_size) {
   return Future<>(absl::UnimplementedError(
       "PjRtBuffer::CopyRawToHostFuture is not implemented"));
+}
+
+Future<> PjRtBuffer::UseBuffer(
+    absl::FunctionRef<Future<>(PjRtRawBufferRef raw, Future<> defined)> cb) {
+  return absl::UnimplementedError("PjRtBuffer::UseBuffer is not implemented");
+}
+
+absl::StatusOr<std::unique_ptr<PjRtBuffer>>
+PjRtClient::CreateBufferFromExternalWrite(
+    const Shape& shape, PjRtMemorySpace* memory_space,
+    absl::FunctionRef<Future<>(PjRtRawBufferRef raw, Future<> allocated)> cb) {
+  return absl::UnimplementedError(
+      "PjRtClient::CreateBufferFromExternalWrite is not implemented");
 }
 
 std::string CompiledMemoryStats::DebugString() const {
