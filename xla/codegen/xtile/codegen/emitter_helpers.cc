@@ -127,7 +127,11 @@ Value EmitClampedIndex(mlir::ImplicitLocOpBuilder& b, Value value,
       ma::MaxSIOp::create(b, value, CreateConst(b, value.getType(), lower));
   clamped_index = ma::MinSIOp::create(b, clamped_index,
                                       CreateConst(b, value.getType(), upper));
-  return ma::IndexCastOp::create(b, b.getIndexType(), clamped_index);
+  auto index_cast = ma::IndexCastOp::create(b, b.getIndexType(), clamped_index);
+  if (lower <= upper) {
+    index_cast->setAttr("xla.range", b.getIndexArrayAttr({lower, upper}));
+  }
+  return index_cast;
 }
 
 // Emit code corresponding to a fusion instruction somehow nested within the
