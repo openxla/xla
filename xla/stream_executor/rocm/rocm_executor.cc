@@ -75,6 +75,7 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_command_buffer.h"
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/stream_executor/rocm/rocm_context.h"
+#include "xla/stream_executor/rocm/rocm_data_caches.h"
 #include "xla/stream_executor/rocm/rocm_event.h"
 #include "xla/stream_executor/rocm/rocm_kernel.h"
 #include "xla/stream_executor/rocm/rocm_memory_bandwidth.h"
@@ -85,6 +86,7 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_timer.h"
 #include "xla/stream_executor/rocm/rocm_version_parser.h"
 #include "xla/stream_executor/rocm/rocm_xgmi_topology.h"
+#include "xla/stream_executor/rocm/smi_util.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -975,8 +977,6 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
       *desc.gpu_compute_capability().rocm_compute_capability(),
       prop.memoryBusWidth, prop.memoryClockRate));
 
-  desc.set_l2_cache_size(prop.l2CacheSize);
-
   {
     absl::StatusOr<int64_t> pcie_bw =
         gpu::GetRocmPcieBandwidth(desc.pci_bus_id());
@@ -1025,6 +1025,43 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
   desc.set_shared_memory_per_block(prop.sharedMemPerBlock);
   desc.set_shared_memory_per_block_optin(prop.sharedMemPerBlockOptin);
   desc.set_core_count(prop.multiProcessorCount);
+  {
+    // One L2 per XCD.
+    int32_t xcc_count = 1;
+    if (hipDeviceGetAttribute(&xcc_count, hipDeviceAttributeNumberOfXccs,
+                              static_cast<hipDevice_t>(device_ordinal)) !=
+        hipSuccess) {
+      xcc_count = 1;
+    }
+    auto get_caches = [&]() -> absl::StatusOr<std::vector<DataCacheInfo>> {
+      ABSL_ASSIGN_OR_RETURN(std::vector<gpu::SmiDataCache> smi_caches,
+                            gpu::QueryRocmDataCaches(desc.pci_bus_id()));
+      return gpu::BuildDataCacheHierarchy(smi_caches, prop.multiProcessorCount,
+                                          xcc_count);
+    };
+    absl::StatusOr<std::vector<DataCacheInfo>> caches = get_caches();
+    if (caches.ok()) {
+      desc.set_data_caches(*std::move(caches));
+    } else {
+      if (absl::IsUnimplemented(caches.status())) {
+        VLOG(1) << "Data caches of " << desc.pci_bus_id()
+                << " are not queried with the rocm-smi backend, reporting "
+                   "only the L2 from HIP.";
+      } else {
+        LOG(WARNING) << "Could not read the data caches of "
+                     << desc.pci_bus_id() << " over SMI ("
+                     << caches.status().message()
+                     << "), reporting only the L2 from HIP.";
+      }
+      desc.set_data_caches({DataCacheInfo{/*level=*/2, prop.l2CacheSize,
+                                          /*num_instances=*/xcc_count}});
+    }
+    for (const DataCacheInfo& cache : desc.data_caches()) {
+      VLOG(1) << "L" << cache.level << " data cache of " << desc.pci_bus_id()
+              << ": " << cache.num_instances << " x " << cache.size_bytes
+              << " bytes.";
+    }
+  }
   {
     desc.set_fpus_per_core(GetFpusPerCore(desc.gpu_compute_capability()));
     FillExecutionUnitDesc(desc.gpu_compute_capability(), desc.clock_rate_ghz(),
