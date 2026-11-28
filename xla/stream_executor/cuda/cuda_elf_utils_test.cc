@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/types/span.h"
+#include "third_party/gloop/util/gtl/c_memcpy.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_fatbin.h"
 
@@ -410,8 +411,9 @@ std::vector<uint8_t> CreateTestFatbin(
 
     std::memcpy(fatbin.data() + entry_start, &ehdr, sizeof(FatEntryHeader));
     if (!entry.payload.empty()) {
-      std::memcpy(fatbin.data() + entry_start + entry.header_size,
-                  entry.payload.data(), entry.payload.size());
+      gtl::c_memcpy(
+          absl::MakeSpan(fatbin).subspan(entry_start + entry.header_size),
+          entry.payload);
     }
   }
 
