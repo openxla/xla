@@ -1916,9 +1916,104 @@ absl::Status CopyInsertion::RemoveUnnecessaryCopies(
                 instruction, insert_post_scheduling_control_dependencies,
                 should_skip_removal_)) {
           changed = true;
+          HloInstruction* operand = instruction->mutable_operand(0);
+          absl::InlinedVector<HloInstruction*, 4> ctrl_preds(
+              instruction->control_predecessors().begin(),
+              instruction->control_predecessors().end());
+          absl::InlinedVector<HloInstruction*, 4> ctrl_succs(
+              instruction->control_successors().begin(),
+              instruction->control_successors().end());
+          absl::InlinedVector<HloInstruction*, 4> users;
+          if (!ctrl_preds.empty()) {
+            users.assign(instruction->users().begin(),
+                         instruction->users().end());
+          }
           ABSL_RETURN_IF_ERROR(StripControlDependenciesFrom(instruction));
-          ABSL_RETURN_IF_ERROR(
-              instruction->ReplaceAllUsesWith(instruction->mutable_operand(0)));
+          ABSL_RETURN_IF_ERROR(instruction->ReplaceAllUsesWith(operand));
+          if (!ctrl_preds.empty() || !ctrl_succs.empty()) {
+            auto* pred_ordering =
+                dynamic_cast<PredecessorHloOrdering*>(ordering.get());
+            const HloReachabilityMap* rmap =
+                pred_ordering != nullptr
+                    ? &pred_ordering->reachability_map(computation)
+                    : nullptr;
+            // Returns true if `src` still reaches `dst` after removing
+            // `instruction`, pruning the walk to instructions that can reach
+            // `dst` in `rmap` when available.
+            auto reaches_without_copy = [&](const HloInstruction* src,
+                                            const HloInstruction* dst) {
+              if (src == dst || dst->IsUserOf(src) ||
+                  absl::c_linear_search(src->control_successors(), dst)) {
+                return true;
+              }
+              absl::flat_hash_set<const HloInstruction*> visited = {src};
+              absl::InlinedVector<const HloInstruction*, 8> stack = {src};
+              const HloReachabilityMap::Index dst_idx =
+                  rmap != nullptr ? rmap->GetIndex(dst) : 0;
+              while (!stack.empty()) {
+                const HloInstruction* cur = stack.back();
+                stack.pop_back();
+                auto visit = [&](const HloInstruction* next) {
+                  if (next == dst) {
+                    return true;
+                  }
+                  if (next == instruction) {
+                    return false;
+                  }
+                  if (rmap != nullptr &&
+                      !rmap->IsReachable(rmap->GetIndex(next), dst_idx)) {
+                    return false;
+                  }
+                  if (visited.insert(next).second) {
+                    stack.push_back(next);
+                  }
+                  return false;
+                };
+                for (const HloInstruction* u : cur->users()) {
+                  if (visit(u)) {
+                    return true;
+                  }
+                }
+                for (const HloInstruction* s : cur->control_successors()) {
+                  if (visit(s)) {
+                    return true;
+                  }
+                }
+              }
+              return false;
+            };
+            auto relay_if_needed = [&](HloInstruction* src,
+                                       HloInstruction* dst) -> absl::Status {
+              if (!reaches_without_copy(src, dst)) {
+                ABSL_RETURN_IF_ERROR(src->AddControlDependencyTo(dst));
+              }
+              return absl::OkStatus();
+            };
+            if (rmap != nullptr) {
+              auto by_idx_asc = [&](const HloInstruction* a,
+                                    const HloInstruction* b) {
+                return rmap->GetIndex(a) < rmap->GetIndex(b);
+              };
+              auto by_idx_desc = [&](const HloInstruction* a,
+                                     const HloInstruction* b) {
+                return rmap->GetIndex(a) > rmap->GetIndex(b);
+              };
+              absl::c_sort(ctrl_preds, by_idx_desc);
+              absl::c_sort(users, by_idx_asc);
+              absl::c_sort(ctrl_succs, by_idx_asc);
+            }
+            for (HloInstruction* succ : ctrl_succs) {
+              ABSL_RETURN_IF_ERROR(relay_if_needed(operand, succ));
+            }
+            for (HloInstruction* pred : ctrl_preds) {
+              for (HloInstruction* user : users) {
+                ABSL_RETURN_IF_ERROR(relay_if_needed(pred, user));
+              }
+              for (HloInstruction* succ : ctrl_succs) {
+                ABSL_RETURN_IF_ERROR(relay_if_needed(pred, succ));
+              }
+            }
+          }
           VLOG(3) << "Copy removed successfully: " << instruction->ToString();
           XLA_VLOG_LINES(
               6, absl::StrCat("   Resulting Module: ", module->ToString()));
