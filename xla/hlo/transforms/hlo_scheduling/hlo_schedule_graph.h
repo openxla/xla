@@ -573,6 +573,7 @@ class HloGraphNode {
 
     void RecordStaticSize() { static_size_ = size_; }
     void RevertToStaticSize() { size_ = static_size_; }
+    bool HasDynamicEdges() const { return size_ != static_size_; }
 
     void AddEdge(const HloEdge& e) {
       if (size_ >= alloc_) {
@@ -661,6 +662,12 @@ class HloScheduleGraph {
   void SetPreferences(const std::vector<double>& preferences);
   void RecordStaticEdges();
 
+  bool HasDynamicEdges() const;
+
+  // Recomputes per-node ready-neighbor counts and topological depth/height
+  // metrics after dynamic edges are added post-construction.
+  void RefreshAfterDynamicEdgeAdditions();
+
   void ResetScheduling();
 
   // Returns the sharable resources recorded for `edge`.
@@ -696,6 +703,9 @@ class HloScheduleGraph {
   // Scheduling context for the graph.
   std::shared_ptr<const SchedulingContext> scheduling_context_;
   std::shared_ptr<const HloReachabilityMap> reachability_;
+  // True when InitializeGraphAnalysis() currently reflects dynamic edges that
+  // ResetScheduling() must clear on reuse.
+  bool graph_analysis_has_dynamic_edges_ = false;
 };
 
 }  // namespace xla

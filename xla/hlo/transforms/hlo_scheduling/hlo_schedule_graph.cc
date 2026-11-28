@@ -681,6 +681,8 @@ void HloScheduleGraph::InitializeGraphAnalysis() {
     node.SetAsyncDepth(0.0);
     node.SetDepth(0.0);
     node.SetGraphDepth(0);
+    node.num_hops_to_closest_selective_resource_occupier_ =
+        std::numeric_limits<int32_t>::max();
     if (node.GetIndegree() == 0) {
       stack.push_back(&node);
     }
@@ -1008,18 +1010,37 @@ void HloScheduleGraph::SetPreferences(const std::vector<double>& preferences) {
 }
 
 void HloScheduleGraph::RecordStaticEdges() {
-  for (auto& pair : nodes_) {
-    node_storage_[pair.second].predecessors_.RecordStaticSize();
-    node_storage_[pair.second].successors_.RecordStaticSize();
+  for (HloGraphNode& node : node_storage_) {
+    node.predecessors_.RecordStaticSize();
+    node.successors_.RecordStaticSize();
   }
 }
 
-void HloScheduleGraph::ResetScheduling() {
-  for (auto& pair : nodes_) {
-    node_storage_[pair.second].ResetScheduling();
+bool HloScheduleGraph::HasDynamicEdges() const {
+  return absl::c_any_of(node_storage_, [](const HloGraphNode& node) {
+    return node.predecessors_.HasDynamicEdges() ||
+           node.successors_.HasDynamicEdges();
+  });
+}
+
+void HloScheduleGraph::RefreshAfterDynamicEdgeAdditions() {
+  for (HloGraphNode& node : node_storage_) {
+    node.UpdateReadyNodesIfScheduled();
   }
-  for (auto& pair : nodes_) {
-    node_storage_[pair.second].UpdateReadyNodesIfScheduled();
+  InitializeGraphAnalysis();
+  graph_analysis_has_dynamic_edges_ = HasDynamicEdges();
+}
+
+void HloScheduleGraph::ResetScheduling() {
+  for (HloGraphNode& node : node_storage_) {
+    node.ResetScheduling();
+  }
+  for (HloGraphNode& node : node_storage_) {
+    node.UpdateReadyNodesIfScheduled();
+  }
+  if (graph_analysis_has_dynamic_edges_) {
+    graph_analysis_has_dynamic_edges_ = false;
+    InitializeGraphAnalysis();
   }
   for (auto& edge : predecessors_storage_) {
     edge.ResetSharableResources();
