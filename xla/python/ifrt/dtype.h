@@ -130,8 +130,14 @@ class DType {
   // (such as kString).
   std::optional<int> byte_size() const;
 
-  // Returns the bit size of a single element of this DType. Returns
-  // std::nullopt if there is no fixed size.
+  // Returns the bit size of a single element of this DType.
+  //
+  // Note: This is not necessarily the minimum number of bits that can represent
+  // any value of this type. It is possible that a layout may choose to encode
+  // each element in a smaller number of bits when encoding multiple elements
+  // together.
+  //
+  // Returns std::nullopt if there is no fixed size.
   std::optional<int> bit_size() const;
 
   // Constructs `DType` from `DTypeProto`.
