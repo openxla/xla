@@ -1706,6 +1706,32 @@ cc_library(
 )
 
 cc_library(
+    name = "manual_async_work_runner",
+    testonly = True,
+    hdrs = ["manual_async_work_runner.h"],
+    deps = [":async_work_runner"],
+)
+
+xla_cc_test(
+    name = "linearize_throttler_test",
+    srcs = ["linearize_throttler_test.cc"],
+    deps = [
+        ":host_memory_allocator",
+        ":linearize_throttler",
+        ":manual_async_work_runner",
+        ":raw_buffer",
+        ":staging_buffer",
+        "//xla/tsl/concurrency:async_value",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:platform_port",
+    ],
+)
+
+cc_library(
     name = "raw_buffer",
     srcs = ["raw_buffer.cc"],
     hdrs = ["raw_buffer.h"],
