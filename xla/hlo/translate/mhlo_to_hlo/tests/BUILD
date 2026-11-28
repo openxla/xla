@@ -39,6 +39,7 @@ lit_test_suite(
             "cosh.mlir",
             "sinh.mlir",
             "dynamic.mlir",
+            "execution_thread.mlir",
             "export-with-layouts.mlir",
             "export.mlir",
             "export_async.mlir",
