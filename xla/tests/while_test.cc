@@ -16,6 +16,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -29,6 +30,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "benchmark/benchmark.h"
@@ -1343,6 +1345,181 @@ TEST_F(WhileTest, WhileWithWrappingS32InductionVarCompareAndTripCount) {
   )hlo";
 
   EXPECT_TRUE(RunAndCompare(kHloString, ErrorSpec{0.0, 0.0}));
+}
+
+TEST_F(WhileTest, WriteOnlyRowPackPreservesSpecialFloatBitsAndClampedRows) {
+  static constexpr absl::string_view kHloTmpl = R"hlo(
+  HloModule WriteOnlyRowPackBitParity
+
+  pass_b {
+    p = (u32[6,1,64]) parameter(0)
+    c = u32[6,1,64] get-tuple-element(p), index=0
+    ROOT r = (u32[6,1,64]) tuple(c)
+  }
+
+  upd_b {
+    p = (u32[6,1,64], IDX[], f32[256], f32[1,128]) parameter(0)
+    c = u32[6,1,64] get-tuple-element(p), index=0
+    idx = IDX[] get-tuple-element(p), index=1
+    a = f32[256] get-tuple-element(p), index=2
+    b = f32[1,128] get-tuple-element(p), index=3
+    sl0 = f32[4] slice(a), slice={[0:4]}
+    sl1 = f32[4] slice(a), slice={[128:132]}
+    sl2 = f32[4] slice(a), slice={[200:204]}
+    sl3 = f32[1,4] slice(b), slice={[0:1], [0:4]}
+    sl4 = f32[1,4] slice(b), slice={[0:1], [64:68]}
+    sl5 = f32[1,4] slice(b), slice={[0:1], [120:124]}
+    r3 = f32[4] reshape(sl3)
+    r4 = f32[4] reshape(sl4)
+    r5 = f32[4] reshape(sl5)
+    cat = f32[24] concatenate(sl0, sl1, sl2, r3, r4, r5), dimensions={0}
+    pz = f32[] constant(0.0)
+    pad = f32[48] pad(cat, pz), padding=0_24
+    u = u32[48] bitcast-convert(pad)
+    uz = u32[] constant(0)
+    tail = u32[16] broadcast(uz), dimensions={}
+    full = u32[64] concatenate(u, tail), dimensions={0}
+    row = u32[1,1,64] reshape(full)
+    iz = IDX[] constant(0)
+    nc = u32[6,1,64] dynamic-update-slice(c, row, idx, iz, iz)
+    ROOT r = (u32[6,1,64]) tuple(nc)
+  }
+
+  cond {
+    p = (s32[], s32[], u32[6,1,64], IDX[5], s32[5], u32[5,256], u32[5,128])
+        parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    lim = s32[] get-tuple-element(p), index=1
+    ROOT lt = pred[] compare(i, lim), direction=LT
+  }
+
+  body {
+    p = (s32[], s32[], u32[6,1,64], IDX[5], s32[5], u32[5,256], u32[5,128])
+        parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    lim = s32[] get-tuple-element(p), index=1
+    c = u32[6,1,64] get-tuple-element(p), index=2
+    idxs = IDX[5] get-tuple-element(p), index=3
+    brs = s32[5] get-tuple-element(p), index=4
+    ta = u32[5,256] get-tuple-element(p), index=5
+    tb = u32[5,128] get-tuple-element(p), index=6
+    idx1 = IDX[1] dynamic-slice(idxs, i), dynamic_slice_sizes={1}
+    idx = IDX[] reshape(idx1)
+    br1 = s32[1] dynamic-slice(brs, i), dynamic_slice_sizes={1}
+    br = s32[] reshape(br1)
+    z = s32[] constant(0)
+    ra_u = u32[1,256] dynamic-slice(ta, i, z), dynamic_slice_sizes={1,256}
+    ra_f = f32[1,256] bitcast-convert(ra_u)
+    ra = f32[256] reshape(ra_f)
+    rb_u = u32[1,128] dynamic-slice(tb, i, z), dynamic_slice_sizes={1,128}
+    rb = f32[1,128] bitcast-convert(rb_u)
+    a0 = (u32[6,1,64]) tuple(c)
+    a1 = (u32[6,1,64], IDX[], f32[256], f32[1,128]) tuple(c, idx, ra, rb)
+    sw = (u32[6,1,64]) conditional(br, a0, a1),
+        branch_computations={pass_b, upd_b}
+    nc = u32[6,1,64] get-tuple-element(sw), index=0
+    one = s32[] constant(1)
+    ni = s32[] add(i, one)
+    ROOT r = (s32[], s32[], u32[6,1,64], IDX[5], s32[5], u32[5,256], u32[5,128])
+        tuple(ni, lim, nc, idxs, brs, ta, tb)
+  }
+
+  ENTRY main {
+    lim = s32[] parameter(0)
+    idxs = IDX[5] parameter(1)
+    brs = s32[5] parameter(2)
+    ta = u32[5,256] parameter(3)
+    tb = u32[5,128] parameter(4)
+    i0 = s32[] constant(0)
+    uz = u32[] constant(0)
+    c0 = u32[6,1,64] broadcast(uz), dimensions={}
+    init = (s32[], s32[], u32[6,1,64], IDX[5], s32[5], u32[5,256], u32[5,128])
+        tuple(i0, lim, c0, idxs, brs, ta, tb)
+    w = (s32[], s32[], u32[6,1,64], IDX[5], s32[5], u32[5,256], u32[5,128])
+        while(init), condition=cond, body=body
+    ROOT out = u32[6,1,64] get-tuple-element(w), index=2
+  }
+  )hlo";
+
+  // Cover +0.0, -0.0, subnormals, +/-Inf, distinct qNaN and sNaN payloads.
+  constexpr std::array<uint32_t, 8> kPatterns = {
+      0x00000000u, 0x80000000u, 0x00000001u, 0x007fffffu,
+      0x7f800000u, 0xff800000u, 0x7fc12345u, 0x7f8abcdeu,
+  };
+  Literal ta(ShapeUtil::MakeShape(U32, {5, 256}));
+  Literal tb(ShapeUtil::MakeShape(U32, {5, 128}));
+  for (int64_t t = 0; t < 5; ++t) {
+    for (int64_t j = 0; j < 256; ++j) {
+      ta.Set<uint32_t>(
+          {t, j}, kPatterns[(t + j) & 7] ^ (static_cast<uint32_t>(t) << 4));
+    }
+    for (int64_t j = 0; j < 128; ++j) {
+      tb.Set<uint32_t>({t, j}, kPatterns[(t * 3 + j) & 7]);
+    }
+  }
+  const Literal brs = LiteralUtil::CreateR1<int32_t>({1, 1, 0, 1, 1});
+
+  auto expected_word = [&](int64_t t, int64_t k) -> uint32_t {
+    if (k < 4) {
+      return ta.Get<uint32_t>({t, k});
+    }
+    if (k < 8) {
+      return ta.Get<uint32_t>({t, 128 + (k - 4)});
+    }
+    if (k < 12) {
+      return ta.Get<uint32_t>({t, 200 + (k - 8)});
+    }
+    if (k < 16) {
+      return tb.Get<uint32_t>({t, k - 12});
+    }
+    if (k < 20) {
+      return tb.Get<uint32_t>({t, 64 + (k - 16)});
+    }
+    if (k < 24) {
+      return tb.Get<uint32_t>({t, 120 + (k - 20)});
+    }
+    return 0u;
+  };
+
+  // S32 indices: -5 -> row 0, 2 -> row 2, 3 skipped (pass_b), 2 overwrites
+  // row 2, 99 -> row 5; rows 1, 3, 4 remain unwritten all-zero.
+  const Literal s32_idxs = LiteralUtil::CreateR1<int32_t>({-5, 2, 3, 2, 99});
+  for (int32_t trips : {0, 5}) {
+    ASSERT_OK_AND_ASSIGN(auto m,
+                         ParseAndReturnVerifiedModule(
+                             absl::StrReplaceAll(kHloTmpl, {{"IDX", "s32"}})));
+    const Literal lim = LiteralUtil::CreateR0<int32_t>(trips);
+    ASSERT_OK_AND_ASSIGN(
+        Literal out, Execute(std::move(m), {&lim, &s32_idxs, &brs, &ta, &tb}));
+    const std::array<int64_t, 6> writer = {
+        trips == 5 ? 0 : -1, -1, trips == 5 ? 3 : -1, -1, -1,
+        trips == 5 ? 4 : -1};
+    for (int64_t r = 0; r < 6; ++r) {
+      for (int64_t k = 0; k < 64; ++k) {
+        const uint32_t want = writer[r] < 0 ? 0u : expected_word(writer[r], k);
+        EXPECT_EQ(out.Get<uint32_t>({r, 0, k}), want)
+            << "s32 trips=" << trips << " r=" << r << " k=" << k;
+      }
+    }
+  }
+
+  // U32 indices including out-of-bounds clamp to row 5.
+  const Literal u32_idxs =
+      LiteralUtil::CreateR1<uint32_t>({0u, 4u, 1u, 4u, 77u});
+  ASSERT_OK_AND_ASSIGN(auto mu,
+                       ParseAndReturnVerifiedModule(
+                           absl::StrReplaceAll(kHloTmpl, {{"IDX", "u32"}})));
+  const Literal lim5 = LiteralUtil::CreateR0<int32_t>(5);
+  ASSERT_OK_AND_ASSIGN(
+      Literal uout, Execute(std::move(mu), {&lim5, &u32_idxs, &brs, &ta, &tb}));
+  const std::array<int64_t, 6> uwriter = {0, -1, -1, -1, 3, 4};
+  for (int64_t r = 0; r < 6; ++r) {
+    for (int64_t k = 0; k < 64; ++k) {
+      const uint32_t want = uwriter[r] < 0 ? 0u : expected_word(uwriter[r], k);
+      EXPECT_EQ(uout.Get<uint32_t>({r, 0, k}), want)
+          << "u32 r=" << r << " k=" << k;
+    }
+  }
 }
 
 std::unique_ptr<PjRtClient> GetPjRtClientForTest() {

@@ -64,8 +64,10 @@ absl::StatusOr<bool> TryRemoveDeadWhileParams(HloInstruction* while_op);
 //
 class WhileLoopSimplifier : public HloModulePass {
  public:
-  explicit WhileLoopSimplifier(bool simplify_compare_instrs = false)
-      : simplify_compare_instrs_(simplify_compare_instrs) {}
+  explicit WhileLoopSimplifier(bool simplify_compare_instrs = false,
+                               bool hoist_write_only_row_packs = false)
+      : simplify_compare_instrs_(simplify_compare_instrs),
+        hoist_write_only_row_packs_(hoist_write_only_row_packs) {}
 
   ~WhileLoopSimplifier() override = default;
   static constexpr absl::string_view kName = "simplify-while-loops";
@@ -79,6 +81,9 @@ class WhileLoopSimplifier : public HloModulePass {
  private:
   // Whether to remove trivial compare instructions inside while loops.
   const bool simplify_compare_instrs_;
+  // Whether to split write-only zero-initialized row-table carries and hoist
+  // pure per-iteration row-packing subgraphs after the loop.
+  const bool hoist_write_only_row_packs_;
 };
 
 }  // namespace xla
