@@ -20,6 +20,7 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "llvm/ADT/APFloat.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/IR/Builders.h"
@@ -71,14 +72,15 @@ Value reducePrecision(Location loc, Value input, int destExponentBits,
   APInt expBitsMask(nbits, 1);
   expBitsMask = ((expBitsMask << srcExponentBits) - 1) << srcMantissaBits;
 
-  auto createConstant = [&](const APInt& v) {
+  auto createConstant = [&](const APInt &v) {
     return createScalarOrSplatConstant(b, loc, intType, v);
   };
 
   Value xAbsBits =
       b.create<arith::AndIOp>(xAsInt, createConstant(~signBitMask));
-  Value xIsNan = b.create<arith::CmpIOp>(arith::CmpIPredicate::ugt, xAbsBits,
-                                         createConstant(expBitsMask));
+  Value infBits = createConstant(expBitsMask);
+  Value xIsNan =
+      b.create<arith::CmpIOp>(arith::CmpIPredicate::ugt, xAbsBits, infBits);
 
   if (destMantissaBits < static_cast<int>(srcMantissaBits)) {
     // Last remaining mantissa bit.
@@ -144,8 +146,7 @@ Value reducePrecision(Location loc, Value input, int destExponentBits,
     // Compute appropriately-signed values of zero and infinity.
     Value xSignedZero =
         b.create<arith::AndIOp>(xAsInt, createConstant(signBitMask));
-    Value xSignedInf =
-        b.create<arith::OrIOp>(xSignedZero, createConstant(expBitsMask));
+    Value xSignedInf = b.create<arith::OrIOp>(xSignedZero, infBits);
 
     // Force to zero or infinity if overflow or underflow.  (Note that this
     // truncates all denormal values to zero, rather than rounding them.)
@@ -154,7 +155,12 @@ Value reducePrecision(Location loc, Value input, int destExponentBits,
   }
 
   Value result = b.create<BitCastOp>(input.getType(), xAsInt);
-  return b.create<arith::SelectOp>(xIsNan, input, result);
+  Value nanResult = input;
+  if (destMantissaBits == 0 &&
+      llvm::APFloat::semanticsHasInf(floatType.getFloatSemantics())) {
+    nanResult = b.create<BitCastOp>(input.getType(), infBits);
+  }
+  return b.create<arith::SelectOp>(xIsNan, nanResult, result);
 }
 }  // namespace mlir::mhlo
 

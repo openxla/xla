@@ -4018,8 +4018,9 @@ Arguments       | Type    | Semantics
 The result is an array of type `T`. The input values are rounded to the nearest
 value representable with the given number of mantissa bits (using "ties to even"
 semantics), and any values that exceed the range specified by the number of
-exponent bits are clamped to positive or negative infinity. `NaN` values are
-retained, although they may be converted to canonical `NaN` values.
+exponent bits are clamped to positive or negative infinity. When `mantissa_bits` is zero
+and `T` supports infinity, `NaN` values become positive infinity. Otherwise,
+`NaN` values are retained, possibly as canonical `NaN` values.
 
 The lower-precision format must have at least one exponent bit (in order to
 distinguish a zero value from an infinity, since both have a zero mantissa), and
