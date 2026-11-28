@@ -194,6 +194,7 @@ class RocmTraceCollectorImpl : public RocmTraceCollector {
       : RocmTraceCollector(options),
         num_callback_events_(0),
         num_activity_events_(0),
+        num_dropped_callback_events_(0),
         start_walltime_ns_(start_walltime_ns),
         start_gputime_ns_(start_gputime_ns),
         num_gpus_(options.num_gpus) {}
@@ -218,6 +219,8 @@ class RocmTraceCollectorImpl : public RocmTraceCollector {
  private:
   uint64_t num_callback_events_ ABSL_GUARDED_BY(event_maps_mutex_);
   uint64_t num_activity_events_ ABSL_GUARDED_BY(event_maps_mutex_);
+  // HIP API callbacks and ROCTX markers dropped at max_callback_api_events.
+  uint64_t num_dropped_callback_events_ ABSL_GUARDED_BY(event_maps_mutex_);
   uint64_t start_walltime_ns_;
   uint64_t start_gputime_ns_;
   int num_gpus_;
