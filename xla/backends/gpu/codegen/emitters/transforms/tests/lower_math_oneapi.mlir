@@ -18,6 +18,7 @@
 
 module {
   // CHECK-LABEL: func @test_log1p
+  // CHECK-SAME: intel_reqd_sub_group_size
   func.func @test_log1p(%arg0: f32) -> f32 {
     // CHECK-NOT: llvm.mlir.constant(1.000000e+00 : f32) : f32
     // CHECK-NOT: llvm.fadd %{{.*}}, %arg0 : f32
@@ -33,6 +34,7 @@ module {
 
 module {
   // CHECK-LABEL: func @test_exp
+  // CHECK-SAME: intel_reqd_sub_group_size
   func.func @test_exp(%arg0: f16) -> f16 {
     // CHECK-NOT: llvm.intr.exp
     // CHECK: %[[EXT:.*]] = llvm.fpext %arg0
@@ -58,6 +60,7 @@ module {
 // CHECK-DAG: spir_funccc @_Z{{.*}}__spirv_ocl_cosf
 // CHECK-LABEL: @test_tan
 // CHECK-SAME: %[[ARG0:.*]]: !llvm.struct<(f32, f32)>
+// CHECK-SAME: intel_reqd_sub_group_size
 // CHECK: %[[V0:.*]] = llvm.extractvalue %[[ARG0]][0]
 // CHECK: %[[V1:.*]] = llvm.extractvalue %[[ARG0]][1]
 // CHECK-NOT: llvm.intr.exp
