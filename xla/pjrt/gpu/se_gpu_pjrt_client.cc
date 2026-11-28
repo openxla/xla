@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -1488,27 +1489,38 @@ void RegisterDistributedDeviceErrorListener(
       });
 }
 
-// Builds a LocalDeviceState for each GPU present. If `compute_stream_priority`
-// is set, each device's compute, host-to-device, and device-to-host streams
-// are created at that priority.
+// Builds a LocalDeviceState for each GPU present, with one compute stream per
+// priority in `compute_stream_priorities`. If `compute_stream_priorities` is
+// empty, a single compute stream at the default priority is created.
 absl::StatusOr<std::map<int, std::unique_ptr<LocalDeviceState>>>
 BuildLocalDeviceStates(
     LocalClient* xla_client, bool schedule_async,
     std::optional<int> max_inflight_computations, int node_id, int num_nodes,
     const std::shared_ptr<KeyValueStoreInterface>& kv_store,
     const std::shared_ptr<std::atomic<bool>>& error_already_fired,
-    std::optional<int> compute_stream_priority = std::nullopt) {
+    absl::Span<const int> compute_stream_priorities = {}) {
   std::map<int, std::unique_ptr<LocalDeviceState>> addressable_devices;
   // Only pass stream options when a priority is requested. The transfer stream
   // counts stay at the client's defaults (LocalDeviceState::
   // kNumDeviceToHostStreams and kNumDeviceToDeviceStreams, the counts used when
   // no options are given. StreamOptions' own defaults are 1).
   std::optional<LocalDeviceState::StreamOptions> stream_options;
-  if (compute_stream_priority.has_value()) {
+  if (!compute_stream_priorities.empty()) {
+    // Sort by descending priority value (lowest priority first) and drop
+    // duplicates, e.g. {-3, 0, -1, -3} -> {0, -1, -3}.
+    std::vector<int> priorities(compute_stream_priorities.begin(),
+                                compute_stream_priorities.end());
+    absl::c_sort(priorities, std::greater<int>());
+    priorities.erase(std::unique(priorities.begin(), priorities.end()),
+                     priorities.end());
+    // The lowest priority is the default compute stream, and the other
+    // priorities are additional compute streams.
     stream_options = LocalDeviceState::StreamOptions{
-        .priority = *compute_stream_priority,
+        .priority = priorities.front(),
         .num_device_to_host_streams = 4,
         .num_device_to_device_streams = 4,
+        .additional_compute_stream_priorities =
+            std::vector<int>(priorities.begin() + 1, priorities.end()),
     };
   }
   for (se::StreamExecutor* executor :
@@ -2312,7 +2324,7 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
       BuildLocalDeviceStates(xla_client, use_async_dispatch,
                              options.max_inflight_computations, options.node_id,
                              options.num_nodes, kv_store, error_already_fired,
-                             options.compute_stream_priority));
+                             options.compute_stream_priorities));
   EnablePeerAccess(xla_client->backend().stream_executors());
 
   GpuAllocatorConfig allocator_config = options.allocator_config;
