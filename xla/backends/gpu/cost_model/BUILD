@@ -621,6 +621,7 @@ xla_cc_test(
         ":gpu_performance_model_base",
         "//xla:shape_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/codegen/tiling:tile",
         "//xla/codegen/tiling:tiled_hlo",
         "//xla/codegen/xtile:block_level_parameters",
