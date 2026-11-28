@@ -37,12 +37,24 @@ struct KernelHostRef {
 // All per-type sort kernels defined in a single sharded CUDA compilation unit.
 struct CubSortTypeKernelRefs {
   KernelHostRef single_tile;
+  KernelHostRef onesweep;
+  KernelHostRef segmented_primary;
+  KernelHostRef segmented_alt;
 };
+
+// Shared out-of-place exclusive-sum kernel for Onesweep bin histograms.
+KernelHostRef GetCubSortExclusiveSumRef();
 
 // Per-type kernel accessors explicitly instantiated across sharded CUDA
 // compilation units in cub_sort_kernels_impl.cu.cc.
+// Keys-only shards define both the sort kernels and the value-independent
+// histogram kernel, which is reused by key-value pair shards sharing the same
+// key type.
 template <PrimitiveType kKeyType>
 CubSortTypeKernelRefs GetCubSortKeysRefs(SortDirection direction);
+
+template <PrimitiveType kKeyType>
+KernelHostRef GetCubSortHistogramRef(SortDirection direction);
 
 template <PrimitiveType kKeyType, int kValueBitWidth>
 CubSortTypeKernelRefs GetCubSortPairsRefs(SortDirection direction);

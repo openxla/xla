@@ -2021,6 +2021,9 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu:target_machine_options",
         "//xla/backends/gpu:ffi",
+        "//xla/backends/gpu/codegen:gpu_kernel_spec_proto_cc",
+        "//xla/backends/gpu/codegen/kernels:custom_kernel_proto_cc",
+        "//xla/backends/gpu/runtime:thunk_proto_cc",
         "//xla/backends/gpu/target_config",
         "//xla/ffi",
         "//xla/hlo/ir:hlo",
@@ -2031,8 +2034,10 @@ xla_cc_test(
         "//xla/service:gpu_topology",
         "//xla/service:hlo_module_config",
         "//xla/service:platform_util",
+        "//xla/service/gpu:gpu_executable_proto_cc",
         "//xla/stream_executor:device_description_proto_cc",
         "//xla/stream_executor:platform_id",
+        "//xla/util/split_proto:split_proto_reader",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
@@ -2041,6 +2046,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+        "@riegeli//riegeli/bytes:string_reader",
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:all_runtime",  # buildcleaner: keep
     ]) + if_rocm_is_configured([

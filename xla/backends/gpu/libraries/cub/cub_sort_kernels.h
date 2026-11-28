@@ -23,10 +23,31 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/cuda/cuda_elf_utils.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
+
+// Embedded KernelLoaderSpecs and optional static histogram attributes required
+// to emit a multi-tile 1D Onesweep radix sort.
+struct CubSortOnesweepKernelSpecs {
+  stream_executor::KernelLoaderSpec histogram;
+  // Statically extracted from the matched CUBIN ELF when present; nullopt when
+  // falling back to PTX JIT (callers should use a conservative occupancy
+  // fallback).
+  std::optional<stream_executor::cuda::CudaKernelFuncAttributes>
+      histogram_attrs;
+  stream_executor::KernelLoaderSpec exclusive_sum;
+  stream_executor::KernelLoaderSpec onesweep;
+};
+
+// Embedded KernelLoaderSpecs required to emit a multi-pass uniform segmented
+// radix sort (primary and alternate radix bit widths).
+struct CubSortSegmentedKernelSpecs {
+  stream_executor::KernelLoaderSpec primary;
+  stream_executor::KernelLoaderSpec alt;
+};
 
 // Returns the embedded KernelLoaderSpec for the unified SingleTile radix sort
 // kernel (handling both unbatched and batched segments whose segment size fits
@@ -52,6 +73,21 @@ namespace xla::gpu {
 // buffers must be non-aliasing (`__restrict__`).
 absl::StatusOr<stream_executor::KernelLoaderSpec>
 GetCubSortSingleTileKernelSpec(
+    PrimitiveType key_type, std::optional<PrimitiveType> value_type,
+    bool descending,
+    const stream_executor::CudaComputeCapability& compute_capability);
+
+// Returns the single-architecture CUBIN KernelLoaderSpecs (plus statically
+// parsed histogram function attributes for occupancy calculation) for a
+// multi-tile unbatched Onesweep radix sort.
+absl::StatusOr<CubSortOnesweepKernelSpecs> GetCubSortOnesweepKernelSpecs(
+    PrimitiveType key_type, std::optional<PrimitiveType> value_type,
+    bool descending,
+    const stream_executor::CudaComputeCapability& compute_capability);
+
+// Returns the single-architecture CUBIN KernelLoaderSpecs for a multi-pass
+// uniform-segment batched radix sort.
+absl::StatusOr<CubSortSegmentedKernelSpecs> GetCubSortSegmentedKernelSpecs(
     PrimitiveType key_type, std::optional<PrimitiveType> value_type,
     bool descending,
     const stream_executor::CudaComputeCapability& compute_capability);

@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_HLO_TRANSFORMS_ESTIMATE_CUB_SORT_SCRATCH_SIZE_H_
 
 #include <string>
+#include <utility>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
@@ -26,17 +27,24 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/stream_executor/device_description.h"
 
 namespace xla::gpu {
 
 // Updates the scratch size of CUB sort custom calls to match the actual
-// scratch size. Invokes the FFI instantiate handler to compute the scratch
-// size and changes the custom call target to the FFI handler name
+// scratch size and changes the custom call target to the execute target
 // (xla.gpu.ext.cub_sort_keys or xla.gpu.ext.cub_sort_pairs).
+//
+// On CUDA, scratch size is computed purely in C++ from the target compute
+// capability (supporting both live-GPU and deviceless compilation). On other
+// GPU platforms (ROCm, SYCL), invokes the platform FFI instantiate handler.
 class EstimateCubSortScratchSize : public HloModulePass {
  public:
-  explicit EstimateCubSortScratchSize(std::string platform_name)
-      : platform_name_(platform_name) {}
+  explicit EstimateCubSortScratchSize(
+      std::string platform_name,
+      stream_executor::GpuComputeCapability gpu_compute_capability)
+      : platform_name_(std::move(platform_name)),
+        gpu_compute_capability_(std::move(gpu_compute_capability)) {}
 
   absl::string_view name() const override {
     return "estimate-cub-sort-scratch-size";
@@ -52,6 +60,7 @@ class EstimateCubSortScratchSize : public HloModulePass {
 
  private:
   std::string platform_name_;
+  stream_executor::GpuComputeCapability gpu_compute_capability_;
 };
 
 }  // namespace xla::gpu

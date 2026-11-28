@@ -26,8 +26,12 @@ limitations under the License.
 #endif
 
 #include "cub/agent/agent_radix_sort_downsweep.cuh"
+#include "cub/agent/agent_radix_sort_histogram.cuh"
+#include "cub/agent/agent_radix_sort_onesweep.cuh"
+#include "cub/agent/agent_radix_sort_upsweep.cuh"
 #include "cub/block/block_load.cuh"
 #include "cub/block/block_radix_sort.cuh"
+#include "cub/block/block_scan.cuh"
 #include "cub/util_device.cuh"
 #include "cub/util_ptx.cuh"
 #include "cub/util_type.cuh"
@@ -60,11 +64,77 @@ struct XlaCubRadixSortPolicy {
       cub::RADIX_RANK_MEMOIZE, cub::BLOCK_SCAN_WARP_SCANS,
       kSpec.single_tile.radix_bits>;
 
+  using HistogramPolicy = cub::AgentRadixSortHistogramPolicy<
+      kSpec.histogram.block_threads, kSpec.histogram.items_per_thread,
+      kSpec.histogram_nominal_4b_num_parts, Key, kSpec.histogram.radix_bits>;
+
+  using OnesweepPolicy = cub::AgentRadixSortOnesweepPolicy<
+      kSpec.onesweep.nominal_threads, kSpec.onesweep.nominal_items,
+      DominantType, kSpec.onesweep_rank_num_parts,
+      cub::RADIX_RANK_MATCH_EARLY_COUNTS_ANY,
+      kSpec.onesweep_use_raking_memoize ? cub::BLOCK_SCAN_RAKING_MEMOIZE
+                                        : cub::BLOCK_SCAN_WARP_SCANS,
+      cub::RADIX_SORT_STORE_DIRECT, kSpec.onesweep.radix_bits>;
+
+  using SegmentedPolicy = cub::AgentRadixSortDownsweepPolicy<
+      kSpec.segmented.nominal_threads, kSpec.segmented.nominal_items,
+      DominantType,
+      kSpec.segmented_use_warp_transpose ? cub::BLOCK_LOAD_WARP_TRANSPOSE
+                                         : cub::BLOCK_LOAD_TRANSPOSE,
+      cub::LOAD_DEFAULT, cub::RADIX_RANK_MEMOIZE, cub::BLOCK_SCAN_WARP_SCANS,
+      kSpec.segmented.radix_bits>;
+
+  using AltSegmentedPolicy = cub::AgentRadixSortDownsweepPolicy<
+      kSpec.alt_segmented.nominal_threads, kSpec.alt_segmented.nominal_items,
+      DominantType,
+      kSpec.segmented_use_warp_transpose ? cub::BLOCK_LOAD_WARP_TRANSPOSE
+                                         : cub::BLOCK_LOAD_TRANSPOSE,
+      cub::LOAD_DEFAULT, cub::RADIX_RANK_MEMOIZE, cub::BLOCK_SCAN_WARP_SCANS,
+      kSpec.alt_segmented.radix_bits>;
+
   static_assert(SingleTilePolicy::BLOCK_THREADS ==
                 kSpec.single_tile.block_threads);
   static_assert(SingleTilePolicy::ITEMS_PER_THREAD ==
                 kSpec.single_tile.items_per_thread);
   static_assert(SingleTilePolicy::RADIX_BITS == kSpec.single_tile.radix_bits);
+
+  static_assert(HistogramPolicy::BLOCK_THREADS ==
+                kSpec.histogram.block_threads);
+  static_assert(HistogramPolicy::ITEMS_PER_THREAD ==
+                kSpec.histogram.items_per_thread);
+  static_assert(HistogramPolicy::RADIX_BITS == kSpec.histogram.radix_bits);
+  // Pair shards reuse the keys-only shard's histogram kernel; lock the
+  // value-independence invariant at compile time.
+  static constexpr CubRadixSortPolicySpec kKeysOnlySpec =
+      GetCubRadixSortPolicySpec(kSmVersion, static_cast<int>(sizeof(Key)),
+                                /*value_byte_size=*/0,
+                                std::is_same_v<Key, float>);
+  static_assert(kSpec.histogram.block_threads ==
+                kKeysOnlySpec.histogram.block_threads);
+  static_assert(kSpec.histogram.items_per_thread ==
+                kKeysOnlySpec.histogram.items_per_thread);
+  static_assert(kSpec.histogram.radix_bits ==
+                kKeysOnlySpec.histogram.radix_bits);
+  static_assert(kSpec.histogram_nominal_4b_num_parts ==
+                kKeysOnlySpec.histogram_nominal_4b_num_parts);
+
+  static_assert(OnesweepPolicy::BLOCK_THREADS == kSpec.onesweep.block_threads);
+  static_assert(OnesweepPolicy::ITEMS_PER_THREAD ==
+                kSpec.onesweep.items_per_thread);
+  static_assert(OnesweepPolicy::RADIX_BITS == kSpec.onesweep.radix_bits);
+
+  static_assert(SegmentedPolicy::BLOCK_THREADS ==
+                kSpec.segmented.block_threads);
+  static_assert(SegmentedPolicy::ITEMS_PER_THREAD ==
+                kSpec.segmented.items_per_thread);
+  static_assert(SegmentedPolicy::RADIX_BITS == kSpec.segmented.radix_bits);
+
+  static_assert(AltSegmentedPolicy::BLOCK_THREADS ==
+                kSpec.alt_segmented.block_threads);
+  static_assert(AltSegmentedPolicy::ITEMS_PER_THREAD ==
+                kSpec.alt_segmented.items_per_thread);
+  static_assert(AltSegmentedPolicy::RADIX_BITS ==
+                kSpec.alt_segmented.radix_bits);
 };
 
 // Major-SM policy chain (500..1000) so minor-SM CUBIN fallbacks (e.g., sm_100
@@ -224,6 +294,226 @@ __launch_bounds__(ChainedPolicy::ActivePolicy::SingleTilePolicy::BLOCK_THREADS)
       keys_in, keys_out, values_in, values_out, segment_size);
 }
 
+//===----------------------------------------------------------------------===//
+// 2. Onesweep Histogram (keys-only shards, reused by pair shards) & Scatter
+//===----------------------------------------------------------------------===//
+
+template <typename ChainedPolicy, SortDirection kDirection, typename Key>
+__launch_bounds__(ChainedPolicy::ActivePolicy::HistogramPolicy::BLOCK_THREADS)
+    __global__
+    void CubRadixSortHistogramKernel(CubGlobalOffset* __restrict__ d_bins_out,
+                                     const Key* __restrict__ d_keys_in,
+                                     CubGlobalOffset num_items,
+                                     int32_t begin_bit, int32_t end_bit) {
+  using HistogramPolicy = typename ChainedPolicy::ActivePolicy::HistogramPolicy;
+  using Agent = cub::detail::radix_sort::AgentRadixSortHistogram<
+      HistogramPolicy, kDirection == SortDirection::kDescending, Key,
+      CubGlobalOffset>;
+  __shared__ typename Agent::TempStorage temp_storage;
+  Agent agent(temp_storage, d_bins_out, d_keys_in, num_items, begin_bit,
+              end_bit);
+  agent.Process();
+}
+
+template <typename ChainedPolicy, SortDirection kDirection, typename Key>
+__launch_bounds__(ChainedPolicy::ActivePolicy::OnesweepPolicy::BLOCK_THREADS)
+    __global__ void CubRadixSortOnesweepKeysKernel(
+        int32_t* __restrict__ d_lookback, int32_t* __restrict__ d_ctrs,
+        CubGlobalOffset* __restrict__ d_bins_out,
+        const CubGlobalOffset* __restrict__ d_bins_in,
+        Key* __restrict__ d_keys_out, const Key* __restrict__ d_keys_in,
+        int64_t portion_item_offset, int32_t portion_num_items,
+        int32_t current_bit, int32_t num_bits) {
+  using OnesweepPolicy = typename ChainedPolicy::ActivePolicy::OnesweepPolicy;
+  using Agent = cub::detail::radix_sort::AgentRadixSortOnesweep<
+      OnesweepPolicy, kDirection == SortDirection::kDescending, Key,
+      cub::NullType, CubGlobalOffset, int32_t>;
+  __shared__ typename Agent::TempStorage temp_storage;
+  Agent agent(temp_storage, d_lookback, d_ctrs, d_bins_out, d_bins_in,
+              d_keys_out, d_keys_in + portion_item_offset,
+              /*d_values_out=*/nullptr, /*d_values_in=*/nullptr,
+              portion_num_items, current_bit, num_bits);
+  agent.Process();
+}
+
+template <typename ChainedPolicy, SortDirection kDirection, typename Key,
+          typename Value>
+__launch_bounds__(ChainedPolicy::ActivePolicy::OnesweepPolicy::BLOCK_THREADS)
+    __global__ void CubRadixSortOnesweepPairsKernel(
+        int32_t* __restrict__ d_lookback, int32_t* __restrict__ d_ctrs,
+        CubGlobalOffset* __restrict__ d_bins_out,
+        const CubGlobalOffset* __restrict__ d_bins_in,
+        Key* __restrict__ d_keys_out, const Key* __restrict__ d_keys_in,
+        Value* __restrict__ d_values_out, const Value* __restrict__ d_values_in,
+        int64_t portion_item_offset, int32_t portion_num_items,
+        int32_t current_bit, int32_t num_bits) {
+  using OnesweepPolicy = typename ChainedPolicy::ActivePolicy::OnesweepPolicy;
+  using Agent = cub::detail::radix_sort::AgentRadixSortOnesweep<
+      OnesweepPolicy, kDirection == SortDirection::kDescending, Key, Value,
+      CubGlobalOffset, int32_t>;
+  __shared__ typename Agent::TempStorage temp_storage;
+  Agent agent(temp_storage, d_lookback, d_ctrs, d_bins_out, d_bins_in,
+              d_keys_out, d_keys_in + portion_item_offset, d_values_out,
+              d_values_in + portion_item_offset, portion_num_items, current_bit,
+              num_bits);
+  agent.Process();
+}
+
+//===----------------------------------------------------------------------===//
+// 3. Uniform-segment multi-pass batched radix sort kernels (no H2D offsets)
+//===----------------------------------------------------------------------===//
+
+template <typename SegmentedPolicy, SortDirection kDirection, typename Key,
+          typename Value>
+__device__ __forceinline__ void RunUniformSegmentedPass(
+    const Key* __restrict__ keys_in, Key* __restrict__ keys_out,
+    const Value* __restrict__ values_in, Value* __restrict__ values_out,
+    int32_t segment_size, int32_t current_bit, int32_t pass_bits) {
+  constexpr int kBlockThreads = SegmentedPolicy::BLOCK_THREADS;
+  constexpr int kRadixBits = SegmentedPolicy::RADIX_BITS;
+  constexpr int kRadixDigits = 1 << kRadixBits;
+  static_assert(kBlockThreads >= kRadixDigits);
+
+  using BlockUpsweep =
+      cub::detail::radix_sort::AgentRadixSortUpsweep<SegmentedPolicy, Key,
+                                                     int32_t>;
+  using DigitScan = cub::BlockScan<int32_t, kBlockThreads>;
+  using BlockDownsweep = cub::detail::radix_sort::AgentRadixSortDownsweep<
+      SegmentedPolicy, kDirection == SortDirection::kDescending, Key, Value,
+      int32_t>;
+  constexpr int kBinsTrackedPerThread = BlockDownsweep::BINS_TRACKED_PER_THREAD;
+
+  __shared__ union {
+    typename BlockUpsweep::TempStorage upsweep;
+    typename BlockDownsweep::TempStorage downsweep;
+    struct {
+      volatile int32_t reverse_counts_in[kRadixDigits];
+      volatile int32_t reverse_counts_out[kRadixDigits];
+      typename DigitScan::TempStorage scan;
+    };
+  } temp_storage;
+
+  if (segment_size <= 0) {
+    return;
+  }
+
+  // Recompute base_offset before upsweep and again before downsweep (matching
+  // CUB's DeviceSegmentedRadixSortKernel) so segment pointers are not kept live
+  // in registers across upsweep + BlockScan, reducing register pressure in
+  // AltSegmented.
+  int32_t bin_count[kBinsTrackedPerThread] = {};
+  {
+    const int64_t upsweep_offset =
+        static_cast<int64_t>(blockIdx.x) * static_cast<int64_t>(segment_size);
+    BlockUpsweep upsweep(temp_storage.upsweep, keys_in + upsweep_offset,
+                         current_bit, pass_bits);
+    upsweep.ProcessRegion(int32_t{0}, segment_size);
+    __syncthreads();
+
+    upsweep.ExtractCounts(bin_count);
+    __syncthreads();
+  }
+
+  if constexpr (kDirection == SortDirection::kDescending) {
+#pragma unroll
+    for (int track = 0; track < kBinsTrackedPerThread; ++track) {
+      const int bin_idx =
+          static_cast<int>(threadIdx.x) * kBinsTrackedPerThread + track;
+      if ((kBlockThreads == kRadixDigits) || (bin_idx < kRadixDigits)) {
+        temp_storage.reverse_counts_in[bin_idx] = bin_count[track];
+      }
+    }
+    __syncthreads();
+#pragma unroll
+    for (int track = 0; track < kBinsTrackedPerThread; ++track) {
+      const int bin_idx =
+          static_cast<int>(threadIdx.x) * kBinsTrackedPerThread + track;
+      if ((kBlockThreads == kRadixDigits) || (bin_idx < kRadixDigits)) {
+        bin_count[track] =
+            temp_storage.reverse_counts_in[kRadixDigits - bin_idx - 1];
+      }
+    }
+  }
+
+  int32_t bin_offset[kBinsTrackedPerThread];
+  DigitScan(temp_storage.scan).ExclusiveSum(bin_count, bin_offset);
+
+  if constexpr (kDirection == SortDirection::kDescending) {
+#pragma unroll
+    for (int track = 0; track < kBinsTrackedPerThread; ++track) {
+      const int bin_idx =
+          static_cast<int>(threadIdx.x) * kBinsTrackedPerThread + track;
+      if ((kBlockThreads == kRadixDigits) || (bin_idx < kRadixDigits)) {
+        temp_storage.reverse_counts_out[bin_idx] = bin_offset[track];
+      }
+    }
+    __syncthreads();
+#pragma unroll
+    for (int track = 0; track < kBinsTrackedPerThread; ++track) {
+      const int bin_idx =
+          static_cast<int>(threadIdx.x) * kBinsTrackedPerThread + track;
+      if ((kBlockThreads == kRadixDigits) || (bin_idx < kRadixDigits)) {
+        bin_offset[track] =
+            temp_storage.reverse_counts_out[kRadixDigits - bin_idx - 1];
+      }
+    }
+  }
+
+  __syncthreads();
+
+  const int64_t downsweep_offset =
+      static_cast<int64_t>(blockIdx.x) * static_cast<int64_t>(segment_size);
+  const Value* segment_values_in = std::is_same_v<Value, cub::NullType>
+                                       ? nullptr
+                                       : values_in + downsweep_offset;
+  Value* segment_values_out = std::is_same_v<Value, cub::NullType>
+                                  ? nullptr
+                                  : values_out + downsweep_offset;
+  BlockDownsweep downsweep(temp_storage.downsweep, bin_offset, segment_size,
+                           keys_in + downsweep_offset,
+                           keys_out + downsweep_offset, segment_values_in,
+                           segment_values_out, current_bit, pass_bits);
+  downsweep.ProcessRegion(int32_t{0}, segment_size);
+}
+
+template <typename ChainedPolicy, bool kAltDigitBits, SortDirection kDirection,
+          typename Key>
+__launch_bounds__(
+    kAltDigitBits
+        ? ChainedPolicy::ActivePolicy::AltSegmentedPolicy::BLOCK_THREADS
+        : ChainedPolicy::ActivePolicy::SegmentedPolicy::BLOCK_THREADS)
+    __global__
+    void CubUniformSegmentedRadixSortKeysKernel(const Key* __restrict__ keys_in,
+                                                Key* __restrict__ keys_out,
+                                                int32_t segment_size,
+                                                int32_t current_bit,
+                                                int32_t pass_bits) {
+  using SegmentedPolicy = std::conditional_t<
+      kAltDigitBits, typename ChainedPolicy::ActivePolicy::AltSegmentedPolicy,
+      typename ChainedPolicy::ActivePolicy::SegmentedPolicy>;
+  RunUniformSegmentedPass<SegmentedPolicy, kDirection, Key, cub::NullType>(
+      keys_in, keys_out, /*values_in=*/nullptr, /*values_out=*/nullptr,
+      segment_size, current_bit, pass_bits);
+}
+
+template <typename ChainedPolicy, bool kAltDigitBits, SortDirection kDirection,
+          typename Key, typename Value>
+__launch_bounds__(
+    kAltDigitBits
+        ? ChainedPolicy::ActivePolicy::AltSegmentedPolicy::BLOCK_THREADS
+        : ChainedPolicy::ActivePolicy::SegmentedPolicy::BLOCK_THREADS)
+    __global__ void CubUniformSegmentedRadixSortPairsKernel(
+        const Key* __restrict__ keys_in, Key* __restrict__ keys_out,
+        const Value* __restrict__ values_in, Value* __restrict__ values_out,
+        int32_t segment_size, int32_t current_bit, int32_t pass_bits) {
+  using SegmentedPolicy = std::conditional_t<
+      kAltDigitBits, typename ChainedPolicy::ActivePolicy::AltSegmentedPolicy,
+      typename ChainedPolicy::ActivePolicy::SegmentedPolicy>;
+  RunUniformSegmentedPass<SegmentedPolicy, kDirection, Key, Value>(
+      keys_in, keys_out, values_in, values_out, segment_size, current_bit,
+      pass_bits);
+}
+
 template <typename Return, typename... Args>
 KernelHostRef MakeKernelHostRef(Return (*fn)(Args...)) {
   return {reinterpret_cast<const void*>(fn), sizeof...(Args)};
@@ -235,7 +525,29 @@ CubSortTypeKernelRefs MakeKeysRefs() {
   return {
       /*single_tile=*/MakeKernelHostRef(
           &CubRadixSortSingleTileKeysKernel<Policy, kDirection, Key>),
+      /*onesweep=*/
+      MakeKernelHostRef(
+          &CubRadixSortOnesweepKeysKernel<Policy, kDirection, Key>),
+      /*segmented_primary=*/
+      MakeKernelHostRef(
+          &CubUniformSegmentedRadixSortKeysKernel<Policy, false, kDirection,
+                                                  Key>),
+      /*segmented_alt=*/
+      MakeKernelHostRef(
+          &CubUniformSegmentedRadixSortKeysKernel<Policy, true, kDirection,
+                                                  Key>),
   };
+}
+
+template <typename Key>
+KernelHostRef GetHistogramRefImpl(SortDirection direction) {
+  using Policy = typename XlaChainedPolicy<Key, cub::NullType>::MaxPolicy;
+  if (direction == SortDirection::kDescending) {
+    return MakeKernelHostRef(
+        &CubRadixSortHistogramKernel<Policy, SortDirection::kDescending, Key>);
+  }
+  return MakeKernelHostRef(
+      &CubRadixSortHistogramKernel<Policy, SortDirection::kAscending, Key>);
 }
 
 template <SortDirection kDirection, typename Key, typename Value>
@@ -244,6 +556,17 @@ CubSortTypeKernelRefs MakePairsRefs() {
   return {
       /*single_tile=*/MakeKernelHostRef(
           &CubRadixSortSingleTilePairsKernel<Policy, kDirection, Key, Value>),
+      /*onesweep=*/
+      MakeKernelHostRef(
+          &CubRadixSortOnesweepPairsKernel<Policy, kDirection, Key, Value>),
+      /*segmented_primary=*/
+      MakeKernelHostRef(
+          &CubUniformSegmentedRadixSortPairsKernel<Policy, false, kDirection,
+                                                   Key, Value>),
+      /*segmented_alt=*/
+      MakeKernelHostRef(
+          &CubUniformSegmentedRadixSortPairsKernel<Policy, true, kDirection,
+                                                   Key, Value>),
   };
 }
 
@@ -323,6 +646,11 @@ CubSortTypeKernelRefs GetCubSortKeysRefs(SortDirection direction) {
              : MakeKeysRefs<SortDirection::kAscending, Key>();
 }
 
+template <PrimitiveType kKeyType>
+KernelHostRef GetCubSortHistogramRef(SortDirection direction) {
+  return GetHistogramRefImpl<typename CudaKeyType<kKeyType>::type>(direction);
+}
+
 template <PrimitiveType kKeyType, int kValueBitWidth>
 CubSortTypeKernelRefs GetCubSortPairsRefs(SortDirection direction) {
   using Key = typename CudaKeyType<kKeyType>::type;
@@ -335,43 +663,55 @@ CubSortTypeKernelRefs GetCubSortPairsRefs(SortDirection direction) {
 // Floating point keys.
 #ifdef CUB_TYPE_BF16
 template CubSortTypeKernelRefs GetCubSortKeysRefs<BF16>(SortDirection);
+template KernelHostRef GetCubSortHistogramRef<BF16>(SortDirection);
 #endif
 #ifdef CUB_TYPE_F16
 template CubSortTypeKernelRefs GetCubSortKeysRefs<F16>(SortDirection);
+template KernelHostRef GetCubSortHistogramRef<F16>(SortDirection);
 #endif
 #ifdef CUB_TYPE_F32
 template CubSortTypeKernelRefs GetCubSortKeysRefs<F32>(SortDirection);
+template KernelHostRef GetCubSortHistogramRef<F32>(SortDirection);
 #endif
 #ifdef CUB_TYPE_F64
 template CubSortTypeKernelRefs GetCubSortKeysRefs<F64>(SortDirection);
+template KernelHostRef GetCubSortHistogramRef<F64>(SortDirection);
 #endif
 
 // Signed integer keys.
 #ifdef CUB_TYPE_S8
 template CubSortTypeKernelRefs GetCubSortKeysRefs<S8>(SortDirection);
+template KernelHostRef GetCubSortHistogramRef<S8>(SortDirection);
 #endif
 #ifdef CUB_TYPE_S16
 template CubSortTypeKernelRefs GetCubSortKeysRefs<S16>(SortDirection);
+template KernelHostRef GetCubSortHistogramRef<S16>(SortDirection);
 #endif
 #ifdef CUB_TYPE_S32
 template CubSortTypeKernelRefs GetCubSortKeysRefs<S32>(SortDirection);
+template KernelHostRef GetCubSortHistogramRef<S32>(SortDirection);
 #endif
 #ifdef CUB_TYPE_S64
 template CubSortTypeKernelRefs GetCubSortKeysRefs<S64>(SortDirection);
+template KernelHostRef GetCubSortHistogramRef<S64>(SortDirection);
 #endif
 
 // Unsigned integer keys.
 #ifdef CUB_TYPE_U8
 template CubSortTypeKernelRefs GetCubSortKeysRefs<U8>(SortDirection);
+template KernelHostRef GetCubSortHistogramRef<U8>(SortDirection);
 #endif
 #ifdef CUB_TYPE_U16
 template CubSortTypeKernelRefs GetCubSortKeysRefs<U16>(SortDirection);
+template KernelHostRef GetCubSortHistogramRef<U16>(SortDirection);
 #endif
 #ifdef CUB_TYPE_U32
 template CubSortTypeKernelRefs GetCubSortKeysRefs<U32>(SortDirection);
+template KernelHostRef GetCubSortHistogramRef<U32>(SortDirection);
 #endif
 #ifdef CUB_TYPE_U64
 template CubSortTypeKernelRefs GetCubSortKeysRefs<U64>(SortDirection);
+template KernelHostRef GetCubSortHistogramRef<U64>(SortDirection);
 #endif
 
 // Pairs with 8-bit key.

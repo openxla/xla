@@ -149,6 +149,18 @@ struct CubSortPlanOptions {
   std::optional<int32_t> max_grid_x_override;
 };
 
+// Returns the maximum supported `segment_size` (`num_items / batch_size`) for a
+// batched (`batch_size > 1`) CUDA CUB segmented radix sort on `cc` for the
+// given key and optional value types.
+//
+// CUB's `DeviceSegmentedRadixSortKernel` asserts `segment_size < INT32_MAX` and
+// its `int32_t`-offset downsweep can advance by up to one tile on a final
+// partial tile, so the safe upper bound is `INT32_MAX - max_tile_items`.
+// Returns an error if `(key_type, value_type)` is not supported by CUB sort.
+absl::StatusOr<int64_t> MaxCudaCubSortSegmentedSegmentSize(
+    const stream_executor::CudaComputeCapability& cc, PrimitiveType key_type,
+    std::optional<PrimitiveType> value_type);
+
 // Plans mode selection, scratch-buffer layout, and kernel launches for a CUDA
 // CUB radix sort without requiring a live GPU or CUDA toolkit headers.
 //

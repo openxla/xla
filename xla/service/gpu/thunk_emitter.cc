@@ -330,6 +330,7 @@ bool HasCollectivesGroupAttribute(const HloInstruction* instr) {
 // (--xla_gpu_hlo_custom_call_allowlist).
 bool IsInternalAotAllowlistedCustomCall(absl::string_view target_name) {
   static constexpr absl::string_view kInternalAotAllowlist[] = {
+      // Used on ROCm/SYCL (CUDA compilations lower to CustomKernelThunks).
       kCubDeviceRadixSortPairsTarget,
       kCubDeviceRadixSortKeysTarget,
       kTopKCustomCallTarget,
@@ -519,8 +520,6 @@ Future<ThunkSequence> ThunkEmitter::DispatchCustomCall(
   if (IsTriangularSolve(*hlo)) {
     return EmitTriangularSolveCustomCall(hlo);
   }
-  // CUB sort is handled as a generic FFI custom call via CustomCallThunk.
-  // See xla.gpu.ext.cub_sort_keys and xla.gpu.ext.cub_sort_pairs handlers.
   if (hlo->custom_call_target() == "PadToStatic") {
     return EmitPadToStatic(custom_call);
   }
@@ -537,15 +536,26 @@ Future<ThunkSequence> ThunkEmitter::DispatchCustomCall(
   if (hlo->custom_call_target() == "GetRngSeed") {
     return EmitRngSeed(hlo);
   }
-  // Custom calls that have registered a thunk-folding handler are lowered
-  // directly to a native ThunkSequence instead of a CustomCallThunk. This is
-  // checked last, so the built-in specialized emitters above always take
-  // precedence.
+  // Custom calls that have registered a thunk-folding handler (e.g.,
+  // xla.gpu.ext.cub_sort_{keys,pairs} registered by nvptx_compiler_impl on
+  // CUDA) are lowered directly to a native ThunkSequence instead of a
+  // CustomCallThunk; ROCm/SYCL fall through to EmitGenericCustomCall below.
+  // Checked last so built-in specialized emitters above always take precedence.
   if (std::optional<NativeCustomCallHandlerRef> handler =
           NativeCustomCallHandlerRegistry::GetGlobal().Lookup(
               hlo->custom_call_target());
       handler.has_value()) {
     return EmitNativeCustomCallThunks(custom_call, *handler);
+  }
+  if (ir_emitter_context_->gpu_compute_capability().IsCuda() &&
+      (hlo->custom_call_target() == kCubDeviceRadixSortKeysTarget ||
+       hlo->custom_call_target() == kCubDeviceRadixSortPairsTarget)) {
+    return Internal(
+        "CUDA CUB sort custom call '%s' requires the native custom-call "
+        "handler (cub_sort_thunk_emitter_registration) to be linked; "
+        "falling back to legacy FFI is incompatible with planner-sized "
+        "scratch buffers.",
+        hlo->custom_call_target());
   }
   return EmitGenericCustomCall(custom_call);
 }

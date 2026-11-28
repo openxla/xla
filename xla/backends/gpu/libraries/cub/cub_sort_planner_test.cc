@@ -610,6 +610,13 @@ TEST(CubSortPlannerTest, InvalidInputsReturnInvalidArgument) {
       static_cast<int64_t>(std::numeric_limits<int32_t>::max()) -
       max_tile_items;
   ASSERT_OK_AND_ASSIGN(
+      int64_t reported_max_seg,
+      MaxCudaCubSortSegmentedSegmentSize(sm90, F32, std::nullopt));
+  EXPECT_EQ(reported_max_seg, max_safe_seg);
+  EXPECT_THAT(
+      MaxCudaCubSortSegmentedSegmentSize(sm90, PRED, std::nullopt),
+      StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("Unsupported")));
+  ASSERT_OK_AND_ASSIGN(
       CubSortExecutionPlan max_safe_plan,
       PlanCubSortExecution(sm90, F32, std::nullopt, max_safe_seg * 2, 2));
   EXPECT_TRUE(std::holds_alternative<CubSortSegmentedMultiPassPlan>(

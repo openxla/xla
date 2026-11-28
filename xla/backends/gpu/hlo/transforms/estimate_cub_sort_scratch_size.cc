@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/hlo/transforms/estimate_cub_sort_scratch_size.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -26,6 +28,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/libraries/cub/cub_sort_planner.h"
 #include "xla/backends/gpu/libraries/cub/cub_sort_utils.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/call_frame.h"
@@ -40,6 +43,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/shape.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
@@ -74,20 +78,40 @@ absl::Status EstimateCubSortScratchSize::RunOnSortInstruction(
   ABSL_ASSIGN_OR_RETURN(SortOptions sort_options,
                         custom_call->backend_config<SortOptions>());
 
-  // Determine FFI handler target names for compile-time scratch estimation vs.
-  // runtime execution.
-  absl::string_view instantiate_target =
-      is_pairs ? kCubDeviceRadixSortPairsUnassignedScratchSizeTarget
-               : kCubDeviceRadixSortKeysUnassignedScratchSizeTarget;
   absl::string_view execute_target =
       is_pairs ? kCubDeviceRadixSortPairsTarget : kCubDeviceRadixSortKeysTarget;
 
-  // Look up the registered FFI instantiate handler.
+  int64_t num_items = Product(key_shape.dimensions());
+  int64_t batch_size = (num_items == 0 || key_shape.dimensions().empty())
+                           ? 1
+                           : num_items / key_shape.dimensions().back();
+
+  // On CUDA, compute the exact scratch size purely in C++ from the target
+  // compute capability (works identically for live-GPU and deviceless builds).
+  if (const stream_executor::CudaComputeCapability* cuda_cc =
+          gpu_compute_capability_.cuda_compute_capability()) {
+    std::optional<PrimitiveType> value_type;
+    if (is_pairs) {
+      value_type = custom_call->operand(1)->shape().element_type();
+    }
+    ABSL_ASSIGN_OR_RETURN(
+        int64_t scratch_size,
+        ComputeCudaCubSortScratchSize(*cuda_cc, key_shape.element_type(),
+                                      value_type, num_items, batch_size));
+    // Keep at least a 1-byte scratch tuple element for HLO compatibility.
+    scratch_size = std::max<int64_t>(1, scratch_size);
+    return CreateCubSortCustomCall(custom_call, scratch_size, execute_target,
+                                   sort_options.descending(), batch_size);
+  }
+
+  // Non-CUDA platforms (ROCm, SYCL): invoke the registered FFI instantiate
+  // handler to compute the scratch size.
+  absl::string_view instantiate_target =
+      is_pairs ? kCubDeviceRadixSortPairsUnassignedScratchSizeTarget
+               : kCubDeviceRadixSortKeysUnassignedScratchSizeTarget;
+
   ABSL_ASSIGN_OR_RETURN(ffi::HandlerRegistration registration,
                         ffi::FindHandler(instantiate_target, platform_name_));
-
-  int64_t num_items = Product(key_shape.dimensions());
-  int64_t batch_size = num_items / key_shape.dimensions().back();
 
   ffi::CallFrameBuilder::AttributesBuilder attrs;
   attrs.Insert("descending", false);

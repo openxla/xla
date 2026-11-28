@@ -19,6 +19,7 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -38,6 +39,40 @@ limitations under the License.
 
 namespace xla::gpu {
 namespace {
+
+absl::StatusOr<internal::KernelHostRef> GetHistogramHostRef(
+    PrimitiveType key_type, internal::SortDirection direction) {
+  switch (key_type) {
+    case BF16:
+      return internal::GetCubSortHistogramRef<BF16>(direction);
+    case F16:
+      return internal::GetCubSortHistogramRef<F16>(direction);
+    case F32:
+      return internal::GetCubSortHistogramRef<F32>(direction);
+    case F64:
+      return internal::GetCubSortHistogramRef<F64>(direction);
+    case S8:
+      return internal::GetCubSortHistogramRef<S8>(direction);
+    case S16:
+      return internal::GetCubSortHistogramRef<S16>(direction);
+    case S32:
+      return internal::GetCubSortHistogramRef<S32>(direction);
+    case S64:
+      return internal::GetCubSortHistogramRef<S64>(direction);
+    case U8:
+      return internal::GetCubSortHistogramRef<U8>(direction);
+    case U16:
+      return internal::GetCubSortHistogramRef<U16>(direction);
+    case U32:
+      return internal::GetCubSortHistogramRef<U32>(direction);
+    case U64:
+      return internal::GetCubSortHistogramRef<U64>(direction);
+    default:
+      return absl::InvalidArgumentError(
+          absl::StrCat("Unsupported key type for CUB sort: ",
+                       primitive_util::LowercasePrimitiveTypeName(key_type)));
+  }
+}
 
 absl::StatusOr<internal::CubSortTypeKernelRefs> GetKeysHostRefs(
     PrimitiveType key_type, internal::SortDirection direction) {
@@ -153,6 +188,36 @@ absl::StatusOr<stream_executor::KernelLoaderSpec> LoadCubinSpec(
       fatbin_kernel.cubin, std::string(fatbin_kernel.name), ref.arity);
 }
 
+absl::StatusOr<std::optional<stream_executor::cuda::CudaKernelFuncAttributes>>
+LoadFuncAttributes(
+    internal::KernelHostRef ref,
+    const stream_executor::CudaComputeCapability& compute_capability) {
+  absl::StatusOr<stream_executor::cuda::CudaKernelFuncAttributes> attrs =
+      stream_executor::cuda::FindCudaRuntimeKernelFuncAttributes(
+          ref.host_fun, compute_capability);
+  if (!absl::IsNotFound(attrs.status())) {
+    ABSL_RETURN_IF_ERROR(attrs.status());
+    return *attrs;
+  }
+  // Fall back to the minor-0 accelerated CUBIN of the same major architecture
+  // (e.g. sm_100a for sm_103a / sm_107) for occupancy attributes.
+  const stream_executor::CudaComputeCapability base_accel(
+      compute_capability.major, 0,
+      stream_executor::CudaComputeCapability::FeatureExtension::
+          kAcceleratedFeatures);
+  if (compute_capability != base_accel) {
+    attrs = stream_executor::cuda::FindCudaRuntimeKernelFuncAttributes(
+        ref.host_fun, base_accel);
+    if (!absl::IsNotFound(attrs.status())) {
+      ABSL_RETURN_IF_ERROR(attrs.status());
+      return *attrs;
+    }
+  }
+  // No matching CUBIN ELF in fatbinary; return nullopt so callers use their
+  // conservative occupancy fallback.
+  return std::nullopt;
+}
+
 }  // namespace
 
 namespace internal {
@@ -231,6 +296,60 @@ GetCubSortSingleTileKernelSpec(
   ABSL_ASSIGN_OR_RETURN(internal::CubSortTypeKernelRefs refs,
                         GetTypeKernelRefs(key_type, value_type, direction));
   return LoadCubinSpec(refs.single_tile, compute_capability);
+}
+
+absl::StatusOr<CubSortOnesweepKernelSpecs> GetCubSortOnesweepKernelSpecs(
+    PrimitiveType key_type, std::optional<PrimitiveType> value_type,
+    bool descending,
+    const stream_executor::CudaComputeCapability& compute_capability) {
+  const internal::SortDirection direction =
+      descending ? internal::SortDirection::kDescending
+                 : internal::SortDirection::kAscending;
+  ABSL_ASSIGN_OR_RETURN(internal::CubSortTypeKernelRefs refs,
+                        GetTypeKernelRefs(key_type, value_type, direction));
+  ABSL_ASSIGN_OR_RETURN(internal::KernelHostRef histo_ref,
+                        GetHistogramHostRef(key_type, direction));
+
+  ABSL_ASSIGN_OR_RETURN(stream_executor::KernelLoaderSpec histogram,
+                        LoadCubinSpec(histo_ref, compute_capability));
+  ABSL_ASSIGN_OR_RETURN(
+      std::optional<stream_executor::cuda::CudaKernelFuncAttributes>
+          histo_attrs,
+      LoadFuncAttributes(histo_ref, compute_capability));
+  ABSL_ASSIGN_OR_RETURN(
+      stream_executor::KernelLoaderSpec exclusive_sum,
+      LoadCubinSpec(internal::GetCubSortExclusiveSumRef(), compute_capability));
+  ABSL_ASSIGN_OR_RETURN(stream_executor::KernelLoaderSpec onesweep,
+                        LoadCubinSpec(refs.onesweep, compute_capability));
+
+  return CubSortOnesweepKernelSpecs{
+      /*histogram=*/std::move(histogram),
+      /*histogram_attrs=*/histo_attrs,
+      /*exclusive_sum=*/std::move(exclusive_sum),
+      /*onesweep=*/std::move(onesweep),
+  };
+}
+
+absl::StatusOr<CubSortSegmentedKernelSpecs> GetCubSortSegmentedKernelSpecs(
+    PrimitiveType key_type, std::optional<PrimitiveType> value_type,
+    bool descending,
+    const stream_executor::CudaComputeCapability& compute_capability) {
+  const internal::SortDirection direction =
+      descending ? internal::SortDirection::kDescending
+                 : internal::SortDirection::kAscending;
+  ABSL_ASSIGN_OR_RETURN(internal::CubSortTypeKernelRefs refs,
+                        GetTypeKernelRefs(key_type, value_type, direction));
+
+  ABSL_ASSIGN_OR_RETURN(
+      stream_executor::KernelLoaderSpec primary,
+      LoadCubinSpec(refs.segmented_primary, compute_capability));
+  ABSL_ASSIGN_OR_RETURN(stream_executor::KernelLoaderSpec alt,
+                        LoadCubinSpec(refs.segmented_alt, compute_capability));
+
+  return CubSortSegmentedKernelSpecs{
+      /*primary=*/std::move(primary),
+      /*alt=*/std::move(alt),
+  };
 }
 
 }  // namespace xla::gpu

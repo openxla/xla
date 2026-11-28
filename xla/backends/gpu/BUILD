@@ -674,6 +674,7 @@ cc_library(
         "//xla/backends/gpu/hlo/transforms:cudnn_simplify_padding",
         "//xla/backends/gpu/hlo/transforms:ragged_dot_cudnn_support",
         "//xla/backends/gpu/hlo/transforms:triangular_solve_rewriter",
+        "//xla/backends/gpu/libraries/cub:cub_sort_thunk_emitter_registration",
         "//xla/backends/gpu/target_lowering:nvptx_backend",
         "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
