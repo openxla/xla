@@ -15,40 +15,40 @@ limitations under the License.
 
 #include "xla/tsl/lib/random/weighted_picker.h"
 
-#include <string.h>
-
 #include <algorithm>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
 
 #include "xla/tsl/lib/random/simple_philox.h"
+#include "xla/tsl/platform/logging.h"
 
 namespace tsl {
 namespace random {
+namespace {
 
-WeightedPicker::WeightedPicker(int N) {
-  CHECK_GE(N, 0);
-  N_ = N;
-
-  // Find the number of levels
-  num_levels_ = 1;
-  while (LevelSize(num_levels_ - 1) < N) {
-    num_levels_++;
+int CalcNumLevels(int n) {
+  CHECK_GE(n, 0);
+  const size_t count = static_cast<size_t>(n);
+  int levels = 1;
+  while ((size_t{1} << (levels - 1)) < count) {
+    levels++;
   }
+  CHECK_LT(levels, static_cast<int>(sizeof(size_t) * 8));
+  return levels;
+}
 
-  // Initialize the levels
-  level_ = new int32_t*[num_levels_];
-  for (int l = 0; l < num_levels_; l++) {
-    level_[l] = new int32_t[LevelSize(l)];
-  }
+}  // namespace
 
+WeightedPicker::WeightedPicker(int N)
+    : N_(N),
+      num_levels_(CalcNumLevels(N)),
+      level_(new int32_t[LevelSize(num_levels_)]) {
+  level_[0] = 0;
   SetAllWeights(1);
 }
 
-WeightedPicker::~WeightedPicker() {
-  for (int l = 0; l < num_levels_; l++) {
-    delete[] level_[l];
-  }
-  delete[] level_;
-}
+WeightedPicker::~WeightedPicker() { delete[] level_; }
 
 static int32_t UnbiasedUniform(SimplePhilox* r, int32_t n) {
   CHECK_LE(0, n);
@@ -111,23 +111,27 @@ int WeightedPicker::PickAt(int32_t weight_index) const {
   if (weight_index < 0 || weight_index >= total_weight()) return -1;
 
   int32_t position = weight_index;
-  int index = 0;
+  const size_t leaf_offset = LevelSize(num_levels_ - 1);
+  const int32_t* const tree = level_;
+  size_t node = 1;
 
-  for (int l = 1; l < num_levels_; l++) {
-    // Pick left or right child of "level_[l-1][index]"
-    const int32_t left_weight = level_[l][2 * index];
+  while (node < leaf_offset) {
+    // Pick left or right child of "tree[node]"
+    const size_t left = 2 * node;
+    const int32_t left_weight = tree[left];
     if (position < left_weight) {
       // Descend to left child
-      index = 2 * index;
+      node = left;
     } else {
       // Descend to right child
-      index = 2 * index + 1;
+      node = left + 1;
       position -= left_weight;
     }
   }
+  const int index = static_cast<int>(node - leaf_offset);
   CHECK_GE(index, 0);
   CHECK_LT(index, N_);
-  CHECK_LE(position, level_[num_levels_ - 1][index]);
+  CHECK_LE(position, tree[node]);
   return index;
 }
 
@@ -136,18 +140,20 @@ void WeightedPicker::set_weight(int index, int32_t weight) {
   assert(index < N_);
 
   // Adjust the sums all the way up to the root
-  const int32_t delta = weight - get_weight(index);
-  for (int l = num_levels_ - 1; l >= 0; l--) {
-    level_[l][index] += delta;
-    index >>= 1;
+  size_t node = LevelSize(num_levels_ - 1) + static_cast<size_t>(index);
+  const int32_t delta = weight - level_[node];
+  for (; node >= 1; node >>= 1) {
+    level_[node] += delta;
   }
 }
 
 void WeightedPicker::SetAllWeights(int32_t weight) {
   // Initialize leaves
-  int32_t* leaves = level_[num_levels_ - 1];
-  for (int i = 0; i < N_; i++) leaves[i] = weight;
-  for (int i = N_; i < LevelSize(num_levels_ - 1); i++) leaves[i] = 0;
+  const size_t leaf_offset = LevelSize(num_levels_ - 1);
+  const size_t count = static_cast<size_t>(N_);
+  int32_t* leaves = level_ + leaf_offset;
+  std::fill_n(leaves, count, weight);
+  std::fill_n(leaves + count, leaf_offset - count, 0);
 
   // Now sum up towards the root
   RebuildTreeWeights();
@@ -157,21 +163,22 @@ void WeightedPicker::SetWeightsFromArray(int N, const int32_t* weights) {
   Resize(N);
 
   // Initialize leaves
-  int32_t* leaves = level_[num_levels_ - 1];
-  for (int i = 0; i < N_; i++) leaves[i] = weights[i];
-  for (int i = N_; i < LevelSize(num_levels_ - 1); i++) leaves[i] = 0;
+  const size_t leaf_offset = LevelSize(num_levels_ - 1);
+  const size_t count = static_cast<size_t>(N_);
+  int32_t* leaves = level_ + leaf_offset;
+  if (count > 0) {
+    std::copy_n(weights, count, leaves);
+  }
+  std::fill_n(leaves + count, leaf_offset - count, 0);
 
   // Now sum up towards the root
   RebuildTreeWeights();
 }
 
 void WeightedPicker::RebuildTreeWeights() {
-  for (int l = num_levels_ - 2; l >= 0; l--) {
-    int32_t* level = level_[l];
-    int32_t* children = level_[l + 1];
-    for (int i = 0; i < LevelSize(l); i++) {
-      level[i] = children[2 * i] + children[2 * i + 1];
-    }
+  int32_t* const tree = level_;
+  for (size_t i = LevelSize(num_levels_ - 1) - 1; i >= 1; --i) {
+    tree[i] = tree[2 * i] + tree[2 * i + 1];
   }
 }
 
@@ -182,7 +189,8 @@ void WeightedPicker::Append(int32_t weight) {
 
 void WeightedPicker::Resize(int new_size) {
   CHECK_GE(new_size, 0);
-  if (new_size <= LevelSize(num_levels_ - 1)) {
+  const size_t new_count = static_cast<size_t>(new_size);
+  if (new_count <= LevelSize(num_levels_ - 1)) {
     // The new picker fits in the existing levels.
 
     // First zero out any of the weights that are being dropped so
@@ -197,22 +205,24 @@ void WeightedPicker::Resize(int new_size) {
     return;
   }
 
-  // We follow the simple strategy of just copying the old
-  // WeightedPicker into a new WeightedPicker.  The cost is
-  // O(N) regardless.
   assert(new_size > N_);
-  WeightedPicker new_picker(new_size);
-  int32_t* dst = new_picker.level_[new_picker.num_levels_ - 1];
-  int32_t* src = this->level_[this->num_levels_ - 1];
-  memcpy(dst, src, sizeof(dst[0]) * N_);
-  memset(dst + N_, 0, sizeof(dst[0]) * (new_size - N_));
-  new_picker.RebuildTreeWeights();
+  const int new_num_levels = CalcNumLevels(new_size);
+  const size_t new_leaf_offset = LevelSize(new_num_levels - 1);
+  const size_t old_count = static_cast<size_t>(N_);
+  int32_t* new_level = new int32_t[LevelSize(new_num_levels)];
+  new_level[0] = 0;
+  int32_t* dst = new_level + new_leaf_offset;
+  const int32_t* src = level_ + LevelSize(num_levels_ - 1);
+  if (old_count > 0) {
+    std::copy_n(src, old_count, dst);
+  }
+  std::fill_n(dst + old_count, new_leaf_offset - old_count, 0);
 
-  // Now swap the two pickers
-  std::swap(new_picker.N_, this->N_);
-  std::swap(new_picker.num_levels_, this->num_levels_);
-  std::swap(new_picker.level_, this->level_);
-  assert(this->N_ == new_size);
+  delete[] level_;
+  level_ = new_level;
+  num_levels_ = new_num_levels;
+  N_ = new_size;
+  RebuildTreeWeights();
 }
 
 }  // namespace random
