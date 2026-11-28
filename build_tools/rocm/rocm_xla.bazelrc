@@ -66,10 +66,10 @@ build:tsan --copt -fno-omit-frame-pointer
 build:tsan --linkopt -fsanitize=thread
 build:tsan --copt -O1
 build:tsan --run_under=//build_tools/rocm:sanitizer_wrapper
-build:tsan --repo_env=GLOBAL_SYMBOLS_TO_VERSION="llvm::*,LLVM*"
+build:tsan --repo_env=GLOBAL_SYMBOLS_TO_VERSION="*llvm::*,*LLVM*"
 
 build:asan --run_under=//build_tools/rocm:sanitizer_wrapper
-build:asan --repo_env=GLOBAL_SYMBOLS_TO_VERSION="llvm::*,LLVM*"
+build:asan --repo_env=GLOBAL_SYMBOLS_TO_VERSION="*llvm::*,*LLVM*"
 
 build:ci_single_gpu --config=rocm_base
 
