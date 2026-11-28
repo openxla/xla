@@ -271,6 +271,48 @@ struct ClampOpConversion
   }
 };
 
+struct Expm1OpConversion
+    : public mlir::OpConversionPattern<mlir::stablehlo::Expm1Op> {
+  using mlir::OpConversionPattern<
+      mlir::stablehlo::Expm1Op>::OpConversionPattern;
+
+  mlir::LogicalResult matchAndRewrite(
+      mlir::stablehlo::Expm1Op op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter& rewriter) const override {
+    auto result_type = mlir::dyn_cast_or_null<mlir::RankedTensorType>(
+        this->getTypeConverter()->convertType(op.getType()));
+    if (!result_type ||
+        !mlir::isa<mlir::FloatType>(result_type.getElementType())) {
+      return rewriter.notifyMatchFailure(
+          op, "expected a ranked floating-point result");
+    }
+    rewriter.replaceOpWithNewOp<mlir::nv_tensor_ir::ExpM1Op>(
+        op, result_type, adaptor.getOperand());
+    return mlir::success();
+  }
+};
+
+struct Log1pOpConversion
+    : public mlir::OpConversionPattern<mlir::stablehlo::Log1pOp> {
+  using mlir::OpConversionPattern<
+      mlir::stablehlo::Log1pOp>::OpConversionPattern;
+
+  mlir::LogicalResult matchAndRewrite(
+      mlir::stablehlo::Log1pOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter& rewriter) const override {
+    auto result_type = mlir::dyn_cast_or_null<mlir::RankedTensorType>(
+        this->getTypeConverter()->convertType(op.getType()));
+    if (!result_type ||
+        !mlir::isa<mlir::FloatType>(result_type.getElementType())) {
+      return rewriter.notifyMatchFailure(
+          op, "expected a ranked floating-point result");
+    }
+    rewriter.replaceOpWithNewOp<mlir::nv_tensor_ir::Log1POp>(
+        op, result_type, adaptor.getOperand());
+    return mlir::success();
+  }
+};
+
 //===----------------------------------------------------------------------===//
 // Structural operations.
 //===----------------------------------------------------------------------===//
