@@ -75,6 +75,10 @@ struct SchedulerConfig {
   // collectives are used as schedule anchors by the target-specific
   // schedule-by-structure (critical path depth) heuristic.
   bool enable_cpd_for_sync_collective = true;
+  // If true, break ready-set ties while an async operation has unhidden latency
+  // in flight and memory usage is at or below half the limit in favor of
+  // non-async candidates that exclusively unlock higher-cost compute ops.
+  bool prioritize_unlocking_overlap_compute = false;
   // If set, only log computations that match the given regular expression.
   std::string log_computation_re;
 };

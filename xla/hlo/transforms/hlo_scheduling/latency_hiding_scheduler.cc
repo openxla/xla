@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -1020,6 +1021,81 @@ bool TransfersEarlierData(const HloInstruction& x, const HloInstruction& y,
   });
 }
 
+bool IsAsyncOrResourceNode(const HloGraphNode& node) {
+  return node.IsSupportedAsyncStart() || node.IsSupportedAsyncDone() ||
+         node.DoesOccupyAnyResource() || node.DoesReleaseAnyResource();
+}
+
+bool ExceedsMemoryBudget(int64_t usage, int64_t delta, uint64_t budget) {
+  if (delta <= 0) {
+    return false;
+  }
+  if (usage <= 0) {
+    return usage + delta > 0 && static_cast<uint64_t>(usage + delta) > budget;
+  }
+  const uint64_t cur = static_cast<uint64_t>(usage);
+  return cur > budget || static_cast<uint64_t>(delta) > budget - cur;
+}
+
+// Sums the cost of non-async compute neighbors that become ready exclusively
+// when `node` is scheduled next (capped at 64 edges to stay O(1)).
+HloGraphNode::TimeCost ExclusiveUnlockedComputeCost(
+    const DefaultSchedulerCore::SchedulingState& sched_state,
+    DefaultSchedulerCore::ScheduleCandidate& cand, const HloGraphNode& node,
+    bool top_down) {
+  constexpr size_t kMaxScannedEdges = 64;
+  if (IsAsyncOrResourceNode(node)) {
+    return 0.0;
+  }
+  const uint64_t mem_limit = sched_state.config.memory_limit;
+  if (mem_limit != UINT64_MAX && sched_state.pressure_metadata != nullptr) {
+    if (!cand.has_pressure_change) {
+      cand.set_pressure_change(
+          sched_state.memory_pressure_tracker.MemoryPressureDifference(
+              &node.GetInstr()));
+    }
+    const int64_t usage = sched_state.memory_pressure_tracker.memory_usage();
+    if (ExceedsMemoryBudget(usage, cand.pressure_change_first, mem_limit / 2) ||
+        ExceedsMemoryBudget(usage, cand.pressure_change_second, mem_limit)) {
+      return 0.0;
+    }
+  }
+  const absl::Span<const HloEdge> edges =
+      top_down ? node.GetSuccessors() : node.GetPredecessors();
+  if (edges.empty() || edges.size() > kMaxScannedEdges) {
+    return 0.0;
+  }
+  auto has_unit_degree = [top_down](const HloGraphNode* n) {
+    return n != nullptr && !n->IsScheduled() &&
+           (top_down ? n->GetIndegree() : n->GetOutdegree()) == 1;
+  };
+  HloGraphNode::TimeCost unlocked_cost = 0.0;
+  for (const HloEdge& edge : edges) {
+    const HloGraphNode* target = edge.TargetPtr();
+    if (!has_unit_degree(target)) {
+      continue;
+    }
+    if (IsNopInstruction(target->GetOpcode(), target->GetInstr())) {
+      const absl::Span<const HloEdge> nop_edges =
+          top_down ? target->GetSuccessors() : target->GetPredecessors();
+      if (target->GetAnnotation() != kInvalidAnnotation ||
+          target->HasPreference() || nop_edges.size() != 1) {
+        continue;
+      }
+      target = nop_edges.front().TargetPtr();
+      if (!has_unit_degree(target) ||
+          IsNopInstruction(target->GetOpcode(), target->GetInstr())) {
+        continue;
+      }
+    }
+    if (!IsAsyncOrResourceNode(*target) && std::isfinite(target->GetCost()) &&
+        target->GetCost() > 0.0) {
+      unlocked_cost += target->GetCost();
+    }
+  }
+  return unlocked_cost;
+}
+
 }  // namespace
 
 bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
@@ -1323,6 +1399,25 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
       sched_state.selective_resource_releasers.empty()) {
     if (auto value = IsValuableForSelectiveOverlap(sched_state, a, b, reason)) {
       return *value;
+    }
+  }
+
+  if (ABSL_PREDICT_FALSE(config.prioritize_unlocking_overlap_compute) &&
+      !computed_memory_increases &&
+      !(IsAsyncOrResourceNode(*an) && IsAsyncOrResourceNode(*bn)) &&
+      absl::c_any_of(sched_state.next_ready_stack,
+                     [t = sched_state.current_time](const HloGraphNode* node) {
+                       return node != nullptr && !node->IsScheduled() &&
+                              node->GetReadyTime() > t;
+                     })) {
+    const HloGraphNode::TimeCost a_unlocked = ExclusiveUnlockedComputeCost(
+        sched_state, a, *an, core_->top_down_scheduling_);
+    const HloGraphNode::TimeCost b_unlocked = ExclusiveUnlockedComputeCost(
+        sched_state, b, *bn, core_->top_down_scheduling_);
+    if (std::optional<bool> res =
+            CmpExplicit(a_unlocked > b_unlocked, b_unlocked > a_unlocked,
+                        "kUnlockOverlapCompute", reason)) {
+      return *res;
     }
   }
 
