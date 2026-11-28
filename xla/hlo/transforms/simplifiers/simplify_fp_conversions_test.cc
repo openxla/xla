@@ -123,7 +123,7 @@ TEST_F(SimplifyFPConversionsTest, PreservesF8E4M3FNQuantizationRoundTrips) {
   }
 }
 
-TEST_F(SimplifyFPConversionsTest, PreservesSubByteConversionsToAndFromF16) {
+TEST_F(SimplifyFPConversionsTest, PreservesF8AndSubByteConversions) {
   for (absl::string_view src_type : {"f32", "bf16", "f16"}) {
     for (absl::string_view mid_type : {"f8e4m3fn", "f8e5m2", "f4e2m1fn"}) {
       for (absl::string_view dst_type : {"f16", "bf16", "f32"}) {
