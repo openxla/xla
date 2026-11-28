@@ -15,12 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/hlo/transforms/splitk_rewriter.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/log/check.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/hlo/testlib/filecheck.h"
@@ -364,6 +364,106 @@ CHECK: f32[16,8,12804]{{.*}} reshape(%lhs)
 CHECK: f32[8,12804,128]{{.*}} reshape(%rhs)
   )")
                   .value_or(false));
+}
+
+constexpr absl::string_view kDecodeGateUpDot = R"(
+  HloModule module
+
+  ENTRY test {
+    lhs = bf16[8,4096]{1,0} parameter(0)
+    rhs = bf16[4096,12288]{1,0} parameter(1)
+    ROOT dot = bf16[8,12288]{1,0} dot(lhs, rhs),
+                                 lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  })";
+
+TEST_F(SplitkRewriterTest, Gfx950SplitsDecodeDotTheDefaultLeavesUnsplit) {
+  SplitkRewriter rewriter(TestGpuDeviceInfo::AMDMI350DeviceInfo());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kDecodeGateUpDot));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.HloModulePass::Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_TRUE(RunFileCheck(module->ToString(), R"(
+CHECK: f32[8,8,12288]{{.*}} dot(
+CHECK: f32[8,12288]{{.*}} reduce(
+  )")
+                  .value_or(false));
+}
+
+TEST_F(SplitkRewriterTest, Gfx942KeepsTheDefaultDecision) {
+  SplitkRewriter rewriter(TestGpuDeviceInfo::AMDMI300DeviceInfo());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kDecodeGateUpDot));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.HloModulePass::Run(module.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(SplitkRewriterTest, Gfx950DoesNotRaiseASplitTheDefaultMakes) {
+  SplitkRewriter rewriter(TestGpuDeviceInfo::AMDMI350DeviceInfo());
+  const char* hlo_string = R"(
+  HloModule module
+
+  ENTRY test {
+    lhs = bf16[8,4096]{1,0} parameter(0)
+    rhs = bf16[4096,4096]{1,0} parameter(1)
+    ROOT dot = bf16[8,4096]{1,0} dot(lhs, rhs),
+                                lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.HloModulePass::Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_TRUE(RunFileCheck(module->ToString(), R"(
+CHECK: f32[4,8,4096]{{.*}} dot(
+  )")
+                  .value_or(false));
+}
+
+TEST_F(SplitkRewriterTest, Gfx950KeepsDotsOutsideTheDecodeGateUnsplit) {
+  SplitkRewriter rewriter(TestGpuDeviceInfo::AMDMI350DeviceInfo());
+  // All unsplit by default, and each fails exactly one condition: a batched
+  // dot, a router (less than 1 MiB of weights), a dot with more than 32 rows, a
+  // tensor-parallel shard with a short K, an LM head whose output fills the
+  // GPU, and a merged gate / up whose output occupies more than half the cores.
+  const char* hlo_string = R"(
+  HloModule module
+
+  ENTRY test {
+    bx = bf16[2,1,4096]{2,1,0} parameter(0)
+    bw = bf16[2,4096,4096]{2,1,0} parameter(1)
+    batched = bf16[2,1,4096]{2,1,0} dot(bx, bw), lhs_batch_dims={0},
+              lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}
+    x = bf16[1,2048]{1,0} parameter(2)
+    router_w = bf16[2048,128]{1,0} parameter(3)
+    router = bf16[1,128]{1,0} dot(x, router_w), lhs_contracting_dims={1},
+             rhs_contracting_dims={0}
+    y = bf16[64,4096]{1,0} parameter(4)
+    w = bf16[4096,12288]{1,0} parameter(5)
+    proj = bf16[64,12288]{1,0} dot(y, w), lhs_contracting_dims={1},
+           rhs_contracting_dims={0}
+    a = bf16[8,512]{1,0} parameter(6)
+    o_shard = bf16[512,4096]{1,0} parameter(7)
+    attn_out = bf16[8,4096]{1,0} dot(a, o_shard), lhs_contracting_dims={1},
+               rhs_contracting_dims={0}
+    h = bf16[8,8192]{1,0} parameter(8)
+    vocab = bf16[8192,128256]{1,0} parameter(9)
+    logits = bf16[8,128256]{1,0} dot(h, vocab), lhs_contracting_dims={1},
+             rhs_contracting_dims={0}
+    g = bf16[8,4096]{1,0} parameter(10)
+    gate_up_w = bf16[4096,24576]{1,0} parameter(11)
+    gate_up = bf16[8,24576]{1,0} dot(g, gate_up_w), lhs_contracting_dims={1},
+              rhs_contracting_dims={0}
+    ROOT t = (bf16[2,1,4096], bf16[1,128], bf16[64,12288], bf16[8,4096],
+              bf16[8,128256], bf16[8,24576]) tuple(batched, router, proj,
+                                                   attn_out, logits, gate_up)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.HloModulePass::Run(module.get()));
+  EXPECT_FALSE(changed);
 }
 
 }  // namespace

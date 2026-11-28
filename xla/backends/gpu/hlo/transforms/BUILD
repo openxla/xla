@@ -4104,6 +4104,7 @@ cc_library(
         "//xla/service:matmul_indexing_utils",
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor/rocm:rocm_compute_capability",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
@@ -4198,6 +4199,7 @@ xla_cc_test(
         "//xla/stream_executor:device_description_proto_cc",
         "//xla/tests:test_utils",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )
