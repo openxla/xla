@@ -1372,6 +1372,7 @@ std::unique_ptr<HloInstruction> CreateUniformCollectiveReplacement(
     HloInstruction* collective, UniformCollectiveOperand uniform,
     const AlgebraicSimplifierOptions& options, AlgebraicSimplifier* simplifier,
     AlgebraicSimplifierVisitor* visitor) {
+  CHECK(ShapeUtil::IsScalar(uniform.scalar_literal.shape()));
   if (ShapeUtil::IsScalar(collective->shape()) &&
       (!options.is_layout_sensitive() || !collective->shape().has_layout() ||
        collective->shape().layout().memory_space() ==
@@ -1462,26 +1463,37 @@ absl::Status AlgebraicSimplifierVisitor::HandleAllReduceOrReduceScatter(
       PrimitiveType element_type = collective->shape().element_type();
       const Literal& literal = uniform->scalar_literal;
 
-      Literal new_literal;
-      primitive_util::ArrayTypeSwitch(
-          [&](auto type_constant) {
+      std::optional<Literal> new_literal = primitive_util::ArrayTypeSwitch(
+          [&](auto type_constant) -> std::optional<Literal> {
             using T = primitive_util::NativeTypeOf<type_constant>;
             if constexpr (primitive_util::IsIntegralType(type_constant) ||
                           primitive_util::IsFloatingPointType(type_constant)) {
               T val = literal.Get<T>({});
               T result = val * static_cast<T>(group_size);
-              new_literal = LiteralUtil::CreateR0<T>(result);
+              return LiteralUtil::CreateR0<T>(result);
+            } else if constexpr (primitive_util::IsComplexType(
+                                     type_constant)) {
+              T val = literal.Get<T>({});
+              using RealT = typename T::value_type;
+              RealT scale = static_cast<RealT>(group_size);
+              // Scale components separately so NaN/Inf stays isolated per part.
+              return LiteralUtil::CreateR0<T>(
+                  T(val.real() * scale, val.imag() * scale));
             }
+            return std::nullopt;
           },
           element_type);
 
-      if (!ShapeUtil::IsInitialized(new_literal.shape())) {
+      // Require an array shape in addition to has_value(), because an
+      // unassigned default Literal has empty tuple shape () which passes
+      // ShapeUtil::IsInitialized().
+      if (!new_literal.has_value() || !new_literal->shape().IsArray()) {
         return absl::OkStatus();
       }
 
       return ReplaceWithNewInstruction(
           collective, CreateUniformCollectiveReplacement(
-                          collective, {std::move(new_literal), nullptr},
+                          collective, {std::move(*new_literal), nullptr},
                           options_, simplifier_, this));
     }
     default:

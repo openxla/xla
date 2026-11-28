@@ -17,6 +17,8 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+#include <complex>
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
@@ -15998,6 +16000,126 @@ TEST_F(AlgebraicSimplifierTest, AllReduceAndReduceScatterSumOfConstant) {
             Layout::kDefaultMemorySpace);
 }
 
+TEST_F(AlgebraicSimplifierTest,
+       AllReduceAndReduceScatterSumOfComplexConstant) {
+  constexpr absl::string_view kBroadcastAllReduceC64Hlo = R"hlo(
+    HloModule m, num_partitions=8
+    add {
+      p0 = c64[] parameter(0)
+      p1 = c64[] parameter(1)
+      ROOT a = c64[] add(p0, p1)
+    }
+    ENTRY test {
+      c = c64[] constant((1.5, -2))
+      b = c64[1,2] broadcast(c), dimensions={}
+      ROOT ar = c64[1,2] all-reduce(b), channel_id=1,
+        replica_groups={{0,1,2,3,4,5,6,7}}, use_global_device_ids=true,
+        to_apply=add
+    })hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> bcast_ar_c64,
+                       ParseAndReturnVerifiedModule(kBroadcastAllReduceC64Hlo));
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(bcast_ar_c64.get()),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(
+      bcast_ar_c64->entry_computation()->root_instruction(),
+      GmockMatch(m::Broadcast(m::ConstantScalar(
+          std::complex<double>(12.0, -16.0)))));
+
+  constexpr absl::string_view kScalarAllReduceC64Hlo = R"hlo(
+    HloModule m
+    add {
+      p0 = c64[] parameter(0)
+      p1 = c64[] parameter(1)
+      ROOT a = c64[] add(p0, p1)
+    }
+    ENTRY test {
+      c = c64[] constant((1, 2))
+      ROOT ar = c64[] all-reduce(c), to_apply=add, replica_groups={{0,1,2,3}}
+    })hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> scalar_ar_c64,
+                       ParseAndReturnVerifiedModule(kScalarAllReduceC64Hlo));
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(scalar_ar_c64.get()),
+              absl_testing::IsOkAndHolds(true));
+  const HloInstruction* scalar_root =
+      scalar_ar_c64->entry_computation()->root_instruction();
+  EXPECT_TRUE(ShapeUtil::IsScalar(scalar_root->shape()));
+  EXPECT_THAT(scalar_root,
+              GmockMatch(m::ConstantScalar(std::complex<double>(4.0, 8.0))));
+
+  constexpr absl::string_view kBroadcastReduceScatterC128Hlo = R"hlo(
+    HloModule m
+    add {
+      p0 = c128[] parameter(0)
+      p1 = c128[] parameter(1)
+      ROOT a = c128[] add(p0, p1)
+    }
+    ENTRY test {
+      c = c128[] constant((1.5, -0.5))
+      b = c128[8,2] broadcast(c), dimensions={}
+      ROOT rs = c128[2,2] reduce-scatter(b), dimensions={0}, to_apply=add,
+        replica_groups={{0,1,2,3}}
+    })hlo";
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> bcast_rs_c128,
+      ParseAndReturnVerifiedModule(kBroadcastReduceScatterC128Hlo));
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(bcast_rs_c128.get()),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(
+      bcast_rs_c128->entry_computation()->root_instruction(),
+      GmockMatch(m::Broadcast(m::ConstantScalar(
+          std::complex<double>(6.0, -2.0)))));
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       AllReduceSumOfComplexConstantIsolatesNonFiniteComponents) {
+  constexpr absl::string_view kNanHlo = R"hlo(
+    HloModule m
+    add {
+      p0 = c64[] parameter(0)
+      p1 = c64[] parameter(1)
+      ROOT a = c64[] add(p0, p1)
+    }
+    ENTRY test {
+      c = c64[] constant((nan, 2))
+      ROOT ar = c64[] all-reduce(c), to_apply=add, replica_groups={{0,1,2,3}}
+    })hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> nan_module,
+                       ParseAndReturnVerifiedModule(kNanHlo));
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(nan_module.get()),
+              absl_testing::IsOkAndHolds(true));
+  const HloInstruction* nan_root =
+      nan_module->entry_computation()->root_instruction();
+  ASSERT_THAT(nan_root, GmockMatch(m::ConstantScalar()));
+  std::complex<float> nan_val =
+      nan_root->literal().Get<std::complex<float>>({});
+  EXPECT_TRUE(std::isnan(nan_val.real()));
+  EXPECT_EQ(nan_val.imag(), 8.0f);
+
+  constexpr absl::string_view kInfHlo = R"hlo(
+    HloModule m
+    add {
+      p0 = c64[] parameter(0)
+      p1 = c64[] parameter(1)
+      ROOT a = c64[] add(p0, p1)
+    }
+    ENTRY test {
+      c = c64[] constant((inf, 2))
+      ROOT ar = c64[] all-reduce(c), to_apply=add, replica_groups={{0,1,2,3}}
+    })hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> inf_module,
+                       ParseAndReturnVerifiedModule(kInfHlo));
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(inf_module.get()),
+              absl_testing::IsOkAndHolds(true));
+  const HloInstruction* inf_root =
+      inf_module->entry_computation()->root_instruction();
+  ASSERT_THAT(inf_root, GmockMatch(m::ConstantScalar()));
+  std::complex<float> inf_val =
+      inf_root->literal().Get<std::complex<float>>({});
+  EXPECT_TRUE(std::isinf(inf_val.real()));
+  EXPECT_GT(inf_val.real(), 0.0f);
+  EXPECT_EQ(inf_val.imag(), 8.0f);
+}
+
 TEST_F(AlgebraicSimplifierTest, UniformCollectiveNegativeCases) {
   constexpr absl::string_view kNonUniformHlo = R"hlo(
     HloModule m
@@ -16048,6 +16170,23 @@ TEST_F(AlgebraicSimplifierTest, UniformCollectiveNegativeCases) {
       std::unique_ptr<HloModule> cond_module,
       ParseAndReturnVerifiedModule(kConditionalBranchCollectiveHlo));
   EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(cond_module.get()),
+              absl_testing::IsOkAndHolds(false));
+
+  constexpr absl::string_view kPredSumAllReduceHlo = R"hlo(
+    HloModule m
+    add {
+      p0 = pred[] parameter(0)
+      p1 = pred[] parameter(1)
+      ROOT a = pred[] add(p0, p1)
+    }
+    ENTRY test {
+      c = pred[] constant(true)
+      b = pred[4] broadcast(c), dimensions={}
+      ROOT ar = pred[4] all-reduce(b), to_apply=add, replica_groups={{0,1}}
+    })hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> pred_module,
+                       ParseAndReturnVerifiedModule(kPredSumAllReduceHlo));
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(pred_module.get()),
               absl_testing::IsOkAndHolds(false));
 }
 

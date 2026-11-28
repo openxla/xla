@@ -18,6 +18,8 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cmath>
+#include <complex>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -4232,6 +4234,55 @@ ENTRY %NanPayload () -> f8e4m3b11fnuz[1] {
 )";
   ExpectHasSubstr(ParseAndReturnUnverifiedModule(original).status().message(),
                   "tries to set NaN payload 0x1");
+}
+
+TEST_F(HloParserTest, ComplexNanAndPayload) {
+  const std::string original =
+      R"(HloModule ComplexNan_module, entry_computation_layout={()->c64[3]{0}}
+
+ENTRY %ComplexNan () -> c64[3] {
+  ROOT %constant = c64[3]{0} constant({(nan, 2), (2, -nan), (-nan(0x123), nan(0x45))})
+}
+
+)";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_EQ(absl::OkStatus(), result.status());
+  EXPECT_EQ(result.value()->ToString(HloPrintOptions()), original);
+
+  const Literal& lit =
+      result.value()->entry_computation()->root_instruction()->literal();
+  auto elem0 = lit.Get<std::complex<float>>({0});
+  EXPECT_TRUE(std::isnan(elem0.real()));
+  EXPECT_EQ(elem0.imag(), 2.0f);
+  auto elem1 = lit.Get<std::complex<float>>({1});
+  EXPECT_EQ(elem1.real(), 2.0f);
+  EXPECT_TRUE(std::isnan(elem1.imag()));
+  EXPECT_TRUE(std::signbit(elem1.imag()));
+
+  const std::string original_c128 =
+      R"(HloModule Complex128Nan_module, entry_computation_layout={()->c128[2]{0}}
+
+ENTRY %Complex128Nan () -> c128[2] {
+  ROOT %constant = c128[2]{0} constant({(nan, 2), (2, -nan(0x123))})
+}
+
+)";
+  auto c128_result = ParseAndReturnUnverifiedModule(original_c128);
+  EXPECT_EQ(absl::OkStatus(), c128_result.status());
+  EXPECT_EQ(c128_result.value()->ToString(HloPrintOptions()), original_c128);
+}
+
+TEST_F(HloParserTest, InvalidComplexImagNanPayload) {
+  const std::string original =
+      R"(HloModule InvalidComplexImagNanPayload_module, entry_computation_layout={()->c64[1]{0}}
+
+ENTRY %NanPayload () -> c64[1] {
+  ROOT %constant = c64[1]{0} constant({(2, nan(0x800000))})
+}
+
+)";
+  ExpectHasSubstr(ParseAndReturnUnverifiedModule(original).status().message(),
+                  "tries to set NaN payload 0x800000");
 }
 
 TEST_F(HloParserTest, AttributesAnyOrder) {

@@ -5463,8 +5463,8 @@ bool HloParserImpl::SetValueInLiteralHelper(LocTy loc, ParsedElemT value,
   const ParsedElemComponentT parsed_real_value = GetReal(value);
   auto literal_real_value =
       static_cast<LiteralNativeComponentT>(parsed_real_value);
-  if (std::is_floating_point_v<ParsedElemT> ||
-      std::is_same_v<ParsedElemT, std::complex<double>>) {
+  if constexpr (std::is_floating_point_v<ParsedElemT> ||
+                std::is_same_v<ParsedElemT, std::complex<double>>) {
     if (!handle_nan(parsed_real_value, &literal_real_value)) {
       return false;
     }
@@ -5473,7 +5473,7 @@ bool HloParserImpl::SetValueInLiteralHelper(LocTy loc, ParsedElemT value,
   auto literal_imag_value =
       static_cast<LiteralNativeComponentT>(parsed_imag_value);
   if constexpr (std::is_same_v<ParsedElemT, std::complex<double>>) {
-    if (!handle_nan(parsed_real_value, &literal_imag_value)) {
+    if (!handle_nan(parsed_imag_value, &literal_imag_value)) {
       return false;
     }
   }
