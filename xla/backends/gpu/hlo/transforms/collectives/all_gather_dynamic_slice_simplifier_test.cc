@@ -20,7 +20,6 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <utility>
 
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
