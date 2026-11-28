@@ -743,7 +743,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> CustomCallThunk::Record(
   auto const execute_handler = [&](auto& handler, auto stage) {
     return ExecuteFfiHandler(
         run_id, handler, stage, execute_params.stream,
-        /*execution_scoped_state=*/nullptr,
+        execute_params.execution_scoped_state,
         execute_params.ffi_execution_context, execute_params.custom_options,
         execute_params.buffer_allocations, execute_params.collective_params,
         /*collective_clique_requests=*/nullptr,
