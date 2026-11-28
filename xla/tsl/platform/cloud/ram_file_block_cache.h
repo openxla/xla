@@ -159,10 +159,11 @@ class RamFileBlockCache : public FileBlockCache {
   /// was cached, a coordination lock, and state & condition variables.
   ///
   /// Thread safety:
-  /// The iterator and timestamp fields should only be accessed while holding
-  /// the block-cache-wide mu_ instance variable. The state variable should only
-  /// be accessed while holding the Block's mu lock. The data vector should only
-  /// be accessed after state == FINISHED, and it should never be modified.
+  /// The iterator, timestamp, charged_bytes, and evicted fields should only be
+  /// accessed while holding the block-cache-wide mu_ instance variable. The
+  /// state variable should only be accessed while holding the Block's mu lock.
+  /// The data vector is populated under mu before setting state == FINISHED,
+  /// should only be read after state == FINISHED, and is never modified again.
   ///
   /// In order to prevent deadlocks, never grab the block-cache-wide mu_ lock
   /// AFTER grabbing any block's mu lock. It is safe to grab mu without locking
@@ -175,7 +176,11 @@ class RamFileBlockCache : public FileBlockCache {
     /// A list iterator pointing to the block's position in the LRA list.
     std::list<Key>::iterator lra_iterator;
     /// The timestamp (seconds since epoch) at which the block was cached.
-    uint64_t timestamp;
+    uint64_t timestamp = 0;
+    /// Bytes currently charged to cache_size_ for this block (guarded by mu_).
+    size_t charged_bytes = 0;
+    /// Whether this block has been removed from block_map_ (guarded by mu_).
+    bool evicted = false;
     /// Mutex to guard state variable
     absl::Mutex mu;
     /// The state of the block.
