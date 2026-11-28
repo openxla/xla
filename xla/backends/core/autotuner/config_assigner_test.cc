@@ -31,6 +31,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/platform/path.h"
+#include "xla/backends/core/autotuner/autotune_fingerprint.h"
 #include "xla/backends/core/autotuner/autotuner.h"
 #include "xla/backends/core/autotuner/autotuner_cache_interface.h"
 #include "xla/backends/core/autotuner/backends.pb.h"
@@ -902,6 +904,13 @@ TEST_F(ConfigAssignerTest, DumpHlos) {
   EXPECT_THAT(config_assigner->AssignConfigs(module.get(), should_autotune),
               IsOk());
 
+  const HloInstruction* add =
+      module->entry_computation()->GetInstructionWithName("add");
+  const HloInstruction* copy =
+      module->entry_computation()->GetInstructionWithName("copy");
+  std::string add_fp = AutotuneFingerprintToString(GetHloFingerprint(*add));
+  std::string copy_fp = AutotuneFingerprintToString(GetHloFingerprint(*copy));
+
   std::vector<std::string> files;
   EXPECT_THAT(tsl::Env::Default()->GetChildren(dump_dir.path(), &files),
               IsOk());
@@ -909,11 +918,75 @@ TEST_F(ConfigAssignerTest, DumpHlos) {
   EXPECT_THAT(
       files,
       UnorderedElementsAre(
-          MatchesRegex(".*\\.test_module\\.autotuner_0\\.add\\.before\\.txt"),
-          MatchesRegex(".*\\.test_module\\.autotuner_0\\.add\\.after\\.txt"),
-          MatchesRegex(".*\\.test_module\\.autotuner_1\\.copy\\.after\\.txt"),
-          MatchesRegex(
-              ".*\\.test_module\\.autotuner_1\\.copy\\.before\\.txt")));
+          MatchesRegex(absl::StrCat(".*\\.test_module\\.autotuner_0\\.add\\.",
+                                    add_fp, "\\.before\\.txt")),
+          MatchesRegex(absl::StrCat(".*\\.test_module\\.autotuner_0\\.add\\.",
+                                    add_fp, "\\.after\\.txt")),
+          MatchesRegex(absl::StrCat(".*\\.test_module\\.autotuner_1\\.copy\\.",
+                                    copy_fp, "\\.after\\.txt")),
+          MatchesRegex(absl::StrCat(".*\\.test_module\\.autotuner_1\\.copy\\.",
+                                    copy_fp, "\\.before\\.txt"))));
+}
+
+TEST_F(ConfigAssignerTest, DumpHlosPreservesLargeConstantsAndFingerprint) {
+  ASSERT_OK_AND_ASSIGN(
+      tsl::testing::TemporaryDirectory dump_dir,
+      tsl::testing::TemporaryDirectory::CreateForCurrentTestcase());
+  constexpr absl::string_view kFusionWithLargeConst = R"(
+    HloModule test_module
+    fused_comp {
+      p0 = s32[12] parameter(0)
+      c = s32[12] constant({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
+      ROOT add = s32[12] add(p0, c)
+    }
+    ENTRY main {
+      p0 = s32[12] parameter(0)
+      ROOT fusion = s32[12] fusion(p0), kind=kLoop, calls=fused_comp
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kFusionWithLargeConst));
+  module->mutable_config().mutable_debug_options().set_xla_dump_to(
+      dump_dir.path());
+
+  const HloInstruction* fusion =
+      module->entry_computation()->root_instruction();
+  std::string fp = AutotuneFingerprintToString(GetHloFingerprint(*fusion));
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ConfigAssigner> config_assigner,
+      SetupConfigAssignerWithExpectations(
+          /*instrs_to_autotune=*/{HloOpcode::kFusion},
+          /*instrs_to_apply_config_and_count=*/{{HloOpcode::kFusion, 2}},
+          /*cache=*/nullptr,
+          /*dump_hlos=*/true));
+  EXPECT_THAT(config_assigner->AssignConfigs(module.get(),
+                                             [](const HloInstruction& instr) {
+                                               return instr.opcode() ==
+                                                      HloOpcode::kFusion;
+                                             }),
+              IsOk());
+
+  std::vector<std::string> files;
+  ASSERT_OK(tsl::Env::Default()->GetChildren(dump_dir.path(), &files));
+  std::string before_file;
+  const std::string before_pattern =
+      absl::StrCat(".*\\.autotuner_0\\.fusion\\.", fp, "\\.before\\.txt");
+  for (const std::string& file : files) {
+    if (testing::Matches(MatchesRegex(before_pattern))(file)) {
+      before_file = tsl::io::JoinPath(dump_dir.path(), file);
+    }
+  }
+  ASSERT_FALSE(before_file.empty());
+
+  std::string content;
+  ASSERT_OK(tsl::ReadFileToString(tsl::Env::Default(), before_file, &content));
+  EXPECT_THAT(content, testing::Not(testing::HasSubstr("{...}")));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> parsed_module,
+                       ParseAndReturnVerifiedModule(content));
+  EXPECT_EQ(AutotuneFingerprintToString(GetHloFingerprint(
+                *parsed_module->entry_computation()->root_instruction())),
+            fp);
 }
 
 TEST_F(ConfigAssignerTest, SelectFirstConfigWithEstimatesPicksLowestEstimate) {

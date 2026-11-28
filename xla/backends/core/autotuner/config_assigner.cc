@@ -43,6 +43,7 @@ limitations under the License.
 #include "tsl/platform/protobuf.h"
 #include "xla/autotune_cache.pb.h"
 #include "xla/autotuning.pb.h"
+#include "xla/backends/core/autotuner/autotune_fingerprint.h"
 #include "xla/backends/core/autotuner/autotuner.h"
 #include "xla/backends/core/autotuner/autotuner_cache_interface.h"
 #include "xla/backends/core/autotuner/backends.pb.h"
@@ -668,14 +669,17 @@ absl::Status ConfigAssigner::DumpHlo(const HloInstruction& instr,
   const HloModule* parent_module = instr.GetModule();
   std::unique_ptr<HloModule> module = ExtractInstructionIntoNewModule(instr);
   module->set_name(std::string(instr.name()));
-  std::string id =
-      absl::StrCat("autotuner_", dump_counter_++, ".", instr.name());
+  HloPrintOptions print_options =
+      HloPrintOptions().set_print_large_constants(true);
+  std::string id = absl::StrCat(
+      "autotuner_", dump_counter_++, ".", instr.name().substr(0, 120), ".",
+      AutotuneFingerprintToString(GetHloFingerprint(instr)));
   DumpToFileInDirOrStdout(*parent_module, "", absl::StrCat(id, ".before.txt"),
-                          module->ToString());
+                          module->ToString(print_options));
   HloInstruction* root = module->entry_computation()->root_instruction();
   ABSL_RETURN_IF_ERROR(orchestrator_->ApplyConfig(*root, config));
   DumpToFileInDirOrStdout(*parent_module, "", absl::StrCat(id, ".after.txt"),
-                          module->ToString());
+                          module->ToString(print_options));
   return absl::OkStatus();
 }
 
