@@ -20,7 +20,7 @@ limitations under the License.
 #include "xla/backends/gpu/hlo/transforms/conv_padding_legalization.h"
 #include "xla/backends/gpu/hlo/transforms/conv_rewriter.h"
 #include "xla/backends/gpu/hlo/transforms/cudnn_fused_conv_rewriter.h"
-#include "xla/backends/gpu/hlo/transforms/sycl_gemm_workspace_pass.h"
+#include "xla/backends/gpu/hlo/transforms/onednn_workspace_pass.h"
 #include "xla/backends/gpu/target_lowering/spirv_backend.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/convert_mover.h"
 #include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/reshape_mover.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/service/dump.h"
@@ -119,9 +120,17 @@ absl::Status IntelGpuCompiler::OptimizeHloPostLayoutAssignment(
 
   HloPassPipeline post_pipeline("Intel GPU post-layout_assignment",
                                 compilation_stats);
-  post_pipeline.AddPass<SyclGemmWorkspacePass>(
+  // A deviceless compile has no stream executor; size the workspaces for the
+  // first device then.
+  const int device_ordinal =
+      stream_exec != nullptr ? stream_exec->device_ordinal() : 0;
+  post_pipeline.AddPass<OneDnnWorkspacePass>(
       gpu_topology.gpu_target_config()
-          .device_description.gpu_compute_capability());
+          .device_description.gpu_compute_capability(),
+      device_ordinal);
+  // Clean up the tuples left behind by OneDnnWorkspacePass.
+  post_pipeline.AddPass<TupleSimplifier>();
+  post_pipeline.AddPass<HloDCE>();
   return post_pipeline.Run(hlo_module).status();
 }
 

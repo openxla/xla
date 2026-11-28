@@ -399,11 +399,13 @@ CreateOneDnnMatMulPrimDesc(const dnnl::engine& dnnl_engine,
 
 absl::StatusOr<std::unique_ptr<dnnl::matmul::primitive_desc>>
 CreateMatMulPrimDescFromGemmConfig(const xla::gpu::GemmConfig& config,
-                                   sycl_gemm::GemmBackendEpilogue epilogue) {
+                                   sycl_gemm::GemmBackendEpilogue epilogue,
+                                   int device_ordinal) {
   ABSL_ASSIGN_OR_RETURN(OneDnnMatMulParams params,
                         CreateMatMulParams(config, epilogue));
 
-  dnnl::engine dnnl_engine(dnnl::engine::kind::gpu, 0);
+  ABSL_ASSIGN_OR_RETURN(dnnl::engine dnnl_engine,
+                        GetEngineForDevice(device_ordinal));
   return CreateOneDnnMatMulPrimDesc(dnnl_engine, params);
 }
 
