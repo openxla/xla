@@ -123,5 +123,30 @@ TEST_F(SimplifyFPConversionsTest, PreservesF8E4M3FNQuantizationRoundTrips) {
   }
 }
 
+TEST_F(SimplifyFPConversionsTest, PreservesF8AndSubByteConversions) {
+  for (absl::string_view src_type : {"f32", "bf16", "f16"}) {
+    for (absl::string_view mid_type : {"f8e4m3fn", "f8e5m2", "f4e2m1fn"}) {
+      for (absl::string_view dst_type : {"f16", "bf16", "f32"}) {
+        const std::string module_str = absl::StrFormat(
+            R"(
+    HloModule test
+    ENTRY entry {
+      p0 = %s[2,3] parameter(0)
+      c0 = %s[2,3] convert(p0)
+      c1 = %s[2,3] convert(c0)
+      ROOT ret = (%s[2,3]) tuple(c1)
+    })",
+            src_type, mid_type, dst_type, dst_type);
+        ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                             ParseAndReturnVerifiedModule(module_str));
+        SimplifyFPConversions simplifier;
+        EXPECT_THAT(simplifier.Run(module.get()),
+                    absl_testing::IsOkAndHolds(false))
+            << module_str;
+      }
+    }
+  }
+}
+    
 }  // namespace
 }  // namespace xla
