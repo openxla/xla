@@ -123,9 +123,6 @@ TEST(BackendConfigWrapperTest, EmptyStateIsTrackedCorrectly) {
   EXPECT_TRUE(empty_str.empty());
   EXPECT_TRUE(default_empty == empty_str);
 
-  BackendConfigWrapper stripped_empty(R"("wait_on_operation_queues":[],)");
-  EXPECT_TRUE(stripped_empty.empty());
-
   BackendConfigWrapper from_str(std::string{kRawString});
   EXPECT_FALSE(from_str.empty());
   EXPECT_FALSE(default_empty == from_str);
