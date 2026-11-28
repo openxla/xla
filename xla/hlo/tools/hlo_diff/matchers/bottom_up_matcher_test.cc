@@ -29,6 +29,9 @@
 namespace xla::hlo_diff {
 namespace {
 
+using ::testing::Contains;
+using ::testing::Key;
+using ::testing::Not;
 using ::testing::Pair;
 using ::testing::UnorderedElementsAre;
 
@@ -252,6 +255,59 @@ ENTRY entry {
                   Pair("add.0", "add.0"), Pair("negate.0", "negate.0"),
                   Pair("abs.0", "abs.0"), Pair("param_0", "param_0"),
                   Pair("param_1", "param_1"), Pair("root_L", "root_R")));
+}
+
+TEST_F(BottomUpMatcherTest, DoesNotStealFromExactOperandCounterpart) {
+  // multiply.0's opcode changed, so it has no counterpart. It is visited
+  // before multiply.1, shares operand p0 with it, and must not take
+  // multiply.1, whose operands are mapped exactly to left multiply.1's
+  // operands.
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::VerifiedHloModule> module_l,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[8] parameter(0)
+  p1 = f32[8] parameter(1)
+  p2 = f32[8] parameter(2)
+  multiply.0 = f32[8] multiply(p0, p1)
+  multiply.1 = f32[8] multiply(p0, p2)
+  ROOT tuple = (f32[8], f32[8]) tuple(multiply.0, multiply.1)
+}
+)"));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<const HloGumgraph> graph_l,
+                          HloGumgraph::Create(module_l.get()));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::VerifiedHloModule> module_r,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[8] parameter(0)
+  p1 = f32[8] parameter(1)
+  p2 = f32[8] parameter(2)
+  add.0 = f32[8] add(p0, p1)
+  multiply.1 = f32[8] multiply(p0, p2)
+  ROOT tuple = (f32[8], f32[8]) tuple(add.0, multiply.1)
+}
+)"));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<const HloGumgraph> graph_r,
+                          HloGumgraph::Create(module_r.get()));
+
+  auto mappings = std::make_unique<HloGumgraphMappings>();
+  mappings->MapInstructionsIfAbsent(&graph_l->GetRoot(), &graph_r->GetRoot(),
+                                    MatcherType::kManual);
+  for (const char* name : {"p0", "p1", "p2", "tuple"}) {
+    ASSERT_NO_FATAL_FAILURE(
+        OverwriteMapInstructions(GetNodeByName(*graph_l, name),
+                                 GetNodeByName(*graph_r, name), *mappings));
+  }
+
+  GreedyLimitedCandidatesBottomUpMatcher matcher(graph_l.get(), graph_r.get());
+  matcher.Match(*mappings);
+
+  auto mapped_nodes = ExtractMappedInstructionNames(*mappings);
+  EXPECT_THAT(mapped_nodes, Contains(Pair("multiply.1", "multiply.1")));
+  EXPECT_THAT(mapped_nodes, Not(Contains(Key("multiply.0"))));
 }
 
 }  // namespace
