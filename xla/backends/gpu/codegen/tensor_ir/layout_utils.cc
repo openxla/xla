@@ -69,45 +69,49 @@ namespace {
 // Returns the shapes of the graph results `ImportAndLegalizeComputation`
 // produces for `computation`: the elements of a root tuple, or the root shape
 // itself otherwise.
-absl::StatusOr<absl::Span<const Shape>> GetResultShapes(
+absl::StatusOr<std::vector<const Shape*>> GetResultShapes(
     const HloComputation& computation) {
-  const Shape& root_shape = computation.root_instruction()->shape();
-  absl::Span<const Shape> shapes =
-      root_shape.IsTuple() ? absl::MakeConstSpan(root_shape.tuple_shapes())
-                           : absl::MakeConstSpan(&root_shape, 1);
-  for (const Shape& shape : shapes) {
-    if (!shape.IsArray()) {
+  std::vector<const Shape*> shapes;
+  ShapeUtil::FlattenTupleShape(computation.root_instruction()->shape(), shapes);
+  for (const Shape* shape : shapes) {
+    if (!shape->IsArray()) {
       return absl::InvalidArgumentError(
           absl::StrCat("AttachLayoutStrides: non-array result of computation '",
-                       computation.name(), "': ", shape.ToString()));
+                       computation.name(), "': ", shape->ToString()));
     }
   }
   return shapes;
 }
-
 }  // namespace
 
 absl::Status AttachLayoutStrides(mlir::nv_tensor_ir::GraphOp graph,
                                  const HloComputation& computation) {
-  int64_t num_parameters = computation.num_parameters();
-  if (graph.getNumArguments() != num_parameters) {
-    return absl::InternalError(absl::StrCat(
-        "AttachLayoutStrides: graph '", graph.getSymName().str(), "' has ",
-        graph.getNumArguments(), " arguments, expected ", num_parameters,
-        " for computation '", computation.name(), "'"));
+  std::vector<const Shape*> parameter_shapes;
+  for (const HloInstruction* parameter : computation.parameter_instructions()) {
+    ShapeUtil::FlattenTupleShape(parameter->shape(), parameter_shapes);
+  }
+  for (const Shape* shape : parameter_shapes) {
+    if (!shape->IsArray()) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "AttachLayoutStrides: non-array parameter leaf of computation '",
+          computation.name(), "': ", shape->ToString()));
+    }
+  }
+
+  if (graph.getNumArguments() != parameter_shapes.size()) {
+    return absl::InternalError(
+        absl::StrCat("AttachLayoutStrides: graph '", graph.getSymName().str(),
+                     "' has ", graph.getNumArguments(), " arguments, expected ",
+                     parameter_shapes.size(), " (flattened) for computation '",
+                     computation.name(), "'"));
   }
 
   mlir::MLIRContext* context = graph.getContext();
   mlir::StringAttr stride_attr_name = mlir::StringAttr::get(
       context, mlir::nv_tensor_ir::TensorIRDialect::getStrideAttrName());
 
-  for (int64_t i = 0; i < num_parameters; ++i) {
-    const Shape& shape = computation.parameter_instruction(i)->shape();
-    if (!shape.IsArray()) {
-      return absl::InvalidArgumentError(absl::StrCat(
-          "AttachLayoutStrides: non-array parameter at index ", i,
-          " of computation '", computation.name(), "': ", shape.ToString()));
-    }
+  for (int64_t i = 0; i < parameter_shapes.size(); ++i) {
+    const Shape& shape = *parameter_shapes[i];
     if (!HasDefaultLayout(shape)) {
       graph.setArgAttr(
           i, stride_attr_name,
@@ -115,7 +119,7 @@ absl::Status AttachLayoutStrides(mlir::nv_tensor_ir::GraphOp graph,
     }
   }
 
-  ABSL_ASSIGN_OR_RETURN(absl::Span<const Shape> result_shapes,
+  ABSL_ASSIGN_OR_RETURN(std::vector<const Shape*> result_shapes,
                         GetResultShapes(computation));
   if (graph.getNumResults() != result_shapes.size()) {
     return absl::InternalError(absl::StrCat(
@@ -124,10 +128,11 @@ absl::Status AttachLayoutStrides(mlir::nv_tensor_ir::GraphOp graph,
         " for computation '", computation.name(), "'"));
   }
   for (int64_t i = 0; i < result_shapes.size(); ++i) {
-    if (!HasDefaultLayout(result_shapes[i])) {
-      graph.setResultAttr(i, stride_attr_name,
-                          mlir::StringAttr::get(
-                              context, ComputeStrideString(result_shapes[i])));
+    if (!HasDefaultLayout(*(result_shapes[i]))) {
+      graph.setResultAttr(
+          i, stride_attr_name,
+          mlir::StringAttr::get(context,
+                                ComputeStrideString(*(result_shapes[i]))));
     }
   }
 

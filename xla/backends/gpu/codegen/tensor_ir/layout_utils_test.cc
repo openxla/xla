@@ -273,7 +273,7 @@ TEST_F(AttachLayoutStridesTest, ErrorPathGraphNumArgumentsMismatch) {
   graph.erase();
 }
 
-TEST_F(AttachLayoutStridesTest, ErrorPathTupleParameter) {
+TEST_F(AttachLayoutStridesTest, TupleParameterIsFlattened) {
   constexpr absl::string_view kHloText = R"(
     HloModule test_module
 
@@ -290,11 +290,10 @@ TEST_F(AttachLayoutStridesTest, ErrorPathTupleParameter) {
   mlir::OpBuilder b(&context);
 
   auto t0 = mlir::RankedTensorType::get({4}, b.getF32Type());
-  auto graph = MakeGraph(b, {t0}, {t0});
+  // The importer flattens the tuple parameter into two graph arguments.
+  auto graph = MakeGraph(b, {t0, t0}, {t0});
 
-  EXPECT_THAT(AttachLayoutStrides(graph, *hlo_module->entry_computation()),
-              StatusIs(absl::StatusCode::kInvalidArgument));
-
+  EXPECT_OK(AttachLayoutStrides(graph, *hlo_module->entry_computation()));
   graph.erase();
 }
 

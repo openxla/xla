@@ -48,8 +48,9 @@ bool HasDefaultLayout(const Shape& shape);
 // `ImportAndLegalizeComputation`, so that everyone who imports a computation
 // (the emitter, the autotuner, tools) sees the same graph.
 //
-// `graph` must have exactly one argument per computation parameter and one
-// result per computation result; this mirrors what the importer produces.
+// `graph` must have exactly one argument per flattened computation parameter
+// (tuple parameters contribute one argument per leaf array) and one result per
+// computation result; this mirrors what the importer produces.
 absl::Status AttachLayoutStrides(mlir::nv_tensor_ir::GraphOp graph,
                                  const HloComputation& computation);
 
