@@ -16,9 +16,12 @@ limitations under the License.
 #include "xla/hlo/transforms/conditional_code_motion.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -51,6 +54,8 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
+#include "xla/layout.h"
+#include "xla/literal.h"
 #include "xla/map_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -397,8 +402,8 @@ bool WorthHoisting(HloOpcode op, HloOpcode child_op) {
     case HloOpcode::kDynamicSlice:
     case HloOpcode::kDynamicUpdateSlice:
     case HloOpcode::kGather:
-      // TODO: b/423941718 - Remove these once the bug is fixed.
-      // case HloOpcode::kConcatenate:
+    case HloOpcode::kConcatenate:
+      // TODO: b/423941718 - Remove this once tuple scatter hoisting is fixed.
       // case HloOpcode::kScatter:
       return true;
     default:
@@ -1382,9 +1387,11 @@ class MoveOperandIntoBranch {
         CHECK(op_map_.contains(new_input));
         VLOG(2) << "Mapping operand " << new_input->ToString() << " to "
                 << opd_index;
-        user->AppendOperand(new_input);
-        user->mutable_shape()->mutable_tuple_shapes()->push_back(
-            new_input->shape());
+        if (new_input_in_user == user->operands().end()) {
+          user->AppendOperand(new_input);
+          user->mutable_shape()->mutable_tuple_shapes()->push_back(
+              new_input->shape());
+        }
       }
       // The operands of the argument tuple changed, so its OriginalValue is
       // reassembled from them.
@@ -1803,6 +1810,64 @@ class GroupConnectedBoundaries {
         VLOG(1) << "Do not move GetTupleElement.";
         return false;
       }
+      // Do not sink size-shrinking slice/gather operands whose un-sliced source
+      // buffer is larger than the sliced output (b/423941718): pulling the
+      // large buffer across the conditional boundary inflates branch live-in
+      // memory even on standalone second-pass visits.
+      if ((opcode == HloOpcode::kSlice || opcode == HloOpcode::kDynamicSlice ||
+           opcode == HloOpcode::kGather) &&
+          instruction->shape().IsArray() && instruction->shape().is_static() &&
+          instruction->operand_count() > 0 &&
+          instruction->operand(0)->shape().IsArray() &&
+          instruction->operand(0)->shape().is_static()) {
+        const int64_t out_bytes = ShapeUtil::ByteSizeOfPrimitiveType(
+                                      instruction->shape().element_type()) *
+                                  ShapeUtil::ElementsIn(instruction->shape());
+        const int64_t src_bytes =
+            ShapeUtil::ByteSizeOfPrimitiveType(
+                instruction->operand(0)->shape().element_type()) *
+            ShapeUtil::ElementsIn(instruction->operand(0)->shape());
+        constexpr int64_t kTinyDynamicSliceAllowanceBytes = 64;
+        const int64_t limit = (opcode == HloOpcode::kDynamicSlice)
+                                  ? out_bytes + kTinyDynamicSliceAllowanceBytes
+                                  : out_bytes;
+        if (src_bytes > limit) {
+          return false;
+        }
+      }
+    }
+
+    // Only allow HBM-neutral single-branch operand sinking for `kConcatenate`
+    // (never move-out from branches or legacy single-user sinking; contiguous
+    // multi-output user runs are handled by
+    // TrySinkConditionalConcatenateUserRuns).
+    if (opcode == HloOpcode::kConcatenate) {
+      constexpr int64_t kMaxSunkOperandConcatArity = 16;
+      if (pos != Boundary::Position::kOutsideBranchOperand || has_outfeed_ ||
+          instruction->operand_count() > kMaxSunkOperandConcatArity ||
+          instruction->user_count() != 1 ||
+          instruction->HasControlDependencies() ||
+          instruction->has_frontend_attributes() ||
+          !instruction->shape().IsArray() ||
+          !instruction->shape().is_static()) {
+        return false;
+      }
+      if (is_layout_sensitive_ &&
+          (!instruction->shape().has_layout() ||
+           instruction->shape().layout().memory_space() !=
+               Layout::kDefaultMemorySpace)) {
+        return false;
+      }
+      const HloInstruction* direct_user = instruction->users().front();
+      if (direct_user->opcode() != HloOpcode::kTuple ||
+          direct_user->user_count() != 1 ||
+          direct_user->users().front() != conditional_ ||
+          absl::c_count(
+              absl::MakeConstSpan(conditional_->operands()).subspan(1),
+              direct_user) != 1 ||
+          absl::c_count(direct_user->operands(), instruction) != 1) {
+        return false;
+      }
     }
 
     // It is not safe to move collective ops from outside to inside
@@ -2154,17 +2219,50 @@ class GroupConnectedBoundaries {
   // It might be nice to refactor this function to factor the outside-inside
   // considerations into separate function pointer parameters to improve
   // readability.
+  static bool ExpandsUniqueNonConstantOperandBytes(const HloInstruction* inst) {
+    if (inst == nullptr || !inst->shape().IsArray() ||
+        !inst->shape().is_static()) {
+      return false;
+    }
+    const int64_t out_bytes =
+        ShapeUtil::ByteSizeOfPrimitiveType(inst->shape().element_type()) *
+        ShapeUtil::ElementsIn(inst->shape());
+    int64_t unique_in_bytes = 0;
+    absl::flat_hash_set<const HloInstruction*> seen;
+    for (const HloInstruction* op : inst->operands()) {
+      if (op->opcode() == HloOpcode::kConstant || !seen.insert(op).second ||
+          !op->shape().IsArray() || !op->shape().is_static()) {
+        continue;
+      }
+      unique_in_bytes +=
+          ShapeUtil::ByteSizeOfPrimitiveType(op->shape().element_type()) *
+          ShapeUtil::ElementsIn(op->shape());
+      if (unique_in_bytes > out_bytes) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   void AddBoundaries(const Boundary& boundary) {
     BoundaryVisitor visitor;
     visitor.AddToWorkList(boundary);
     int64_t boundary_index = 0;
+    bool group_has_concat = false;
     while (visitor.HasNextBoundary()) {
       Boundary b = visitor.PopNextBoundary();
       VLOG(1) << "visiting boundary " << b.ToString() << "\n";
       VLOG(1) << "boundary index=" << boundary_index << "\n";
-      if ((b.IsOutsideBranchUser() || b.IsOutsideBranchOperand() ||
+      const bool non_expanding_ok =
+          !(group_has_concat && b.IsOutsideBranchOperand() &&
+            ExpandsUniqueNonConstantOperandBytes(b[0]));
+      if (non_expanding_ok &&
+          (b.IsOutsideBranchUser() || b.IsOutsideBranchOperand() ||
            InstructionWithinBranchIdentical(b, is_layout_sensitive_)) &&
           IsSafeToMoveBoundary(b) && WorthHoisting(b, boundary_index)) {
+        if (b[0]->opcode() == HloOpcode::kConcatenate) {
+          group_has_concat = true;
+        }
         connected_boundaries_.push_back(b);
         boundary_index++;
         auto output_size = CalculateMemorySize(b[0]);
@@ -2374,6 +2472,500 @@ void CompactTupleSharding(const HloInstruction* old_root,
   }
 }
 
+bool ComputationContainsOutfeed(
+    const HloComputation* comp,
+    absl::flat_hash_set<const HloComputation*>* visited) {
+  if (comp == nullptr || !visited->insert(comp).second) {
+    return false;
+  }
+  for (const HloInstruction* inst : comp->instructions()) {
+    if (inst->opcode() == HloOpcode::kOutfeed) {
+      return true;
+    }
+    for (const HloComputation* callee : inst->called_computations()) {
+      if (ComputationContainsOutfeed(callee, visited)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool HasNonTiledSinkableSharding(const HloInstruction* inst) {
+  if (!inst->has_sharding()) {
+    return true;
+  }
+  const HloSharding& s = inst->sharding();
+  return !s.IsTuple() &&
+         (s.IsReplicated() || s.IsSingleDevice() || s.IsManual());
+}
+
+bool HasOnlyBarrierWrapFrontendAttr(const HloInstruction* gte) {
+  const auto& attrs = gte->frontend_attributes().map();
+  return attrs.empty() || (attrs.size() == 1 && attrs.contains("barrier_wrap"));
+}
+
+bool HasDefaultTileFreeArrayLayout(const Shape& shape,
+                                   bool is_layout_sensitive) {
+  if (!shape.IsArray() || !shape.is_static()) {
+    return false;
+  }
+  if (!is_layout_sensitive) {
+    return true;
+  }
+  return shape.has_layout() &&
+         shape.layout().memory_space() == Layout::kDefaultMemorySpace &&
+         shape.layout().tiles().empty();
+}
+
+// Extracts an effective-scalar `kConstant` when `inst` evaluates to a uniform
+// scalar replicated across all elements (peeling `kReshape`, `kCopy`, and
+// empty-dimension `kBroadcast`), or nullptr otherwise.
+const HloInstruction* ExtractReplicatedScalarConstant(
+    const HloInstruction* inst, PrimitiveType expected_type) {
+  const HloInstruction* cur = inst;
+  for (int depth = 0; cur != nullptr && depth < 16; ++depth) {
+    if (cur->HasControlDependencies() || cur->HasSideEffect() ||
+        cur->shape().element_type() != expected_type) {
+      return nullptr;
+    }
+    if (cur->opcode() == HloOpcode::kReshape ||
+        cur->opcode() == HloOpcode::kCopy) {
+      cur = cur->operand(0);
+      continue;
+    }
+    if (cur->opcode() == HloOpcode::kBroadcast && cur->dimensions().empty()) {
+      cur = cur->operand(0);
+      continue;
+    }
+    if (cur->opcode() == HloOpcode::kConstant &&
+        ShapeUtil::IsEffectiveScalar(cur->shape())) {
+      return cur;
+    }
+    return nullptr;
+  }
+  return nullptr;
+}
+
+bool HaveIdenticalRawScalarBytes(const HloInstruction* a,
+                                 const HloInstruction* b) {
+  if (a == nullptr || b == nullptr ||
+      a->shape().element_type() != b->shape().element_type()) {
+    return false;
+  }
+  const int64_t bytes = a->literal().size_bytes();
+  if (bytes <= 0 || bytes != b->literal().size_bytes()) {
+    return false;
+  }
+  return std::memcmp(a->literal().untyped_data(), b->literal().untyped_data(),
+                     static_cast<size_t>(bytes)) == 0;
+}
+
+struct MatchedConcatSlot {
+  HloInstruction* gte = nullptr;
+  HloInstruction* reshape = nullptr;
+  int64_t tuple_index = -1;
+  bool barrier_wrap = false;
+  std::string barrier_wrap_val;
+};
+
+std::optional<MatchedConcatSlot> MatchSingleUseConditionalConcatOperand(
+    HloInstruction* op, const HloInstruction* conditional,
+    const Layout* required_layout, bool is_layout_sensitive,
+    const absl::flat_hash_map<int64_t, int64_t>& gte_count_per_index,
+    const absl::flat_hash_map<const HloInstruction*, int64_t>& in_cat_count) {
+  const auto cnt_it = in_cat_count.find(op);
+  if (cnt_it == in_cat_count.end() || cnt_it->second != 1 ||
+      !HasDefaultTileFreeArrayLayout(op->shape(), is_layout_sensitive)) {
+    return std::nullopt;
+  }
+  if (is_layout_sensitive && required_layout != nullptr &&
+      op->shape().layout() != *required_layout) {
+    return std::nullopt;
+  }
+  HloInstruction* reshape = nullptr;
+  HloInstruction* cur = op;
+  if (cur->opcode() == HloOpcode::kReshape) {
+    if (cur->user_count() != 1 || cur->IsRoot() ||
+        cur->HasControlDependencies() || cur->has_frontend_attributes() ||
+        !HasNonTiledSinkableSharding(cur) ||
+        ShapeUtil::ElementsIn(cur->shape()) !=
+            ShapeUtil::ElementsIn(cur->operand(0)->shape())) {
+      return std::nullopt;
+    }
+    reshape = cur;
+    cur = cur->mutable_operand(0);
+  }
+  if (cur->opcode() != HloOpcode::kGetTupleElement ||
+      cur->operand(0) != conditional || cur->user_count() != 1 ||
+      cur->IsRoot() || cur->HasControlDependencies() ||
+      !HasOnlyBarrierWrapFrontendAttr(cur) ||
+      !HasDefaultTileFreeArrayLayout(cur->shape(), is_layout_sensitive)) {
+    return std::nullopt;
+  }
+  const int64_t tidx = cur->tuple_index();
+  const auto gte_it = gte_count_per_index.find(tidx);
+  if (gte_it == gte_count_per_index.end() || gte_it->second != 1) {
+    return std::nullopt;
+  }
+  MatchedConcatSlot slot;
+  slot.gte = cur;
+  slot.reshape = reshape;
+  slot.tuple_index = tidx;
+  if (const auto bw = cur->frontend_attributes().map().find("barrier_wrap");
+      bw != cur->frontend_attributes().map().end()) {
+    slot.barrier_wrap = true;
+    slot.barrier_wrap_val = bw->second;
+  }
+  return slot;
+}
+
+Literal MakeRank0ScalarLiteralFromEffectiveScalar(const HloInstruction* c0) {
+  Literal out(ShapeUtil::MakeShape(c0->shape().element_type(), {}));
+  const int64_t bytes = out.size_bytes();
+  if (bytes > 0 && bytes == c0->literal().size_bytes()) {
+    std::memcpy(out.untyped_data(), c0->literal().untyped_data(),
+                static_cast<size_t>(bytes));
+  }
+  return out;
+}
+
+absl::Status RemoveUnusedBranchOutputs(HloInstruction* conditional);
+
+absl::StatusOr<bool> SinkConditionalConcatenateUserRunsImpl(
+    HloInstruction* conditional, bool is_layout_sensitive) {
+  if (conditional == nullptr ||
+      conditional->opcode() != HloOpcode::kConditional ||
+      conditional->branch_count() < 2 || conditional->IsRoot() ||
+      conditional->HasControlDependencies() ||
+      !conditional->shape().IsTuple()) {
+    return false;
+  }
+  const int64_t old_arity = conditional->shape().tuple_shapes().size();
+  if (old_arity < 2) {
+    return false;
+  }
+  absl::flat_hash_set<const HloComputation*> distinct_branches;
+  for (HloComputation* branch : conditional->branch_computations()) {
+    if (!distinct_branches.insert(branch).second) {
+      return false;
+    }
+    const HloInstruction* root = branch->root_instruction();
+    if (root->opcode() != HloOpcode::kTuple || root->HasControlDependencies() ||
+        root->operand_count() != old_arity) {
+      return false;
+    }
+  }
+
+  absl::flat_hash_map<int64_t, int64_t> gte_count_per_index;
+  for (const HloInstruction* user : conditional->users()) {
+    if (user->opcode() != HloOpcode::kGetTupleElement) {
+      return false;
+    }
+    ++gte_count_per_index[user->tuple_index()];
+  }
+
+  struct ConcatRun {
+    size_t begin = 0;
+    size_t end = 0;
+    Shape sub_shape;
+    std::vector<MatchedConcatSlot> slots;
+    int64_t new_tuple_index = -1;
+  };
+  struct ConcatPlan {
+    HloInstruction* cat = nullptr;
+    std::vector<ConcatRun> runs;
+  };
+
+  constexpr int64_t kMaxSunkConcatRunBytes = int64_t{1} << 20;  // 1 MiB.
+  HloComputation* parent = conditional->parent();
+  absl::flat_hash_set<int64_t> claimed_indices;
+  std::vector<ConcatPlan> plans;
+
+  for (HloInstruction* inst : parent->MakeInstructionPostOrder()) {
+    if (inst->opcode() != HloOpcode::kConcatenate ||
+        inst->operand_count() < 2 || inst->HasControlDependencies() ||
+        inst->has_frontend_attributes() || !HasNonTiledSinkableSharding(inst) ||
+        !HasDefaultTileFreeArrayLayout(inst->shape(), is_layout_sensitive)) {
+      continue;
+    }
+    const int64_t concat_dim = inst->concatenate_dimension();
+    const int64_t elem_bytes =
+        ShapeUtil::ByteSizeOfPrimitiveType(inst->shape().element_type());
+    const Layout* req_layout =
+        is_layout_sensitive ? &inst->shape().layout() : nullptr;
+
+    absl::flat_hash_map<const HloInstruction*, int64_t> in_cat_count;
+    in_cat_count.reserve(inst->operand_count());
+    for (const HloInstruction* op : inst->operands()) {
+      ++in_cat_count[op];
+    }
+
+    ConcatPlan plan;
+    plan.cat = inst;
+    const size_t num_ops = static_cast<size_t>(inst->operand_count());
+    size_t pos = 0;
+    while (pos < num_ops) {
+      std::optional<MatchedConcatSlot> first =
+          MatchSingleUseConditionalConcatOperand(
+              inst->mutable_operand(pos), conditional, req_layout,
+              is_layout_sensitive, gte_count_per_index, in_cat_count);
+      if (!first.has_value() || claimed_indices.contains(first->tuple_index)) {
+        ++pos;
+        continue;
+      }
+      const Shape& first_shape = inst->operand(pos)->shape();
+      const int64_t first_bytes =
+          elem_bytes * ShapeUtil::ElementsIn(first_shape);
+      if (first_bytes > kMaxSunkConcatRunBytes) {
+        ++pos;
+        continue;
+      }
+
+      std::vector<MatchedConcatSlot> run_slots;
+      absl::flat_hash_set<int64_t> run_indices;
+      run_slots.push_back(std::move(*first));
+      run_indices.insert(run_slots.back().tuple_index);
+      int64_t dim_sum = first_shape.dimensions(concat_dim);
+      int64_t bytes_sum = first_bytes;
+      size_t end = pos + 1;
+      while (end < num_ops) {
+        const Shape& next_shape = inst->operand(end)->shape();
+        const int64_t next_bytes =
+            elem_bytes * ShapeUtil::ElementsIn(next_shape);
+        if (bytes_sum > kMaxSunkConcatRunBytes - next_bytes) {
+          break;
+        }
+        std::optional<MatchedConcatSlot> next =
+            MatchSingleUseConditionalConcatOperand(
+                inst->mutable_operand(end), conditional, req_layout,
+                is_layout_sensitive, gte_count_per_index, in_cat_count);
+        if (!next.has_value() || claimed_indices.contains(next->tuple_index) ||
+            run_indices.contains(next->tuple_index)) {
+          break;
+        }
+        dim_sum += next_shape.dimensions(concat_dim);
+        bytes_sum += next_bytes;
+        run_indices.insert(next->tuple_index);
+        run_slots.push_back(std::move(*next));
+        ++end;
+      }
+
+      if (run_slots.size() >= 2) {
+        for (const MatchedConcatSlot& slot : run_slots) {
+          claimed_indices.insert(slot.tuple_index);
+        }
+        Shape sub_shape = inst->shape();
+        sub_shape.set_dimensions(concat_dim, dim_sum);
+        if (!is_layout_sensitive) {
+          sub_shape.clear_layout();
+        }
+        plan.runs.push_back(ConcatRun{pos, end, std::move(sub_shape),
+                                      std::move(run_slots), -1});
+        pos = end;
+      } else {
+        ++pos;
+      }
+    }
+    if (!plan.runs.empty()) {
+      plans.push_back(std::move(plan));
+    }
+  }
+
+  if (plans.empty()) {
+    return false;
+  }
+
+  const std::shared_ptr<OriginalValue> old_original_value =
+      conditional->original_value();
+  std::vector<std::shared_ptr<OriginalValue>> moved_in_original_values;
+  std::vector<HloInstruction*> dead_reshapes;
+  std::vector<HloInstruction*> dead_gtes;
+  std::vector<std::pair<HloComputation*, HloInstruction*>> maybe_dead_in_branch;
+  absl::flat_hash_set<const HloInstruction*> seen_maybe_dead;
+  int64_t next_tuple_index = old_arity;
+
+  for (ConcatPlan& plan : plans) {
+    HloInstruction* cat = plan.cat;
+    const int64_t concat_dim = cat->concatenate_dimension();
+    const size_t num_ops = static_cast<size_t>(cat->operand_count());
+    const bool is_full_concat =
+        (plan.runs.size() == 1 && plan.runs[0].begin == 0 &&
+         plan.runs[0].end == num_ops);
+
+    for (ConcatRun& run : plan.runs) {
+      run.new_tuple_index = next_tuple_index++;
+      for (HloComputation* branch : conditional->branch_computations()) {
+        HloInstruction* root = branch->root_instruction();
+        const HloInstruction* ref_const = ExtractReplicatedScalarConstant(
+            root->operand(run.slots[0].tuple_index),
+            run.sub_shape.element_type());
+        bool all_same_scalar = (ref_const != nullptr);
+        for (size_t i = 1; all_same_scalar && i < run.slots.size(); ++i) {
+          const HloInstruction* ci = ExtractReplicatedScalarConstant(
+              root->operand(run.slots[i].tuple_index),
+              run.sub_shape.element_type());
+          if (!HaveIdenticalRawScalarBytes(ref_const, ci)) {
+            all_same_scalar = false;
+          }
+        }
+
+        HloInstruction* branch_val = nullptr;
+        if (all_same_scalar) {
+          for (const MatchedConcatSlot& slot : run.slots) {
+            HloInstruction* cand = root->mutable_operand(slot.tuple_index);
+            if (seen_maybe_dead.insert(cand).second) {
+              maybe_dead_in_branch.emplace_back(branch, cand);
+            }
+          }
+          HloInstruction* scalar_c =
+              branch->AddInstruction(HloInstruction::CreateConstant(
+                  MakeRank0ScalarLiteralFromEffectiveScalar(ref_const)));
+          branch_val = branch->AddInstruction(
+              HloInstruction::CreateBroadcast(run.sub_shape, scalar_c, {}));
+        } else {
+          std::vector<HloInstruction*> cat_elems;
+          cat_elems.reserve(run.slots.size());
+          for (const MatchedConcatSlot& slot : run.slots) {
+            HloInstruction* elem = root->mutable_operand(slot.tuple_index);
+            if (slot.reshape != nullptr) {
+              Shape rshape = slot.reshape->shape();
+              if (!is_layout_sensitive) {
+                rshape.clear_layout();
+              }
+              elem = branch->AddInstruction(
+                  HloInstruction::CreateReshape(rshape, elem));
+              if (slot.reshape->has_sharding()) {
+                elem->set_sharding(slot.reshape->sharding());
+              }
+            }
+            cat_elems.push_back(elem);
+          }
+          branch_val = branch->AddInstruction(HloInstruction::CreateConcatenate(
+              run.sub_shape, cat_elems, concat_dim));
+        }
+        branch_val->set_metadata(cat->metadata());
+        if (cat->has_sharding()) {
+          branch_val->set_sharding(cat->sharding());
+        }
+        if (is_full_concat) {
+          branch_val->set_original_value(cat->original_value());
+        }
+        root->AppendOperand(branch_val);
+        *root->mutable_shape()->add_tuple_shapes() = branch_val->shape();
+        root->set_original_value(OriginalValue::CreateFromInstruction(root));
+        UpdateShardingForWidenedBranchArgument(root, root);
+      }
+      moved_in_original_values.push_back(is_full_concat ? cat->original_value()
+                                                        : nullptr);
+      for (const MatchedConcatSlot& slot : run.slots) {
+        if (slot.reshape != nullptr) {
+          dead_reshapes.push_back(slot.reshape);
+        }
+        dead_gtes.push_back(slot.gte);
+      }
+    }
+  }
+
+  HloInstruction* new_branch0_root =
+      conditional->branch_computation(0)->root_instruction();
+  *conditional->mutable_shape() = new_branch0_root->shape();
+  conditional->set_original_value(
+      BuildOriginalValueForConditionalWithMovedInInstructions(
+          conditional->shape(), old_original_value, old_arity,
+          moved_in_original_values));
+  conditional->copy_sharding(new_branch0_root);
+
+  for (ConcatPlan& plan : plans) {
+    HloInstruction* cat = plan.cat;
+    const size_t num_ops = static_cast<size_t>(cat->operand_count());
+    auto make_run_gte = [&](const ConcatRun& run, bool full) {
+      HloInstruction* gte =
+          parent->AddInstruction(HloInstruction::CreateGetTupleElement(
+              run.sub_shape, conditional, run.new_tuple_index));
+      if (cat->has_sharding()) {
+        gte->set_sharding(cat->sharding());
+      }
+      if (full) {
+        gte->set_original_value(cat->original_value());
+      }
+      for (const MatchedConcatSlot& slot : run.slots) {
+        if (slot.barrier_wrap) {
+          gte->add_frontend_attribute("barrier_wrap", slot.barrier_wrap_val);
+          break;
+        }
+      }
+      return gte;
+    };
+
+    if (plan.runs.size() == 1 && plan.runs[0].begin == 0 &&
+        plan.runs[0].end == num_ops) {
+      HloInstruction* gte = make_run_gte(plan.runs[0], /*full=*/true);
+      ABSL_RETURN_IF_ERROR(cat->ReplaceAllUsesWith(gte));
+      if (parent->root_instruction() == cat) {
+        parent->set_root_instruction(gte);
+      }
+      if (cat->IsDead() && parent->IsSafelyRemovable(cat)) {
+        ABSL_RETURN_IF_ERROR(parent->RemoveInstruction(cat));
+      }
+      continue;
+    }
+
+    std::vector<HloInstruction*> new_ops;
+    new_ops.reserve(num_ops);
+    size_t run_idx = 0;
+    size_t pos = 0;
+    while (pos < num_ops) {
+      if (run_idx < plan.runs.size() && plan.runs[run_idx].begin == pos) {
+        new_ops.push_back(make_run_gte(plan.runs[run_idx], /*full=*/false));
+        pos = plan.runs[run_idx].end;
+        ++run_idx;
+      } else {
+        new_ops.push_back(cat->mutable_operand(pos));
+        ++pos;
+      }
+    }
+    HloInstruction* new_cat =
+        parent->AddInstruction(HloInstruction::CreateConcatenate(
+            cat->shape(), new_ops, cat->concatenate_dimension()));
+    new_cat->set_metadata(cat->metadata());
+    new_cat->set_original_value(cat->original_value());
+    if (cat->has_sharding()) {
+      new_cat->set_sharding(cat->sharding());
+    }
+    ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(cat, new_cat));
+  }
+
+  for (HloInstruction* r : dead_reshapes) {
+    if (r->parent() != nullptr && r->IsDead() && parent->IsSafelyRemovable(r)) {
+      ABSL_RETURN_IF_ERROR(parent->RemoveInstruction(r));
+    }
+  }
+  for (HloInstruction* g : dead_gtes) {
+    if (g->parent() != nullptr && g->IsDead() && parent->IsSafelyRemovable(g)) {
+      ABSL_RETURN_IF_ERROR(parent->RemoveInstruction(g));
+    }
+  }
+  ABSL_RETURN_IF_ERROR(RemoveUnusedBranchOutputs(conditional));
+
+  // Prune dead constant-broadcast/reshape/copy chains left behind in folded
+  // branches so folded branches shrink immediately.
+  absl::flat_hash_set<const HloInstruction*> removed_in_branch;
+  for (const auto& [branch, root_op] : maybe_dead_in_branch) {
+    HloInstruction* cur = root_op;
+    while (cur != nullptr && !removed_in_branch.contains(cur) &&
+           cur->parent() == branch && cur->IsDead() &&
+           branch->IsSafelyRemovable(cur)) {
+      HloInstruction* next =
+          cur->operand_count() == 1 ? cur->mutable_operand(0) : nullptr;
+      removed_in_branch.insert(cur);
+      ABSL_RETURN_IF_ERROR(branch->RemoveInstruction(cur));
+      cur = next;
+    }
+  }
+  return true;
+}
+
 // Compacts unused tuple elements out of `conditional` and its branch roots
 // after MoveUserInstructionsIn and dead-instruction removal. Computing liveness
 // from the surviving GTE users handles duplicate GTEs, root GTEs, control-dep
@@ -2537,12 +3129,14 @@ absl::StatusOr<bool> ConditionalCodeMotion::RunImpl(
     std::vector<std::vector<Boundary>> new_boundaries_for_movein;
     // Shared by the analyses of all boundaries of this conditional.
     ConditionalAnalysisState analysis;
-    analysis.has_outfeed = absl::c_any_of(
-        conditional->called_computations(),
-        [](const HloComputation* computation) {
-          return absl::c_any_of(computation->instructions(),
-                                HloPredicateIsOp<HloOpcode::kOutfeed>);
-        });
+    {
+      absl::flat_hash_set<const HloComputation*> visited_comps;
+      analysis.has_outfeed = absl::c_any_of(
+          conditional->called_computations(),
+          [&](const HloComputation* computation) {
+            return ComputationContainsOutfeed(computation, &visited_comps);
+          });
+    }
     int benefit_move_out = 0, benefit_move_in = 0;
     Decision::Direction final_d = Decision::Direction::kNoChange;
     // The conditional is moved into a worklist as the seed (starting point).
@@ -2736,6 +3330,12 @@ absl::StatusOr<bool> ConditionalCodeMotion::RunImpl(
       }
       changed |= convert_result;
     }
+    if (pursue_full_conditional_code_motion_ && !conditional_is_shared &&
+        !analysis.has_outfeed && conditional->parent() != nullptr) {
+      ABSL_ASSIGN_OR_RETURN(const bool concat_runs_sunk,
+                            TrySinkConditionalConcatenateUserRuns(conditional));
+      changed |= concat_runs_sunk;
+    }
   }
   if (changed) {
     HloPassPipeline subpipeline(
@@ -2836,6 +3436,13 @@ void ConditionalCodeMotion::ParseSearchConfiguration(
     VLOG(2) << "Setting search config " << condition_index << "->" << cur_config
             << "\n";
   }
+}
+
+absl::StatusOr<bool>
+ConditionalCodeMotion::TrySinkConditionalConcatenateUserRuns(
+    HloInstruction* conditional) {
+  return SinkConditionalConcatenateUserRunsImpl(conditional,
+                                                is_layout_sensitive_);
 }
 
 }  // namespace conditional_opt
