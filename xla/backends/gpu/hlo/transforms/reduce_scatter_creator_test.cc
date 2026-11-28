@@ -15,14 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/hlo/transforms/reduce_scatter_creator.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <utility>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
@@ -39,9 +38,11 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/pattern_matcher.h"
+#include "xla/shape_util.h"
 #include "xla/side_effect_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -135,6 +136,551 @@ ENTRY %AllReduce {
   const auto* rs = Cast<HloReduceScatterInstruction>(
       module->entry_computation()->root_instruction());
   EXPECT_EQ(rs->scatter_dimension(), 0) << rs->ToString();
+  EXPECT_EQ(AllReduceCount(module), 0);
+}
+
+TEST_F(GpuReduceScatterCreatorTest, AllReplicasThroughScalarMultiplyAndCopy) {
+  absl::string_view hlo_string = R"hlo(
+HloModule AllReduce
+
+%sum {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %AllReduce {
+  %param = f32[32,8,128]{2,1,0} parameter(0)
+  %scale = f32[] parameter(1)
+  %all-reduce = f32[32,8,128]{2,1,0} all-reduce(%param),
+    replica_groups={}, to_apply=%sum
+  %table = s32[8]{0} constant({0,1,2,3,4,5,6,7})
+  %rid = u32[] replica-id()
+  %id = s32[1] dynamic-slice(%table, %rid), dynamic_slice_sizes={1}
+  %reshape = s32[] reshape(%id)
+  %slice_size = s32[] constant(4)
+  %offset = s32[] multiply(%reshape, %slice_size)
+  %zero = s32[] constant(0)
+  %scale_bcast = f32[32,8,128]{2,1,0} broadcast(%scale), dimensions={}
+  %scaled = f32[32,8,128]{2,1,0} multiply(%all-reduce, %scale_bcast)
+  %copy = f32[32,8,128]{2,1,0} copy(%scaled)
+  ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%copy, %offset, %zero, %zero),
+    dynamic_slice_sizes={4,8,128}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                            /*num_replicas=*/8,
+                                            /*num_partitions=*/1,
+                                            /*use_spmd_partitioning=*/false,
+                                            /*expect_change=*/true));
+  // The multiply and the copy now run on the result of the reduce-scatter.
+  const HloInstruction* rs = nullptr;
+  ASSERT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Copy(m::Multiply(m::ReduceScatter(&rs, m::Parameter(0)),
+                                     m::Broadcast(m::Parameter(1))))));
+  EXPECT_EQ(Cast<HloReduceScatterInstruction>(rs)->scatter_dimension(), 0)
+      << rs->ToString();
+  EXPECT_EQ(module->entry_computation()->root_instruction()->shape(),
+            ShapeUtil::MakeShape(F32, {4, 8, 128}));
+  EXPECT_EQ(AllReduceCount(module), 0);
+}
+
+TEST_F(GpuReduceScatterCreatorTest, AllReplicasThroughConvert) {
+  absl::string_view hlo_string = R"hlo(
+HloModule AllReduce
+
+%sum {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %AllReduce {
+  %param = f32[32,8,128]{2,1,0} parameter(0)
+  %all-reduce = f32[32,8,128]{2,1,0} all-reduce(%param),
+    replica_groups={}, to_apply=%sum
+  %table = s32[8]{0} constant({0,1,2,3,4,5,6,7})
+  %rid = u32[] replica-id()
+  %id = s32[1] dynamic-slice(%table, %rid), dynamic_slice_sizes={1}
+  %reshape = s32[] reshape(%id)
+  %slice_size = s32[] constant(4)
+  %offset = s32[] multiply(%reshape, %slice_size)
+  %zero = s32[] constant(0)
+  %convert = bf16[32,8,128]{2,1,0} convert(%all-reduce)
+  ROOT %dynamic-slice = bf16[4,8,128] dynamic-slice(%convert, %offset, %zero, %zero),
+    dynamic_slice_sizes={4,8,128}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                            /*num_replicas=*/8,
+                                            /*num_partitions=*/1,
+                                            /*use_spmd_partitioning=*/false,
+                                            /*expect_change=*/true));
+  ASSERT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Convert(m::ReduceScatter(m::Parameter(0)))));
+  EXPECT_EQ(module->entry_computation()->root_instruction()->shape(),
+            ShapeUtil::MakeShape(BF16, {4, 8, 128}));
+  EXPECT_EQ(AllReduceCount(module), 0);
+}
+
+TEST_F(GpuReduceScatterCreatorTest, AllReplicasThroughNonScalarMultiply) {
+  // The other operand of the multiply is not a scalar broadcast, so the
+  // dynamic-slice cannot be moved next to the all-reduce.
+  absl::string_view hlo_string = R"hlo(
+HloModule AllReduce
+
+%sum {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %AllReduce {
+  %param = f32[32,8,128]{2,1,0} parameter(0)
+  %all-reduce = f32[32,8,128]{2,1,0} all-reduce(%param),
+    replica_groups={}, to_apply=%sum
+  %table = s32[8]{0} constant({0,1,2,3,4,5,6,7})
+  %rid = u32[] replica-id()
+  %id = s32[1] dynamic-slice(%table, %rid), dynamic_slice_sizes={1}
+  %reshape = s32[] reshape(%id)
+  %slice_size = s32[] constant(4)
+  %offset = s32[] multiply(%reshape, %slice_size)
+  %zero = s32[] constant(0)
+  %scaled = f32[32,8,128]{2,1,0} multiply(%all-reduce, %param)
+  ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%scaled, %offset, %zero, %zero),
+    dynamic_slice_sizes={4,8,128}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                            /*num_replicas=*/8,
+                                            /*num_partitions=*/1,
+                                            /*use_spmd_partitioning=*/false,
+                                            /*expect_change=*/false));
+  EXPECT_EQ(AllReduceCount(module), 1);
+  EXPECT_EQ(ReduceScatterCount(module), 0);
+}
+
+TEST_F(GpuReduceScatterCreatorTest, AllReplicasScaledResultWithTwoUsers) {
+  // The scaled all-reduce result is also used in full, so it has to stay.
+  absl::string_view hlo_string = R"hlo(
+HloModule AllReduce
+
+%sum {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %AllReduce {
+  %param = f32[32,8,128]{2,1,0} parameter(0)
+  %scale = f32[] parameter(1)
+  %all-reduce = f32[32,8,128]{2,1,0} all-reduce(%param),
+    replica_groups={}, to_apply=%sum
+  %table = s32[8]{0} constant({0,1,2,3,4,5,6,7})
+  %rid = u32[] replica-id()
+  %id = s32[1] dynamic-slice(%table, %rid), dynamic_slice_sizes={1}
+  %reshape = s32[] reshape(%id)
+  %slice_size = s32[] constant(4)
+  %offset = s32[] multiply(%reshape, %slice_size)
+  %zero = s32[] constant(0)
+  %scale_bcast = f32[32,8,128]{2,1,0} broadcast(%scale), dimensions={}
+  %scaled = f32[32,8,128]{2,1,0} multiply(%all-reduce, %scale_bcast)
+  %dynamic-slice = f32[4,8,128] dynamic-slice(%scaled, %offset, %zero, %zero),
+    dynamic_slice_sizes={4,8,128}
+  ROOT %tuple = (f32[32,8,128], f32[4,8,128]) tuple(%scaled, %dynamic-slice)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                            /*num_replicas=*/8,
+                                            /*num_partitions=*/1,
+                                            /*use_spmd_partitioning=*/false,
+                                            /*expect_change=*/false));
+  EXPECT_EQ(AllReduceCount(module), 1);
+  EXPECT_EQ(ReduceScatterCount(module), 0);
+}
+
+TEST_F(GpuReduceScatterCreatorTest, AllReplicasThroughClampWithScalarBounds) {
+  // Both other operands of the clamp are scalar broadcasts.
+  absl::string_view hlo_string = R"hlo(
+HloModule AllReduce
+
+%sum {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %AllReduce {
+  %param = f32[32,8,128]{2,1,0} parameter(0)
+  %low = f32[] parameter(1)
+  %high = f32[] parameter(2)
+  %all-reduce = f32[32,8,128]{2,1,0} all-reduce(%param),
+    replica_groups={}, to_apply=%sum
+  %table = s32[8]{0} constant({0,1,2,3,4,5,6,7})
+  %rid = u32[] replica-id()
+  %id = s32[1] dynamic-slice(%table, %rid), dynamic_slice_sizes={1}
+  %reshape = s32[] reshape(%id)
+  %slice_size = s32[] constant(4)
+  %offset = s32[] multiply(%reshape, %slice_size)
+  %zero = s32[] constant(0)
+  %low_bcast = f32[32,8,128]{2,1,0} broadcast(%low), dimensions={}
+  %high_bcast = f32[32,8,128]{2,1,0} broadcast(%high), dimensions={}
+  %clamp = f32[32,8,128]{2,1,0} clamp(%low_bcast, %all-reduce, %high_bcast)
+  ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%clamp, %offset, %zero, %zero),
+    dynamic_slice_sizes={4,8,128}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                            /*num_replicas=*/8,
+                                            /*num_partitions=*/1,
+                                            /*use_spmd_partitioning=*/false,
+                                            /*expect_change=*/true));
+  ASSERT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Clamp(m::Broadcast(m::Parameter(1)),
+                                  m::ReduceScatter(m::Parameter(0)),
+                                  m::Broadcast(m::Parameter(2)))));
+  EXPECT_EQ(module->entry_computation()->root_instruction()->shape(),
+            ShapeUtil::MakeShape(F32, {4, 8, 128}));
+  EXPECT_EQ(AllReduceCount(module), 0);
+}
+
+TEST_F(GpuReduceScatterCreatorTest, AllReplicasThroughClampWithRank0Bounds) {
+  // The bounds of the clamp are rank-0 broadcasts, which do not have the
+  // dimensions of the clamp and cannot be re-created with the sliced shape.
+  absl::string_view hlo_string = R"hlo(
+HloModule AllReduce
+
+%sum {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %AllReduce {
+  %param = f32[32,8,128]{2,1,0} parameter(0)
+  %low = f32[] parameter(1)
+  %high = f32[] parameter(2)
+  %all-reduce = f32[32,8,128]{2,1,0} all-reduce(%param),
+    replica_groups={}, to_apply=%sum
+  %table = s32[8]{0} constant({0,1,2,3,4,5,6,7})
+  %rid = u32[] replica-id()
+  %id = s32[1] dynamic-slice(%table, %rid), dynamic_slice_sizes={1}
+  %reshape = s32[] reshape(%id)
+  %slice_size = s32[] constant(4)
+  %offset = s32[] multiply(%reshape, %slice_size)
+  %zero = s32[] constant(0)
+  %low_bcast = f32[] broadcast(%low), dimensions={}
+  %high_bcast = f32[] broadcast(%high), dimensions={}
+  %clamp = f32[32,8,128]{2,1,0} clamp(%low_bcast, %all-reduce, %high_bcast)
+  ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%clamp, %offset, %zero, %zero),
+    dynamic_slice_sizes={4,8,128}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                            /*num_replicas=*/8,
+                                            /*num_partitions=*/1,
+                                            /*use_spmd_partitioning=*/false,
+                                            /*expect_change=*/false));
+  EXPECT_EQ(AllReduceCount(module), 1);
+  EXPECT_EQ(ReduceScatterCount(module), 0);
+}
+
+TEST_F(GpuReduceScatterCreatorTest, AllPartitionsThroughScalarMultiply) {
+  absl::string_view hlo_string = R"hlo(
+HloModule AllReduce
+
+%sum {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %AllReduce {
+  %param = f32[32,8,128]{2,1,0} parameter(0)
+  %scale = f32[] parameter(1)
+  %all-reduce = f32[32,8,128]{2,1,0} all-reduce(%param),
+    replica_groups={{0},{1}}, to_apply=%sum, channel_id=1
+  %table = s32[8]{0} constant({0,1,2,3,4,5,6,7})
+  %pid = u32[] partition-id()
+  %id = s32[1] dynamic-slice(%table, %pid), dynamic_slice_sizes={1}
+  %reshape = s32[] reshape(%id)
+  %slice_size = s32[] constant(4)
+  %offset = s32[] multiply(%reshape, %slice_size)
+  %zero = s32[] constant(0)
+  %scale_bcast = f32[32,8,128]{2,1,0} broadcast(%scale), dimensions={}
+  %scaled = f32[32,8,128]{2,1,0} multiply(%all-reduce, %scale_bcast)
+  ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%scaled, %offset, %zero, %zero),
+    dynamic_slice_sizes={4,8,128}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                            /*num_replicas=*/2,
+                                            /*num_partitions=*/8,
+                                            /*use_spmd_partitioning=*/true,
+                                            /*expect_change=*/true));
+  ASSERT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Multiply(m::ReduceScatter(m::Parameter(0)),
+                                     m::Broadcast(m::Parameter(1)))));
+  EXPECT_EQ(module->entry_computation()->root_instruction()->shape(),
+            ShapeUtil::MakeShape(F32, {4, 8, 128}));
+  EXPECT_EQ(AllReduceCount(module), 0);
+}
+
+TEST_F(GpuReduceScatterCreatorTest, AllReplicasScaledResultWithControlDep) {
+  // The multiply has a control dependency, which would be lost if it were
+  // re-created on the sliced result.
+  absl::string_view hlo_string = R"hlo(
+HloModule AllReduce
+
+%sum {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %AllReduce {
+  %param = f32[32,8,128]{2,1,0} parameter(0)
+  %scale = f32[] parameter(1)
+  %all-reduce = f32[32,8,128]{2,1,0} all-reduce(%param),
+    replica_groups={}, to_apply=%sum
+  %table = s32[8]{0} constant({0,1,2,3,4,5,6,7})
+  %rid = u32[] replica-id()
+  %id = s32[1] dynamic-slice(%table, %rid), dynamic_slice_sizes={1}
+  %reshape = s32[] reshape(%id)
+  %slice_size = s32[] constant(4)
+  %offset = s32[] multiply(%reshape, %slice_size)
+  %zero = s32[] constant(0)
+  %scale_bcast = f32[32,8,128]{2,1,0} broadcast(%scale), dimensions={}
+  %scaled = f32[32,8,128]{2,1,0} multiply(%all-reduce, %scale_bcast),
+    control-predecessors={%offset}
+  ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%scaled, %offset, %zero, %zero),
+    dynamic_slice_sizes={4,8,128}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                            /*num_replicas=*/8,
+                                            /*num_partitions=*/1,
+                                            /*use_spmd_partitioning=*/false,
+                                            /*expect_change=*/false));
+  EXPECT_EQ(AllReduceCount(module), 1);
+  EXPECT_EQ(ReduceScatterCount(module), 0);
+}
+
+TEST_F(GpuReduceScatterCreatorTest, AllReplicasScalarBroadcastWithControlDep) {
+  // The scalar broadcast has a control dependency. A broadcast re-created with
+  // the sliced shape would not be ordered by it, so the multiply stays.
+  absl::string_view hlo_string = R"hlo(
+HloModule AllReduce
+
+%sum {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %AllReduce {
+  %param = f32[32,8,128]{2,1,0} parameter(0)
+  %scale = f32[] parameter(1)
+  %all-reduce = f32[32,8,128]{2,1,0} all-reduce(%param),
+    replica_groups={}, to_apply=%sum
+  %table = s32[8]{0} constant({0,1,2,3,4,5,6,7})
+  %rid = u32[] replica-id()
+  %id = s32[1] dynamic-slice(%table, %rid), dynamic_slice_sizes={1}
+  %reshape = s32[] reshape(%id)
+  %slice_size = s32[] constant(4)
+  %offset = s32[] multiply(%reshape, %slice_size)
+  %zero = s32[] constant(0)
+  %scale_bcast = f32[32,8,128]{2,1,0} broadcast(%scale), dimensions={},
+    control-predecessors={%offset}
+  %scaled = f32[32,8,128]{2,1,0} multiply(%all-reduce, %scale_bcast)
+  ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%scaled, %offset, %zero, %zero),
+    dynamic_slice_sizes={4,8,128}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                            /*num_replicas=*/8,
+                                            /*num_partitions=*/1,
+                                            /*use_spmd_partitioning=*/false,
+                                            /*expect_change=*/false));
+  EXPECT_EQ(AllReduceCount(module), 1);
+  EXPECT_EQ(ReduceScatterCount(module), 0);
+}
+
+TEST_F(GpuReduceScatterCreatorTest, AllReplicasScaledWrongOffsets) {
+  // The offsets do not select the shard of each replica, so no reduce-scatter
+  // is created and the module is left unchanged.
+  absl::string_view hlo_string = R"hlo(
+HloModule AllReduce
+
+%sum {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %AllReduce {
+  %param = f32[32,8,128]{2,1,0} parameter(0)
+  %scale = f32[] parameter(1)
+  %all-reduce = f32[32,8,128]{2,1,0} all-reduce(%param),
+    replica_groups={}, to_apply=%sum
+  %table = s32[8]{0} constant({0,1,2,3,4,5,6,8})
+  %rid = u32[] replica-id()
+  %id = s32[1] dynamic-slice(%table, %rid), dynamic_slice_sizes={1}
+  %reshape = s32[] reshape(%id)
+  %slice_size = s32[] constant(4)
+  %offset = s32[] multiply(%reshape, %slice_size)
+  %zero = s32[] constant(0)
+  %scale_bcast = f32[32,8,128]{2,1,0} broadcast(%scale), dimensions={}
+  %scaled = f32[32,8,128]{2,1,0} multiply(%all-reduce, %scale_bcast)
+  ROOT %dynamic-slice = f32[4,8,128] dynamic-slice(%scaled, %offset, %zero, %zero),
+    dynamic_slice_sizes={4,8,128}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                            /*num_replicas=*/8,
+                                            /*num_partitions=*/1,
+                                            /*use_spmd_partitioning=*/false,
+                                            /*expect_change=*/false));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::DynamicSlice(m::Multiply(m::AllReduce(m::Parameter(0)),
+                                             m::Broadcast(m::Parameter(1))),
+                                 m::Op(), m::Op(), m::Op())));
+  EXPECT_EQ(AllReduceCount(module), 1);
+  EXPECT_EQ(ReduceScatterCount(module), 0);
+}
+
+TEST_F(GpuReduceScatterCreatorTest, AllReplicasScaledResultIsRoot) {
+  // The scaled all-reduce result is the root of the computation, so it stays
+  // live and cannot be replaced, even though the dynamic-slice is its only
+  // user.
+  absl::string_view hlo_string = R"hlo(
+HloModule AllReduce
+
+%sum {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %AllReduce {
+  %param = f32[32,8,128]{2,1,0} parameter(0)
+  %scale = f32[] parameter(1)
+  %all-reduce = f32[32,8,128]{2,1,0} all-reduce(%param),
+    replica_groups={}, to_apply=%sum
+  %table = s32[8]{0} constant({0,1,2,3,4,5,6,7})
+  %rid = u32[] replica-id()
+  %id = s32[1] dynamic-slice(%table, %rid), dynamic_slice_sizes={1}
+  %reshape = s32[] reshape(%id)
+  %slice_size = s32[] constant(4)
+  %offset = s32[] multiply(%reshape, %slice_size)
+  %zero = s32[] constant(0)
+  %scale_bcast = f32[32,8,128]{2,1,0} broadcast(%scale), dimensions={}
+  ROOT %scaled = f32[32,8,128]{2,1,0} multiply(%all-reduce, %scale_bcast)
+  %dynamic-slice = f32[4,8,128] dynamic-slice(%scaled, %offset, %zero, %zero),
+    dynamic_slice_sizes={4,8,128}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                            /*num_replicas=*/8,
+                                            /*num_partitions=*/1,
+                                            /*use_spmd_partitioning=*/false,
+                                            /*expect_change=*/false));
+  EXPECT_EQ(AllReduceCount(module), 1);
+  EXPECT_EQ(ReduceScatterCount(module), 0);
+}
+
+TEST_F(GpuReduceScatterCreatorTest, AllReplicasAllReduceIsRootWithScaledUser) {
+  // The all-reduce is the root of the computation, so it stays live and
+  // cannot be replaced, even though the scaled result is its only user.
+  absl::string_view hlo_string = R"hlo(
+HloModule AllReduce
+
+%sum {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %AllReduce {
+  %param = f32[32,8,128]{2,1,0} parameter(0)
+  %scale = f32[] parameter(1)
+  ROOT %all-reduce = f32[32,8,128]{2,1,0} all-reduce(%param),
+    replica_groups={}, to_apply=%sum
+  %table = s32[8]{0} constant({0,1,2,3,4,5,6,7})
+  %rid = u32[] replica-id()
+  %id = s32[1] dynamic-slice(%table, %rid), dynamic_slice_sizes={1}
+  %reshape = s32[] reshape(%id)
+  %slice_size = s32[] constant(4)
+  %offset = s32[] multiply(%reshape, %slice_size)
+  %zero = s32[] constant(0)
+  %scale_bcast = f32[32,8,128]{2,1,0} broadcast(%scale), dimensions={}
+  %scaled = f32[32,8,128]{2,1,0} multiply(%all-reduce, %scale_bcast)
+  %dynamic-slice = f32[4,8,128] dynamic-slice(%scaled, %offset, %zero, %zero),
+    dynamic_slice_sizes={4,8,128}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                            /*num_replicas=*/8,
+                                            /*num_partitions=*/1,
+                                            /*use_spmd_partitioning=*/false,
+                                            /*expect_change=*/false));
+  EXPECT_EQ(AllReduceCount(module), 1);
+  EXPECT_EQ(ReduceScatterCount(module), 0);
+}
+
+TEST_F(GpuReduceScatterCreatorTest, AllReplicasThroughCopyKeepsLayout) {
+  // The re-created copy keeps the layout of the original one, here the element
+  // size of a sub-byte type.
+  absl::string_view hlo_string = R"hlo(
+HloModule AllReduce
+
+%sum {
+  %a = s4[] parameter(0)
+  %b = s4[] parameter(1)
+  ROOT %add = s4[] add(%a, %b)
+}
+
+ENTRY %AllReduce {
+  %param = s4[32,8,128]{2,1,0:E(4)} parameter(0)
+  %all-reduce = s4[32,8,128]{2,1,0:E(4)} all-reduce(%param),
+    replica_groups={}, to_apply=%sum
+  %table = s32[8]{0} constant({0,1,2,3,4,5,6,7})
+  %rid = u32[] replica-id()
+  %id = s32[1] dynamic-slice(%table, %rid), dynamic_slice_sizes={1}
+  %reshape = s32[] reshape(%id)
+  %slice_size = s32[] constant(4)
+  %offset = s32[] multiply(%reshape, %slice_size)
+  %zero = s32[] constant(0)
+  %copy = s4[32,8,128]{2,1,0:E(4)} copy(%all-reduce)
+  ROOT %dynamic-slice = s4[4,8,128]{2,1,0:E(4)} dynamic-slice(%copy, %offset, %zero, %zero),
+    dynamic_slice_sizes={4,8,128}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                            /*num_replicas=*/8,
+                                            /*num_partitions=*/1,
+                                            /*use_spmd_partitioning=*/false,
+                                            /*expect_change=*/true));
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_THAT(root, GmockMatch(m::Copy(m::ReduceScatter(m::Parameter(0)))));
+  EXPECT_TRUE(ShapeUtil::SameDimensions(root->shape(),
+                                        ShapeUtil::MakeShape(S4, {4, 8, 128})));
+  EXPECT_EQ(root->shape().layout().element_size_in_bits(), 4);
   EXPECT_EQ(AllReduceCount(module), 0);
 }
 
