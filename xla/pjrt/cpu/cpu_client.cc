@@ -272,6 +272,7 @@ struct MlirCompilationSetup {
 absl::Status ResolveXlaComputationLayouts(
     const XlaComputation& computation, CompileOptions& options,
     std::vector<const Shape*>& argument_layout_pointers) {
+  ABSL_RETURN_IF_ERROR(options.ApplyAllOptionOverrides());
   const ExecutableBuildOptions& build_options =
       options.executable_build_options;
   const bool allow_auto_layout =
@@ -308,6 +309,7 @@ absl::Status ResolveXlaComputationLayouts(
 absl::StatusOr<MlirCompilationSetup> SetupMlirCompilation(
     MaybeOwningMlirModule& module, CompileOptions& options,
     const CpuTopologyDescription& topology) {
+  ABSL_RETURN_IF_ERROR(options.ApplyAllOptionOverrides());
   MlirCompilationSetup setup;
   int module_id = HloModule::GetNextUniqueModuleId();
   ABSL_RETURN_IF_ERROR(pjrt::MaybeDumpCompileInputs(
