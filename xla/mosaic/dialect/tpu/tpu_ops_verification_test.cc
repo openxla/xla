@@ -3138,5 +3138,51 @@ TEST_F(TpuOpsVerificationTest, ConcatenateOpRankMismatch) {
       inferred)));
 }
 
+TEST_F(TpuOpsVerificationTest, AllocaUnionOpVerification) {
+  MemRefType vmem_f32 =
+      GetMemRefType({16, 128}, builder().getF32Type(), MemorySpace::kVmem);
+  MemRefType vmem_bf16 =
+      GetMemRefType({8, 128}, builder().getBF16Type(), MemorySpace::kVmem);
+  MemRefType vmem_1d = GetMemRefType({256}, i32(), MemorySpace::kVmem);
+  MemRefType smem_i32 = GetMemRefType({4}, i32(), MemorySpace::kSmem);
+
+  EXPECT_THAT(
+      VerifyOp(Create<AllocaUnionOp>(TypeRange{vmem_f32, vmem_bf16, vmem_1d},
+                                     ArrayRef<int32_t>{1, 2})),
+      absl_testing::IsOk());
+  EXPECT_THAT(VerifyOp(Create<AllocaUnionOp>(TypeRange{smem_i32, smem_i32},
+                                             ArrayRef<int32_t>{1, 1})),
+              absl_testing::IsOk());
+
+  EXPECT_THAT(
+      VerifyOp(Create<AllocaUnionOp>(TypeRange{vmem_f32}, ArrayRef<int32_t>{})),
+      StatusIs(_, HasSubstr("expected at least one group in group_sizes")));
+  EXPECT_THAT(VerifyOp(Create<AllocaUnionOp>(TypeRange{vmem_f32},
+                                             ArrayRef<int32_t>{0, 1})),
+              StatusIs(_, HasSubstr("size must be positive")));
+  EXPECT_THAT(VerifyOp(Create<AllocaUnionOp>(TypeRange{vmem_f32, vmem_bf16},
+                                             ArrayRef<int32_t>{3})),
+              StatusIs(_, HasSubstr("sum of group_sizes")));
+  EXPECT_THAT(VerifyOp(Create<AllocaUnionOp>(
+                  TypeRange{GetMemRefType({ShapedType::kDynamic, 128}, i32(),
+                                          MemorySpace::kVmem)},
+                  ArrayRef<int32_t>{1})),
+              StatusIs(_, HasSubstr("must have a static shape")));
+  EXPECT_THAT(VerifyOp(Create<AllocaUnionOp>(
+                  TypeRange{GetMemRefType(
+                      {}, SemaphoreType::get(builder().getContext()),
+                      MemorySpace::kVmem)},
+                  ArrayRef<int32_t>{1})),
+              StatusIs(_, HasSubstr("must have int or float element type")));
+  EXPECT_THAT(VerifyOp(Create<AllocaUnionOp>(
+                  TypeRange{GetMemRefType({8, 128}, i32(), MemorySpace::kHbm)},
+                  ArrayRef<int32_t>{1})),
+              StatusIs(_, HasSubstr("results must be in vmem or smem")));
+  EXPECT_THAT(
+      VerifyOp(Create<AllocaUnionOp>(TypeRange{vmem_f32, smem_i32},
+                                     ArrayRef<int32_t>{1, 1})),
+      StatusIs(_, HasSubstr("all results must share the same memory space")));
+}
+
 }  // namespace
 }  // namespace mlir::tpu

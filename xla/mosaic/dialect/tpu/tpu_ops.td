@@ -1528,6 +1528,19 @@ def TPU_AllocaSemaphoreOp : TPU_Op<"sem_alloc"> {
   let assemblyFormat = [{ attr-dict `:` type($result) }];
 }
 
+// Allocates a single scoped VMEM or SMEM buffer sized to the largest group and
+// returns one typed memref per member. `group_sizes` partitions `results` into
+// contiguous non-empty groups; members in the same group get disjoint aligned
+// offsets, while distinct groups overlap from offset 0.
+def TPU_AllocaUnionOp : TPU_Op<"alloca_union", [
+    MemoryEffects<[MemAlloc<AutomaticAllocationScopeResource>]>
+  ]> {
+  let arguments = (ins DenseI32ArrayAttr:$group_sizes);
+  let results = (outs Variadic<AnyMemRef>:$results);
+  let assemblyFormat = [{ $group_sizes attr-dict `:` type($results) }];
+  let hasVerifier = 1;
+}
+
 def TPU_GetBarrierSemaphoreOp : TPU_Op<"sem_barrier"> {
   let arguments = (ins);
   let results = (outs MemRefOf<[TPU_SemaphoreType]>:$semaphore);
