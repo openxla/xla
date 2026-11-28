@@ -77,6 +77,8 @@ cc_library(
     # usage of llvm_type_conversion_util
     visibility = internal_visibility([":friends"]),
     deps = [
+        "//third_party/gloop/util/gtl:c_memcpy",
+        "//third_party/gloop/util/gtl:c_memset",
         "//xla:util",
         "//xla/backends/cpu:alignment",
         "//xla/service/llvm_ir:llvm_type_conversion_util",
