@@ -16,9 +16,11 @@ limitations under the License.
 #ifndef XLA_HLO_TRANSFORMS_EXPANDERS_RNG_EXPANDER_H_
 #define XLA_HLO_TRANSFORMS_EXPANDERS_RNG_EXPANDER_H_
 
+#include <string>
 #include <tuple>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/transforms/expanders/op_expander_pass.h"
@@ -31,17 +33,20 @@ class RngExpander : public OpExpanderPass {
   absl::string_view name() const override { return "rng-expander"; }
 
  protected:
+  absl::StatusOr<bool> RunImpl(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
+
   bool InstructionMatchesPattern(HloInstruction* instruction) override;
 
   absl::StatusOr<HloInstruction*> ExpandInstruction(
       HloInstruction* rng) override;
 
  private:
-  // Cache RNG computations based on the distribution, output shape and shapes
-  // of the first and second operand.
-  absl::flat_hash_map<std::tuple<RandomDistribution, Shape, Shape, Shape>,
-                      HloComputation*>
-      expanded_rng_instructions_;
+  using RngCacheKey =
+      std::tuple<RandomDistribution, Shape, Shape, Shape, const HloModule*,
+                 std::string, /*has_replica=*/bool, /*has_partition=*/bool>;
+  absl::flat_hash_map<RngCacheKey, HloComputation*> expanded_rng_instructions_;
 };
 
 }  // namespace xla

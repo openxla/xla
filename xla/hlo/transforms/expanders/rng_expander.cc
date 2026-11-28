@@ -15,22 +15,31 @@ limitations under the License.
 
 #include "xla/hlo/transforms/expanders/rng_expander.h"
 
+#include <algorithm>
 #include <cstdint>
-#include <iterator>
+#include <limits>
+#include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
-#include "absl/algorithm/container.h"
-#include "absl/log/check.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/builder/lib/prng.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/transforms/expanders/op_expander_pass.h"
+#include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/hlo_module_config.h"
@@ -40,43 +49,176 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla {
-
 namespace {
 
-int64_t GetNumberOf32bitUnits(const Shape& shape) {
-  int64_t bit_width = primitive_util::BitWidth(shape.element_type());
-  CHECK(bit_width == 32 || bit_width == 64);
-  int64_t num_elems = ShapeUtil::ElementsIn(shape);
-  return num_elems * (bit_width / 32);
+absl::StatusOr<int64_t> ValidateAndGet32bitUnits(const HloInstruction* rng) {
+  const Shape& s = rng->shape();
+  if (rng->opcode() != HloOpcode::kRng || !s.IsArray() ||
+      rng->operand_count() < 2) {
+    return absl::InvalidArgumentError("Invalid RNG instruction.");
+  }
+  if (s.is_dynamic()) {
+    return absl::UnimplementedError("Dynamic RNG is not supported.");
+  }
+  const PrimitiveType ty = s.element_type();
+  const bool fp = primitive_util::IsFloatingPointType(ty);
+  const RandomDistribution dist = rng->random_distribution();
+  const int64_t bw = primitive_util::BitWidth(ty);
+  if ((!fp && !primitive_util::IsIntegralType(ty) && ty != PRED) ||
+      (dist != RNG_UNIFORM && dist != RNG_NORMAL) ||
+      (dist == RNG_NORMAL && !fp) || bw <= 0 || bw > 64 ||
+      (bw >= 32 && bw != 32 && bw != 64)) {
+    return absl::InvalidArgumentError("Unsupported RNG type or distribution.");
+  }
+  for (int i = 0; i < 2; ++i) {
+    const Shape& os = rng->operand(i)->shape();
+    const PrimitiveType oty = os.element_type();
+    if (!os.IsArray() || !ShapeUtil::IsScalar(os) ||
+        (oty != ty && !(fp && primitive_util::IsFloatingPointType(oty)))) {
+      return absl::InvalidArgumentError("Invalid RNG operand.");
+    }
+  }
+  constexpr int64_t kMax = std::numeric_limits<int64_t>::max();
+  constexpr int64_t kMaxPhiloxUnits = (kMax / 16) * 4;
+  const int64_t words = bw == 64 ? 2 : 1, max_elems = kMaxPhiloxUnits / words;
+  int64_t n = 1, bytes = words * 4, max_d = 0;
+  bool has_even = false;
+  for (int64_t d : s.dimensions()) {
+    if (d < 0) {
+      return absl::InvalidArgumentError("Negative RNG dimension.");
+    }
+    if (d == 0) {
+      n = bytes = 0;
+    } else if (bytes > 0 && bytes > kMax / d) {
+      return absl::InvalidArgumentError("RNG shape overflows 64-bit size.");
+    } else if (bytes > 0) {
+      bytes *= d;
+      n *= d;
+    }
+    has_even |= (d % 2 == 0);
+    max_d = std::max(max_d, d);
+  }
+  if (n > max_elems ||
+      (dist == RNG_NORMAL && n > 0 && !s.dimensions().empty() && !has_even &&
+       (max_d >= max_elems || (n / max_d) > max_elems / (max_d + 1)))) {
+    return absl::InvalidArgumentError("RNG shape exceeds 64-bit Philox limit.");
+  }
+  return n * words;
 }
 
-absl::StatusOr<HloInstruction*> ConvertSmallFpRngToF32Rng(HloInstruction* rng) {
-  CHECK_EQ(rng->opcode(), HloOpcode::kRng);
-  PrimitiveType primitive_type = rng->shape().element_type();
-  CHECK(primitive_type == F16 || primitive_type == BF16);
+HloInstruction* SetAttrs(HloInstruction* inst, const HloInstruction* rng,
+                         bool same_shape = false) {
+  if (same_shape) {
+    rng->SetupDerivedInstruction(inst);
+    if (rng->has_frontend_attributes()) {
+      inst->set_frontend_attributes(rng->frontend_attributes());
+    }
+    return inst;
+  }
+  inst->set_metadata(rng->metadata());
+  if (rng->has_sharding()) {
+    const HloSharding& s = rng->sharding();
+    if (!s.IsTuple() &&
+        (s.IsReplicatedOrSingleDevice() || s.IsManual() || s.IsUnknown()) &&
+        (!s.UseNamedShardingLeaf() ||
+         s.named_sharding().dim_shardings().empty())) {
+      inst->set_sharding(s);
+    }
+  }
+  return inst;
+}
 
-  std::vector<HloInstruction*> new_operands;
-  absl::c_transform(rng->operands(), std::back_inserter(new_operands),
-                    [&](HloInstruction* operand) {
-                      CHECK_EQ(operand->shape().element_type(), primitive_type);
-                      return MakeConvertToHlo(operand, F32);
-                    });
+Shape SanitizeShape(const Shape& orig, PrimitiveType ty,
+                    bool keep_bits = false) {
+  Shape s = ShapeUtil::ChangeElementType(orig, ty);
+  if (s.has_layout()) {
+    const int64_t bits = keep_bits ? orig.layout().element_size_in_bits() : 0;
+    Layout* l = s.mutable_layout();
+    l->clear_tiles();
+    l->clear_split_configs();
+    l->clear_physical_shape();
+    l->set_tail_padding_alignment_in_elements(1).set_memory_space(0);
+    if (!s.dimensions().empty() &&
+        l->minor_to_major().size() != s.dimensions().size()) {
+      LayoutUtil::SetToDefaultLayout(&s);
+    }
+    s.mutable_layout()->set_element_size_in_bits(bits);
+  }
+  return s;
+}
 
-  Shape shape = ShapeUtil::ChangeElementType(rng->shape(), F32);
-  HloComputation* computation = rng->parent();
-  HloCloneContext context(computation->parent());
-  HloInstruction* new_rng = computation->AddInstruction(
-      rng->CloneWithNewOperands(shape, new_operands, &context));
+HloInstruction* MaybeCopy(HloInstruction* op, const Shape& dst,
+                          const HloInstruction* rng, bool same_shape = false) {
+  return (dst.has_layout() && op->shape().layout() != dst.layout())
+             ? SetAttrs(
+                   op->parent()->AddInstruction(
+                       HloInstruction::CreateUnary(dst, HloOpcode::kCopy, op)),
+                   rng, same_shape)
+             : op;
+}
+
+HloInstruction* ConvertOperand(HloInstruction* op, PrimitiveType dst,
+                               const HloInstruction* rng, bool strip = false) {
+  const bool same = op->shape().element_type() == dst;
+  if (same && !strip) {
+    return op;
+  }
+  const Shape clean = SanitizeShape(op->shape(), op->shape().element_type(),
+                                    /*keep_bits=*/!strip);
+  op = MaybeCopy(op, clean, rng);
+  return same ? op
+              : SetAttrs(
+                    op->parent()->AddInstruction(HloInstruction::CreateConvert(
+                        SanitizeShape(clean, dst), op)),
+                    rng);
+}
+
+absl::StatusOr<HloInstruction*> ConvertNarrowRngToWideRng(HloInstruction* rng) {
+  const Shape orig = rng->shape();
+  const PrimitiveType ty = orig.element_type();
+  const PrimitiveType wide =
+      primitive_util::IsFloatingPointType(ty)
+          ? F32
+          : (primitive_util::IsSignedIntegralType(ty) ? S32 : U32);
+  HloComputation* c = rng->parent();
+  std::vector<HloInstruction*> ops;
+  if (ty == PRED) {
+    ops = {SetAttrs(MakeR0ConstantHlo<uint32_t>(c, 0), rng),
+           SetAttrs(MakeR0ConstantHlo<uint32_t>(c, 2), rng)};
+  } else {
+    for (HloInstruction* op : rng->operands()) {
+      ops.push_back(op->shape().IsArray() ? ConvertOperand(op, wide, rng) : op);
+    }
+  }
+  HloCloneContext ctx(c->parent());
+  HloInstruction* new_rng = c->AddInstruction(
+      rng->CloneWithNewOperands(SanitizeShape(orig, wide), ops, &ctx));
   ABSL_RETURN_IF_ERROR(new_rng->CopyAllControlDepsFrom(rng));
 
+  const Shape ns = SanitizeShape(orig, ty, /*keep_bits=*/true);
+  auto add = [&](auto inst, bool same = true) {
+    return SetAttrs(c->AddInstruction(std::move(inst)), rng, same);
+  };
+  HloInstruction* out = add(HloInstruction::CreateConvert(ns, new_rng));
+  if (ty == PRED) {
+    const Shape p0 = ShapeUtil::MakeShape(PRED, {});
+    HloInstruction* lo =
+        ConvertOperand(rng->mutable_operand(0), PRED, rng, true);
+    HloInstruction* open = add(
+        HloInstruction::CreateBinary(
+            p0, HloOpcode::kAnd,
+            add(HloInstruction::CreateUnary(p0, HloOpcode::kNot, lo), false),
+            ConvertOperand(rng->mutable_operand(1), PRED, rng, true)),
+        false);
+    out = add(HloInstruction::CreateTernary(
+        ns, HloOpcode::kSelect,
+        add(HloInstruction::CreateBroadcast(ns, open, {})), out,
+        add(HloInstruction::CreateBroadcast(ns, lo, {}))));
+  }
   ABSL_RETURN_IF_ERROR(
-      rng->ReplaceAllUsesWith(MakeConvertToHlo(new_rng, primitive_type)));
+      rng->ReplaceAllUsesWith(MaybeCopy(out, orig, rng, true)));
   ABSL_RETURN_IF_ERROR(rng->DropAllControlDeps());
-
-  // Since rng is a side-effecting instruction, we can't rely on DCE to remove
-  // it.
-  ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(rng));
-
+  ABSL_RETURN_IF_ERROR(c->RemoveInstruction(rng));
   return new_rng;
 }
 
@@ -145,18 +287,21 @@ XlaOp BuildPhiloxKey(XlaBuilder* builder, XlaOp op_seed,
   return mixed_seed;
 }
 
-absl::StatusOr<HloComputation*> GetComputationForRng(HloInstruction* rng) {
+absl::StatusOr<HloComputation*> GetComputationForRng(HloInstruction* rng,
+                                                     const Shape& op0_shape,
+                                                     const Shape& op1_shape) {
   XlaBuilder builder("rng");
   const Shape u64_shape = ShapeUtil::MakeShape(xla::U64, {});
   const Shape u128_shape = ShapeUtil::MakeShape(xla::U64, {2});
   const Shape& result_shape = rng->shape();
+  const PrimitiveType ty = result_shape.element_type();
+  const Shape gen_shape = ShapeUtil::MakeShape(ty, result_shape.dimensions());
+  const Shape p_shape = ShapeUtil::MakeShape(ty, {});
 
   XlaOp op_seed = Parameter(&builder, 0, u64_shape, "op_seed");
   XlaOp state = Parameter(&builder, 1, u128_shape, "state");
-  XlaOp a_or_mean =
-      Parameter(&builder, 2, rng->operand(0)->shape(), "a_or_mean");
-  XlaOp b_or_sigma =
-      Parameter(&builder, 3, rng->operand(1)->shape(), "b_or_sigma");
+  XlaOp a_or_mean = Parameter(&builder, 2, p_shape, "a_or_mean");
+  XlaOp b_or_sigma = Parameter(&builder, 3, p_shape, "b_or_sigma");
 
   XlaOp key = BuildPhiloxKey(&builder, op_seed, rng->GetModule()->config());
 
@@ -168,29 +313,64 @@ absl::StatusOr<HloComputation*> GetComputationForRng(HloInstruction* rng) {
   XlaOp result;
   if (rng->random_distribution() == RNG_NORMAL) {
     result =
-        NormalFloatingPointDistribution(key, state, generator, result_shape)
-            .value;
+        NormalFloatingPointDistribution(key, state, generator, gen_shape).value;
     // Transform standard normal distribution to normal distribution with the
     // given mean and standard deviation.
     result = a_or_mean + (b_or_sigma * result);
+  } else if (rng->random_distribution() != RNG_UNIFORM) {
+    return absl::InvalidArgumentError("Unsupported RNG distribution.");
+  } else if (primitive_util::IsFloatingPointType(ty)) {
+    result = UniformFloatingPointDistribution(key, state, generator, a_or_mean,
+                                              b_or_sigma, gen_shape)
+                 .value;
   } else {
-    CHECK_EQ(rng->random_distribution(), RNG_UNIFORM);
-    if (primitive_util::IsFloatingPointType(result_shape.element_type())) {
-      result = UniformFloatingPointDistribution(
-                   key, state, generator, a_or_mean, b_or_sigma, result_shape)
-                   .value;
-    } else {
-      result = UniformIntDistribution(key, state, generator, a_or_mean,
-                                      b_or_sigma, result_shape)
-                   .value;
-    }
+    result = UniformIntDistribution(key, state, generator, a_or_mean,
+                                    b_or_sigma, gen_shape)
+                 .value;
   }
 
   ABSL_ASSIGN_OR_RETURN(XlaComputation xla_computation, builder.Build());
-  return XlaComputationToHloComputation(xla_computation, rng->GetModule());
+  ABSL_ASSIGN_OR_RETURN(
+      HloComputation * comp,
+      XlaComputationToHloComputation(xla_computation, rng->GetModule()));
+  for (int i : {0, 1}) {
+    const Shape& dst = i == 0 ? op0_shape : op1_shape;
+    HloInstruction* p = comp->parameter_instruction(i + 2);
+    if (dst.has_layout() && p->shape().layout() != dst.layout()) {
+      const Shape clean = p->shape();
+      std::vector<HloInstruction*> users(p->users().begin(), p->users().end());
+      *p->mutable_shape() = dst;
+      if (!users.empty()) {
+        ABSL_RETURN_IF_ERROR(p->ReplaceUsesWith(
+            users, comp->AddInstruction(HloInstruction::CreateUnary(
+                       clean, HloOpcode::kCopy, p))));
+      }
+    }
+  }
+  if (HloInstruction* r = comp->root_instruction();
+      result_shape.has_layout() &&
+      r->shape().layout() != result_shape.layout()) {
+    comp->set_root_instruction(comp->AddInstruction(HloInstruction::CreateUnary(
+                                   result_shape, HloOpcode::kCopy, r)),
+                               /*accept_different_shape=*/true);
+  }
+  if (absl::string_view th = rng->parent()->execution_thread();
+      th != HloInstruction::kMainExecutionThread) {
+    comp->SetExecutionThread(th);
+  }
+  return comp;
 }
 
 }  // namespace
+
+absl::StatusOr<bool> RngExpander::RunImpl(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  expanded_rng_instructions_.clear();
+  auto changed = OpExpanderPass::RunImpl(module, execution_threads);
+  expanded_rng_instructions_.clear();
+  return changed;
+}
 
 bool RngExpander::InstructionMatchesPattern(HloInstruction* instruction) {
   return instruction->opcode() == HloOpcode::kRng;
@@ -199,56 +379,47 @@ bool RngExpander::InstructionMatchesPattern(HloInstruction* instruction) {
 absl::StatusOr<HloInstruction*> RngExpander::ExpandInstruction(
     HloInstruction* rng) {
   VLOG(2) << "Expand rng instruction " << rng->ToString();
-  PrimitiveType old_primitive_type = rng->shape().element_type();
-  if (primitive_util::BitWidth(old_primitive_type) < 32) {
-    ABSL_ASSIGN_OR_RETURN(rng, ConvertSmallFpRngToF32Rng(rng));
+  ABSL_ASSIGN_OR_RETURN(const int64_t num_units, ValidateAndGet32bitUnits(rng));
+  if (primitive_util::BitWidth(rng->shape().element_type()) < 32) {
+    ABSL_ASSIGN_OR_RETURN(rng, ConvertNarrowRngToWideRng(rng));
   }
-  auto key_tuple =
-      std::make_tuple(rng->random_distribution(), rng->shape(),
-                      rng->operand(0)->shape(), rng->operand(1)->shape());
-  auto [it, inserted] =
-      expanded_rng_instructions_.try_emplace(key_tuple, nullptr);
-  HloComputation* rng_computation = it->second;
-  if (inserted) {
-    ABSL_ASSIGN_OR_RETURN(rng_computation, GetComputationForRng(rng));
-    it->second = rng_computation;
-  }
+  const PrimitiveType ty = rng->shape().element_type();
+  HloInstruction* op0 = ConvertOperand(rng->mutable_operand(0), ty, rng);
+  HloInstruction* op1 = ConvertOperand(rng->mutable_operand(1), ty, rng);
   HloComputation* computation = rng->parent();
-
-  // The unique op_seed is passed as op_seed constant, and the key calculation
-  // is performed inside the cached rng_computation to reduce caller graph size.
-  // We pre-calculate a seed with higher entropy to reduce the chance of
-  // collisions.
-  uint64_t op_id = static_cast<uint64_t>(rng->unique_id());
-  uint64_t op_seed = (op_id * 0x9E3779B97F4A7C15ULL) >> 32;
+  const HloModuleConfig& cfg = rng->GetModule()->config();
+  RngCacheKey key(rng->random_distribution(), rng->shape(), op0->shape(),
+                  op1->shape(), rng->GetModule(),
+                  std::string(computation->execution_thread()),
+                  cfg.replica_count() > 1,
+                  !cfg.use_spmd_partitioning() && cfg.num_partitions() > 1);
+  HloComputation* rng_computation = nullptr;
+  if (auto it = expanded_rng_instructions_.find(key);
+      it != expanded_rng_instructions_.end()) {
+    rng_computation = it->second;
+  } else {
+    ABSL_ASSIGN_OR_RETURN(
+        rng_computation, GetComputationForRng(rng, op0->shape(), op1->shape()));
+    expanded_rng_instructions_.emplace(std::move(key), rng_computation);
+  }
+  uint64_t op_seed =
+      (static_cast<uint64_t>(rng->unique_id()) * 0x9E3779B97F4A7C15ULL) >> 32;
   HloInstruction* op_seed_hlo =
-      MakeR0ConstantHlo<uint64_t>(computation, op_seed);
-
-  const Shape u128_shape = ShapeUtil::MakeShape(xla::U64, {2});
-  HloInstruction* state =
+      SetAttrs(MakeR0ConstantHlo<uint64_t>(computation, op_seed), rng);
+  HloInstruction* state = SetAttrs(
       computation->AddInstruction(HloInstruction::CreateRngGetAndUpdateState(
-          u128_shape, GetNumberOf32bitUnits(rng->shape())));
-
+          ShapeUtil::MakeShape(xla::U64, {2}), num_units)),
+      rng);
   VLOG(2) << "Rng op_seed " << op_seed_hlo->ToString();
   VLOG(2) << "Rng state " << state->ToString();
-
-  HloInstruction* new_rng = computation->AddInstruction(
-      HloInstruction::CreateCall(rng->shape(),
-                                 {op_seed_hlo, state, rng->mutable_operand(0),
-                                  rng->mutable_operand(1)},
-                                 rng_computation));
-
+  HloInstruction* new_rng = SetAttrs(
+      computation->AddInstruction(HloInstruction::CreateCall(
+          rng->shape(), {op_seed_hlo, state, op0, op1}, rng_computation)),
+      rng, /*same_shape=*/true);
   ABSL_RETURN_IF_ERROR(new_rng->CopyAllControlDepsFrom(rng));
-
   ABSL_RETURN_IF_ERROR(rng->ReplaceAllUsesWith(new_rng));
   ABSL_RETURN_IF_ERROR(rng->DropAllControlDeps());
-
-  // Since rng is a side-effecting instruction, we can't rely on DCE to remove
-  // it.
   ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(rng));
-
-  // Returns nullptr to OpExpanderPass::Run to indicate the old rng instruction
-  // has been replaced with the new rng instruction.
   return nullptr;
 }
 
