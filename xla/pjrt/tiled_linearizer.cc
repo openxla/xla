@@ -339,6 +339,7 @@ void RepackToHardwareLayout(absl::Span<const uint8_t> source_buffer,
       std::memcpy(target_buffer, source_buffer.data(), input_bytes);
     }
   } else {
+#if HWY_IS_LITTLE_ENDIAN
     for (size_t i = 0; i < full_reads; ++i) {
       // If inputs are pointer aliases, copy source to staging buffer so we can
       // modify source/target in place. Compiler actually optimizes the memcpy
@@ -388,6 +389,7 @@ void RepackToHardwareLayout(absl::Span<const uint8_t> source_buffer,
       RepackToHardwareLayoutSublaneHighway<kPackingFactor, kLaneCount>(
           staging_buffer, &target_buffer[kLaneCount * full_reads]);
     }
+#endif  // HWY_IS_LITTLE_ENDIAN
   }
 }
 
@@ -429,6 +431,7 @@ void RepackToHostLayout(absl::Span<const uint32_t> input,
   const size_t full_writes = output_bytes / kBytesWrittenPerSublane;
   const size_t partial_bytes_remaining = output_bytes % kBytesWrittenPerSublane;
   if constexpr (kPackingFactor > 1) {
+#if HWY_IS_LITTLE_ENDIAN
     for (size_t i = 0; i < full_writes; ++i) {
       RepackToHostLayoutSublaneHighway<kPackingFactor, kLaneCount>(
           &input[kLaneCount * i], tsl::safe_reinterpret_cast<uint32_t*>(
@@ -440,6 +443,7 @@ void RepackToHostLayout(absl::Span<const uint32_t> input,
       std::memcpy(&output[kBytesWrittenPerSublane * full_writes],
                   staging_buffer, partial_bytes_remaining);
     }
+#endif  // HWY_IS_LITTLE_ENDIAN
   } else {
     std::memcpy(output.data(), input.data(), output.size());
   }
@@ -549,7 +553,6 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
 
     // For 8-byte types, change the element size to 4 bytes, add a trailing
     // input dimension [..., 2], and transpose it to an output major dimension.
-    static_assert(tsl::port::kLittleEndian);
     TF_RET_CHECK(byte_width == 8) << byte_width;
     // Add a size-1 dimension for scalars, since it becomes a tiled dimension.
     if (ndim == 0) {
