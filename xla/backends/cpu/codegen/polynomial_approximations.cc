@@ -265,11 +265,14 @@ llvm::Value* GenerateVF32Exp(llvm::IRBuilderBase* b, llvm::Value* input,
   z = vb.MulAdd(z, vb.Mul(x, x), x);
   z = vb.Add(one, z);
 
-  // Convert n' to an i32.  This is safe because we clamped it above.
-  // FPToSI(NaN) yields poison in LLVM IR; freeze it so smin/sub do not
-  // propagate poison into pow2_1/pow2_2 and fold z * pow2 to poison on NaN.
-  llvm::Value* n_i32 = b->CreateFreeze(b->CreateFPToSI(
-      n, llvm::VectorType::get(b->getInt32Ty(), vector_width, false)));
+  // Convert n' to an i32. The clamp above passes NaN through and FPToSI(NaN) is
+  // poison; a frozen arbitrary value can reach rem_bits and turn the NaN z into
+  // a finite value or an infinity. Use n' = 0 for NaN, so pow2 = 1.0 and
+  // rem_bits = 0, and the result is the NaN z.
+  llvm::Value* n_not_nan = b->CreateSelect(
+      b->CreateFCmpUNO(n, n), llvm::ConstantFP::get(n->getType(), 0.0), n);
+  llvm::Value* n_i32 = b->CreateFPToSI(
+      n_not_nan, llvm::VectorType::get(b->getInt32Ty(), vector_width, false));
 
   auto splat_i32 = [&](int32_t v) {
     return b->CreateVectorSplat(vector_width, b->getInt32(v));
