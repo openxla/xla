@@ -31,6 +31,8 @@ ncclGetErrorString
 ncclGetLastError
 ncclGetLsaDevicePointer
 ncclGetLsaMultimemDevicePointer
+ncclGetMultimemDeviceLeInfo
+ncclGetPeerDeviceLeInfo
 ncclGetPeerDevicePointer
 ncclGetUniqueId
 ncclGetVersion

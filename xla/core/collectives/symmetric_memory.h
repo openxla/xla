@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_CORE_COLLECTIVES_SYMMETRIC_MEMORY_H_
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -59,6 +60,19 @@ class SymmetricMemory {
   virtual absl::StatusOr<stream_executor::DeviceAddressBase> peer_addr(
       RankId rank) const {
     return absl::UnimplementedError("Peer address not supported");
+  }
+
+  struct CftHandle {
+    uint32_t le_id = 0;
+    size_t le_offset = 0;
+  };
+
+  virtual absl::StatusOr<CftHandle> multimem_cft_handle() const {
+    return absl::UnimplementedError("Multimem CFT handle not supported");
+  }
+
+  virtual absl::StatusOr<CftHandle> peer_cft_handle(RankId rank) const {
+    return absl::UnimplementedError("Peer CFT handle not supported");
   }
 
   virtual std::string ToString() const = 0;
