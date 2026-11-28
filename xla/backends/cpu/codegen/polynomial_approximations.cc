@@ -218,6 +218,8 @@ llvm::Value* GenerateVF32Exp(llvm::IRBuilderBase* b, llvm::Value* input,
   //
   //   log(F32_MAX) = 88.723...
   //   log(2^-126) = -87.337...
+  // Preserve the unclamped input for the explicit overflow check below.
+  llvm::Value* orig_input = input;
   input = vb.Clamp(input, GetIeeeF32(-87.8), GetIeeeF32(88.8));
 
   llvm::Value* x = input;
@@ -297,7 +299,20 @@ llvm::Value* GenerateVF32Exp(llvm::IRBuilderBase* b, llvm::Value* input,
   llvm::Value* pow2 = b->CreateBitCast(pow2_bits, vb.vector_type());
 
   // Return z * 2^n' if -126 <= n' <= 128 and 0 if n' = -127.
-  return vb.Mul(z_scaled, pow2);
+  llvm::Value* result = vb.Mul(z_scaled, pow2);
+
+  // Return +inf explicitly for inputs >= 0x1.62e430p+6f (88.72283935546875f,
+  // the smallest float32 whose exp overflows float32) instead of relying on
+  // the final multiply overflowing. When exp feeds an add/sub in the same
+  // fusion, LLVM can contract that multiply into an FMA, skipping float32
+  // overflow rounding and exposing the clamped exp(88.8) value. Ordered
+  // comparison keeps NaN inputs unaffected.
+  llvm::Value* overflow_threshold = vb.SplatFloat(GetIeeeF32(0x1.62e430p+6f));
+  llvm::Value* pos_inf =
+      vb.SplatFloat(llvm::APFloat::getInf(llvm::APFloat::IEEEsingle()));
+  return b->CreateSelect(
+      b->CreateFCmpOGE(orig_input, overflow_threshold, "exp_overflow"),
+      pos_inf, result);
 }
 
 // Generates an IR for computing output value via upcasting to F32:

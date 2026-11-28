@@ -15,7 +15,9 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -510,6 +512,63 @@ ENTRY main {
       const Literal result,
       Execute(std::move(module), {&p0, &p1}, /*run_hlo_passes=*/false));
   EXPECT_EQ(result, LiteralUtil::CreateR1<float>({-1.0f, 2.0f, -3.0f, 4.0f}));
+}
+
+TEST_F(CpuEdgeCasesTest, ExpSubAndAddFusedOverflow) {
+  // Keep exp single-user in each module so CpuInstructionFusion fuses it with
+  // subtract/add and LLVM can contract the final exp multiply into an FMA.
+  constexpr absl::string_view kSubHloText = R"(
+HloModule exp_sub_overflow
+
+ENTRY main {
+  x = f32[4] parameter(0)
+  y = f32[4] parameter(1)
+  e = f32[4] exponential(x)
+  ROOT sub = f32[4] subtract(e, y)
+}
+)";
+  constexpr absl::string_view kAddHloText = R"(
+HloModule exp_add_overflow
+
+ENTRY main {
+  x = f32[4] parameter(0)
+  y = f32[4] parameter(1)
+  e = f32[4] exponential(x)
+  ROOT add = f32[4] add(e, y)
+}
+)";
+  const float kInf = std::numeric_limits<float>::infinity();
+  const float kNan = std::numeric_limits<float>::quiet_NaN();
+
+  // 0x1.62e42ep+6f is the largest float32 whose exp is finite;
+  // 0x1.62e430p+6f is the next ULP and overflows float32.
+  Literal x_sub = LiteralUtil::CreateR1<float>(
+      {0x1.62e42ep+6f, 0x1.62e430p+6f, 100.0f, kInf});
+  Literal y_sub = LiteralUtil::CreateR1<float>({1e38f, 1e38f, 1e38f, kInf});
+  ASSERT_OK_AND_ASSIGN(auto sub_module,
+                       ParseAndReturnVerifiedModule(kSubHloText));
+  ASSERT_OK_AND_ASSIGN(Literal sub_result,
+                       Execute(std::move(sub_module), {&x_sub, &y_sub}));
+  absl::Span<const float> sub = sub_result.data<float>();
+  ASSERT_EQ(sub.size(), 4);
+  EXPECT_TRUE(std::isfinite(sub[0]));
+  EXPECT_EQ(sub[1], kInf);
+  EXPECT_EQ(sub[2], kInf);
+  EXPECT_TRUE(std::isnan(sub[3]));
+
+  Literal x_add =
+      LiteralUtil::CreateR1<float>({0x1.62e430p+6f, 100.0f, kInf, kNan});
+  Literal y_add = LiteralUtil::CreateR1<float>({-1e38f, -kInf, -kInf, 1.0f});
+  ASSERT_OK_AND_ASSIGN(auto add_module,
+                       ParseAndReturnVerifiedModule(kAddHloText));
+  ASSERT_OK_AND_ASSIGN(Literal add_result,
+                       Execute(std::move(add_module), {&x_add, &y_add}));
+  absl::Span<const float> add = add_result.data<float>();
+  ASSERT_EQ(add.size(), 4);
+  EXPECT_EQ(add[0], kInf);
+  EXPECT_TRUE(std::isnan(add[1]));
+  EXPECT_TRUE(std::isnan(add[2]));
+  EXPECT_TRUE(std::isnan(add[3]));
 }
 
 }  // namespace
