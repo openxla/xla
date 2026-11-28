@@ -339,10 +339,13 @@ void convertShardedToUnreduced(sdy::ShardedToUnreducedOp op,
         auto [axisCoordinates, axisSizes] =
             getAxesCoordinateAndSize(blockBuilder, loc, mesh);
 
+        bool useI64 = sdy::requires64BitIndex(outputType);
+        RankedTensorType offsetType = RankedTensorType::get(
+            {}, sdy::getIndexOrOffsetType(blockBuilder, useI64));
         SmallVector<Value> offsets;
         offsets.reserve(outputType.getRank());
-        Value zeroOffset = stablehlo::ConstantOp::create(
-            blockBuilder, loc, blockBuilder.getI32IntegerAttr(0));
+        Value zeroOffset =
+            sdy::createScalarIntConstant(loc, offsetType, 0, blockBuilder);
         for (int64_t dim = 0; dim < outputType.getRank(); ++dim) {
           if (op.getAxes()[dim].empty()) {
             offsets.push_back(zeroOffset);
@@ -366,9 +369,12 @@ void convertShardedToUnreduced(sdy::ShardedToUnreducedOp op,
             prevAxisSize = axisSizes[axisName];
           }
 
-          Value localDimSize = stablehlo::ConstantOp::create(
-              blockBuilder, loc,
-              blockBuilder.getI32IntegerAttr(inputType.getDimSize(dim)));
+          if (useI64) {
+            offset = stablehlo::ConvertOp::create(blockBuilder, loc, offsetType,
+                                                  offset);
+          }
+          Value localDimSize = sdy::createScalarIntConstant(
+              loc, offsetType, inputType.getDimSize(dim), blockBuilder);
           offset =
               stablehlo::MulOp::create(blockBuilder, loc, offset, localDimSize);
           offsets.push_back(offset);
