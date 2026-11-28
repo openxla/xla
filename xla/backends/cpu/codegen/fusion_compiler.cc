@@ -243,6 +243,7 @@ void AddGenericLoweringPasses(mlir::OpPassManager& pm, bool fast_min_max,
   pm.addNestedPass<mlir::func::FuncOp>(cpu::createExpandFloatOpsPass());
   emitters::ExpandFloatOpsPassOptions expand_float_ops_options;
   expand_float_ops_options.approximate_tanh_ = false;
+  expand_float_ops_options.expand_f8_conversions_ = false;
   pm.addPass(emitters::createExpandFloatOpsPass(expand_float_ops_options));
   pm.addPass(emitters::createEraseDeadFunctionsPass());
   pm.addPass(mlir::createLowerAffinePass());

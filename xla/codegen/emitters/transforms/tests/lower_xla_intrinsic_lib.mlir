@@ -629,3 +629,95 @@ module {
 // CHECK-NOT: math.exp2
 // CHECK: %[[CALL:.*]] = call @xla.exp2.v4f64(%arg0) : (vector<4xf64>) -> vector<4xf64>
 // CHECK: return %[[CALL]] : vector<4xf64>
+
+// -----
+
+func.func @fptrunc_f8_scalar(%a: f32, %b: f16, %c: bf16, %d: f64)
+    -> (f8E4M3FN, f8E5M2, f8E4M3FN, f8E8M0FNU) {
+  %0 = arith.truncf %a : f32 to f8E4M3FN
+  %1 = arith.truncf %b : f16 to f8E5M2
+  %2 = arith.truncf %c : bf16 to f8E4M3FN
+  %3 = arith.truncf %d : f64 to f8E8M0FNU
+  return %0, %1, %2, %3 : f8E4M3FN, f8E5M2, f8E4M3FN, f8E8M0FNU
+}
+// CHECK-LABEL: @fptrunc_f8_scalar
+// CHECK-NOT: arith.truncf
+// CHECK: call @xla.fptrunc.f32.to.f8e4m3fn(%arg0) : (f32) -> f8E4M3FN
+// CHECK: call @xla.fptrunc.f16.to.f8e5m2(%arg1) : (f16) -> f8E5M2
+// CHECK: call @xla.fptrunc.bf16.to.f8e4m3fn(%arg2) : (bf16) -> f8E4M3FN
+// CHECK: call @xla.fptrunc.f64.to.f8e8m0fnu(%arg3) : (f64) -> f8E8M0FNU
+
+// -----
+
+func.func @fptrunc_f8_vector_16(%arg0: vector<16xf32>) -> vector<16xf8E4M3FN> {
+  %ret = arith.truncf %arg0 : vector<16xf32> to vector<16xf8E4M3FN>
+  return %ret : vector<16xf8E4M3FN>
+}
+// CHECK-LABEL: @fptrunc_f8_vector_16
+// CHECK-NOT: arith.truncf
+// CHECK: %[[CALL:.*]] = call @xla.fptrunc.v16f32.to.v16f8e4m3fn(%arg0) : (vector<16xf32>) -> vector<16xf8E4M3FN>
+// CHECK: return %[[CALL]] : vector<16xf8E4M3FN>
+
+// -----
+
+func.func @fpext_f8_scalar(%a: f8E4M3FN, %b: f8E5M2, %c: f8E4M3FN, %d: f8E8M0FNU)
+    -> (f32, f16, bf16, f64) {
+  %0 = arith.extf %a : f8E4M3FN to f32
+  %1 = arith.extf %b : f8E5M2 to f16
+  %2 = arith.extf %c : f8E4M3FN to bf16
+  %3 = arith.extf %d : f8E8M0FNU to f64
+  return %0, %1, %2, %3 : f32, f16, bf16, f64
+}
+// CHECK-LABEL: @fpext_f8_scalar
+// CHECK-NOT: arith.extf
+// CHECK: call @xla.fpext.f8e4m3fn.to.f32(%arg0) : (f8E4M3FN) -> f32
+// CHECK: call @xla.fpext.f8e5m2.to.f16(%arg1) : (f8E5M2) -> f16
+// CHECK: call @xla.fpext.f8e4m3fn.to.bf16(%arg2) : (f8E4M3FN) -> bf16
+// CHECK: call @xla.fpext.f8e8m0fnu.to.f64(%arg3) : (f8E8M0FNU) -> f64
+
+// -----
+
+func.func @fpext_f8_vector_16(%arg0: vector<16xf8E4M3FN>) -> vector<16xf32> {
+  %ret = arith.extf %arg0 : vector<16xf8E4M3FN> to vector<16xf32>
+  return %ret : vector<16xf32>
+}
+// CHECK-LABEL: @fpext_f8_vector_16
+// CHECK-NOT: arith.extf
+// CHECK: %[[CALL:.*]] = call @xla.fpext.v16f8e4m3fn.to.v16f32(%arg0) : (vector<16xf8E4M3FN>) -> vector<16xf32>
+// CHECK: return %[[CALL]] : vector<16xf32>
+
+// -----
+
+func.func @fpext_f8_vector_32(%arg0: vector<32xf8E4M3FN>) -> vector<32xf32> {
+  %ret = arith.extf %arg0 : vector<32xf8E4M3FN> to vector<32xf32>
+  return %ret : vector<32xf32>
+}
+// CHECK-LABEL: @fpext_f8_vector_32
+// CHECK-NOT: arith.extf
+// CHECK: %[[S0:.*]] = vector.extract_strided_slice %arg0 offsets = [0], sizes = [16], strides = [1] : vector<32xf8E4M3FN> to vector<16xf8E4M3FN>
+// CHECK: %[[C0:.*]] = call @xla.fpext.v16f8e4m3fn.to.v16f32(%[[S0]])
+// CHECK: %[[S1:.*]] = vector.extract_strided_slice %arg0 offsets = [16], sizes = [16], strides = [1] : vector<32xf8E4M3FN> to vector<16xf8E4M3FN>
+// CHECK: %[[C1:.*]] = call @xla.fpext.v16f8e4m3fn.to.v16f32(%[[S1]])
+// CHECK: return
+
+// -----
+
+func.func @fpext_f8_vector_3(%arg0: vector<3xf8E4M3FN>) -> vector<3xf32> {
+  %ret = arith.extf %arg0 : vector<3xf8E4M3FN> to vector<3xf32>
+  return %ret : vector<3xf32>
+}
+// CHECK-LABEL: @fpext_f8_vector_3
+// CHECK-NOT: arith.extf
+// CHECK-COUNT-3: call @xla.fpext.f8e4m3fn.to.f32
+// CHECK: return
+
+// -----
+
+func.func @non_f8_casts_untouched(%a: bf16, %b: f32) -> (f32, f16) {
+  %0 = arith.extf %a : bf16 to f32
+  %1 = arith.truncf %b : f32 to f16
+  return %0, %1 : f32, f16
+}
+// CHECK-LABEL: @non_f8_casts_untouched
+// CHECK: arith.extf %arg0 : bf16 to f32
+// CHECK: arith.truncf %arg1 : f32 to f16

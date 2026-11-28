@@ -212,6 +212,51 @@ static void BM_ConvertF32ToBF16(benchmark::State& state,
       RunHloBenchmark(state, hlo, args, {{"$d0", absl::StrCat(d0)}}, options));
 }
 
+static void BM_Convert(benchmark::State& state,
+                       const HloBenchmarkOptions& options, PrimitiveType from,
+                       PrimitiveType to) {
+  int64_t d0 = state.range(0);
+  std::string from_name = absl::AsciiStrToLower(PrimitiveType_Name(from));
+  std::string to_name = absl::AsciiStrToLower(PrimitiveType_Name(to));
+
+  absl::string_view hlo = R"(
+    HloModule convert_$from_to_$to_$d0
+
+    ENTRY e {
+      p0 = $from[1,2,1,$d0,256] parameter(0)
+      ROOT convert = $to[1,2,1,$d0,256] convert(p0)
+    }
+  )";
+
+  std::minstd_rand0 engine;
+
+  auto shape = ShapeUtil::MakeShape(from, {1, 2, 1, d0, 256});
+  absl::StatusOr<Literal> p0 = [&]() -> absl::StatusOr<Literal> {
+    switch (from) {
+      case F32:
+        return LiteralUtil::CreateRandomLiteral<F32>(shape, &engine, 1.0f,
+                                                     0.1f);
+      case F8E4M3FN:
+        return LiteralUtil::CreateRandomLiteral<F8E4M3FN>(shape, &engine, 1.0f,
+                                                          0.1f);
+      case F8E5M2:
+        return LiteralUtil::CreateRandomLiteral<F8E5M2>(shape, &engine, 1.0f,
+                                                        0.1f);
+      default:
+        return absl::InvalidArgumentError(
+            absl::StrCat("Unsupported type: ", PrimitiveType_Name(from)));
+    }
+  }();
+
+  CHECK_OK(p0.status());
+
+  std::vector<const Literal*> args = {&*p0};
+  CHECK_OK(RunHloBenchmark(
+      state, hlo, args,
+      {{"$d0", absl::StrCat(d0)}, {"$from", from_name}, {"$to", to_name}},
+      options));
+}
+
 #define BENCHMARK_SIZES(NAME)   \
   XLA_CPU_BENCHMARK(NAME)       \
       ->MeasureProcessCPUTime() \
@@ -228,6 +273,18 @@ BENCHMARK_SIZES(BM_AddBF16);
 BENCHMARK_SIZES(BM_AddU32);
 BENCHMARK_SIZES(BM_AddU64);
 BENCHMARK_SIZES(BM_ConvertF32ToBF16);
+
+#define BM_CONVERT(FROM, TO)                                       \
+  static void BM_Convert##FROM##To##TO(benchmark::State& state,    \
+                                       HloBenchmarkOptions opts) { \
+    BM_Convert(state, opts, FROM, TO);                             \
+  }                                                                \
+  BENCHMARK_SIZES(BM_Convert##FROM##To##TO)
+
+BM_CONVERT(F32, F8E4M3FN);
+BM_CONVERT(F8E4M3FN, F32);
+BM_CONVERT(F32, F8E5M2);
+BM_CONVERT(F8E5M2, F32);
 
 #define BM_UNARY_OP(OP, TYPE)                              \
   static void BM_##OP##TYPE(benchmark::State& state,       \

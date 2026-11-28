@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/APFloat.h"
 #include "llvm/IR/Type.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Types.h"
@@ -92,6 +93,10 @@ class Type : public std::variant<Scalar, Vec> {
   // Returns the intrinsic type for the given type name, e.g. v4f32.
   static Type FromName(absl::string_view name);
 };
+
+// Returns the LLVM fltSemantics for an 8-bit floating-point PrimitiveType, or
+// nullptr if `type` is not an 8-bit float.
+const llvm::fltSemantics* GetByteFloatSemantics(PrimitiveType type);
 
 }  // namespace xla::codegen::intrinsics
 

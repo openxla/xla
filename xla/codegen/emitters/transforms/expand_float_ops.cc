@@ -39,6 +39,10 @@ limitations under the License.
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "xla/codegen/emitters/implicit_arith_op_builder.h"
 #include "xla/codegen/emitters/transforms/passes.h"
+#include "xla/codegen/intrinsic/fpext.h"
+#include "xla/codegen/intrinsic/fptrunc.h"
+#include "xla/codegen/intrinsic/type.h"
+#include "xla/mlir/utils/type_util.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/transforms/map_mhlo_to_scalar_op.h"
 #include "xla/xla_data.pb.h"
@@ -523,8 +527,11 @@ Value EmitFloatConversion(Value value, mlir::FloatType to_ty,
   return result;
 }
 
-struct RewriteTruncFPattern : public mlir::OpRewritePattern<ma::TruncFOp> {
-  using OpRewritePattern::OpRewritePattern;
+class RewriteTruncFPattern : public mlir::OpRewritePattern<ma::TruncFOp> {
+ public:
+  RewriteTruncFPattern(mlir::MLIRContext* context, bool expand_f8_conversions)
+      : mlir::OpRewritePattern<ma::TruncFOp>(context),
+        expand_f8_conversions_(expand_f8_conversions) {}
 
   mlir::LogicalResult matchAndRewrite(
       ma::TruncFOp op, mlir::PatternRewriter& rewriter) const override {
@@ -539,15 +546,30 @@ struct RewriteTruncFPattern : public mlir::OpRewritePattern<ma::TruncFOp> {
     if (dst_ty.getWidth() > 8) {
       return rewriter.notifyMatchFailure(op, "not an 8 bit (or less) truncf");
     }
+    if (!expand_f8_conversions_) {
+      codegen::intrinsics::Type from_type = codegen::intrinsics::Type::S(
+          ConvertMlirTypeToPrimitiveType(src.getType()));
+      codegen::intrinsics::Type to_type =
+          codegen::intrinsics::Type::S(ConvertMlirTypeToPrimitiveType(dst_ty));
+      if (codegen::intrinsics::FpTrunc::IsSupported("", {from_type, to_type})) {
+        return rewriter.notifyMatchFailure(op, "deferred to FpTrunc intrinsic");
+      }
+    }
 
     mlir::ImplicitLocOpBuilder b(op.getLoc(), rewriter);
     rewriter.replaceOp(op, EmitFloatConversion(src, dst_ty, b));
     return mlir::success();
   }
+
+ private:
+  bool expand_f8_conversions_;
 };
 
-struct RewriteExtFPattern : public mlir::OpRewritePattern<ma::ExtFOp> {
-  using OpRewritePattern::OpRewritePattern;
+class RewriteExtFPattern : public mlir::OpRewritePattern<ma::ExtFOp> {
+ public:
+  RewriteExtFPattern(mlir::MLIRContext* context, bool expand_f8_conversions)
+      : mlir::OpRewritePattern<ma::ExtFOp>(context),
+        expand_f8_conversions_(expand_f8_conversions) {}
 
   mlir::LogicalResult matchAndRewrite(
       ma::ExtFOp op, mlir::PatternRewriter& rewriter) const override {
@@ -562,11 +584,23 @@ struct RewriteExtFPattern : public mlir::OpRewritePattern<ma::ExtFOp> {
     if (src.getType().getWidth() > 8) {
       return rewriter.notifyMatchFailure(op, "not an 8 bit (or less) extf");
     }
+    if (!expand_f8_conversions_) {
+      codegen::intrinsics::Type from_type = codegen::intrinsics::Type::S(
+          ConvertMlirTypeToPrimitiveType(src.getType()));
+      codegen::intrinsics::Type to_type =
+          codegen::intrinsics::Type::S(ConvertMlirTypeToPrimitiveType(dst_ty));
+      if (codegen::intrinsics::FpExt::IsSupported("", {from_type, to_type})) {
+        return rewriter.notifyMatchFailure(op, "deferred to FpExt intrinsic");
+      }
+    }
 
     mlir::ImplicitLocOpBuilder b(op.getLoc(), rewriter);
     rewriter.replaceOp(op, EmitFloatConversion(src, dst_ty, b));
     return mlir::success();
   }
+
+ private:
+  bool expand_f8_conversions_;
 };
 
 // Lowering for cmpf : f8 for float to pred conversions.
@@ -684,8 +718,11 @@ struct RewriteFpToIPattern : public mlir::OpRewritePattern<Op> {
 };
 
 template <typename Op>
-struct RewriteMinMaxFPattern : public mlir::OpRewritePattern<Op> {
-  using mlir::OpRewritePattern<Op>::OpRewritePattern;
+class RewriteMinMaxFPattern : public mlir::OpRewritePattern<Op> {
+ public:
+  RewriteMinMaxFPattern(mlir::MLIRContext* context, bool expand_f8_conversions)
+      : mlir::OpRewritePattern<Op>(context),
+        expand_f8_conversions_(expand_f8_conversions) {}
 
   mlir::LogicalResult matchAndRewrite(
       Op op, mlir::PatternRewriter& rewriter) const override {
@@ -699,12 +736,28 @@ struct RewriteMinMaxFPattern : public mlir::OpRewritePattern<Op> {
       return rewriter.notifyMatchFailure(op, "not an 8 bit (or less) float");
     }
     mlir::ImplicitLocOpBuilder b(op.getLoc(), rewriter);
+    if (!expand_f8_conversions_) {
+      codegen::intrinsics::Type f8_type = codegen::intrinsics::Type::S(
+          ConvertMlirTypeToPrimitiveType(lhs.getType()));
+      codegen::intrinsics::Type f32_type = codegen::intrinsics::Type::S(F32);
+      if (codegen::intrinsics::FpExt::IsSupported("", {f8_type, f32_type}) &&
+          codegen::intrinsics::FpTrunc::IsSupported("", {f32_type, f8_type})) {
+        auto lhs_f32 = ma::ExtFOp::create(b, b.getF32Type(), lhs);
+        auto rhs_f32 = ma::ExtFOp::create(b, b.getF32Type(), rhs);
+        auto max_f32 = Op::create(b, lhs_f32, rhs_f32, op.getFastmathAttr());
+        rewriter.replaceOpWithNewOp<ma::TruncFOp>(op, lhs.getType(), max_f32);
+        return mlir::success();
+      }
+    }
     auto lhs_f32 = EmitFloatConversion(lhs, b.getF32Type(), b);
     auto rhs_f32 = EmitFloatConversion(rhs, b.getF32Type(), b);
     auto max_f32 = Op::create(b, lhs_f32, rhs_f32, op.getFastmathAttr());
     rewriter.replaceOp(op, EmitFloatConversion(max_f32, lhs.getType(), b));
     return mlir::success();
   }
+
+ private:
+  bool expand_f8_conversions_;
 };
 
 class ExpandFloatOpsPass
@@ -713,15 +766,16 @@ class ExpandFloatOpsPass
   using ExpandFloatOpsPassBase::ExpandFloatOpsPassBase;
   void runOnOperation() override {
     mlir::RewritePatternSet patterns(&getContext());
-    patterns.add<RewriteTruncFPattern, RewriteExtFPattern, RewriteAbsFPattern,
-                 RewriteF8Cst, RewriteIToFpPattern<ma::SIToFPOp>,
-                 RewriteIToFpPattern<ma::UIToFPOp>,
-                 RewriteFpToIPattern<ma::FPToSIOp>,
-                 RewriteFpToIPattern<ma::FPToUIOp>,
+    patterns.add<RewriteTruncFPattern, RewriteExtFPattern,
                  RewriteMinMaxFPattern<ma::MaximumFOp>,
                  RewriteMinMaxFPattern<ma::MinimumFOp>,
                  RewriteMinMaxFPattern<ma::MaxNumFOp>,
-                 RewriteMinMaxFPattern<ma::MinNumFOp>>(&getContext());
+                 RewriteMinMaxFPattern<ma::MinNumFOp>>(&getContext(),
+                                                       expand_f8_conversions_);
+    patterns.add<
+        RewriteAbsFPattern, RewriteF8Cst, RewriteIToFpPattern<ma::SIToFPOp>,
+        RewriteIToFpPattern<ma::UIToFPOp>, RewriteFpToIPattern<ma::FPToSIOp>,
+        RewriteFpToIPattern<ma::FPToUIOp>>(&getContext());
     if (approximate_tanh_) {
       mlir::populatePolynomialApproximateTanhPattern(patterns);
     }

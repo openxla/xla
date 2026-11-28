@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/codegen/intrinsic/cpp/intrinsic_declarations.h"
 #include "xla/codegen/intrinsic/erf.h"
 #include "xla/codegen/intrinsic/exp.h"
+#include "xla/codegen/intrinsic/fpext.h"
 #include "xla/codegen/intrinsic/fptrunc.h"
 #include "xla/codegen/intrinsic/log1p.h"
 #include "xla/codegen/intrinsic/rsqrt.h"
@@ -85,9 +86,13 @@ bool NeedsUpcast(mlir::Type type) {
 }
 
 template <typename Op>
+inline constexpr bool kIsFloatCastOp =
+    std::is_same_v<Op, ma::TruncFOp> || std::is_same_v<Op, ma::ExtFOp>;
+
+template <typename Op>
 PrimitiveType GetTargetPrimitiveType(mlir::Type type) {
   mlir::Type elem_type = mlir::getElementTypeOrSelf(type);
-  if constexpr (!std::is_same_v<Op, ma::TruncFOp>) {
+  if constexpr (!kIsFloatCastOp<Op>) {
     if (NeedsUpcast(elem_type)) {
       return xla::F32;
     }
@@ -102,7 +107,7 @@ SmallVector<ci::Type, 2> GetVectorTargetTypes(Op op, int64_t num_elements) {
     vector_types.push_back(
         ci::Type::V(GetTargetPrimitiveType<Op>(type), num_elements));
   }
-  if constexpr (std::is_same_v<Op, ma::TruncFOp>) {
+  if constexpr (kIsFloatCastOp<Op>) {
     mlir::Type result_element_type = mlir::getElementTypeOrSelf(op.getType());
     PrimitiveType result_target_type =
         ConvertMlirTypeToPrimitiveType(result_element_type);
@@ -116,7 +121,7 @@ TargetTypes GetTargetTypes(Op op) {
   TargetTypes target_types;
   auto vector_type = mlir::dyn_cast<mlir::VectorType>(op.getType());
   for (mlir::Type type : TypeRange(op->getOperands())) {
-    if constexpr (!std::is_same_v<Op, ma::TruncFOp>) {
+    if constexpr (!kIsFloatCastOp<Op>) {
       if (NeedsUpcast(type)) {
         target_types.needs_upcast = true;
       }
@@ -128,7 +133,7 @@ TargetTypes GetTargetTypes(Op op) {
     }
     target_types.scalar_types.push_back(ci::Type::S(target_type));
   }
-  if constexpr (std::is_same_v<Op, ma::TruncFOp>) {
+  if constexpr (kIsFloatCastOp<Op>) {
     mlir::Type result_element_type = mlir::getElementTypeOrSelf(op.getType());
     PrimitiveType result_target_type =
         ConvertMlirTypeToPrimitiveType(result_element_type);
@@ -379,6 +384,7 @@ class LowerXlaIntrinsicLibPass
                  LowerIntrinsicPattern<ci::Sin, mm::SinOp>,
                  LowerIntrinsicPattern<ci::Cos, mm::CosOp>,
                  LowerIntrinsicPattern<ci::FpTrunc, ma::TruncFOp>,
+                 LowerIntrinsicPattern<ci::FpExt, ma::ExtFOp>,
                  LowerIntrinsicPattern<ci::Erf, mm::ErfOp>,
                  LowerIntrinsicPattern<ci::Sinh, mm::SinhOp>,
                  LowerIntrinsicPattern<ci::Cosh, mm::CoshOp>,

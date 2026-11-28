@@ -17,7 +17,10 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <memory>
 #include <string>
@@ -26,17 +29,19 @@ limitations under the License.
 
 #include "absl/base/attributes.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include "llvm/IR/Argument.h"
+#include "llvm/IR/FMF.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CodeGen.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
@@ -1647,6 +1652,129 @@ TEST_F(CpuFusionEmitterTest,
                                    args.data()};
   EXPECT_EQ(CallCpuKernel(kernel, &frame), nullptr);
   EXPECT_EQ(dst, src);
+}
+
+absl::Status CompileAndRunConvertKernel(
+    absl::string_view name, absl::string_view op, absl::string_view src_ty,
+    absl::string_view dst_ty, absl::string_view expected_intrinsic,
+    llvm::FastMathFlags fmf, void* src_ptr, size_t src_bytes, void* dst_ptr,
+    size_t dst_bytes, size_t count) {
+  std::string mlir = absl::Substitute(R"(
+    module attributes {xla.cpu_memory_region_name = "$0"} {
+      func.func @$0(
+          %src: tensor<$4x$2> {llvm.align = 16 : index, xla.invariant, xla.slice_index = 0},
+          %dst: tensor<$4x$3> {llvm.align = 16 : index, xla.slice_index = 1})
+          -> tensor<$4x$3>
+          attributes {xla.backend_kind = #xla.backend_kind<cpu>, xla.entry} {
+        %c0 = arith.constant 0 : index
+        %c1 = arith.constant 1 : index
+        %cN = arith.constant $4 : index
+        %res = scf.for %i = %c0 to %cN step %c1 iter_args(%cur = %dst) -> (tensor<$4x$3>) {
+          %v = tensor.extract %src[%i] : tensor<$4x$2>
+          %f = arith.$1 %v : $2 to $3
+          %next = tensor.insert %f into %cur[%i] : tensor<$4x$3>
+          scf.yield %next : tensor<$4x$3>
+        }
+        return %res : tensor<$4x$3>
+      }
+    }
+  )",
+                                      name, op, src_ty, dst_ty, count);
+
+  std::unique_ptr<mlir::MLIRContext> mlir_context =
+      FusionCompiler::CreateContext();
+  mlir::MLIRContext* context_ptr = mlir_context.get();
+  ABSL_ASSIGN_OR_RETURN(
+      MlirKernelSource mlir_source,
+      MlirKernelSource::ParseFromString(mlir, std::move(mlir_context)));
+  FusionCompiler::Options fc_opts{256, 1, false, fmf};
+  FusionCompiler compiler(context_ptr, fc_opts);
+  ABSL_ASSIGN_OR_RETURN(LlvmKernelSource llvm_source,
+                        compiler.Compile(std::move(mlir_source)));
+  llvm::orc::ThreadSafeModule tsm = std::move(llvm_source).thread_safe_module();
+  bool saw_intrinsic = false;
+  tsm.withModuleDo([&](llvm::Module& module) {
+    saw_intrinsic = module.getFunction(expected_intrinsic) != nullptr;
+  });
+  if (!saw_intrinsic) {
+    return absl::InternalError(absl::Substitute(
+        "Expected FusionCompiler to emit $0", expected_intrinsic));
+  }
+
+  std::unique_ptr<IrCompiler> ir_compiler =
+      IrCompiler::Create({},
+                         IrCompiler::Options{
+                             /*opt_level=*/llvm::CodeGenOptLevel::Aggressive,
+                             /*optimize_for_size=*/false,
+                             TargetMachineOptions(GetDebugOptionsFromFlags()),
+                             /*fast_math_flags=*/fmf,
+                         },
+                         IrCompiler::CompilationHooks());
+  ABSL_ASSIGN_OR_RETURN(JitCompiler jit,
+                        JitCompiler::Create({}, std::move(ir_compiler)));
+  ABSL_RETURN_IF_ERROR(jit.AddModule(std::move(tsm)));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<FunctionLibrary> library,
+      std::move(jit).Compile(
+          {FunctionLibrary::Sym<FunctionLibrary::Kernel>(name)}));
+  ABSL_ASSIGN_OR_RETURN(
+      FunctionLibrary::Kernel * kernel,
+      library->ResolveFunction<FunctionLibrary::Kernel>(name));
+  std::array<XLA_CPU_KernelArg, 2> args = {{
+      {src_ptr, src_bytes},
+      {dst_ptr, dst_bytes},
+  }};
+  XLA_CPU_NumWorkGroups num_workgroups = {1, 1, 1};
+  XLA_CPU_WorkGroupId workgroup_id = {0, 0, 0};
+  XLA_CPU_KernelCallFrame frame = {&num_workgroups, &workgroup_id, args.size(),
+                                   args.data()};
+  if (CallCpuKernel(kernel, &frame) != nullptr) {
+    return absl::InternalError(
+        absl::Substitute("CPU kernel $0 returned non-null error", name));
+  }
+  return absl::OkStatus();
+}
+
+TEST_F(CpuFusionEmitterTest, Fp8ConversionsLowerToIntrinsicsAndExecute) {
+  alignas(64) std::array<uint8_t, 256> all_f8{};
+  for (int i = 0; i < 256; ++i) {
+    all_f8[i] = static_cast<uint8_t>(i);
+  }
+  alignas(64) std::array<float, 256> f32_out{};
+  alignas(64) std::array<uint8_t, 256> f8_roundtrip{};
+
+  for (llvm::FastMathFlags fmf :
+       {llvm::FastMathFlags(), llvm::FastMathFlags::getFast()}) {
+    ASSERT_OK(CompileAndRunConvertKernel("fp8_ext_f32", "extf", "f8E4M3FN",
+                                         "f32", "xla.fpext.f8e4m3fn.to.f32",
+                                         fmf, all_f8.data(), sizeof(all_f8),
+                                         f32_out.data(), sizeof(f32_out), 256));
+    for (int i = 0; i < 256; ++i) {
+      tsl::float8_e4m3fn val;
+      std::memcpy(&val, &all_f8[i], 1);
+      float expected = static_cast<float>(val);
+      if (std::isnan(expected)) {
+        EXPECT_TRUE(std::isnan(f32_out[i])) << "idx=" << i;
+      } else {
+        uint32_t actual_bits = 0;
+        uint32_t expected_bits = 0;
+        std::memcpy(&actual_bits, &f32_out[i], 4);
+        std::memcpy(&expected_bits, &expected, 4);
+        EXPECT_EQ(actual_bits, expected_bits) << "idx=" << i;
+      }
+    }
+
+    ASSERT_OK(CompileAndRunConvertKernel(
+        "f32_trunc_fp8", "truncf", "f32", "f8E4M3FN",
+        "xla.fptrunc.f32.to.f8e4m3fn", fmf, f32_out.data(), sizeof(f32_out),
+        f8_roundtrip.data(), sizeof(f8_roundtrip), 256));
+    for (int i = 0; i < 256; ++i) {
+      tsl::float8_e4m3fn expected = static_cast<tsl::float8_e4m3fn>(f32_out[i]);
+      uint8_t expected_bits = 0;
+      std::memcpy(&expected_bits, &expected, 1);
+      EXPECT_EQ(f8_roundtrip[i], expected_bits) << "idx=" << i;
+    }
+  }
 }
 
 }  // namespace

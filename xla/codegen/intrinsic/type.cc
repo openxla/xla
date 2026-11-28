@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/APFloat.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Type.h"
@@ -216,6 +217,29 @@ Type Type::TypeFromIrType(llvm::Type* type) {
                     .getKnownMinValue());
   }
   return Type(llvm_ir::PrimitiveTypeFromIrType(type), std::nullopt);
+}
+
+const llvm::fltSemantics* GetByteFloatSemantics(PrimitiveType type) {
+  switch (type) {
+    case F8E5M2:
+      return &llvm::APFloat::Float8E5M2();
+    case F8E4M3FN:
+      return &llvm::APFloat::Float8E4M3FN();
+    case F8E4M3:
+      return &llvm::APFloat::Float8E4M3();
+    case F8E3M4:
+      return &llvm::APFloat::Float8E3M4();
+    case F8E4M3FNUZ:
+      return &llvm::APFloat::Float8E4M3FNUZ();
+    case F8E5M2FNUZ:
+      return &llvm::APFloat::Float8E5M2FNUZ();
+    case F8E4M3B11FNUZ:
+      return &llvm::APFloat::Float8E4M3B11FNUZ();
+    case F8E8M0FNU:
+      return &llvm::APFloat::Float8E8M0FNU();
+    default:
+      return nullptr;
+  }
 }
 
 }  // namespace xla::codegen::intrinsics

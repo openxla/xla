@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/codegen/intrinsic_lib.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -45,6 +46,7 @@ limitations under the License.
 #include "xla/codegen/intrinsic/cpp/intrinsic_declarations.h"
 #include "xla/codegen/intrinsic/erf.h"
 #include "xla/codegen/intrinsic/exp.h"
+#include "xla/codegen/intrinsic/fpext.h"
 #include "xla/codegen/intrinsic/fptrunc.h"
 #include "xla/codegen/intrinsic/intrinsic.h"
 #include "xla/codegen/intrinsic/ldexp.h"
@@ -147,6 +149,8 @@ IntrinsicFunctionLib::IntrinsicFunctionLib(const IntrinsicOptions& options)
   intrinsic_functions_.push_back(
       std::make_unique<IntrinsicAdapter<intrinsics::Expm1>>());
   intrinsic_functions_.push_back(
+      std::make_unique<IntrinsicAdapter<intrinsics::FpExt>>());
+  intrinsic_functions_.push_back(
       std::make_unique<IntrinsicAdapter<intrinsics::FpTrunc>>());
   intrinsic_functions_.push_back(
       std::make_unique<IntrinsicAdapter<intrinsics::Erf>>());
@@ -247,10 +251,14 @@ std::vector<llvm::VecDesc> IntrinsicFunctionLib::Vectorizations() {
           continue;
         }
         size_t vector_width = vector_types.front().vector_width().value_or(1);
+        size_t max_bit_width = 0;
+        for (const Type& t : target_types) {
+          max_bit_width = std::max(
+              max_bit_width,
+              static_cast<size_t>(primitive_util::BitWidth(t.element_type())));
+        }
         if (options_.prefer_vector_width > 0 &&
-            vector_width * primitive_util::BitWidth(
-                               target_types.front().element_type()) >
-                options_.prefer_vector_width) {
+            vector_width * max_bit_width > options_.prefer_vector_width) {
           continue;
         }
         llvm::VecDesc vec_desc = {
