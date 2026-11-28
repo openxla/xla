@@ -1059,12 +1059,28 @@ void SetFakeArgumentCacheLimitsForTest(int64_t max_in_memory_bytes,
                                                  max_disk_bytes);
 }
 
-absl::StatusOr<std::vector<Literal>> MakeFakeArguments(
-    const HloModule* module, const FakeArgumentsOptions& options) {
+FakeArgumentsGenerator::FakeArgumentsGenerator(
+    const HloModule* module,
+    std::unique_ptr<HloDataflowAnalysis> dataflow_analysis)
+    : module_(module), dataflow_analysis_(std::move(dataflow_analysis)) {}
+
+absl::StatusOr<FakeArgumentsGenerator> FakeArgumentsGenerator::Create(
+    const HloModule* module) {
+  if (module == nullptr) {
+    return InvalidArgument("HloModule must not be null.");
+  }
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloDataflowAnalysis> dataflow_analysis,
+                        HloDataflowAnalysis::Run(*module));
+  return FakeArgumentsGenerator(module, std::move(dataflow_analysis));
+}
+
+absl::StatusOr<std::vector<Literal>> FakeArgumentsGenerator::MakeArguments(
+    const FakeArgumentsOptions& options) {
   if (!options.parameter_ranges.empty()) {
     return Unimplemented(
         "parameter_ranges is not currently supported in MakeFakeArguments.");
   }
+  CHECK(dataflow_analysis_ != nullptr);
 
   std::unique_ptr<std::minstd_rand0> default_engine;
   std::minstd_rand0* engine = options.engine;
@@ -1080,11 +1096,11 @@ absl::StatusOr<std::vector<Literal>> MakeFakeArguments(
   FakeArgumentCacheContext* cache_ctx_ptr =
       cache_ctx.has_value() ? &*cache_ctx : nullptr;
 
-  ABSL_ASSIGN_OR_RETURN(auto dataflow, HloDataflowAnalysis::Run(*module));
-  const auto params = module->entry_computation()->parameter_instructions();
+  const HloInstruction::InstructionVector& params =
+      module_->entry_computation()->parameter_instructions();
   std::vector<Literal> arguments(params.size());
   for (int i = 0; i < params.size(); ++i) {
-    const HloModuleConfig& module_config = module->config();
+    const HloModuleConfig& module_config = module_->config();
     const Shape& param_shape = (module_config.has_entry_computation_layout() &&
                                 module_config.entry_computation_layout()
                                     .parameter_layout(i)
@@ -1098,12 +1114,23 @@ absl::StatusOr<std::vector<Literal>> MakeFakeArguments(
     ABSL_ASSIGN_OR_RETURN(
         arguments[i],
         MakeConstrainedArgument(
-            *dataflow, *params[i], param_shape, engine, options.use_large_range,
-            options.treat_gte_as_data_formatting, options.max_bits_of_precision,
-            options.generate_aligned_ds_indices, options.get_index_known_zeroes,
-            cache_ctx_ptr));
+            *dataflow_analysis_, *params[i], param_shape, engine,
+            options.use_large_range, options.treat_gte_as_data_formatting,
+            options.max_bits_of_precision, options.generate_aligned_ds_indices,
+            options.get_index_known_zeroes, cache_ctx_ptr));
   }
-  return std::move(arguments);
+  return arguments;
+}
+
+absl::StatusOr<std::vector<Literal>> MakeFakeArguments(
+    const HloModule* module, const FakeArgumentsOptions& options) {
+  if (!options.parameter_ranges.empty()) {
+    return Unimplemented(
+        "parameter_ranges is not currently supported in MakeFakeArguments.");
+  }
+  ABSL_ASSIGN_OR_RETURN(FakeArgumentsGenerator generator,
+                        FakeArgumentsGenerator::Create(module));
+  return generator.MakeArguments(options);
 }
 
 // Validates options for dataflow-constrained fake argument generation.

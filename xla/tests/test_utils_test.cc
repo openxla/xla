@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -59,9 +60,11 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::absl_testing::StatusIs;
 using ::testing::AllOf;
 using ::testing::Each;
 using ::testing::Ge;
+using ::testing::HasSubstr;
 using ::testing::Le;
 
 // A test fixture is used because we need a client for our computation builder.
@@ -1422,6 +1425,50 @@ ENTRY entry {
   EXPECT_NE(cached_args[3], cached_args[4]);
   EXPECT_EQ(cached_args[3], cached_args[5]);
   EXPECT_EQ(cached_engine, uncached_engine);
+}
+
+TEST_F(TestUtilsTest,
+       FakeArgumentsGeneratorMatchesMakeFakeArgumentsAcrossCalls) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule DataflowModule
+
+ENTRY entry {
+  data = f32[200,100] parameter(0)
+  idx = s32[10] parameter(1)
+  ROOT gather = f32[10,100] gather(data, idx),
+      offset_dims={1}, collapsed_slice_dims={0}, start_index_map={0},
+      index_vector_dim=1, slice_sizes={1,100}
+}
+)"));
+
+  std::minstd_rand0 default_engine(55);
+  FakeArgumentsOptions default_options;
+  default_options.engine = &default_engine;
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> default_first,
+                       MakeFakeArguments(module.get(), default_options));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> default_second,
+                       MakeFakeArguments(module.get(), default_options));
+
+  ASSERT_OK_AND_ASSIGN(FakeArgumentsGenerator generator,
+                       FakeArgumentsGenerator::Create(module.get()));
+  FakeArgumentsGenerator moved_generator = std::move(generator);
+  std::minstd_rand0 generator_engine(55);
+  FakeArgumentsOptions generator_options;
+  generator_options.engine = &generator_engine;
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> reused_first,
+                       moved_generator.MakeArguments(generator_options));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> reused_second,
+                       moved_generator.MakeArguments(generator_options));
+
+  EXPECT_EQ(reused_first, default_first);
+  EXPECT_EQ(reused_second, default_second);
+  EXPECT_EQ(generator_engine, default_engine);
+}
+
+TEST_F(TestUtilsTest, FakeArgumentsGeneratorRejectsNullModule) {
+  EXPECT_THAT(FakeArgumentsGenerator::Create(nullptr),
+              StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("null")));
 }
 
 }  // namespace
