@@ -105,6 +105,9 @@ static bool OperandsAndResultMustHaveRowMajorLayout(
   if (instr.opcode() == HloOpcode::kCustomCall) {
     return instr.custom_call_target() == "TopK";
   }
+  if (instr.opcode() == HloOpcode::kFft) {
+    return true;
+  }
   return false;
 }
 
@@ -179,7 +182,9 @@ absl::Status CpuLayoutAssignment::AddBackendConstraints(
       if (!operand_shape.IsArray() || operand_shape.dimensions().size() <= 1) {
         continue;
       }
-      if (constraints->OperandLayout(instruction, operand_no) != nullptr) {
+      const OperandLayoutConstraint* op_constraint =
+          constraints->GetOperandLayoutConstraint(instruction, operand_no);
+      if (op_constraint != nullptr && op_constraint->mandatory()) {
         continue;
       }
       if (AnyOperandBufferForwarded(instruction, operand_no)) {
