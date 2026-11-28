@@ -103,12 +103,19 @@ class CpuRawBuffer : public CommonPjRtRawBufferImpl {
 
   void* GetHostPointer() const override;
 
+  void* GetHostPointerForInternalUse(HostAccess access) const override {
+    if (access == HostAccess::kWrite) {
+      buffer_->InvalidateCacheIdentity();
+    }
+    return buffer_->untyped_data();
+  }
+
   void* OpaqueDeviceMemoryDataPointer() const override {
     // We need to wait for the memory to be allocated before sharing it with
     // external frameworks like NumPy.
     tsl::BlockUntilReady(buffer_);
     CHECK(buffer_.IsConcrete());
-    return buffer_->untyped_data();
+    return CpuRawBuffer::GetHostPointer();
   }
 
   const tsl::AsyncValueRef<CpuDeviceMemory>& buffer() const { return buffer_; }
