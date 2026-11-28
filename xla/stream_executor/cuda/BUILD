@@ -3740,6 +3740,7 @@ xla_cc_test(
         ":cuda_compute_capability",
         ":cuda_elf_utils",
         ":cuda_fatbin",
+        "//third_party/gloop/util/gtl:c_memcpy",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/types:span",
