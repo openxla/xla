@@ -553,6 +553,56 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "collective_permute_equivariant_eliminator",
+    srcs = ["collective_permute_equivariant_eliminator.cc"],
+    hdrs = ["collective_permute_equivariant_eliminator.h"],
+    deps = [
+        "//xla:array",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:collective_op_group_mode",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_sharding",
+        "//xla/hlo/ir:tile_assignment",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/utils:hlo_query",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "collective_permute_equivariant_eliminator_test",
+    srcs = ["collective_permute_equivariant_eliminator_test.cc"],
+    deps = [
+        ":collective_permute_equivariant_eliminator",
+        "//xla:array",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_sharding",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:hlo_module_config",
+        "//xla/service:hlo_verifier",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
     name = "infeed_token_propagation",
     srcs = ["infeed_token_propagation.cc"],
     hdrs = ["infeed_token_propagation.h"],
