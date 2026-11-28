@@ -590,11 +590,30 @@ GatherScatterOperandsShardedAcrossParallelDims(
 
 // Pattern rewrite preprocessing utilities.
 
-// Returns rotate_amount if the concat(lhs, rhs) is equivalent to rotating the
-// elements along the concat dimension to the right by rotate_amount, where the
-// input of rotation is the shard operand of lhs and rhs. Returns std::nullopt
-// if the pattern is not found.
-std::optional<int64_t> FindRotateRightPattern(const HloInstruction* concat);
+// Describes the right-rotate pattern for a tensor in `dim` with `amount`.
+// This can be either a shuffle or a concat pattern. If it's a shuffle,
+// `rotate_dim_idx` specifies the index in shuffle->dimensions()/shifts() that
+// corresponds to `dim`. If it's a concat, `rotate_dim_idx` is -1.
+struct RotateRightPatternMatch {
+  int64_t dim;
+  int64_t amount;
+  int64_t rotate_dim_idx;
+};
+
+// Returns a match if inst is either:
+// - a rotate-mode shuffle with a sharded dimension.
+// - a concat(lhs, rhs) pattern equivalent to rotating elements along
+//   the (sharded) concat dimension to the right.
+// Returns std::nullopt otherwise.
+std::optional<RotateRightPatternMatch> FindRotateRightPattern(
+    const HloInstruction* inst);
+
+// Pops the (dim, shift) entry at rotate_dim_idx in shuffle_inst in-place.
+// shuffle_inst must be a shuffle in rotate mode. If shuffle_inst has no
+// dimensions left after erasure, it replaces uses of shuffle_inst with its
+// operand(0) and removes shuffle_inst.
+absl::StatusOr<HloInstruction*> PopRotateDimension(HloInstruction* shuffle_inst,
+                                                   int64_t rotate_dim_idx);
 
 // Describes the pad with wrap pattern.
 struct PadWithWrapPattern {

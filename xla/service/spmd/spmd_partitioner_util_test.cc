@@ -27,6 +27,10 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "xla/array.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/mesh_and_axis.h"
 #include "xla/hlo/ir/named_sharding.h"
@@ -34,6 +38,10 @@ limitations under the License.
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/service/spmd/spmd_partitioner_util_internal.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/shuffle.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace spmd {
@@ -1068,6 +1076,186 @@ TEST(SPMDPartitionerUtilTest, AlignGroupsWithIfCompatibleIgnoreGroupOrder) {
   EXPECT_FALSE(AlignGroupsWithIfCompatible(src_nu_grouped, ref_nu_grouped,
                                            /*ignore_group_order=*/true)
                    .has_value());
+}
+
+TEST(SPMDPartitionerUtilTest, FindRotateRightPatternOnShuffleRotate) {
+  HloComputation::Builder builder("test");
+  Shape shape = ShapeUtil::MakeShape(F32, {10, 20});
+  auto* param =
+      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "p0"));
+  auto* shuffle = builder.AddInstruction(HloInstruction::CreateShuffle(
+      shape, param, /*dimensions=*/{0, 1}, shuffle::Rotate(/*shifts=*/{2, 5})));
+  shuffle->set_sharding(HloSharding::IotaTile({1, 2}));
+  auto computation = builder.Build();
+  shuffle = computation->root_instruction();
+
+  std::optional<RotateRightPatternMatch> match =
+      FindRotateRightPattern(shuffle);
+
+  ASSERT_TRUE(match.has_value());
+  EXPECT_EQ(match->dim, 1);
+  EXPECT_EQ(match->amount, 15);
+  EXPECT_EQ(match->rotate_dim_idx, 1);
+}
+
+TEST(SPMDPartitionerUtilTest, FindRotateRightPatternOnConcat) {
+  HloComputation::Builder builder("test");
+  Shape shape = ShapeUtil::MakeShape(F32, {12});
+  auto* param =
+      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "p0"));
+  param->set_sharding(HloSharding::IotaTile({4}));
+  Shape slice_lhs_shape = ShapeUtil::MakeShape(F32, {2});
+  auto* slice_lhs = builder.AddInstruction(
+      HloInstruction::CreateSlice(slice_lhs_shape, param, {10}, {12}, {1}));
+  Shape slice_rhs_shape = ShapeUtil::MakeShape(F32, {10});
+  auto* slice_rhs = builder.AddInstruction(
+      HloInstruction::CreateSlice(slice_rhs_shape, param, {0}, {10}, {1}));
+  auto* concat = builder.AddInstruction(
+      HloInstruction::CreateConcatenate(shape, {slice_lhs, slice_rhs}, 0));
+  concat->set_sharding(HloSharding::IotaTile({4}));
+  auto computation = builder.Build();
+  concat = computation->root_instruction();
+
+  std::optional<RotateRightPatternMatch> match = FindRotateRightPattern(concat);
+
+  ASSERT_TRUE(match.has_value());
+  EXPECT_EQ(match->dim, 0);
+  EXPECT_EQ(match->amount, 2);
+  EXPECT_EQ(match->rotate_dim_idx, -1);
+}
+
+TEST(SPMDPartitionerUtilTest, FindRotateRightPatternOnUnshardedConcatDim) {
+  HloComputation::Builder builder("test");
+  Shape shape = ShapeUtil::MakeShape(F32, {12, 4});
+  // Sharded on dimension 1 only, so the concat dimension 0 is unsharded.
+  HloSharding sharding = HloSharding::IotaTile({1, 2});
+  auto* param =
+      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "p0"));
+  param->set_sharding(sharding);
+  Shape slice_lhs_shape = ShapeUtil::MakeShape(F32, {2, 4});
+  auto* slice_lhs = builder.AddInstruction(HloInstruction::CreateSlice(
+      slice_lhs_shape, param, {10, 0}, {12, 4}, {1, 1}));
+  Shape slice_rhs_shape = ShapeUtil::MakeShape(F32, {10, 4});
+  auto* slice_rhs = builder.AddInstruction(HloInstruction::CreateSlice(
+      slice_rhs_shape, param, {0, 0}, {10, 4}, {1, 1}));
+  auto* concat = builder.AddInstruction(
+      HloInstruction::CreateConcatenate(shape, {slice_lhs, slice_rhs}, 0));
+  concat->set_sharding(sharding);
+  auto computation = builder.Build();
+  concat = computation->root_instruction();
+
+  std::optional<RotateRightPatternMatch> match = FindRotateRightPattern(concat);
+
+  // The rotation is local to each shard, so no collective is needed.
+  EXPECT_FALSE(match.has_value());
+}
+
+TEST(SPMDPartitionerUtilTest, PopRotateDimension) {
+  HloComputation::Builder builder("test");
+  Shape shape = ShapeUtil::MakeShape(F32, {10, 20});
+  auto* param =
+      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "p0"));
+  auto* shuffle = builder.AddInstruction(HloInstruction::CreateShuffle(
+      shape, param, /*dimensions=*/{0, 1}, shuffle::Rotate(/*shifts=*/{2, 5})));
+  auto computation = builder.Build();
+  shuffle = computation->root_instruction();
+
+  ASSERT_OK_AND_ASSIGN(HloInstruction * rem_shuffle,
+                       PopRotateDimension(shuffle, /*rotate_dim_idx=*/1));
+
+  EXPECT_EQ(rem_shuffle, shuffle);
+  auto* rem_shuffle_inst = Cast<HloShuffleInstruction>(rem_shuffle);
+  ASSERT_EQ(rem_shuffle_inst->dimensions().size(), 1);
+  EXPECT_EQ(rem_shuffle_inst->dimensions()[0], 0);
+  EXPECT_EQ(rem_shuffle_inst->rotate().shifts(0), 2);
+
+  ASSERT_OK_AND_ASSIGN(HloInstruction * final_inst,
+                       PopRotateDimension(rem_shuffle, /*rotate_dim_idx=*/0));
+
+  EXPECT_EQ(final_inst, param);
+}
+
+TEST(SPMDPartitionerUtilTest, PopRotateDimensionMixedAndAllSharded) {
+  HloComputation::Builder builder("test");
+  Shape shape = ShapeUtil::MakeShape(F32, {8, 12, 16});
+  auto* param =
+      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "p0"));
+  auto* shuffle = builder.AddInstruction(
+      HloInstruction::CreateShuffle(shape, param, /*dimensions=*/{0, 1, 2},
+                                    shuffle::Rotate(/*shifts=*/{1, 2, 3})));
+  auto computation = builder.Build();
+  shuffle = computation->root_instruction();
+
+  // 1. Pop sharded dimension 1 (`rotate_dim_idx = 1`). Replicated dims 0 and 2
+  // stay in the shuffle instruction.
+  ASSERT_OK_AND_ASSIGN(HloInstruction * rem_shuffle,
+                       PopRotateDimension(shuffle, /*rotate_dim_idx=*/1));
+
+  EXPECT_EQ(rem_shuffle, shuffle);
+  auto* rem_inst = Cast<HloShuffleInstruction>(rem_shuffle);
+  ASSERT_EQ(rem_inst->dimensions().size(), 2);
+  EXPECT_EQ(rem_inst->dimensions()[0], 0);
+  EXPECT_EQ(rem_inst->dimensions()[1], 2);
+  EXPECT_EQ(rem_inst->rotate().shifts(0), 1);
+  EXPECT_EQ(rem_inst->rotate().shifts(1), 3);
+
+  // 2. If all remaining dimensions (0 and 2) are subsequently popped, the
+  // shuffle instruction is completely replaced by its operand.
+  ASSERT_OK_AND_ASSIGN(rem_shuffle,
+                       PopRotateDimension(rem_shuffle, /*rotate_dim_idx=*/1));
+  ASSERT_OK_AND_ASSIGN(HloInstruction * final_inst,
+                       PopRotateDimension(rem_shuffle, /*rotate_dim_idx=*/0));
+
+  EXPECT_EQ(final_inst, param);
+}
+
+TEST(SPMDPartitionerUtilTest, FindRotateRightPatternMissingOrNonTiledSharding) {
+  HloComputation::Builder builder("test");
+  Shape shape = ShapeUtil::MakeShape(F32, {10, 20});
+  auto* param =
+      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "p0"));
+  auto* shuffle = builder.AddInstruction(HloInstruction::CreateShuffle(
+      shape, param, /*dimensions=*/{0}, shuffle::Rotate(/*shifts=*/{2})));
+  auto computation = builder.Build();
+  shuffle = computation->root_instruction();
+
+  // No sharding.
+  EXPECT_FALSE(FindRotateRightPattern(shuffle).has_value());
+
+  // Non-tiled shardings (replicated, single device, manual).
+  shuffle->set_sharding(HloSharding::Replicate());
+  EXPECT_FALSE(FindRotateRightPattern(shuffle).has_value());
+  shuffle->set_sharding(HloSharding::SingleDevice(0));
+  EXPECT_FALSE(FindRotateRightPattern(shuffle).has_value());
+  shuffle->set_sharding(HloSharding::Manual());
+  EXPECT_FALSE(FindRotateRightPattern(shuffle).has_value());
+
+  // Replicated operand feeding sharded shuffle should rotate locally instead.
+  param->set_sharding(HloSharding::Replicate());
+  shuffle->set_sharding(HloSharding::IotaTile({2, 1}));
+  EXPECT_FALSE(FindRotateRightPattern(shuffle).has_value());
+}
+
+TEST(SPMDPartitionerUtilTest, PopRotateDimensionRelaysControlDependencies) {
+  HloComputation::Builder builder("test");
+  Shape shape = ShapeUtil::MakeShape(F32, {10});
+  auto* p0 =
+      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "p0"));
+  auto* p1 =
+      builder.AddInstruction(HloInstruction::CreateParameter(1, shape, "p1"));
+  auto* shuffle = builder.AddInstruction(HloInstruction::CreateShuffle(
+      shape, p0, /*dimensions=*/{0}, shuffle::Rotate(/*shifts=*/{2})));
+  auto* neg = builder.AddInstruction(
+      HloInstruction::CreateUnary(shape, HloOpcode::kNegate, shuffle));
+  ASSERT_OK(p1->AddControlDependencyTo(shuffle));
+  ASSERT_OK(shuffle->AddControlDependencyTo(neg));
+  auto computation = builder.Build();
+
+  ASSERT_OK_AND_ASSIGN(HloInstruction * result,
+                       PopRotateDimension(shuffle, /*rotate_dim_idx=*/0));
+  EXPECT_EQ(result, p0);
+  EXPECT_THAT(p0->control_predecessors(), ::testing::ElementsAre(p1));
+  EXPECT_THAT(p0->control_successors(), ::testing::ElementsAre(neg));
 }
 
 }  // namespace

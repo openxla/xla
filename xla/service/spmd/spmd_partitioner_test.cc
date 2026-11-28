@@ -4190,6 +4190,156 @@ ENTRY entry {
               AllOf(op::Select(_, rotate1, rotate0), op::Shape("f32[3]")));
 }
 
+TEST_P(SpmdPartitioningTest, TiledShuffleRotatePassthrough) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[3,3] parameter(0), sharding={devices=[2,1]<=[2]}
+  ROOT shuffle = f32[3,3] shuffle(p0), dimensions={1}, mode=rotate, shifts={2},
+    sharding={devices=[2,1]<=[2]}
+})";
+  auto param0 = AllOf(op::Parameter(0), op::Shape("f32[2,3]"));
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/2));
+  VLOG(1) << module->ToString();
+
+  const auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, AllOf(op::Shuffle(param0), op::Shape("f32[2,3]")));
+}
+
+TEST_P(SpmdPartitioningTest, TiledShuffleMixedShardedAndReplicatedDimensions) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f32[8,12] parameter(0), sharding={devices=[1,4]<=[4]}
+  ROOT %shuffle = f32[8,12] shuffle(%param0), dimensions={0,1}, mode=rotate,
+    shifts={1,2}, sharding={devices=[1,4]<=[4]}
+})";
+  auto param0 = AllOf(op::Parameter(0), op::Shape("f32[8,3]"));
+  auto sharded_rotate_concat = op::Concatenate(
+      op::Slice(param0), op::CollectivePermute(op::Slice(param0)));
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/4));
+  VLOG(1) << module->ToString();
+
+  const auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root,
+              AllOf(op::Shuffle(sharded_rotate_concat), op::Shape("f32[8,3]")));
+  auto* remaining_shuffle = Cast<HloShuffleInstruction>(root);
+  EXPECT_THAT(remaining_shuffle->dimensions(), ::testing::ElementsAre(0));
+  EXPECT_THAT(remaining_shuffle->rotate().shifts(), ::testing::ElementsAre(1));
+  auto* cp = FindInstruction(module.get(), HloOpcode::kCollectivePermute);
+  ASSERT_NE(cp, nullptr);
+  // Left shift by 2 on size 12 across 4 shards (shard size 3) is right shift
+  // by 10, moving elements from shard (i + 1) % 4 to shard i.
+  EXPECT_THAT(
+      cp->source_target_pairs(),
+      ::testing::ElementsAre(std::make_pair(0, 3), std::make_pair(1, 0),
+                             std::make_pair(2, 1), std::make_pair(3, 2)));
+}
+
+TEST_P(SpmdPartitioningTest, TiledShuffleAllDimensionsSharded) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f32[8,12] parameter(0), sharding={devices=[2,2]<=[4]}
+  ROOT %shuffle = f32[8,12] shuffle(%param0), dimensions={0,1}, mode=rotate,
+    shifts={2,3}, sharding={devices=[2,2]<=[4]}
+})";
+  auto param0 = AllOf(op::Parameter(0), op::Shape("f32[4,6]"));
+  // Both dimensions are sharded, so each is peeled off into its own
+  // right-rotate and the HloShuffleInstruction is removed entirely.
+  auto rotate_dim0 =
+      AllOf(op::Concatenate(op::Slice(param0),
+                            op::CollectivePermute(op::Slice(param0))),
+            op::Shape("f32[4,6]"));
+  auto rotate_dim1 = op::Concatenate(
+      op::Slice(rotate_dim0), op::CollectivePermute(op::Slice(rotate_dim0)));
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/4));
+  VLOG(1) << module->ToString();
+
+  const auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, AllOf(rotate_dim1, op::Shape("f32[4,6]")));
+  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kShuffle), nullptr);
+}
+
+TEST_P(SpmdPartitioningTest, TiledShuffleMultiUseOperand) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f32[8,12] parameter(0), sharding={devices=[1,4]<=[4]}
+  %shuffle = f32[8,12] shuffle(%param0), dimensions={1}, mode=rotate,
+    shifts={2}, sharding={devices=[1,4]<=[4]}
+  ROOT %add = f32[8,12] add(%param0, %shuffle), sharding={devices=[1,4]<=[4]}
+})";
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/4));
+  auto param0 = AllOf(op::Parameter(0), op::Shape("f32[8,3]"));
+  auto rotated = op::Concatenate(op::Slice(param0),
+                                 op::CollectivePermute(op::Slice(param0)));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              AllOf(op::Add(param0, rotated), op::Shape("f32[8,3]")));
+  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kShuffle), nullptr);
+}
+
+TEST_P(SpmdPartitioningTest, TiledShuffleShardedZeroSizedDim) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f32[0,12] parameter(0), sharding={devices=[2,2]<=[4]}
+  ROOT %shuffle = f32[0,12] shuffle(%param0), dimensions={0}, mode=rotate,
+    shifts={1}, sharding={devices=[2,2]<=[4]}
+})";
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/4));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              AllOf(op::Shuffle(op::Parameter(0)), op::Shape("f32[0,6]")));
+}
+
+TEST_P(SpmdPartitioningTest, TiledShuffleWithControlDependencies) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f32[8,12] parameter(0), sharding={devices=[1,4]<=[4]}
+  %param1 = f32[8,12] parameter(1), sharding={devices=[1,4]<=[4]}
+  %shuffle = f32[8,12] shuffle(%param0), dimensions={1}, mode=rotate,
+    shifts={2}, sharding={devices=[1,4]<=[4]}, control-predecessors={%param1}
+  ROOT %add = f32[8,12] add(%shuffle, %param1), sharding={devices=[1,4]<=[4]},
+    control-predecessors={%shuffle}
+})";
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/4));
+  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kShuffle), nullptr);
+  EXPECT_NE(FindInstruction(module.get(), HloOpcode::kCollectivePermute),
+            nullptr);
+}
+
+TEST_P(SpmdPartitioningTest, ReplicatedOperandShardedShuffleAvoidsCollective) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f32[8,12] parameter(0), sharding={replicated}
+  ROOT %shuffle = f32[8,12] shuffle(%param0), dimensions={1}, mode=rotate,
+    shifts={2}, sharding={devices=[1,4]<=[4]}
+})";
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/4));
+  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kCollectivePermute),
+            nullptr);
+  EXPECT_NE(FindInstruction(module.get(), HloOpcode::kShuffle), nullptr);
+}
+
 TEST_P(SpmdPartitioningTest,
        PartialReplicateSliceAlongNonPartitionedDimension) {
   absl::string_view hlo_string = R"(

@@ -6632,6 +6632,30 @@ absl::Status SpmdPartitioningVisitor::HandleReverse(HloInstruction* hlo) {
   return absl::OkStatus();
 }
 
+absl::Status SpmdPartitioningVisitor::HandleShuffle(HloInstruction* hlo) {
+  auto* shuffle = Cast<HloShuffleInstruction>(hlo);
+  if (shuffle->mode() != ShuffleMode::kRotate ||
+      shuffle->sharding().IsReplicatedOrSingleDevice() ||
+      (shuffle->operand(0)->has_sharding() &&
+       shuffle->operand(0)->sharding().IsReplicated())) {
+    return DefaultAction(hlo);
+  }
+  const HloSharding& sharding = shuffle->sharding();
+  for (int64_t dim : shuffle->dimensions()) {
+    TF_RET_CHECK(sharding.dimension(dim) == 1 ||
+                 shuffle->shape().dimensions(dim) == 0)
+        << "Shuffle (mode " << ShuffleModeToString(shuffle->mode())
+        << ") along sharded dimension " << dim
+        << " should have been preprocessed into custom call: "
+        << hlo->ToString();
+  }
+  auto operand =
+      GetPartitionedHlo(shuffle->operand(0)).Reshard(shuffle->sharding());
+  SetPartitionedHlo(hlo, b_.AddInstruction(hlo->CloneWithNewOperands(
+                             operand.hlo()->shape(), {operand.hlo()})));
+  return absl::OkStatus();
+}
+
 absl::Status SpmdPartitioningVisitor::HandleWhile(HloInstruction* hlo) {
   const HloSharding& sharding = hlo->sharding();
   HloInstruction* whileOp = b_.AddInstruction(HloInstruction::CreateWhile(
@@ -8299,23 +8323,44 @@ absl::Status SpmdPartitioner::PreprocessHlos(
           }
         }
       }
+      while (std::optional<RotateRightPatternMatch> match =
+                 FindRotateRightPattern(hlo)) {
+        HloInstruction* to_rotate =
+            (hlo->opcode() == HloOpcode::kConcatenate)
+                ? SkipCopyOperands(hlo->mutable_operand(0))->mutable_operand(0)
+                : hlo->mutable_operand(0);
+
+        HloInstruction* comm_rotate = computation->AddInstruction(
+            CreateCustomCallSPMDInternal_RotateRight(to_rotate, match->dim,
+                                                     match->amount));
+        comm_rotate->set_metadata(hlo->metadata());
+        comm_rotate->set_sharding(hlo->sharding());
+
+        if (match->rotate_dim_idx < 0) {
+          // A concat pattern expresses a rotation in a single dimension, so we
+          // replace it with the rotate right.
+          ABSL_RETURN_IF_ERROR(hlo->ReplaceAllUsesWith(comm_rotate));
+          ABSL_RETURN_IF_ERROR(
+              computation->RemoveInstructionAndUnusedOperands(hlo));
+          hlo = comm_rotate;
+          break;
+        }
+        // Preserve control predecessors so the collective cannot hoist ahead of
+        // hlo's control dependencies.
+        for (HloInstruction* ctrl_pred : hlo->control_predecessors()) {
+          ABSL_RETURN_IF_ERROR(ctrl_pred->AddControlDependencyTo(comm_rotate));
+        }
+        // A shuffle rotate pattern can rotate in multiple dimensions. We only
+        // replace the dimension that this loop iteration matched, and leave
+        // the others intact.
+        ABSL_RETURN_IF_ERROR(hlo->ReplaceOperandWith(0, comm_rotate));
+        ABSL_ASSIGN_OR_RETURN(hlo,
+                              PopRotateDimension(hlo, match->rotate_dim_idx));
+      }
       if (hlo->opcode() == HloOpcode::kConcatenate) {
         const int64_t dim = hlo->concatenate_dimension();
         if (hlo->sharding().dimension(dim) == 1) {
           continue;
-        }
-
-        if (std::optional<int64_t> amount = FindRotateRightPattern(hlo)) {
-          HloInstruction* lhs = SkipCopyOperands(hlo->mutable_operand(0));
-          HloInstruction* to_rotate = lhs->mutable_operand(0);
-          HloInstruction* rotate = computation->AddInstruction(
-              CreateCustomCallSPMDInternal_RotateRight(to_rotate, dim,
-                                                       *amount));
-          rotate->set_metadata(hlo->metadata());
-          rotate->set_sharding(hlo->sharding());
-          ABSL_RETURN_IF_ERROR(hlo->ReplaceAllUsesWith(rotate));
-          ABSL_RETURN_IF_ERROR(
-              computation->RemoveInstructionAndUnusedOperands(hlo));
         }
 
         if (std::optional<PadWithWrapPattern> pad_pattern =

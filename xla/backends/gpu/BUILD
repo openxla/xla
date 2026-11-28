@@ -295,6 +295,7 @@ cc_library(
         "//xla/hlo/transforms/expanders:scatter_expander",
         "//xla/hlo/transforms/expanders:scatter_simplifier",
         "//xla/hlo/transforms/expanders:select_and_scatter_expander",
+        "//xla/hlo/transforms/expanders:shuffle_expander",
         "//xla/hlo/transforms/expanders:stable_sort_expander",
         "//xla/hlo/transforms/expanders:stochastic_convert_decomposer",
         "//xla/hlo/transforms/simplifiers:algebraic_simplifier",
