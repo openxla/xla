@@ -127,6 +127,13 @@ class LocalDeviceState {
                    DeviceErrorCallback device_error_callback = nullptr);
   virtual ~LocalDeviceState();
 
+  // Blocks until all work enqueued on this device's streams has completed, and
+  // then until all callback thread closures scheduled before that point (e.g.
+  // callbacks enqueued via ThenExecuteCallback) have run. Closures scheduled by
+  // those closures may still be pending. Must not be called from the callback
+  // thread.
+  absl::Status SynchronizeAllActivity();
+
   se::StreamExecutor* executor() const { return executor_; }
 
   LocalDeviceId local_device_id() { return local_device_id_; }
@@ -253,8 +260,6 @@ class LocalDeviceState {
   }
 
  private:
-  absl::Status SynchronizeAllActivity();
-
   AllocationModel allocation_model_;
 
   EventPool event_pool_;
