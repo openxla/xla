@@ -1862,9 +1862,8 @@ TEST_F(FunctionalHloRunnerTest,
   EXPECT_EQ(cross_space_clones.load(), 6);
 }
 
-// Verifies that cross-device cloning in `CopyArgumentsToDevice` looks up
-// per-device host literals by `addressable_devices[i]->global_device_id()`
-// rather than the local index when the two differ.
+// Verifies that cross-device cloning in `CopyArgumentsToDevice` succeeds when
+// `addressable_devices[i]->global_device_id()` differs from the local index.
 TEST_F(FunctionalHloRunnerTest,
        ClonesCrossDeviceArgumentsWhenDeviceIdDiffersFromGlobalDeviceId) {
   ScopedFakeArgumentCacheReset cache_reset;
@@ -1878,10 +1877,7 @@ TEST_F(FunctionalHloRunnerTest,
                              kNumReplicas));
 
   // Wrap addressable devices so `device->global_device_id()` is (4, 5) rather
-  // than local index (0, 1). `CreateArgumentsOnDevice` keys
-  // `PerDeviceLiteralVecType` by `device->global_device_id().value()`, so
-  // `CopyArgumentsToDevice` must also look up per-device arguments via
-  // `addressable_devices[i]->global_device_id().value()`.
+  // than local index (0, 1).
   ASSERT_EQ(real_exec->addressable_devices().size(), 2);
   MismatchedGlobalIdPjRtDevice dev0(real_exec->addressable_devices()[0],
                                     GlobalDeviceId(4));
@@ -2729,6 +2725,299 @@ TEST_F(FunctionalHloRunnerTest, UninitializedInputsUsePinnedHostMemorySpace) {
   ASSERT_OK(FunctionalHloRunner::Run(mock_client, &wrapped_exec,
                                      /*arguments=*/{}, running_options));
   EXPECT_THAT(allocated_spaces, ElementsAre(default_space, &pinned_host_space));
+}
+
+TEST_F(FunctionalHloRunnerTest,
+       FlattenedSingleTupleArgumentsShareZeroCopyCachedHostPointers) {
+  ScopedFakeArgumentCacheReset cache_reset;
+  constexpr int kNumReplicas = 2;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> real_client,
+                       CreateHostClient(/*cpu_device_count=*/kNumReplicas));
+  ASSERT_EQ(real_client->device_count(), kNumReplicas);
+
+  constexpr absl::string_view kTupleHlo = R"hlo(
+HloModule SingleTupleZeroCopy
+
+ENTRY main {
+  ROOT tup = (f32[128,256], f32[128,256], f32[128,256], f32[128,256]) parameter(0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(
+      tsl::testing::TemporaryDirectory temp_dir,
+      tsl::testing::TemporaryDirectory::CreateForCurrentTestcase());
+  const std::string hlo_path =
+      tsl::io::JoinPath(temp_dir.path(), "single_tuple_zero_copy.hlo");
+  ASSERT_OK(tsl::WriteStringToFile(tsl::Env::Default(), hlo_path, kTupleHlo));
+  ASSERT_OK_AND_ASSIGN(HloModuleAndArguments module_and_args,
+                       FunctionalHloRunner::LoadHloModuleAndArguments(
+                           hlo_path, InputFormat::kText));
+
+  FunctionalHloRunner::RawCompileOptions raw_compile_options;
+  raw_compile_options.num_replicas = kNumReplicas;
+  raw_compile_options.num_partitions = 1;
+  ASSERT_OK_AND_ASSIGN(CompileOptions compile_options,
+                       FunctionalHloRunner::CreateCompileOptions(
+                           *real_client, raw_compile_options));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> real_exec,
+      FunctionalHloRunner::Compile(
+          *real_client, module_and_args.hlo_module.get(),
+          FunctionalHloRunner::PreprocessingOptions{}, compile_options));
+  NoOpExecutingLoadedExecutable wrapped_exec(real_exec.get());
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * dev0_mem,
+      real_exec->addressable_devices()[0]->default_memory_space());
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * dev1_mem,
+      real_exec->addressable_devices()[1]->default_memory_space());
+
+  HostLiteralMockPjRtClient mock_client;
+  std::vector<const void*> dev0_ptrs;
+  std::vector<const void*> dev1_ptrs;
+  EXPECT_CALL(mock_client, BufferFromHostLiteral)
+      .Times(4 * kNumReplicas)
+      .WillRepeatedly([&](const LiteralSlice& literal,
+                          PjRtMemorySpace* memory_space,
+                          const Layout* /*device_layout*/) {
+        if (memory_space == dev0_mem) {
+          dev0_ptrs.push_back(literal.untyped_data());
+        } else if (memory_space == dev1_mem) {
+          dev1_ptrs.push_back(literal.untyped_data());
+        }
+        return std::make_unique<FakeReadyFuturePjRtBuffer>(
+            Future<>(absl::OkStatus()));
+      });
+
+  FunctionalHloRunner::RunningOptions running_options;
+  running_options.module_argument_mode =
+      FunctionalHloRunner::ModuleArgumentMode::kUseRandomInputs;
+  running_options.module_output_mode =
+      FunctionalHloRunner::ModuleOutputMode::kNotReturnOutputs;
+  std::minstd_rand0 engine(77);
+  ASSERT_THAT(
+      FunctionalHloRunner::Run(mock_client, &wrapped_exec,
+                               /*arguments=*/{}, running_options, &engine),
+      absl_testing::IsOk());
+  ASSERT_EQ(dev0_ptrs.size(), 4);
+  ASSERT_EQ(dev1_ptrs.size(), 4);
+  const void* v0 = dev0_ptrs[0];
+  const void* v1 = dev0_ptrs[1];
+  EXPECT_NE(v0, v1);
+  EXPECT_THAT(dev0_ptrs, ElementsAre(v0, v1, v0, v1));
+  const void* w0 = dev1_ptrs[0];
+  const void* w1 = dev1_ptrs[1];
+  EXPECT_NE(w0, w1);
+  EXPECT_THAT(dev1_ptrs, ElementsAre(w0, w1, w0, w1));
+}
+
+TEST_F(FunctionalHloRunnerTest,
+       RunWithExplicitArgumentsLooksUpByGlobalDeviceId) {
+  constexpr int kNumReplicas = 2;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> real_client,
+                       CreateHostClient(/*cpu_device_count=*/kNumReplicas));
+  constexpr absl::string_view kSingleArgStablehlo = R"mlir(
+    module {
+      func.func @main(%arg0: tensor<4xf32>) -> tensor<4xf32> {
+        func.return %arg0 : tensor<4xf32>
+      }
+    }
+  )mlir";
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> real_exec,
+      CompileStablehloModule(*real_client, kSingleArgStablehlo, kNumReplicas));
+  ASSERT_EQ(real_exec->addressable_devices().size(), 2);
+  MismatchedGlobalIdPjRtDevice dev0(real_exec->addressable_devices()[0],
+                                    GlobalDeviceId(4));
+  MismatchedGlobalIdPjRtDevice dev1(real_exec->addressable_devices()[1],
+                                    GlobalDeviceId(5));
+  NoOpExecutingLoadedExecutable wrapped_exec(real_exec.get(), {&dev0, &dev1});
+  ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * dev0_mem, dev0.default_memory_space());
+  ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * dev1_mem, dev1.default_memory_space());
+
+  FunctionalHloRunner::PerDeviceLiteralVecType arguments;
+  arguments[4].push_back(
+      LiteralUtil::CreateR1<float>({1.0f, 2.0f, 3.0f, 4.0f}));
+  arguments[5].push_back(
+      LiteralUtil::CreateR1<float>({5.0f, 6.0f, 7.0f, 8.0f}));
+
+  HostLiteralMockPjRtClient mock_client;
+  std::optional<Literal> dev0_literal;
+  std::optional<Literal> dev1_literal;
+  EXPECT_CALL(mock_client, BufferFromHostLiteral)
+      .Times(2)
+      .WillRepeatedly([&](const LiteralSlice& literal,
+                          PjRtMemorySpace* memory_space,
+                          const Layout* /*device_layout*/) {
+        if (memory_space == dev0_mem) {
+          dev0_literal = literal.Clone();
+        } else if (memory_space == dev1_mem) {
+          dev1_literal = literal.Clone();
+        }
+        return std::make_unique<FakeReadyFuturePjRtBuffer>(
+            Future<>(absl::OkStatus()));
+      });
+
+  FunctionalHloRunner::RunningOptions running_options;
+  running_options.module_output_mode =
+      FunctionalHloRunner::ModuleOutputMode::kNotReturnOutputs;
+  ASSERT_THAT(FunctionalHloRunner::Run(mock_client, &wrapped_exec, arguments,
+                                       running_options),
+              absl_testing::IsOk());
+  ASSERT_TRUE(dev0_literal.has_value());
+  ASSERT_TRUE(dev1_literal.has_value());
+  EXPECT_THAT(dev0_literal->data<float>(), ElementsAre(1.0f, 2.0f, 3.0f, 4.0f));
+  EXPECT_THAT(dev1_literal->data<float>(), ElementsAre(5.0f, 6.0f, 7.0f, 8.0f));
+}
+
+TEST_F(FunctionalHloRunnerTest,
+       RunWithExplicitArgumentsRejectsMismatchedDeviceCount) {
+  constexpr int kNumReplicas = 2;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> real_client,
+                       CreateHostClient(/*cpu_device_count=*/kNumReplicas));
+  constexpr absl::string_view kSingleArgStablehlo = R"mlir(
+    module {
+      func.func @main(%arg0: tensor<4xf32>) -> tensor<4xf32> {
+        func.return %arg0 : tensor<4xf32>
+      }
+    }
+  )mlir";
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> real_exec,
+      CompileStablehloModule(*real_client, kSingleArgStablehlo, kNumReplicas));
+  MismatchedGlobalIdPjRtDevice dev0(real_exec->addressable_devices()[0],
+                                    GlobalDeviceId(4));
+  MismatchedGlobalIdPjRtDevice dev1(real_exec->addressable_devices()[1],
+                                    GlobalDeviceId(5));
+  NoOpExecutingLoadedExecutable wrapped_exec(real_exec.get(), {&dev0, &dev1});
+
+  FunctionalHloRunner::PerDeviceLiteralVecType arguments;
+  arguments[4].push_back(
+      LiteralUtil::CreateR1<float>({1.0f, 2.0f, 3.0f, 4.0f}));
+
+  HostLiteralMockPjRtClient mock_client;
+  EXPECT_THAT(FunctionalHloRunner::Run(mock_client, &wrapped_exec, arguments,
+                                       FunctionalHloRunner::RunningOptions{}),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kInvalidArgument,
+                  HasSubstr("does not match the number of logical devices")));
+}
+
+TEST_F(FunctionalHloRunnerTest,
+       RunWithExplicitArgumentsRejectsMissingGlobalDeviceId) {
+  constexpr int kNumReplicas = 2;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> real_client,
+                       CreateHostClient(/*cpu_device_count=*/kNumReplicas));
+  constexpr absl::string_view kSingleArgStablehlo = R"mlir(
+    module {
+      func.func @main(%arg0: tensor<4xf32>) -> tensor<4xf32> {
+        func.return %arg0 : tensor<4xf32>
+      }
+    }
+  )mlir";
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> real_exec,
+      CompileStablehloModule(*real_client, kSingleArgStablehlo, kNumReplicas));
+  MismatchedGlobalIdPjRtDevice dev0(real_exec->addressable_devices()[0],
+                                    GlobalDeviceId(4));
+  MismatchedGlobalIdPjRtDevice dev1(real_exec->addressable_devices()[1],
+                                    GlobalDeviceId(5));
+  NoOpExecutingLoadedExecutable wrapped_exec(real_exec.get(), {&dev0, &dev1});
+
+  // Keyed by local indices (0, 1) instead of global device IDs (4, 5).
+  FunctionalHloRunner::PerDeviceLiteralVecType arguments;
+  arguments[0].push_back(
+      LiteralUtil::CreateR1<float>({1.0f, 2.0f, 3.0f, 4.0f}));
+  arguments[1].push_back(
+      LiteralUtil::CreateR1<float>({5.0f, 6.0f, 7.0f, 8.0f}));
+
+  HostLiteralMockPjRtClient mock_client;
+  EXPECT_THAT(FunctionalHloRunner::Run(mock_client, &wrapped_exec, arguments,
+                                       FunctionalHloRunner::RunningOptions{}),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kInvalidArgument,
+                  HasSubstr("does not contain arguments for device: 4")));
+}
+
+TEST_F(FunctionalHloRunnerTest,
+       SharedRandomInputsWithEngineSharesPointersAndUncachedTensors) {
+  ScopedFakeArgumentCacheReset cache_reset;
+  constexpr int kNumReplicas = 2;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> host_client,
+                       CreateHostClient(/*cpu_device_count=*/kNumReplicas));
+  ASSERT_EQ(host_client->device_count(), kNumReplicas);
+
+  constexpr absl::string_view kCachedAndUncachedStablehlo = R"mlir(
+    module {
+      func.func @main(%cached: tensor<128x256xf32>, %uncached: tensor<16xi32>)
+          -> (tensor<128x256xf32>, tensor<16xi32>) {
+        func.return %cached, %uncached : tensor<128x256xf32>, tensor<16xi32>
+      }
+    }
+  )mlir";
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> executable,
+      CompileStablehloModule(*host_client, kCachedAndUncachedStablehlo,
+                             kNumReplicas));
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * dev0_mem,
+      executable->addressable_devices()[0]->default_memory_space());
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * dev1_mem,
+      executable->addressable_devices()[1]->default_memory_space());
+
+  // 1. Verify identical host data pointers across devices for both the cached
+  // bulk tensor and the uncached integer tensor.
+  NoOpExecutingLoadedExecutable wrapped_exec(executable.get());
+  HostLiteralMockPjRtClient mock_client;
+  std::vector<const void*> dev0_ptrs;
+  std::vector<const void*> dev1_ptrs;
+  EXPECT_CALL(mock_client, BufferFromHostLiteral)
+      .Times(2 * kNumReplicas)
+      .WillRepeatedly([&](const LiteralSlice& literal,
+                          PjRtMemorySpace* memory_space,
+                          const Layout* /*device_layout*/) {
+        if (memory_space == dev0_mem) {
+          dev0_ptrs.push_back(literal.untyped_data());
+        } else if (memory_space == dev1_mem) {
+          dev1_ptrs.push_back(literal.untyped_data());
+        }
+        return std::make_unique<FakeReadyFuturePjRtBuffer>(
+            Future<>(absl::OkStatus()));
+      });
+
+  FunctionalHloRunner::RunningOptions mock_options;
+  mock_options.module_argument_mode =
+      FunctionalHloRunner::ModuleArgumentMode::kUseSharedRandomInputs;
+  mock_options.module_output_mode =
+      FunctionalHloRunner::ModuleOutputMode::kNotReturnOutputs;
+  std::minstd_rand0 mock_engine(42);
+  ASSERT_THAT(
+      FunctionalHloRunner::Run(mock_client, &wrapped_exec, /*arguments=*/{},
+                               mock_options, &mock_engine),
+      absl_testing::IsOk());
+  ASSERT_EQ(dev0_ptrs.size(), 2);
+  ASSERT_EQ(dev1_ptrs.size(), 2);
+  EXPECT_EQ(dev0_ptrs[0], dev1_ptrs[0]);
+  EXPECT_EQ(dev0_ptrs[1], dev1_ptrs[1]);
+
+  // 2. Verify end-to-end execution on the CPU client produces identical cached
+  // and uncached tensors on every device.
+  FunctionalHloRunner::RunningOptions cpu_options;
+  cpu_options.module_argument_mode =
+      FunctionalHloRunner::ModuleArgumentMode::kUseSharedRandomInputs;
+  std::minstd_rand0 cpu_engine(42);
+  ASSERT_OK_AND_ASSIGN(
+      FunctionalHloRunner::PerDeviceLiteralVecType results,
+      FunctionalHloRunner::Run(*host_client, executable.get(), /*arguments=*/{},
+                               cpu_options, &cpu_engine));
+  const int dev0_id =
+      executable->addressable_devices()[0]->global_device_id().value();
+  const int dev1_id =
+      executable->addressable_devices()[1]->global_device_id().value();
+  ASSERT_EQ(results.at(dev0_id).size(), 2);
+  ASSERT_EQ(results.at(dev1_id).size(), 2);
+  EXPECT_EQ(results.at(dev0_id)[0], results.at(dev1_id)[0]);
+  EXPECT_EQ(results.at(dev0_id)[1], results.at(dev1_id)[1]);
 }
 
 }  // namespace

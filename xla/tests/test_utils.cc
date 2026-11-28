@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/random/random.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -167,7 +168,7 @@ void FindConstrainedUsesHelper(
 // be problematic when generating input data.  Returns the list of
 // instructions that correspond to their uses.
 //
-// Should be paired with the CreateLiteralForConstrainedUses() function below.
+// Should be paired with the ResolveParameterConstraints() function below.
 std::vector<HloUse> FindConstrainedUses(const HloDataflowAnalysis& dataflow,
                                         const HloInstruction& param,
                                         bool treat_gte_as_data_formatting) {
@@ -622,41 +623,53 @@ Shape NormalizeShapeForArgumentCache(const Shape& shape) {
 // `Layout::kHostMemorySpace` for pinned host parameters) from `original_shape`
 // onto a cached host literal.
 void RestoreOriginalMemorySpace(const Shape& original_shape, Literal* literal) {
-  if (original_shape.has_layout() &&
-      original_shape.layout().memory_space() != Layout::kDefaultMemorySpace) {
+  const int64_t memory_space = LayoutUtil::MemorySpace(original_shape);
+  if (memory_space != Layout::kDefaultMemorySpace) {
     literal->mutable_shape_do_not_use()->mutable_layout()->set_memory_space(
-        original_shape.layout().memory_space());
+        memory_space);
   }
 }
+
+struct FakeLiteralGenerationOptions {
+  std::optional<std::pair<int64_t, int64_t>> limit;
+  bool is_sorted = false;
+  bool no_duplicates = false;
+  bool use_large_range = false;
+  std::optional<int64_t> max_bits_of_precision;
+  std::optional<int64_t> index_alignment;
+  std::optional<uint64_t> index_known_zeroes;
+  std::optional<ConstraintInterval> interval;
+};
 
 // Formats the canonical base cache key encoding the normalized shape, layout,
 // dataflow/value constraints, and base RNG seed token.
 std::string BuildFakeArgumentCacheKey(
     const Shape& normalized_shape,
-    std::optional<std::pair<int64_t, int64_t>> limit, bool is_sorted,
-    bool no_duplicates, bool use_large_range,
-    std::optional<int64_t> max_bits_of_precision,
-    std::optional<int64_t> index_alignment,
-    std::optional<uint64_t> index_known_zeroes,
-    std::optional<ConstraintInterval> interval, uint32_t base_seed_token) {
+    const FakeLiteralGenerationOptions& gen_options, uint32_t base_seed_token) {
   std::string interval_key = "none";
-  if (interval.has_value() && !interval->IsUnconstrained()) {
-    interval_key = absl::StrFormat("%016x:%016x:%d",
-                                   absl::bit_cast<uint64_t>(interval->min),
-                                   absl::bit_cast<uint64_t>(interval->max),
-                                   interval->exclude_zero ? 1 : 0);
+  if (gen_options.interval.has_value() &&
+      !gen_options.interval->IsUnconstrained()) {
+    interval_key = absl::StrFormat(
+        "%016x:%016x:%d", absl::bit_cast<uint64_t>(gen_options.interval->min),
+        absl::bit_cast<uint64_t>(gen_options.interval->max),
+        gen_options.interval->exclude_zero ? 1 : 0);
   }
   return absl::StrFormat(
       "v1|s=%s|sorted=%d|nd=%d|lr=%d|mb=%s|lim=%s|al=%s|kz=%s|iv=%s|seed=%u",
-      ShapeUtil::HumanStringWithLayout(normalized_shape), is_sorted,
-      no_duplicates, use_large_range,
-      max_bits_of_precision.has_value() ? absl::StrCat(*max_bits_of_precision)
-                                        : "none",
-      limit.has_value() ? absl::StrCat(limit->first, ":", limit->second)
-                        : "none",
-      index_alignment.has_value() ? absl::StrCat(*index_alignment) : "none",
-      index_known_zeroes.has_value()
-          ? absl::StrFormat("%x", *index_known_zeroes)
+      ShapeUtil::HumanStringWithLayout(normalized_shape), gen_options.is_sorted,
+      gen_options.no_duplicates, gen_options.use_large_range,
+      gen_options.max_bits_of_precision.has_value()
+          ? absl::StrCat(*gen_options.max_bits_of_precision)
+          : "none",
+      gen_options.limit.has_value()
+          ? absl::StrCat(gen_options.limit->first, ":",
+                         gen_options.limit->second)
+          : "none",
+      gen_options.index_alignment.has_value()
+          ? absl::StrCat(*gen_options.index_alignment)
+          : "none",
+      gen_options.index_known_zeroes.has_value()
+          ? absl::StrFormat("%x", *gen_options.index_known_zeroes)
           : "none",
       interval_key, base_seed_token);
 }
@@ -669,11 +682,10 @@ std::string BuildFakeArgumentCacheKey(
 // bounded/sorted/unique index arrays are excluded so per-parameter control-flow
 // and data-dependent memory access patterns are not altered by caching.
 bool IsCacheableFakeArgumentType(
-    PrimitiveType type, std::optional<std::pair<int64_t, int64_t>> limit,
-    bool is_sorted, bool no_duplicates,
-    std::optional<int64_t> max_bits_of_precision) {
-  if (is_sorted || no_duplicates || limit.has_value() ||
-      max_bits_of_precision.has_value()) {
+    PrimitiveType type, const FakeLiteralGenerationOptions& gen_options) {
+  if (gen_options.is_sorted || gen_options.no_duplicates ||
+      gen_options.limit.has_value() ||
+      gen_options.max_bits_of_precision.has_value()) {
     return false;
   }
   return primitive_util::IsFloatingPointType(type) ||
@@ -768,43 +780,27 @@ uint64_t ComputeCachedFakeLiteralEngineSteps(
   return num_elements;
 }
 
-// Generates or retrieves a cached fake literal for `shape` when `cache_ctx` is
-// non-null.
-//
-// Tuple parameters are decomposed recursively so leaf array subshapes are
-// cached individually. For cacheable static arrays of at least
-// `cache_ctx->min_cached_argument_bytes` and `kMinCacheableElements` (16,384)
-// elements, device-specific tiling, tail padding, and sub-byte packing
-// attributes are stripped to form a canonical host shape. Up to
-// `max_variants_per_shape` distinct random variants are retained per unique
-// shape and constraint key, while `*engine` advances by the exact jump-ahead
-// transition count `MakeFakeLiteral` would consume so subsequent uncached
-// parameters receive identical RNG values as `cache_arguments = false`.
-absl::StatusOr<Literal> MakeCachedFakeLiteral(
+absl::StatusOr<Literal> MakeUncachedFakeLiteral(
     const Shape& shape, std::minstd_rand0* engine,
-    std::optional<std::pair<int64_t, int64_t>> limit, bool is_sorted,
-    bool no_duplicates, bool use_large_range,
-    std::optional<int64_t> max_bits_of_precision,
-    std::optional<int64_t> index_alignment,
-    std::optional<uint64_t> index_known_zeroes,
-    FakeArgumentCacheContext* cache_ctx,
-    std::optional<ConstraintInterval> interval = std::nullopt) {
-  if (shape.IsTuple()) {
-    std::vector<Literal> elements;
-    const std::vector<Shape>& shape_tuple_shapes = shape.tuple_shapes();
-    elements.reserve(shape_tuple_shapes.size());
-    for (const Shape& element_shape : shape_tuple_shapes) {
-      ABSL_ASSIGN_OR_RETURN(
-          Literal element,
-          MakeCachedFakeLiteral(element_shape, engine, limit, is_sorted,
-                                no_duplicates, use_large_range,
-                                max_bits_of_precision, index_alignment,
-                                index_known_zeroes, cache_ctx, interval));
-      elements.push_back(std::move(element));
-    }
-    return LiteralUtil::MakeTupleOwned(std::move(elements));
-  }
+    const FakeLiteralGenerationOptions& gen_options) {
+  return MakeFakeLiteral(
+      shape, engine, gen_options.limit, gen_options.is_sorted,
+      gen_options.no_duplicates, gen_options.use_large_range,
+      gen_options.max_bits_of_precision, gen_options.index_alignment,
+      gen_options.index_known_zeroes, /*float_generator=*/nullptr,
+      gen_options.interval);
+}
 
+// Looks up or generates a cached normalized static array literal for `shape`
+// when `cache_ctx` is non-null and `shape` is cache-eligible. On both cache
+// hits and misses, `*engine` advances by the exact jump-ahead transition count
+// `MakeFakeLiteral` would consume so subsequent uncached parameters receive
+// identical RNG values as `cache_arguments = false`. Returns `nullptr` (without
+// advancing `*engine`) when `shape` is not cacheable.
+absl::StatusOr<std::shared_ptr<const Literal>> TryGetOrInsertCachedArrayLiteral(
+    const Shape& shape, std::minstd_rand0* engine,
+    const FakeLiteralGenerationOptions& gen_options,
+    FakeArgumentCacheContext* cache_ctx) {
   // Match `kMinElementsPerPartition` in `literal_util.cc` so every cached array
   // uses the fixed-step parallel RNG schedule and has a deterministic jump
   // distance.
@@ -812,40 +808,29 @@ absl::StatusOr<Literal> MakeCachedFakeLiteral(
   if (engine == nullptr || cache_ctx == nullptr ||
       cache_ctx->max_variants_per_shape <= 0 ||
       !shape.IsArrayExcludingBuffer() || !shape.is_static() ||
-      !IsCacheableFakeArgumentType(shape.element_type(), limit, is_sorted,
-                                   no_duplicates, max_bits_of_precision)) {
-    return MakeFakeLiteral(shape, engine, limit, is_sorted, no_duplicates,
-                           use_large_range, max_bits_of_precision,
-                           index_alignment, index_known_zeroes,
-                           /*float_generator=*/nullptr, interval);
+      !IsCacheableFakeArgumentType(shape.element_type(), gen_options)) {
+    return std::shared_ptr<const Literal>(nullptr);
   }
 
   Shape normalized_shape = NormalizeShapeForArgumentCache(shape);
   if (ShapeUtil::ByteSizeOf(normalized_shape) <
           cache_ctx->min_cached_argument_bytes ||
       ShapeUtil::ElementsIn(normalized_shape) < kMinCacheableElements) {
-    return MakeFakeLiteral(shape, engine, limit, is_sorted, no_duplicates,
-                           use_large_range, max_bits_of_precision,
-                           index_alignment, index_known_zeroes,
-                           /*float_generator=*/nullptr, interval);
+    return std::shared_ptr<const Literal>(nullptr);
   }
 
   const uint64_t engine_steps = ComputeCachedFakeLiteralEngineSteps(
-      normalized_shape, use_large_range, interval);
+      normalized_shape, gen_options.use_large_range, gen_options.interval);
   const std::string base_key = BuildFakeArgumentCacheKey(
-      normalized_shape, limit, is_sorted, no_duplicates, use_large_range,
-      max_bits_of_precision, index_alignment, index_known_zeroes, interval,
-      cache_ctx->base_seed_token);
+      normalized_shape, gen_options, cache_ctx->base_seed_token);
   const int variant_idx = (cache_ctx->occurrence_counts[base_key]++) %
                           cache_ctx->max_variants_per_shape;
   const std::string full_key = absl::StrCat(base_key, "|v=", variant_idx);
 
   if (std::shared_ptr<const Literal> cached =
           FakeArgumentCache::Instance().Lookup(full_key, normalized_shape)) {
-    ABSL_ASSIGN_OR_RETURN(Literal cloned, CloneArrayLiteralParallel(*cached));
-    RestoreOriginalMemorySpace(shape, &cloned);
     *engine = AdvanceMinstdRand0(*engine, engine_steps);
-    return cloned;
+    return cached;
   }
 
   // Derive a deterministic per-key leaf RNG engine from the 64-bit fingerprint
@@ -858,30 +843,59 @@ absl::StatusOr<Literal> MakeCachedFakeLiteral(
   std::minstd_rand0 leaf_engine(leaf_seed);
   ABSL_ASSIGN_OR_RETURN(
       Literal generated,
-      MakeFakeLiteral(normalized_shape, &leaf_engine, limit, is_sorted,
-                      no_duplicates, use_large_range, max_bits_of_precision,
-                      index_alignment, index_known_zeroes,
-                      /*float_generator=*/nullptr, interval));
+      MakeUncachedFakeLiteral(normalized_shape, &leaf_engine, gen_options));
   auto shared_lit = std::make_shared<const Literal>(std::move(generated));
   FakeArgumentCache::Instance().Insert(full_key, shared_lit);
-  ABSL_ASSIGN_OR_RETURN(Literal result, CloneArrayLiteralParallel(*shared_lit));
-  RestoreOriginalMemorySpace(shape, &result);
   *engine = AdvanceMinstdRand0(*engine, engine_steps);
-  return result;
+  return shared_lit;
 }
 
-// Given a parameter, generate a random Literal to use as input if there exist
-// no constrained uses in the dataflow graph.  If such constraints exist,
-// generate a constrained literal (either bounded in the case of indices, or
-// zero in the case of init_values for reductions).
-absl::StatusOr<Literal> CreateLiteralForConstrainedUses(
-    const absl::Span<const HloUse> constrained_uses,
-    const HloInstruction& param, const Shape& param_shape,
-    std::minstd_rand0* engine, bool use_large_range,
-    std::optional<int64_t> max_bits_of_precision,
-    bool generate_aligned_ds_indices,
-    GetIndexKnownZeroesFn get_index_known_zeroes = nullptr,
-    FakeArgumentCacheContext* cache_ctx = nullptr) {
+// Generates or retrieves an owned fake literal for `shape`, decomposing tuples
+// recursively and cloning cached array literals when `cache_ctx` is non-null.
+absl::StatusOr<Literal> MakeCachedFakeLiteral(
+    const Shape& shape, std::minstd_rand0* engine,
+    const FakeLiteralGenerationOptions& gen_options,
+    FakeArgumentCacheContext* cache_ctx) {
+  if (shape.IsTuple()) {
+    std::vector<Literal> elements;
+    const std::vector<Shape>& shape_tuple_shapes = shape.tuple_shapes();
+    elements.reserve(shape_tuple_shapes.size());
+    for (const Shape& element_shape : shape_tuple_shapes) {
+      ABSL_ASSIGN_OR_RETURN(
+          Literal element,
+          MakeCachedFakeLiteral(element_shape, engine, gen_options, cache_ctx));
+      elements.push_back(std::move(element));
+    }
+    return LiteralUtil::MakeTupleOwned(std::move(elements));
+  }
+
+  ABSL_ASSIGN_OR_RETURN(
+      std::shared_ptr<const Literal> cached,
+      TryGetOrInsertCachedArrayLiteral(shape, engine, gen_options, cache_ctx));
+  if (cached != nullptr) {
+    ABSL_ASSIGN_OR_RETURN(Literal cloned, CloneArrayLiteralParallel(*cached));
+    RestoreOriginalMemorySpace(shape, &cloned);
+    return cloned;
+  }
+
+  return MakeUncachedFakeLiteral(shape, engine, gen_options);
+}
+
+struct ParameterConstraints {
+  std::optional<std::pair<int64_t, int64_t>> limit;
+  std::optional<int64_t> index_alignment;
+  std::optional<uint64_t> index_known_zeroes;
+  bool no_duplicates = false;
+  bool needs_sorted_indices = false;
+  bool needs_constant = false;
+  IdentityElementType identity_type = IdentityElementType::kUnknown;
+};
+
+absl::StatusOr<ParameterConstraints> ResolveParameterConstraints(
+    const HloDataflowAnalysis& dataflow, const HloInstruction& param,
+    const FakeArgumentsOptions& options) {
+  const std::vector<HloUse> constrained_uses = FindConstrainedUses(
+      dataflow, param, options.treat_gte_as_data_formatting);
   int64_t index_bound = INT64_MAX;
   // Used for operations like DUS / DS which need to be aligned when they
   // appear in a fusion.
@@ -924,9 +938,9 @@ absl::StatusOr<Literal> CreateLiteralForConstrainedUses(
             default:
               break;
           }
-          if (get_index_known_zeroes != nullptr) {
+          if (options.get_index_known_zeroes != nullptr) {
             if (std::optional<uint64_t> current_known_zeroes =
-                    get_index_known_zeroes(use, sliced_dim)) {
+                    options.get_index_known_zeroes(use, sliced_dim)) {
               if (index_known_zeroes.has_value()) {
                 // If we have multiple uses with different masks, we take the
                 // union of known zeroes.
@@ -985,7 +999,7 @@ absl::StatusOr<Literal> CreateLiteralForConstrainedUses(
             use->ToString());
     }
   }
-  if (!generate_aligned_ds_indices) {
+  if (!options.generate_aligned_ds_indices) {
     index_alignment = std::nullopt;
   }
   int constraint_count = 0;
@@ -995,58 +1009,157 @@ absl::StatusOr<Literal> CreateLiteralForConstrainedUses(
   if (constraint_count > 1) {
     return Unimplemented("Conflicting operand generation constraints.");
   }
+
+  ParameterConstraints constraints;
   if (index_bound != INT64_MAX) {
-    return MakeCachedFakeLiteral(
-        param_shape, engine, std::pair<int64_t, int64_t>(0, index_bound),
-        needs_sorted_indices, no_duplicates, use_large_range,
-        max_bits_of_precision, index_alignment, index_known_zeroes, cache_ctx);
+    constraints.limit = std::pair<int64_t, int64_t>(0, index_bound);
+    constraints.index_alignment = index_alignment;
+    constraints.index_known_zeroes = index_known_zeroes;
   }
-  if (needs_constant) {
-    switch (identity_type) {
-      case IdentityElementType::kZero:
-        return LiteralUtil::Zero(param_shape.element_type());
-      case IdentityElementType::kOne:
-        return LiteralUtil::One(param_shape.element_type());
-      case IdentityElementType::kMinimum:
-        return LiteralUtil::MinValue(param_shape.element_type());
-      case IdentityElementType::kMaximum:
-        return LiteralUtil::MaxValue(param_shape.element_type());
-      case IdentityElementType::kUnknown:
-        // We want the identity element for the computation, but we don't
-        // really know what it is - so any value we generate will be just as
-        // wrong.
-        return MakeCachedFakeLiteral(
-            param_shape, engine, /*limit=*/std::nullopt,
-            /*is_sorted=*/needs_sorted_indices,
-            /*no_duplicates=*/false, use_large_range, max_bits_of_precision,
-            /*index_alignment=*/std::nullopt,
-            /*index_known_zeroes=*/std::nullopt, cache_ctx);
-    }
-  }
-  return MakeCachedFakeLiteral(param_shape, engine, /*limit=*/std::nullopt,
-                               /*is_sorted=*/needs_sorted_indices,
-                               no_duplicates, use_large_range,
-                               max_bits_of_precision,
-                               /*index_alignment=*/std::nullopt,
-                               /*index_known_zeroes=*/std::nullopt, cache_ctx);
+  constraints.no_duplicates = no_duplicates;
+  constraints.needs_sorted_indices = needs_sorted_indices;
+  constraints.needs_constant = needs_constant;
+  constraints.identity_type = identity_type;
+  return constraints;
 }
 
-// Given a module entry parameter, use the dataflow analysis to see if a
-// special case literal must be created, or if we can generate fake data.
-absl::StatusOr<Literal> MakeConstrainedArgument(
-    const HloDataflowAnalysis& dataflow, const HloInstruction& param,
-    const Shape& param_shape, std::minstd_rand0* engine, bool use_large_range,
-    bool treat_gte_as_data_formatting,
-    std::optional<int64_t> max_bits_of_precision,
-    bool generate_aligned_ds_indices,
-    GetIndexKnownZeroesFn get_index_known_zeroes = nullptr,
-    FakeArgumentCacheContext* cache_ctx = nullptr) {
-  const auto constrained_uses =
-      FindConstrainedUses(dataflow, param, treat_gte_as_data_formatting);
-  return CreateLiteralForConstrainedUses(
-      constrained_uses, param, param_shape, engine, use_large_range,
-      max_bits_of_precision, generate_aligned_ds_indices,
-      get_index_known_zeroes, cache_ctx);
+FakeLiteralGenerationOptions MakeGenerationOptions(
+    const ParameterConstraints& constraints,
+    const FakeArgumentsOptions& options) {
+  FakeLiteralGenerationOptions gen_options;
+  gen_options.limit = constraints.limit;
+  gen_options.is_sorted = constraints.needs_sorted_indices;
+  gen_options.no_duplicates = constraints.no_duplicates;
+  gen_options.use_large_range = options.use_large_range;
+  gen_options.max_bits_of_precision = options.max_bits_of_precision;
+  gen_options.index_alignment = constraints.index_alignment;
+  gen_options.index_known_zeroes = constraints.index_known_zeroes;
+  return gen_options;
+}
+
+bool ShouldGenerateScalarIdentityConstant(
+    const ParameterConstraints& constraints, const Shape& shape) {
+  return constraints.needs_constant &&
+         constraints.identity_type != IdentityElementType::kUnknown &&
+         shape.IsArrayExcludingBuffer() && ShapeUtil::IsScalar(shape);
+}
+
+Literal MakeScalarIdentityConstant(IdentityElementType identity_type,
+                                   PrimitiveType type) {
+  switch (identity_type) {
+    case IdentityElementType::kZero:
+      return LiteralUtil::Zero(type);
+    case IdentityElementType::kOne:
+      return LiteralUtil::One(type);
+    case IdentityElementType::kMinimum:
+      return LiteralUtil::MinValue(type);
+    case IdentityElementType::kMaximum:
+      return LiteralUtil::MaxValue(type);
+    case IdentityElementType::kUnknown:
+      break;
+  }
+  LOG(FATAL) << "Unknown identity element type.";
+}
+
+absl::StatusOr<Literal> MakeLiteralForConstraints(
+    const ParameterConstraints& constraints, const Shape& shape,
+    const FakeArgumentsOptions& options, std::minstd_rand0* engine,
+    FakeArgumentCacheContext* cache_ctx) {
+  if (ShouldGenerateScalarIdentityConstant(constraints, shape)) {
+    return MakeScalarIdentityConstant(constraints.identity_type,
+                                      shape.element_type());
+  }
+  return MakeCachedFakeLiteral(
+      shape, engine, MakeGenerationOptions(constraints, options), cache_ctx);
+}
+
+absl::StatusOr<std::shared_ptr<const Literal>> MakeSharedLiteralForConstraints(
+    const ParameterConstraints& constraints, const Shape& shape,
+    const FakeArgumentsOptions& options, std::minstd_rand0* engine,
+    FakeArgumentCacheContext* cache_ctx) {
+  if (ShouldGenerateScalarIdentityConstant(constraints, shape)) {
+    return std::make_shared<const Literal>(MakeScalarIdentityConstant(
+        constraints.identity_type, shape.element_type()));
+  }
+  const FakeLiteralGenerationOptions gen_options =
+      MakeGenerationOptions(constraints, options);
+  Literal literal;
+  if (shape.IsTuple()) {
+    ABSL_ASSIGN_OR_RETURN(
+        literal, MakeCachedFakeLiteral(shape, engine, gen_options, cache_ctx));
+    return std::make_shared<const Literal>(std::move(literal));
+  }
+  ABSL_ASSIGN_OR_RETURN(
+      std::shared_ptr<const Literal> cached,
+      TryGetOrInsertCachedArrayLiteral(shape, engine, gen_options, cache_ctx));
+  if (cached == nullptr) {
+    ABSL_ASSIGN_OR_RETURN(literal,
+                          MakeUncachedFakeLiteral(shape, engine, gen_options));
+  } else if (LayoutUtil::MemorySpace(shape) == Layout::kDefaultMemorySpace) {
+    return cached;
+  } else {
+    ABSL_ASSIGN_OR_RETURN(literal, CloneArrayLiteralParallel(*cached));
+    RestoreOriginalMemorySpace(shape, &literal);
+  }
+  return std::make_shared<const Literal>(std::move(literal));
+}
+
+const Shape& GetEntryParameterShape(
+    const HloModule* module, const HloInstruction::InstructionVector& params,
+    int i) {
+  const HloModuleConfig& module_config = module->config();
+  if (module_config.has_entry_computation_layout() &&
+      module_config.entry_computation_layout()
+          .parameter_layout(i)
+          .shape()
+          .is_static()) {
+    return module_config.entry_computation_layout().parameter_layout(i).shape();
+  }
+  return params[i]->shape();
+}
+
+absl::Status ValidateSingleTupleEntryParameter(const HloModule* module) {
+  const HloInstruction::InstructionVector& params =
+      module->entry_computation()->parameter_instructions();
+  if (params.size() != 1 ||
+      !GetEntryParameterShape(module, params, 0).IsTuple()) {
+    return InvalidArgument(
+        "Flattening requires a single tuple entry parameter.");
+  }
+  return absl::OkStatus();
+}
+
+struct PreparedFakeArgumentsState {
+  std::unique_ptr<std::minstd_rand0> owned_engine;
+  std::minstd_rand0* engine = nullptr;
+  std::optional<FakeArgumentCacheContext> cache_ctx;
+};
+
+absl::Status ValidateUnsupportedParameterRanges(
+    const FakeArgumentsOptions& options, absl::string_view caller_name) {
+  if (!options.parameter_ranges.empty()) {
+    return Unimplemented("parameter_ranges is not currently supported in %s.",
+                         caller_name);
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<PreparedFakeArgumentsState> PrepareFakeArgumentsState(
+    const FakeArgumentsOptions& options, absl::string_view caller_name) {
+  ABSL_RETURN_IF_ERROR(
+      ValidateUnsupportedParameterRanges(options, caller_name));
+
+  PreparedFakeArgumentsState state;
+  state.engine = options.engine;
+  if (!options.pseudo_random) {
+    state.engine = nullptr;
+  } else if (state.engine == nullptr) {
+    state.owned_engine = std::make_unique<std::minstd_rand0>();
+    state.engine = state.owned_engine.get();
+  }
+
+  state.cache_ctx = MaybeCreateCacheContext(options, state.engine);
+  return state;
 }
 
 }  // namespace
@@ -1059,51 +1172,110 @@ void SetFakeArgumentCacheLimitsForTest(int64_t max_in_memory_bytes,
                                                  max_disk_bytes);
 }
 
-absl::StatusOr<std::vector<Literal>> MakeFakeArguments(
-    const HloModule* module, const FakeArgumentsOptions& options) {
-  if (!options.parameter_ranges.empty()) {
-    return Unimplemented(
-        "parameter_ranges is not currently supported in MakeFakeArguments.");
-  }
+FakeArgumentsGenerator::FakeArgumentsGenerator(
+    const HloModule* module,
+    std::unique_ptr<HloDataflowAnalysis> dataflow_analysis)
+    : module_(module), dataflow_analysis_(std::move(dataflow_analysis)) {}
 
-  std::unique_ptr<std::minstd_rand0> default_engine;
-  std::minstd_rand0* engine = options.engine;
-  if (!options.pseudo_random) {
-    engine = nullptr;
-  } else if (engine == nullptr) {
-    default_engine = std::make_unique<std::minstd_rand0>();
-    engine = default_engine.get();
+absl::StatusOr<FakeArgumentsGenerator> FakeArgumentsGenerator::Create(
+    const HloModule* module) {
+  if (module == nullptr) {
+    return InvalidArgument("HloModule must not be null.");
   }
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloDataflowAnalysis> dataflow_analysis,
+                        HloDataflowAnalysis::Run(*module));
+  return FakeArgumentsGenerator(module, std::move(dataflow_analysis));
+}
 
-  std::optional<FakeArgumentCacheContext> cache_ctx =
-      MaybeCreateCacheContext(options, engine);
+absl::StatusOr<std::vector<Literal>> FakeArgumentsGenerator::MakeArguments(
+    const FakeArgumentsOptions& options) {
+  ABSL_ASSIGN_OR_RETURN(
+      PreparedFakeArgumentsState state,
+      PrepareFakeArgumentsState(options, "MakeFakeArguments"));
+  CHECK(dataflow_analysis_ != nullptr);
   FakeArgumentCacheContext* cache_ctx_ptr =
-      cache_ctx.has_value() ? &*cache_ctx : nullptr;
+      state.cache_ctx.has_value() ? &*state.cache_ctx : nullptr;
 
-  ABSL_ASSIGN_OR_RETURN(auto dataflow, HloDataflowAnalysis::Run(*module));
-  const auto params = module->entry_computation()->parameter_instructions();
+  const HloInstruction::InstructionVector& params =
+      module_->entry_computation()->parameter_instructions();
   std::vector<Literal> arguments(params.size());
   for (int i = 0; i < params.size(); ++i) {
-    const HloModuleConfig& module_config = module->config();
-    const Shape& param_shape = (module_config.has_entry_computation_layout() &&
-                                module_config.entry_computation_layout()
-                                    .parameter_layout(i)
-                                    .shape()
-                                    .is_static())
-                                   ? module_config.entry_computation_layout()
-                                         .parameter_layout(i)
-                                         .shape()
-                                   : params[i]->shape();
-
+    ABSL_ASSIGN_OR_RETURN(
+        ParameterConstraints constraints,
+        ResolveParameterConstraints(*dataflow_analysis_, *params[i], options));
     ABSL_ASSIGN_OR_RETURN(
         arguments[i],
-        MakeConstrainedArgument(
-            *dataflow, *params[i], param_shape, engine, options.use_large_range,
-            options.treat_gte_as_data_formatting, options.max_bits_of_precision,
-            options.generate_aligned_ds_indices, options.get_index_known_zeroes,
-            cache_ctx_ptr));
+        MakeLiteralForConstraints(constraints,
+                                  GetEntryParameterShape(module_, params, i),
+                                  options, state.engine, cache_ctx_ptr));
   }
-  return std::move(arguments);
+  return arguments;
+}
+
+absl::StatusOr<std::vector<std::shared_ptr<const Literal>>>
+FakeArgumentsGenerator::MakeSharedArguments(
+    const FakeArgumentsOptions& options) {
+  ABSL_ASSIGN_OR_RETURN(
+      PreparedFakeArgumentsState state,
+      PrepareFakeArgumentsState(options, "MakeSharedArguments"));
+  CHECK(dataflow_analysis_ != nullptr);
+  FakeArgumentCacheContext* cache_ctx_ptr =
+      state.cache_ctx.has_value() ? &*state.cache_ctx : nullptr;
+
+  const HloInstruction::InstructionVector& params =
+      module_->entry_computation()->parameter_instructions();
+  std::vector<std::shared_ptr<const Literal>> arguments;
+  arguments.reserve(params.size());
+  for (int i = 0; i < params.size(); ++i) {
+    ABSL_ASSIGN_OR_RETURN(
+        ParameterConstraints constraints,
+        ResolveParameterConstraints(*dataflow_analysis_, *params[i], options));
+    ABSL_ASSIGN_OR_RETURN(
+        std::shared_ptr<const Literal> argument,
+        MakeSharedLiteralForConstraints(
+            constraints, GetEntryParameterShape(module_, params, i), options,
+            state.engine, cache_ctx_ptr));
+    arguments.push_back(std::move(argument));
+  }
+  return arguments;
+}
+
+absl::StatusOr<std::vector<std::shared_ptr<const Literal>>>
+FakeArgumentsGenerator::MakeFlattenedSharedArguments(
+    const FakeArgumentsOptions& options) {
+  ABSL_ASSIGN_OR_RETURN(
+      PreparedFakeArgumentsState state,
+      PrepareFakeArgumentsState(options, "MakeFlattenedSharedArguments"));
+  ABSL_RETURN_IF_ERROR(ValidateSingleTupleEntryParameter(module_));
+  CHECK(dataflow_analysis_ != nullptr);
+  FakeArgumentCacheContext* cache_ctx_ptr =
+      state.cache_ctx.has_value() ? &*state.cache_ctx : nullptr;
+
+  const HloInstruction::InstructionVector& params =
+      module_->entry_computation()->parameter_instructions();
+  const Shape& tuple_shape = GetEntryParameterShape(module_, params, 0);
+  ABSL_ASSIGN_OR_RETURN(
+      ParameterConstraints constraints,
+      ResolveParameterConstraints(*dataflow_analysis_, *params[0], options));
+  std::vector<std::shared_ptr<const Literal>> arguments;
+  arguments.reserve(tuple_shape.tuple_shapes().size());
+  for (const Shape& element_shape : tuple_shape.tuple_shapes()) {
+    ABSL_ASSIGN_OR_RETURN(
+        std::shared_ptr<const Literal> element,
+        MakeSharedLiteralForConstraints(constraints, element_shape, options,
+                                        state.engine, cache_ctx_ptr));
+    arguments.push_back(std::move(element));
+  }
+  return arguments;
+}
+
+absl::StatusOr<std::vector<Literal>> MakeFakeArguments(
+    const HloModule* module, const FakeArgumentsOptions& options) {
+  ABSL_RETURN_IF_ERROR(
+      ValidateUnsupportedParameterRanges(options, "MakeFakeArguments"));
+  ABSL_ASSIGN_OR_RETURN(FakeArgumentsGenerator generator,
+                        FakeArgumentsGenerator::Create(module));
+  return generator.MakeArguments(options);
 }
 
 // Validates options for dataflow-constrained fake argument generation.
@@ -1237,11 +1409,15 @@ absl::StatusOr<Literal> MakeDataflowConstrainedLiteral(
         limit, DiscretizeIntegerInterval(interval, target_name, flat_idx));
   }
 
-  return MakeCachedFakeLiteral(
-      shape, engine, limit, structure.needs_sorted_indices,
-      structure.no_duplicates, options.use_large_range,
-      /*max_bits_of_precision=*/std::nullopt, structure.alignment,
-      structure.known_zeroes_mask, cache_ctx, interval);
+  FakeLiteralGenerationOptions gen_options;
+  gen_options.limit = limit;
+  gen_options.is_sorted = structure.needs_sorted_indices;
+  gen_options.no_duplicates = structure.no_duplicates;
+  gen_options.use_large_range = options.use_large_range;
+  gen_options.index_alignment = structure.alignment;
+  gen_options.index_known_zeroes = structure.known_zeroes_mask;
+  gen_options.interval = interval;
+  return MakeCachedFakeLiteral(shape, engine, gen_options, cache_ctx);
 }
 
 // Generates a literal for a parameter instruction (either array or tuple).
@@ -1304,24 +1480,10 @@ absl::StatusOr<std::vector<Literal>> MakeDataflowConstrainedArguments(
       cache_ctx.has_value() ? &*cache_ctx : nullptr;
 
   const auto params = module->entry_computation()->parameter_instructions();
-  const HloModuleConfig& module_config = module->config();
-  auto get_param_shape = [&](int i) -> const Shape& {
-    if (module_config.has_entry_computation_layout() &&
-        module_config.entry_computation_layout()
-            .parameter_layout(i)
-            .shape()
-            .is_static()) {
-      return module_config.entry_computation_layout()
-          .parameter_layout(i)
-          .shape();
-    }
-    return params[i]->shape();
-  };
-
   // Count total top-level elements across all parameters.
   int64_t total_flat_indices = 0;
   for (int i = 0; i < params.size(); ++i) {
-    const Shape& param_shape = get_param_shape(i);
+    const Shape& param_shape = GetEntryParameterShape(module, params, i);
     if (param_shape.IsTuple()) {
       total_flat_indices += param_shape.tuple_shapes().size();
     } else {
@@ -1341,8 +1503,9 @@ absl::StatusOr<std::vector<Literal>> MakeDataflowConstrainedArguments(
   for (int i = 0; i < params.size(); ++i) {
     ABSL_ASSIGN_OR_RETURN(
         arguments[i], GenerateParameterLiteral(
-                          params[i], get_param_shape(i), constraint_states,
-                          options, engine, current_flat_idx, cache_ctx_ptr));
+                          params[i], GetEntryParameterShape(module, params, i),
+                          constraint_states, options, engine, current_flat_idx,
+                          cache_ctx_ptr));
   }
   return std::move(arguments);
 }

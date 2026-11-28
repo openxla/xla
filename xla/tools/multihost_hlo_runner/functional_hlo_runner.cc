@@ -814,7 +814,7 @@ bool CanCloneArgumentBuffer(
 std::unique_ptr<PjRtBuffer> TryCloneArgumentBuffer(
     size_t device_idx, size_t arg_i, const Literal& dst_literal,
     const Layout& dst_layout, PjRtMemorySpace* dst_memory_space,
-    absl::Span<const std::vector<Literal>* const> per_device_arguments,
+    absl::Span<const std::vector<const Literal*>> per_device_arguments,
     absl::Span<const std::vector<std::unique_ptr<PjRtBuffer>>> argument_buffers,
     absl::Span<const Layout> executable_parameter_layouts,
     bool allow_same_memory_space_clone) {
@@ -828,7 +828,7 @@ std::unique_ptr<PjRtBuffer> TryCloneArgumentBuffer(
         const size_t peer_idx = (device_idx + offset) % num_devices;
         PjRtBuffer* src_buf = argument_buffers[peer_idx][prev_i].get();
         if (src_buf == nullptr || src_buf->memory_space() == dst_memory_space ||
-            !CanCloneArgumentBuffer((*per_device_arguments[peer_idx])[prev_i],
+            !CanCloneArgumentBuffer(*per_device_arguments[peer_idx][prev_i],
                                     prev_i, src_buf, dst_literal, dst_layout,
                                     dst_memory_space,
                                     executable_parameter_layouts)) {
@@ -846,8 +846,8 @@ std::unique_ptr<PjRtBuffer> TryCloneArgumentBuffer(
       const size_t peer_idx = (device_idx + offset) % num_devices;
       PjRtBuffer* src_buf = argument_buffers[peer_idx][arg_i].get();
       if (src_buf == nullptr || src_buf->memory_space() == dst_memory_space ||
-          !CanCloneArgumentBuffer((*per_device_arguments[peer_idx])[arg_i],
-                                  arg_i, src_buf, dst_literal, dst_layout,
+          !CanCloneArgumentBuffer(*per_device_arguments[peer_idx][arg_i], arg_i,
+                                  src_buf, dst_literal, dst_layout,
                                   dst_memory_space,
                                   executable_parameter_layouts)) {
         continue;
@@ -865,7 +865,7 @@ std::unique_ptr<PjRtBuffer> TryCloneArgumentBuffer(
     for (size_t prev_i = 0; prev_i < arg_i; ++prev_i) {
       PjRtBuffer* src_buf = argument_buffers[device_idx][prev_i].get();
       if (src_buf == nullptr || src_buf->memory_space() != dst_memory_space ||
-          !CanCloneArgumentBuffer((*per_device_arguments[device_idx])[prev_i],
+          !CanCloneArgumentBuffer(*per_device_arguments[device_idx][prev_i],
                                   prev_i, src_buf, dst_literal, dst_layout,
                                   dst_memory_space,
                                   executable_parameter_layouts)) {
@@ -882,25 +882,20 @@ std::unique_ptr<PjRtBuffer> TryCloneArgumentBuffer(
   return nullptr;
 }
 
-// Creates argument buffers based on the given arguments map. Note that the
-// arguments might be invalid when arguments are destructed.
+// Creates argument buffers from non-owning host `Literal*` views aligned with
+// `executable->addressable_devices()`. Callers must keep all referenced host
+// `Literal`s alive until this function returns (which awaits every created
+// buffer's ready future before returning, including on error).
 absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>>
-CopyArgumentsToDevice(PjRtClient& client,
-                      const PjRtLoadedExecutable* executable,
-                      const PerDeviceLiteralVecType& arguments,
-                      const RunningOptions& running_options,
-                      bool flattened_arguments,
-                      bool clone_device0_arguments = false) {
+CopyArgumentsToDevice(
+    PjRtClient& client, const PjRtLoadedExecutable* executable,
+    absl::Span<const std::vector<const Literal*>> per_device_arguments,
+    const RunningOptions& running_options, bool flattened_arguments) {
   const bool log_input = running_options.log_input_output();
   absl::Span<PjRtDevice* const> addressable_devices =
       executable->addressable_devices();
   size_t num_addressable_devices = addressable_devices.size();
-  if (!clone_device0_arguments && num_addressable_devices != arguments.size()) {
-    return InvalidArgument(
-        "The number of provided arguments (%v) does not match the number of "
-        "logical devices (%v).",
-        arguments.size(), num_addressable_devices);
-  }
+  TF_RET_CHECK(per_device_arguments.size() == num_addressable_devices);
   std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> argument_buffers;
   argument_buffers.resize(num_addressable_devices);
 
@@ -986,32 +981,13 @@ CopyArgumentsToDevice(PjRtClient& client,
     const bool allow_same_memory_space_clone =
         (client.platform_id() != TpuId());
 
-    std::vector<const std::vector<Literal>*> per_device_arguments(
-        num_addressable_devices, nullptr);
+    const size_t num_args = per_device_arguments[0].size();
     for (size_t i = 0; i < num_addressable_devices; ++i) {
-      PjRtDevice* curr_device = addressable_devices[i];
-      // 'source_device' determines where we get the input literal from; look up
-      // by `PjRtDevice::global_device_id()` (which may differ from the local
-      // device index on multi-host slices).
-      PjRtDevice* source_device =
-          addressable_devices[clone_device0_arguments ? 0 : i];
-      auto it = arguments.find(source_device->global_device_id().value());
-      if (it == arguments.end()) {
-        return InvalidArgument(
-            "The provided argument map does not contain arguments "
-            "for device: %d",
-            curr_device->global_device_id().value());
-      }
-      per_device_arguments[i] = &it->second;
-    }
-
-    const size_t num_args = per_device_arguments[0]->size();
-    for (size_t i = 0; i < num_addressable_devices; ++i) {
-      if (per_device_arguments[i]->size() != num_args) {
+      if (per_device_arguments[i].size() != num_args) {
         return InvalidArgument(
             "Argument count mismatch on device %d: expected %v, got %v.",
             addressable_devices[i]->global_device_id().value(), num_args,
-            per_device_arguments[i]->size());
+            per_device_arguments[i].size());
       }
       argument_buffers[i].resize(num_args);
     }
@@ -1026,7 +1002,7 @@ CopyArgumentsToDevice(PjRtClient& client,
       for (size_t step = 0; step < num_addressable_devices; ++step) {
         const size_t i = (start_dev + step) % num_addressable_devices;
         PjRtDevice* curr_device = addressable_devices[i];
-        const Literal& literal = (*per_device_arguments[i])[arg_i];
+        const Literal& literal = *per_device_arguments[i][arg_i];
         if (log_input) {
           LOG(INFO) << "device_id=" << curr_device->global_device_id().value()
                     << ", input = " << literal.ToString();
@@ -1073,10 +1049,10 @@ CopyArgumentsToDevice(PjRtClient& client,
   }();
 
   // BufferFromHostLiteral transfers read directly from the host `Literal`s in
-  // `arguments` until each buffer's ready future completes, so every created
-  // buffer must be awaited before returning (including on error, since callers
-  // such as CreateArgumentsOnDevice own `arguments` in their local stack
-  // frame).
+  // `per_device_arguments` until each buffer's ready future completes, so every
+  // created buffer must be awaited before returning (including on error, since
+  // callers such as CreateArgumentsOnDevice own the literals in their local
+  // stack frame).
   for (const auto& device_argument_buffers : argument_buffers) {
     for (const auto& device_buffer : device_argument_buffers) {
       if (device_buffer != nullptr) {
@@ -1086,6 +1062,41 @@ CopyArgumentsToDevice(PjRtClient& client,
   }
   ABSL_RETURN_IF_ERROR(status);
   return argument_buffers;
+}
+
+// Creates argument buffers from the given per-device argument map keyed by
+// global device ID, awaiting all host-to-device transfers before returning.
+absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>>
+CopyArgumentsToDevice(PjRtClient& client,
+                      const PjRtLoadedExecutable* executable,
+                      const PerDeviceLiteralVecType& arguments,
+                      const RunningOptions& running_options,
+                      bool flattened_arguments) {
+  absl::Span<PjRtDevice* const> addressable_devices =
+      executable->addressable_devices();
+  if (addressable_devices.size() != arguments.size()) {
+    return InvalidArgument(
+        "The number of provided arguments (%v) does not match the number of "
+        "logical devices (%v).",
+        arguments.size(), addressable_devices.size());
+  }
+  std::vector<std::vector<const Literal*>> per_device_arguments(
+      addressable_devices.size());
+  for (size_t i = 0; i < addressable_devices.size(); ++i) {
+    int device_id = addressable_devices[i]->global_device_id().value();
+    auto it = arguments.find(device_id);
+    if (it == arguments.end()) {
+      return InvalidArgument(
+          "The provided argument map does not contain arguments for device: %d",
+          device_id);
+    }
+    per_device_arguments[i].reserve(it->second.size());
+    for (const Literal& literal : it->second) {
+      per_device_arguments[i].push_back(&literal);
+    }
+  }
+  return CopyArgumentsToDevice(client, executable, per_device_arguments,
+                               running_options, flattened_arguments);
 }
 
 // Creates uninitialized arguments to run the given executable.
@@ -1234,7 +1245,6 @@ CreateArgumentsOnDevice(PjRtClient& client,
       executable->addressable_devices();
   size_t num_addressable_devices = addressable_devices.size();
 
-  PerDeviceLiteralVecType per_device_argument_literals;
   ABSL_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> hlo_modules,
                         executable->GetHloModules());
   VLOG(1) << "FunctionalHloRunner: local_executable count = "
@@ -1270,6 +1280,11 @@ CreateArgumentsOnDevice(PjRtClient& client,
       (running_options.module_argument_mode ==
            ModuleArgumentMode::kUseRandomInputs &&
        engine == nullptr);
+  const bool uses_fake_arguments =
+      running_options.module_argument_mode !=
+          ModuleArgumentMode::kUseRandomNormalInputs &&
+      running_options.module_argument_mode !=
+          ModuleArgumentMode::kUseDeviceIdAsInput;
   absl::BitGen rd;
 
   std::optional<std::normal_distribution<double>> random_dist;
@@ -1282,17 +1297,26 @@ CreateArgumentsOnDevice(PjRtClient& client,
   std::function<double(std::minstd_rand0*)> float_generator =
       [&](std::minstd_rand0* engine) { return (*random_dist)(*engine); };
 
-  for (int i = 0; i < num_addressable_devices; ++i) {
+  if (flatten_arguments && num_addressable_devices > 0) {
+    ABSL_RETURN_IF_ERROR(EnsureSingleTupleForFlattening(*my_hlo_module));
+  }
+
+  std::optional<FakeArgumentsGenerator> fake_args_generator;
+  if (uses_fake_arguments && num_addressable_devices > 0) {
+    ABSL_ASSIGN_OR_RETURN(fake_args_generator,
+                          FakeArgumentsGenerator::Create(my_hlo_module));
+  }
+
+  const size_t num_unique_devices =
+      use_shared_inputs ? std::min<size_t>(1, num_addressable_devices)
+                        : num_addressable_devices;
+  std::vector<std::vector<std::shared_ptr<const Literal>>>
+      owned_argument_literals(num_unique_devices);
+  for (size_t i = 0; i < num_unique_devices; ++i) {
     VLOG(3) << "Creating fake arguments for device " << i;
-    LiteralVec& argument_literals = per_device_argument_literals
-        [addressable_devices[i]->global_device_id().value()];
-    if (flatten_arguments) {
-      ABSL_RETURN_IF_ERROR(EnsureSingleTupleForFlattening(*my_hlo_module));
-    }
-    if (running_options.module_argument_mode ==
-            ModuleArgumentMode::kUseRandomNormalInputs ||
-        running_options.module_argument_mode ==
-            ModuleArgumentMode::kUseDeviceIdAsInput) {
+    std::vector<std::shared_ptr<const Literal>>& argument_literals =
+        owned_argument_literals[i];
+    if (!uses_fake_arguments) {
       const auto params =
           my_hlo_module->entry_computation()->parameter_instructions();
       if (flatten_arguments) {
@@ -1343,10 +1367,12 @@ CreateArgumentsOnDevice(PjRtClient& client,
           std::vector<Literal> decomposed_argument_literals =
               argument_literal_j.DecomposeTuple();
           for (auto& literal : decomposed_argument_literals) {
-            argument_literals.push_back(std::move(literal));
+            argument_literals.push_back(
+                std::make_shared<const Literal>(std::move(literal)));
           }
         } else {
-          argument_literals.push_back(std::move(argument_literal_j));
+          argument_literals.push_back(
+              std::make_shared<const Literal>(std::move(argument_literal_j)));
         }
       }
     } else {
@@ -1355,27 +1381,29 @@ CreateArgumentsOnDevice(PjRtClient& client,
       options.pseudo_random = use_random_inputs;
       options.cache_arguments = use_random_inputs;
       options.min_cached_argument_bytes = min_cached_argument_bytes;
-      if (flatten_arguments) {
-        ABSL_ASSIGN_OR_RETURN(LiteralVec tupled_argument_literals,
-                              MakeFakeArguments(my_hlo_module, options));
-        CHECK_EQ(tupled_argument_literals.size(), 1);
-        CHECK(tupled_argument_literals.front().shape().IsTuple());
-        argument_literals = tupled_argument_literals.front().DecomposeTuple();
-      } else {
-        ABSL_ASSIGN_OR_RETURN(argument_literals,
-                              MakeFakeArguments(my_hlo_module, options));
-      }
-      if (use_shared_inputs) {
-        break;
-      }
+      ABSL_ASSIGN_OR_RETURN(
+          argument_literals,
+          flatten_arguments
+              ? fake_args_generator->MakeFlattenedSharedArguments(options)
+              : fake_args_generator->MakeSharedArguments(options));
+    }
+  }
+
+  std::vector<std::vector<const Literal*>> per_device_arguments(
+      num_addressable_devices);
+  for (size_t i = 0; i < num_addressable_devices; ++i) {
+    const std::vector<std::shared_ptr<const Literal>>& source_literals =
+        owned_argument_literals[use_shared_inputs ? 0 : i];
+    per_device_arguments[i].reserve(source_literals.size());
+    for (const std::shared_ptr<const Literal>& literal : source_literals) {
+      per_device_arguments[i].push_back(literal.get());
     }
   }
 
   ABSL_ASSIGN_OR_RETURN(
       std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> device_buffers,
-      CopyArgumentsToDevice(client, executable, per_device_argument_literals,
-                            running_options, flatten_arguments,
-                            /*clone_device0_arguments=*/use_shared_inputs));
+      CopyArgumentsToDevice(client, executable, per_device_arguments,
+                            running_options, flatten_arguments));
   const double elapsed_secs = absl::ToDoubleSeconds(absl::Now() - init_start);
   LOG(INFO) << "Initialized and loaded arguments on " << num_addressable_devices
             << " addressable device(s) in " << elapsed_secs << "s.";
