@@ -1,5 +1,5 @@
 load("//xla:xla.default.bzl", "xla_cc_test")
-load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -215,12 +215,14 @@ cc_library(
         "abstract_tracked_device_buffer.cc",
         "common_pjrt_client.cc",
         "host_to_device_transfer_manager.cc",
+        "swap_raw_buffer.cc",
         "undonatable_common_pjrt_buffer.cc",
     ],
     hdrs = [
         "abstract_tracked_device_buffer.h",
         "common_pjrt_client.h",
         "host_to_device_transfer_manager.h",
+        "swap_raw_buffer.h",
         "undonatable_common_pjrt_buffer.h",
     ],
     visibility = internal_visibility([
@@ -233,6 +235,7 @@ cc_library(
         ":dynamic_pad_to_static",
         ":dynamic_shapes",
         ":host_callback",
+        ":host_memory_allocator",
         ":host_memory_spaces",
         ":infer_dispatch_info",
         ":linearize_throttler",
@@ -258,6 +261,7 @@ cc_library(
         "//xla/error:error_codes",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt/c:pjrt_c_api_device_event_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
         "//xla/pjrt/plugin/xla_cpu:cpu_topology",
         "//xla/runtime:device_id",
@@ -996,6 +1000,38 @@ xla_cc_test(
         "//xla/pjrt/proto:pjrt_value_type_proto_cc",
         "@com_google_googletest//:gtest_main",
     ],
+)
+
+xla_cc_test(
+    name = "swap_raw_buffer_test",
+    srcs = ["swap_raw_buffer_test.cc"],
+    deps = [
+        ":common_pjrt_client",
+        ":device_event",
+        ":host_memory_allocator",
+        ":host_memory_spaces",
+        ":pjrt_client",
+        ":raw_buffer",
+        "//xla:future",
+        "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
+        "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
+        "//xla/runtime:device_id",
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/framework:bfc_allocator",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:platform_port",
+    ] + if_google([
+        # In OSS this dependency is added automatically for xla_cc_test targets.
+        # See xla/xla.default.bzl.
+        "//xla/tsl/framework:allocator",
+    ]),
 )
 
 xla_cc_test(
