@@ -24,6 +24,8 @@ limitations under the License.
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "tsl/platform/platform.h"
+#include "xla/error_spec.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
@@ -31,6 +33,7 @@ limitations under the License.
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/tests/hlo_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/lib/monitoring/collected_metrics.h"
 #include "xla/tsl/lib/monitoring/collection_registry.h"
@@ -202,6 +205,57 @@ INSTANTIATE_TEST_SUITE_P(
     [](const ::testing::TestParamInfo<CustomFusionReuseCase>& info) {
       return info.param.name;
     });
+
+using CpuReductionNormalizationTest = HloInterpreterReferenceMixin<HloTestBase>;
+
+TEST_F(CpuReductionNormalizationTest, NormalizesDegenerateReductionChains) {
+  constexpr absl::string_view kHlo = R"(
+HloModule test
+add {
+  a = $type[] parameter(0)
+  b = $type[] parameter(1)
+  ROOT sum = $type[] add(a, b)
+}
+ENTRY main {
+  p = $type[1025,1,1] parameter(0)
+  a = $type[1025,1,1] abs(p)
+  n = $type[1025,1,1] negate(a)
+  e = $type[1025,1,1] exponential(n)
+  l = $type[1025,1,1] log-plus-one(e)
+  z = $type[] constant(0)
+  ROOT r = $type[] reduce(l, z), dimensions={0,1,2}, to_apply=add
+})";
+  for (bool use_ynn : {false, true}) {
+    for (const char* type : {"f32", "f64"}) {
+      SCOPED_TRACE(type);
+      SCOPED_TRACE(use_ynn);
+      HloModuleConfig config;
+      DebugOptions debug_options = GetDebugOptionsForTest();
+      debug_options.clear_xla_cpu_experimental_ynn_fusion_type();
+      if (use_ynn) {
+        debug_options.add_xla_cpu_experimental_ynn_fusion_type(
+            DebugOptions::LIBRARY_FUSION_TYPE_REDUCE);
+      }
+      config.set_debug_options(debug_options);
+      std::string hlo = absl::StrReplaceAll(kHlo, {{"$type", type}});
+      ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized,
+                           GetOptimizedModule(hlo, config));
+      int exponential_count = 0;
+      for (HloComputation* computation : optimized->computations()) {
+        for (HloInstruction* instruction : computation->instructions()) {
+          if (instruction->opcode() == HloOpcode::kExp) {
+            ++exponential_count;
+            EXPECT_EQ(instruction->shape().dimensions().size(), 1);
+          }
+        }
+      }
+      EXPECT_GT(exponential_count, 0);
+      ASSERT_OK_AND_ASSIGN(auto module,
+                           ParseAndReturnVerifiedModule(hlo, config));
+      EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec(1e-4, 1e-4)));
+    }
+  }
+}
 
 constexpr absl::string_view kCpuCompilerStacktraceMetricName =
     "/xla/service/cpu/compiler_stacktrace_count";
