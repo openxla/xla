@@ -128,6 +128,15 @@ mlir::LLVM::GlobalOp CreateGlobalOp(mlir::Attribute value,
 mlir::Value AddByteOffsetToPointer(mlir::ImplicitLocOpBuilder& b,
                                    mlir::Value ptr, int64_t offset_bytes);
 
+// Emits a scalar store of `value` into `dest` at `indices`. For packed
+// sub-byte element types when `config.atomic_sub_byte_inserts` is true, lowers
+// directly to an atomic CAS loop on the containing word.
+void EmitTensorElementStore(mlir::Operation* op,
+                            mlir::TypedValue<mlir::RankedTensorType> dest,
+                            mlir::ValueRange indices, mlir::Value value,
+                            const LowerTensorsConfig& config,
+                            mlir::PatternRewriter& rewriter);
+
 }  // namespace emitters
 }  // namespace xla
 

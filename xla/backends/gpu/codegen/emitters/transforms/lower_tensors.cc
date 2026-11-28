@@ -34,6 +34,7 @@ limitations under the License.
 #include "mlir/Dialect/Complex/IR/Complex.h"  // IWYU pragma: keep
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/GPU/IR/GPUDialectDecl.h"
 #include "mlir/Dialect/LLVMIR/LLVMAggregateOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMArithOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
@@ -44,9 +45,11 @@ limitations under the License.
 #include "mlir/Dialect/LLVMIR/LLVMMemoryOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMModuleOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "mlir/Dialect/LLVMIR/NVVMAttributes.h"
+#include "mlir/Dialect/LLVMIR/NVVMDataMovementOps.h"
 #include "mlir/Dialect/LLVMIR/ROCDLDialectDecl.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"  // IWYU pragma: keep
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
@@ -195,12 +198,120 @@ struct RewriteAllocateShared : OpRewritePattern<AllocateSharedOp> {
   }
 };
 
+// Maps `tensor`'s shared-memory pointer to peer CTA `cta_rank` via `nvvm.mapa`
+// in explicit `shared` -> `shared::cluster` address spaces (3 -> 7) so LLVM's
+// InferAddressSpaces emits `ld/st.shared::cluster` rather than generic ops.
+mlir::TypedValue<mlir::RankedTensorType> MapDsmemTensor(
+    mlir::ImplicitLocOpBuilder& b, Value tensor, Value cta_rank,
+    mlir::RankedTensorType result_type) {
+  ml::LLVMPointerType generic_ptr_type =
+      ml::LLVMPointerType::get(b.getContext());
+  ml::LLVMPointerType shared_ptr_type = ml::LLVMPointerType::get(
+      b.getContext(),
+      static_cast<unsigned>(mlir::NVVM::NVVMMemorySpace::Shared));
+  ml::LLVMPointerType cluster_ptr_type = ml::LLVMPointerType::get(
+      b.getContext(),
+      static_cast<unsigned>(mlir::NVVM::NVVMMemorySpace::SharedCluster));
+  Value generic_ptr =
+      UnrealizedConversionCastOp::create(b, generic_ptr_type, tensor)
+          .getResult(0);
+  Value shared_ptr =
+      ml::AddrSpaceCastOp::create(b, shared_ptr_type, generic_ptr);
+  Value cta_rank_i32 =
+      arith::IndexCastUIOp::create(b, b.getI32Type(), cta_rank);
+  Value cluster_ptr =
+      mlir::NVVM::MapaOp::create(b, cluster_ptr_type, shared_ptr, cta_rank_i32);
+  Value dsmem_ptr =
+      ml::AddrSpaceCastOp::create(b, generic_ptr_type, cluster_ptr);
+  return mlir::cast<mlir::TypedValue<mlir::RankedTensorType>>(
+      UnrealizedConversionCastOp::create(b, result_type, dsmem_ptr)
+          .getResult(0));
+}
+
+LogicalResult ValidateClusterOps(mlir::ModuleOp module,
+                                 bool supports_cta_cluster) {
+  bool valid = true;
+  module.walk([&](mlir::Operation* op) {
+    Value dsmem_tensor;
+    if (auto extract = mlir::dyn_cast<DsmemExtractOp>(op)) {
+      dsmem_tensor = extract.getTensor();
+    } else if (auto insert = mlir::dyn_cast<DsmemInsertOp>(op)) {
+      dsmem_tensor = insert.getDest();
+    }
+    if (dsmem_tensor) {
+      if (!supports_cta_cluster) {
+        op->emitOpError(
+            "DSMEM accesses are only supported on Hopper+ CUDA GPUs");
+        valid = false;
+      } else if (!IsSharedMemoryBuffer(dsmem_tensor)) {
+        op->emitOpError("DSMEM accesses require a shared memory tensor");
+        valid = false;
+      }
+      return;
+    }
+    if (auto sync = mlir::dyn_cast<SyncThreadsOp>(op);
+        sync && sync.getScope() == mlir::gpu::BarrierScope::Cluster &&
+        !supports_cta_cluster) {
+      op->emitOpError(
+          "cluster-scoped sync_threads is only supported on Hopper+ CUDA GPUs");
+      valid = false;
+    }
+  });
+  return mlir::success(valid);
+}
+
+struct RewriteDsmemExtract : OpRewritePattern<DsmemExtractOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(
+      DsmemExtractOp op, mlir::PatternRewriter& rewriter) const override {
+    mlir::ImplicitLocOpBuilder b(op.getLoc(), rewriter);
+    // Do not trace past upstream inserts/syncs here: dropping their SSA uses
+    // would let greedy-rewriter DCE erase `tensor.insert` before it lowers.
+    mlir::TypedValue<mlir::RankedTensorType> peer_tensor = MapDsmemTensor(
+        b, op.getTensor(), op.getCtaRank(), op.getTensor().getType());
+    rewriter.replaceOpWithNewOp<mlir::tensor::ExtractOp>(
+        op, peer_tensor, ValueRange{op.getLocalIndex()});
+    return success();
+  }
+};
+
+class RewriteDsmemInsert : public OpRewritePattern<DsmemInsertOp> {
+ public:
+  RewriteDsmemInsert(mlir::MLIRContext* context,
+                     const emitters::LowerTensorsConfig& config)
+      : OpRewritePattern<DsmemInsertOp>(context), config_(config) {}
+
+  LogicalResult matchAndRewrite(
+      DsmemInsertOp op, mlir::PatternRewriter& rewriter) const override {
+    Value dest = emitters::TraceDestinationBuffer(op.getDest());
+    if (!dest) {
+      return failure();
+    }
+    mlir::ImplicitLocOpBuilder b(op.getLoc(), rewriter);
+    mlir::TypedValue<mlir::RankedTensorType> peer_tensor =
+        MapDsmemTensor(b, dest, op.getCtaRank(), op.getDest().getType());
+    // Emit the store directly instead of lowering to `tensor.insert` on
+    // `peer_tensor`: `op` must return `op.getDest()`, so an unused
+    // `tensor.insert` would be DCE'd.
+    emitters::EmitTensorElementStore(op, peer_tensor,
+                                     ValueRange{op.getLocalIndex()},
+                                     op.getScalar(), config_, rewriter);
+    rewriter.replaceOp(op, op.getDest());
+    return success();
+  }
+
+ private:
+  emitters::LowerTensorsConfig config_;
+};
+
 struct RewriteSyncThreads : OpRewritePattern<SyncThreadsOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(
       SyncThreadsOp op, mlir::PatternRewriter& rewriter) const override {
-    mlir::gpu::BarrierOp::create(rewriter, op.getLoc());
+    auto barrier = mlir::gpu::BarrierOp::create(rewriter, op.getLoc());
+    barrier.setScope(op.getScope());
     rewriter.replaceOp(op, op.getOperands());
     return success();
   }
@@ -1061,9 +1172,21 @@ class LowerTensorsPass : public impl::LowerTensorsPassBase<LowerTensorsPass> {
     config.atomic_sync_scope = std::string(GetAtomicSyncScope(gpu_cc_));
     config.atomic_load_store_ordering = GetAtomicLoadStoreOrdering(gpu_cc_);
 
+    const bool supports_cta_cluster =
+        cuda_cc != nullptr && cuda_cc->IsAtLeastHopper();
+    if (mlir::failed(
+            ValidateClusterOps(getOperation(), supports_cta_cluster))) {
+      signalPassFailure();
+      return;
+    }
+
     if (mlir::failed(emitters::LowerTensors(
             getOperation(), config, [&](mlir::RewritePatternSet& patterns) {
               patterns.add<RewriteSyncThreads>(context);
+              if (supports_cta_cluster) {
+                patterns.add<RewriteDsmemExtract>(context);
+                patterns.add<RewriteDsmemInsert>(context, config);
+              }
               patterns
                   .add<RewriteGpuDirectAtomicRMW, RewriteGpuDirectAtomicStore,
                        RewriteGpuSetDynamicDimSize>(context, gpu_cc_);

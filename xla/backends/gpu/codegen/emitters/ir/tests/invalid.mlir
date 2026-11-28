@@ -76,3 +76,19 @@ func.func @reduce_init_type_mismatch(%in: tensor<16x8x4xf32>, %init: i32)
     : (tensor<16x8x4xf32>, i32) -> tensor<16x4xf32>
   func.return %sum : tensor<16x4xf32>
 }
+
+// -----
+
+func.func @dsmem_extract_non_1d(%t: tensor<4x4xf32>, %cta: index, %idx: index) -> f32 {
+  // expected-error @+1 {{expected a 1D tensor}}
+  %v = xla_gpu.dsmem_extract %t[%cta, %idx] : tensor<4x4xf32>
+  return %v : f32
+}
+
+// -----
+
+func.func @dsmem_insert_non_1d(%t: tensor<4x4xf32>, %cta: index, %idx: index, %v: f32) -> tensor<4x4xf32> {
+  // expected-error @+1 {{expected a 1D tensor}}
+  %ins = xla_gpu.dsmem_insert %v into %t[%cta, %idx] : tensor<4x4xf32>
+  return %ins : tensor<4x4xf32>
+}

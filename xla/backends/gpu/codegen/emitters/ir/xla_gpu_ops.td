@@ -15,6 +15,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_FUSIONS_MLIR_OPS
 #define XLA_SERVICE_GPU_FUSIONS_MLIR_OPS
 
+include "mlir/Dialect/GPU/IR/GPUBase.td"
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td"
@@ -64,7 +65,11 @@ def XLAGPU_SyncThreadsOp : XLAGPU_Op<"sync_threads", [
     the synchronized state.
   }];
 
-  let arguments = (ins Variadic<AnyRankedTensor>:$operands);
+  let arguments = (ins
+    Variadic<AnyRankedTensor>:$operands,
+    DefaultValuedAttr<GPU_BarrierScopeAttr,
+      "::mlir::gpu::BarrierScope::Workgroup">:$scope
+  );
   let results = (outs Variadic<AnyRankedTensor>:$results);
   let extraClassDeclaration = [{
     mlir::MutableOperandRange getDpsInitsMutable() {
@@ -72,7 +77,92 @@ def XLAGPU_SyncThreadsOp : XLAGPU_Op<"sync_threads", [
     }
   }];
 
-  let assemblyFormat = "operands attr-dict `:` type($operands)";
+  let skipDefaultBuilders = 1;
+  let builders = [
+    OpBuilder<(ins "::mlir::TypeRange":$results, "::mlir::ValueRange":$operands,
+               CArg<"::mlir::gpu::BarrierScope",
+                    "::mlir::gpu::BarrierScope::Workgroup">:$scope), [{
+      $_state.addOperands(operands);
+      $_state.addTypes(results);
+      $_state.getOrAddProperties<Properties>().scope =
+          ::mlir::gpu::BarrierScopeAttr::get($_builder.getContext(), scope);
+    }]>,
+    OpBuilder<(ins "::mlir::ValueRange":$operands,
+               CArg<"::mlir::gpu::BarrierScope",
+                    "::mlir::gpu::BarrierScope::Workgroup">:$scope), [{
+      build($_builder, $_state, ::mlir::TypeRange(operands), operands, scope);
+    }]>
+  ];
+
+  let assemblyFormat = "(`scope` $scope^)? $operands attr-dict `:` type($operands)";
+}
+
+def XLAGPU_DsmemExtractOp : XLAGPU_Op<"dsmem_extract", [
+    // Not Pure: guarded DSMEM reads must not be speculatively hoisted.
+    NoMemoryEffect,
+    TypesMatchWith<"result type matches tensor element type",
+                   "tensor", "result",
+                   "mlir::cast<mlir::ShapedType>($_self).getElementType()">
+  ]> {
+  let summary = "Extracts an element from a peer CTA's shared memory tensor.";
+  let description = [{
+    Reads an element at CTA-local index `$local_index` from the 1D
+    shared-memory tensor `$tensor` residing in cluster CTA `$cta_rank` via
+    distributed shared memory (DSMEM).
+
+    ```mlir
+    %val = xla_gpu.dsmem_extract %shared[%cta_rank, %local_idx]
+        : tensor<1024xf32>
+    ```
+  }];
+
+  let arguments = (ins AnyStaticShapeTensor:$tensor,
+                       Index:$cta_rank,
+                       Index:$local_index);
+  let results = (outs AnyType:$result);
+
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    $tensor `[` $cta_rank `,` $local_index `]` attr-dict `:` type($tensor)
+  }];
+}
+
+def XLAGPU_DsmemInsertOp : XLAGPU_Op<"dsmem_insert", [
+    // No `NoMemoryEffect`: peer-CTA writes are observable across the cluster
+    // even if this CTA does not consume the returned tensor token.
+    DestinationStyleOpInterface,
+    TypesMatchWith<"result type matches dest type",
+                   "dest", "result", "$_self">,
+    TypesMatchWith<"scalar type matches dest element type",
+                   "dest", "scalar",
+                   "mlir::cast<mlir::ShapedType>($_self).getElementType()">
+  ]> {
+  let summary = "Inserts an element into a peer CTA's shared memory tensor.";
+  let description = [{
+    Writes `$scalar` at CTA-local index `$local_index` into the 1D
+    shared-memory tensor `$dest` residing in cluster CTA `$cta_rank` via
+    distributed shared memory (DSMEM), returning the updated tensor token.
+
+    ```mlir
+    %updated = xla_gpu.dsmem_insert %val into %shared[%cta_rank, %local_idx]
+        : tensor<1024xf32>
+    ```
+  }];
+
+  let arguments = (ins AnyType:$scalar,
+                       AnyStaticShapeTensor:$dest,
+                       Index:$cta_rank,
+                       Index:$local_index);
+  let results = (outs AnyStaticShapeTensor:$result);
+
+  let extraClassDeclaration = [{
+    mlir::MutableOperandRange getDpsInitsMutable() { return getDestMutable(); }
+  }];
+
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    $scalar `into` $dest `[` $cta_rank `,` $local_index `]` attr-dict `:` type($dest)
+  }];
 }
 
 def XLAGPU_ShuffleReduceOp : XLAGPU_Op<"shuffle_reduce",

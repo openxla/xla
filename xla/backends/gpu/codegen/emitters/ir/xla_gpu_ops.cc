@@ -269,6 +269,24 @@ void ShuffleReduceOp::print(OpAsmPrinter& p) {
 }
 
 //===----------------------------------------------------------------------===//
+// DsmemExtractOp / DsmemInsertOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult DsmemExtractOp::verify() {
+  if (getTensor().getType().getRank() != 1) {
+    return emitOpError() << "expected a 1D tensor";
+  }
+  return success();
+}
+
+LogicalResult DsmemInsertOp::verify() {
+  if (getDest().getType().getRank() != 1) {
+    return emitOpError() << "expected a 1D tensor";
+  }
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // SyncThreadsOp
 //===----------------------------------------------------------------------===//
 
