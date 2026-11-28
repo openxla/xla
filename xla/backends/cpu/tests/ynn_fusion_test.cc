@@ -881,5 +881,52 @@ INSTANTIATE_TEST_SUITE_P(YnnUnaryOpTestInstantiation, YnnUnaryOpTest,
                          ::testing::ValuesIn(unary_op_test_params),
                          YnnUnaryOpTest::Name);
 
+class YnnExpFlushToZeroTest : public HloInterpreterReferenceMixin<HloTestBase> {
+ protected:
+  template <typename T>
+  void RunExpNearSmallestNormalTest(absl::string_view dtype) {
+    constexpr size_t kCount = 64;
+    const double min_x =
+        std::log(static_cast<double>(std::numeric_limits<T>::min())) + 0.01;
+    const double max_x = min_x + 2.0;
+    std::vector<T> inputs(kCount);
+    for (size_t i = 0; i < kCount; ++i) {
+      inputs[i] = static_cast<T>(min_x + (max_x - min_x) * i / (kCount - 1));
+    }
+
+    constexpr absl::string_view kHlo = R"(
+      HloModule exp_near_smallest_normal
+
+      ynn_fusion {
+        %input = $dtype[$n] parameter(0)
+        ROOT %output = $dtype[$n] exponential(%input)
+      }
+
+      ENTRY entry {
+        %p0 = $dtype[$n] parameter(0)
+        ROOT %fusion = $dtype[$n] fusion(%p0), kind=kCustom,
+          calls=ynn_fusion,
+          backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+      })";
+
+    std::string hlo_text = absl::StrReplaceAll(
+        kHlo, {{"$dtype", dtype}, {"$n", absl::StrCat(kCount)}});
+    Literal p0 = LiteralUtil::CreateR1<T>(inputs);
+    TF_ASSERT_OK_AND_ASSIGN(auto module,
+                            ParseAndReturnVerifiedModule(hlo_text));
+    // All outputs are normal, so relative error must stay within a few ULPs
+    // even when CPU execution enables flush-to-zero (unlike YnnUnaryOpTest,
+    // whose nonzero aabs masks errors in the lowest normal binades).
+    const double rel_tol = 4.0 * std::numeric_limits<T>::epsilon();
+    EXPECT_TRUE(RunAndCompareNoHloPasses(
+        std::move(module), {&p0}, ErrorSpec{/*aabs=*/0.0, /*arel=*/rel_tol}));
+  }
+};
+
+TEST_F(YnnExpFlushToZeroTest, ExpNearSmallestNormal) {
+  RunExpNearSmallestNormalTest<float>("f32");
+  RunExpNearSmallestNormalTest<double>("f64");
+}
+
 }  // namespace
 }  // namespace xla::cpu
