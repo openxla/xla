@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <memory>
 
-#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"

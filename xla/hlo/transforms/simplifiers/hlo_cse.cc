@@ -16,9 +16,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/hlo_cse.h"
 
 #include <cstdint>
-#include <memory>
 #include <optional>
-#include <string>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
@@ -42,6 +40,7 @@ limitations under the License.
 #include "xla/side_effect_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {

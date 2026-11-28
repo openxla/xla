@@ -15,8 +15,16 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/hlo_module_dce.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "absl/algorithm/container.h"
+#include "absl/strings/string_view.h"
+#include "third_party/gloop/util/task/status_matchers.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"

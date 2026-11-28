@@ -15,11 +15,16 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/hlo_module_dce.h"
 
-#include <deque>
+#include <cstdint>
+#include <memory>
+#include <vector>
 
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "xla/hlo/analysis/hlo_liveness_analysis.h"
