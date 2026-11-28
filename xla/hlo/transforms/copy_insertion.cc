@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/hlo/transforms/copy_insertion.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <memory>
