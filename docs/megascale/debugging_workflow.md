@@ -62,6 +62,82 @@ detects a hang` message in your logs.
     detects a hang` message.
 3.  Follow steps below to diagnose the issue based on the identified cause.
 
+### Receive the Error Digest in a Python Callback
+
+For **McJAX** jobs, the MXLA coordinator also delivers the error digest to the
+callbacks registered through `libtpu.sdk.debug.register_debug_callback`. This
+lets your program react to a hang, for example by
+collecting extra debugging information or by notifying your infrastructure,
+without parsing the logs. This isn't available for **Pathways** jobs. See [Debug
+callback in
+libtpu.sdk.debug](https://openxla.org/xla/tpu_on_device_debugging/debug_callback)
+for the callback API.
+
+```python
+from typing import Any, Mapping
+
+import libtpu.sdk.debug as tpu_debug
+
+
+def on_tpu_debug_event(
+    payload: Mapping[str, Any], metadata: Mapping[str, Any]
+) -> None:
+  if not metadata.get("is_megascale_error_digest"):
+    return  # A different TPU debug event.
+  hosts = sorted({w["hostname"] for w in payload["potential_culprit_workers"]})
+  print(
+      f"MXLA {metadata['first_error_type']}: potential cause"
+      f" {payload['potential_cause']}, potential culprit hosts {hosts}",
+      flush=True,
+  )
+
+
+# Register the callback before running the workload.
+callback_id = tpu_debug.register_debug_callback(on_tpu_debug_event)
+```
+
+The callback receives the digest as structured fields, together with the text
+from the logs:
+
+*   `metadata["is_megascale_error_digest"]`: `True`, which identifies the
+    event.
+*   `metadata["first_error_type"]`: `"HANG_DETECTED"` or
+    `"UNRECOVERABLE_ERROR"`.
+*   `metadata["core_location"]`: `"host <hostname>"`, with the hostname of the
+    MXLA coordinator.
+*   `payload["potential_cause"]`: the potential cause, for example
+    `"BAD_TPU_CHIP"` or `"NETWORKING_ISSUE"`. See [Diagnosis](#diagnosis) for
+    how to interpret it.
+*   `payload["potential_culprit_workers"]`: a list of the potential culprit
+    workers. Each worker is a dict with `worker_id` and `hostname`, plus a
+    `core_info` dict with `chip_id`, `core_idx`, and, if known,
+    `physical_location` when the diagnosis is localized to a TPU core.
+*   `payload["faulty_network_links"]`: a list of the suspected faulty network
+    links, if any, each a dict with the `src` and `dst` workers.
+*   `payload["error_messages"]`: a list of the unrecoverable errors that the
+    workers reported, if any, each a dict with the `worker` and its
+    `error_message`.
+*   `payload["first_error_timestamp_ms"]`: the time of the first error, in
+    milliseconds since the Unix epoch.
+*   `payload["formatted_digest"]`: the lines that the logs show under `Full
+    error digest:`. This is the only field that contains the TPU states.
+
+Keep the following in mind:
+
+*   The digest is only delivered in the MXLA coordinator process, which is
+    typically task 0 of slice 0, so the callback must be registered in that
+    process.
+*   The coordinator delivers the digest right after it logs it, waits at most
+    10 seconds in total for all the registered callbacks, and then, by default,
+    aborts. That time includes the time a callback waits for the Python GIL.
+    For this event, do the work inside the callback, unlike what the debug
+    callback guide recommends for other events: if you hand the event to
+    another thread, that thread may not finish before the process exits. To
+    give the callbacks more time, set
+    `--megascale_error_reporter_debug_callback_timeout`, for example to `30s`.
+*   To stop delivering the digest to the callbacks, set
+    `--megascale_error_reporter_enable_debug_callback=false`.
+
 ### Diagnosis
 
 #### Interpreting TPU States
