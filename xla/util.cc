@@ -51,20 +51,12 @@ limitations under the License.
 #include "tsl/platform/denormal.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/platform/protobuf.h"
-#include "tsl/platform/stacktrace.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
-
-absl::Status WithLogBacktrace(const absl::Status& status) {
-  CHECK(!status.ok());
-  VLOG(1) << status.ToString();
-  VLOG(2) << tsl::CurrentStackTrace();
-  return status;
-}
 
 ScopedLoggingTimer::ScopedLoggingTimer(absl::string_view label, bool enabled,
                                        const char* file, int line,
@@ -105,18 +97,6 @@ void ScopedLoggingTimer::StopAndLog() {
 }
 
 ScopedLoggingTimer::~ScopedLoggingTimer() { StopAndLog(); }
-
-absl::Status AddStatus(absl::Status prior, absl::string_view context) {
-  CHECK(!prior.ok());
-  return absl::Status{prior.code(),
-                      absl::StrCat(context, ": ", prior.message())};
-}
-
-absl::Status AppendStatus(absl::Status prior, absl::string_view context) {
-  CHECK(!prior.ok());
-  return absl::Status{prior.code(),
-                      absl::StrCat(prior.message(), ": ", context)};
-}
 
 std::string Reindent(absl::string_view original,
                      const absl::string_view indentation) {
