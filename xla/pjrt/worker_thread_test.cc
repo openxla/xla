@@ -108,6 +108,17 @@ TEST(WorkerThreadTest, ConsecutiveDrainsOnIdleThread) {
   thread.Drain();  // Second drain on still-empty queue — must not deadlock.
 }
 
+// Drain() from the worker thread itself would deadlock, so it CHECK-fails.
+TEST(WorkerThreadDeathTest, DrainFromWorkerThreadCrashes) {
+  EXPECT_DEATH(
+      {
+        WorkerThread thread(tsl::Env::Default(), "test");
+        thread.Schedule([&thread]() { thread.Drain(); });
+        thread.Drain();
+      },
+      "Drain\\(\\) called from its own worker thread");
+}
+
 TEST(WorkerThreadTest, IsCurrentThread) {
   WorkerThread thread1(tsl::Env::Default(), "test1");
   WorkerThread thread2(tsl::Env::Default(), "test2");

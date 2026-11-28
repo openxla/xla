@@ -45,7 +45,8 @@ class WorkerThread {
 
   // Blocks the calling thread until all closures that were enqueued before this
   // call have completed. Any closures enqueued concurrently with or after this
-  // call may or may not have run when Drain() returns.
+  // call may or may not have run when Drain() returns. Must not be called from
+  // this worker thread (CHECK-fails, since it would otherwise deadlock).
   //
   // Implementation: schedules a sentinel no-op closure and waits for it to be
   // dequeued and executed, which guarantees that all prior closures have run.
