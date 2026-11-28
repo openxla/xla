@@ -567,6 +567,9 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
               if (std::isnan(rhs)) {
                 return rhs;
               }
+              if (lhs == rhs) {
+                return std::signbit(lhs) ? rhs : lhs;
+              }
             }
             return std::max(lhs, rhs);
           });
@@ -598,6 +601,9 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
               }
               if (std::isnan(rhs)) {
                 return rhs;
+              }
+              if (lhs == rhs) {
+                return std::signbit(lhs) ? lhs : rhs;
               }
             }
             return std::min(lhs, rhs);
@@ -806,7 +812,23 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
             return high;
           }
         }
-        return std::min(high, std::max(value, low));
+        auto max_op = [](ElementwiseT a, ElementwiseT b) {
+          if constexpr (std::numeric_limits<ElementwiseT>::has_quiet_NaN) {
+            if (a == b) {
+              return std::signbit(a) ? b : a;
+            }
+          }
+          return std::max(a, b);
+        };
+        auto min_op = [](ElementwiseT a, ElementwiseT b) {
+          if constexpr (std::numeric_limits<ElementwiseT>::has_quiet_NaN) {
+            if (a == b) {
+              return std::signbit(a) ? a : b;
+            }
+          }
+          return std::min(a, b);
+        };
+        return min_op(high, max_op(value, low));
       };
       return ElementwiseTernaryOp(clamp, ConvertTernaryFunction(clamp_op));
     }
