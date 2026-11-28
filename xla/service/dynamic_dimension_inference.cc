@@ -189,6 +189,8 @@ class DynamicDimensionInferenceVisitor : public DfsHloRewriteVisitor {
 
   absl::Status HandleReverse(HloInstruction* hlo) override;
 
+  absl::Status HandleShuffle(HloInstruction* hlo) override;
+
   absl::Status HandleSelectAndScatter(HloInstruction* hlo) override;
 
   absl::Status HandleGetTupleElement(HloInstruction* hlo) override;
@@ -1879,6 +1881,27 @@ absl::Status DynamicDimensionInferenceVisitor::HandleDynamicUpdateSlice(
 absl::Status DynamicDimensionInferenceVisitor::HandleReverse(
     HloInstruction* hlo) {
   return PassThroughDynamicDimension(hlo);
+}
+
+absl::Status DynamicDimensionInferenceVisitor::HandleShuffle(
+    HloInstruction* hlo) {
+  if (!CanInfer(hlo)) {
+    return absl::OkStatus();
+  }
+  return ForEachOperandDynamicDimension(
+      hlo,
+      [&](HloInstruction* /*operand*/, ShapeIndex /*index*/, int64_t dimension,
+          int64_t /*operand_index*/,
+          HloInstruction* dynamic_size) -> absl::Status {
+        if (absl::c_linear_search(hlo->dimensions(), dimension)) {
+          return Unimplemented(
+              "Dynamic dimension propagation on shuffled dimension %d of %s is "
+              "not supported",
+              dimension, hlo->ToString());
+        }
+        SetDynamicSize(hlo, {}, dimension, dynamic_size);
+        return absl::OkStatus();
+      });
 }
 
 absl::Status DynamicDimensionInferenceVisitor::HandleGather(

@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/service/shape_inference.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/shuffle.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tsl/platform/errors.h"
@@ -5139,6 +5140,248 @@ TEST_P(HloEvaluatorBf16Test, Reverse) {
   // clang-format on
 
   EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
+}
+
+TEST_P(HloEvaluatorBf16Test, ShuffleRotate) {
+  HloComputation::Builder b(TestName());
+
+  // Input shape is float[4x3x1x1].
+  // clang-format off
+  Array4D<float> input({
+    {{{1.0f}}, {{2.0f}}, {{3.0f}}},
+    {{{4.0f}}, {{5.0f}}, {{6.0f}}},
+    {{{7.0f}}, {{8.0f}}, {{9.0f}}},
+    {{{10.0f}}, {{11.0f}}, {{12.0f}}},
+  });
+  // clang-format on
+  auto operand_literal = LiteralUtil::CreateR4FromArray4D<float>(input);
+  HloInstruction* operand = b.AddInstruction(
+      HloInstruction::CreateConstant(std::move(operand_literal)));
+
+  const Shape shape = ShapeUtil::MakeShape(F32, {4, 3, 1, 1});
+  b.AddInstruction(
+      HloInstruction::CreateShuffle(shape, operand, /*dimensions=*/{0, 1},
+                                    shuffle::Rotate(/*shifts=*/{1, 2})));
+  m_->AddEntryComputation(b.Build());
+
+  ASSERT_OK_AND_ASSIGN(Literal result, Evaluate());
+
+  // clang-format off
+  auto expected = LiteralUtil::CreateR4FromArray4D<float>({
+    {{{6.0f}}, {{4.0f}}, {{5.0f}}},
+    {{{9.0f}}, {{7.0f}}, {{8.0f}}},
+    {{{12.0f}}, {{10.0f}}, {{11.0f}}},
+    {{{3.0f}}, {{1.0f}}, {{2.0f}}},
+  });
+  // clang-format on
+
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
+}
+
+TEST_F(HloEvaluatorTest, ShuffleRotateEdgeShiftsAndZeroSizedDim) {
+  // Negative shift, zero shift, |shift| >= dim_size, and INT64_MIN.
+  {
+    const std::string hlo_text = absl::StrCat(
+        R"(
+HloModule shuffle_edge_shifts
+
+ENTRY main {
+  p0 = s32[4,3]{1,0} constant({{0, 1, 2}, {3, 4, 5}, {6, 7, 8}, {9, 10, 11}})
+  shuf0 = s32[4,3]{1,0} shuffle(p0), dimensions={0,1}, mode=rotate, shifts={-1, 5}
+  shuf1 = s32[4,3]{1,0} shuffle(shuf0), dimensions={0,1}, mode=rotate, shifts={0, )",
+        std::numeric_limits<int64_t>::min(), R"(}
+  ROOT out = s32[4,3]{1,0} copy(shuf1)
+}
+)");
+    ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+    ASSERT_OK_AND_ASSIGN(Literal result, Evaluate());
+    // shuf0: dim 0 shift -1 -> 3; dim 1 shift 5 -> 2.
+    // shuf1: dim 0 shift 0; dim 1 shift INT64_MIN mod 3 == 1.
+    // Net shift: dim 0 by 3 (row 3 first), dim 1 by (2 + 1) % 3 = 0.
+    auto expected = LiteralUtil::CreateR2<int32_t>(
+        {{9, 10, 11}, {0, 1, 2}, {3, 4, 5}, {6, 7, 8}});
+    EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
+  }
+
+  // Zero-sized dimension.
+  {
+    const char* hlo_text = R"(
+HloModule shuffle_empty
+
+ENTRY main {
+  p0 = f32[0,3]{1,0} constant({})
+  ROOT s = f32[0,3]{1,0} shuffle(p0), dimensions={0,1}, mode=rotate, shifts={1,2}
+}
+)";
+    ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+    evaluator_.ResetVisitStates();
+    ASSERT_OK_AND_ASSIGN(Literal result, Evaluate());
+    EXPECT_TRUE(LiteralTestUtil::Equal(
+        LiteralUtil::CreateR2FromArray2D<float>(Array2D<float>(0, 3)), result));
+  }
+}
+
+TEST_F(HloEvaluatorTest, ShuffleRotateDifferingLayoutsAndTypes) {
+  auto run_hlo = [&](absl::string_view hlo_text) -> absl::StatusOr<Literal> {
+    ABSL_ASSIGN_OR_RETURN(m_, ParseAndReturnVerifiedModule(hlo_text));
+    evaluator_.ResetVisitStates();
+    return Evaluate();
+  };
+
+  // Differing input and output minor-to-major layouts.
+  {
+    const char* hlo_text = R"(
+HloModule shuffle_layouts
+
+ENTRY main {
+  p0 = s32[2,3]{0,1} constant({{1, 2, 3}, {4, 5, 6}})
+  ROOT s = s32[2,3]{1,0} shuffle(p0), dimensions={0,1}, mode=rotate, shifts={1,1}
+}
+)";
+    ASSERT_OK_AND_ASSIGN(Literal result, run_hlo(hlo_text));
+    auto expected = LiteralUtil::CreateR2<int32_t>({{5, 6, 4}, {2, 3, 1}});
+    EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
+  }
+
+  // PRED, complex (C64), and sub-byte types (S4, U4, F4E2M1FN).
+  {
+    const char* pred_hlo = R"(
+HloModule shuffle_pred
+
+ENTRY main {
+  p0 = pred[4]{0} constant({true, false, false, true})
+  ROOT s = pred[4]{0} shuffle(p0), dimensions={0}, mode=rotate, shifts={1}
+}
+)";
+    ASSERT_OK_AND_ASSIGN(Literal result, run_hlo(pred_hlo));
+    EXPECT_TRUE(LiteralTestUtil::Equal(
+        LiteralUtil::CreateR1<bool>({false, false, true, true}), result));
+  }
+  {
+    const char* c64_hlo = R"(
+HloModule shuffle_c64
+
+ENTRY main {
+  p0 = c64[3]{0} constant({(1, 2), (3, 4), (5, 6)})
+  ROOT s = c64[3]{0} shuffle(p0), dimensions={0}, mode=rotate, shifts={2}
+}
+)";
+    ASSERT_OK_AND_ASSIGN(Literal result, run_hlo(c64_hlo));
+    EXPECT_TRUE(LiteralTestUtil::Equal(
+        LiteralUtil::CreateR1<complex64>({{5, 6}, {1, 2}, {3, 4}}), result));
+  }
+  {
+    const char* s4_hlo = R"(
+HloModule shuffle_s4
+
+ENTRY main {
+  p0 = s4[4]{0} constant({-2, -1, 0, 1})
+  ROOT s = s4[4]{0} shuffle(p0), dimensions={0}, mode=rotate, shifts={1}
+}
+)";
+    ASSERT_OK_AND_ASSIGN(Literal result, run_hlo(s4_hlo));
+    EXPECT_TRUE(LiteralTestUtil::Equal(
+        LiteralUtil::CreateR1<s4>({s4{-1}, s4{0}, s4{1}, s4{-2}}), result));
+  }
+  {
+    const char* u4_hlo = R"(
+HloModule shuffle_u4
+
+ENTRY main {
+  p0 = u4[4]{0} constant({1, 2, 3, 4})
+  ROOT s = u4[4]{0} shuffle(p0), dimensions={0}, mode=rotate, shifts={2}
+}
+)";
+    ASSERT_OK_AND_ASSIGN(Literal result, run_hlo(u4_hlo));
+    EXPECT_TRUE(LiteralTestUtil::Equal(
+        LiteralUtil::CreateR1<u4>({u4{3}, u4{4}, u4{1}, u4{2}}), result));
+  }
+  {
+    const char* f4_hlo = R"(
+HloModule shuffle_f4
+
+ENTRY main {
+  p0 = f4e2m1fn[4]{0} constant({0.0, 1.0, 2.0, 3.0})
+  ROOT s = f4e2m1fn[4]{0} shuffle(p0), dimensions={0}, mode=rotate, shifts={1}
+}
+)";
+    ASSERT_OK_AND_ASSIGN(Literal result, run_hlo(f4_hlo));
+    EXPECT_TRUE(LiteralTestUtil::Equal(
+        LiteralUtil::CreateR1<tsl::float4_e2m1fn>(
+            {tsl::float4_e2m1fn{1.0f}, tsl::float4_e2m1fn{2.0f},
+             tsl::float4_e2m1fn{3.0f}, tsl::float4_e2m1fn{0.0f}}),
+        result));
+  }
+}
+
+TEST_F(HloEvaluatorTest, ShuffleRotateDynamicShapes) {
+  // Shuffled bounded dynamic dimension: wraps at runtime size 3, not bound 4.
+  {
+    const char* hlo_text = R"(
+HloModule shuffle_dynamic_shuffled
+
+ENTRY main {
+  p0 = f32[<=4]{0} parameter(0)
+  ROOT s = f32[<=4]{0} shuffle(p0), dimensions={0}, mode=rotate, shifts={1}
+}
+)";
+    ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+    evaluator_.ResetVisitStates();
+    Literal arg = LiteralUtil::CreateR1<float>({1.0f, 2.0f, 3.0f, 99.0f});
+    arg = arg.ToBoundedDynamic(ShapeUtil::MakeShape(F32, {4}, {true}));
+    arg.SetDynamicSize(0, 3);
+    ASSERT_OK_AND_ASSIGN(Literal result, Evaluate({&arg}));
+    EXPECT_EQ(result.GetDynamicSize(0), 3);
+    EXPECT_EQ(result.Get<float>({0}), 2.0f);
+    EXPECT_EQ(result.Get<float>({1}), 3.0f);
+    EXPECT_EQ(result.Get<float>({2}), 1.0f);
+  }
+
+  // Unshuffled bounded dynamic dimension: dynamic size is preserved.
+  {
+    const char* hlo_text = R"(
+HloModule shuffle_dynamic_unshuffled
+
+ENTRY main {
+  p0 = f32[<=4,3]{1,0} parameter(0)
+  ROOT s = f32[<=4,3]{1,0} shuffle(p0), dimensions={1}, mode=rotate, shifts={1}
+}
+)";
+    ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+    evaluator_.ResetVisitStates();
+    Literal arg = LiteralUtil::CreateR2<float>({{1.0f, 2.0f, 3.0f},
+                                                {4.0f, 5.0f, 6.0f},
+                                                {0.0f, 0.0f, 0.0f},
+                                                {0.0f, 0.0f, 0.0f}});
+    arg =
+        arg.ToBoundedDynamic(ShapeUtil::MakeShape(F32, {4, 3}, {true, false}));
+    arg.SetDynamicSize(0, 2);
+    ASSERT_OK_AND_ASSIGN(Literal result, Evaluate({&arg}));
+    EXPECT_EQ(result.GetDynamicSize(0), 2);
+    EXPECT_EQ(result.Get<float>({0, 0}), 2.0f);
+    EXPECT_EQ(result.Get<float>({0, 1}), 3.0f);
+    EXPECT_EQ(result.Get<float>({0, 2}), 1.0f);
+    EXPECT_EQ(result.Get<float>({1, 0}), 5.0f);
+  }
+
+  // Shuffled bounded dynamic dimension with runtime dynamic size 0.
+  {
+    const char* hlo_text = R"(
+HloModule shuffle_dynamic_zero
+
+ENTRY main {
+  p0 = f32[<=4]{0} parameter(0)
+  ROOT s = f32[<=4]{0} shuffle(p0), dimensions={0}, mode=rotate, shifts={1}
+}
+)";
+    ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+    evaluator_.ResetVisitStates();
+    Literal arg = LiteralUtil::CreateR1<float>({1.0f, 2.0f, 3.0f, 4.0f});
+    arg = arg.ToBoundedDynamic(ShapeUtil::MakeShape(F32, {4}, {true}));
+    arg.SetDynamicSize(0, 0);
+    ASSERT_OK_AND_ASSIGN(Literal result, Evaluate({&arg}));
+    EXPECT_EQ(result.GetDynamicSize(0), 0);
+  }
 }
 
 TEST_P(HloEvaluatorBf16Test, EvaluateWithSubstitutions) {

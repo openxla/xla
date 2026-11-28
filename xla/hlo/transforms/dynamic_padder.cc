@@ -161,6 +161,7 @@ absl::StatusOr<HloInstruction*> ChooseIdentityValue(HloInstruction* inst,
     case HloOpcode::kConcatenate:
     case HloOpcode::kReshape:
     case HloOpcode::kReverse:
+    case HloOpcode::kShuffle:
     case HloOpcode::kTuple:
     case HloOpcode::kAllReduce:
     case HloOpcode::kReduceScatter:
