@@ -62,8 +62,12 @@ absl::StatusOr<std::unique_ptr<WhileThunk>> WhileThunk::Create(
       ThunkExecutor body_executor,
       ThunkExecutor::Create(std::move(body_sequence), executor_options));
 
-  if (cond_buffer.size() != sizeof(bool)) {
+  if (cond_buffer.size() != sizeof(uint8_t)) {
     return Internal("Unsupported cond buffer size %d", cond_buffer.size());
+  }
+  if (trip_count.has_value() && *trip_count < 0) {
+    return InvalidArgument("WhileThunk trip_count must be non-negative, got %d",
+                           *trip_count);
   }
 
   return absl::WrapUnique(new WhileThunk(
@@ -103,7 +107,7 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> WhileThunk::Execute(
     cond_data = allocations->GetDeviceAddressUnchecked(cond_buffer_);
   }
 
-  bool* condition = reinterpret_cast<bool*>(cond_data.opaque());
+  const uint8_t* condition = static_cast<const uint8_t*>(cond_data.opaque());
   return ExecuteWhileLoop(params, condition);
 }
 
@@ -132,7 +136,7 @@ tsl::AsyncValueRef<WhileThunk::ExecuteEvent> WhileThunk::ExecuteForLoop(
 }
 
 tsl::AsyncValueRef<WhileThunk::ExecuteEvent> WhileThunk::ExecuteWhileLoop(
-    const ExecuteParams& params, bool* condition) {
+    const ExecuteParams& params, const uint8_t* condition) {
   // Execute `cond` thunk sequence to initialize the loop condition.
   auto init_event = cond_executor_.Execute(params);
 
@@ -149,7 +153,7 @@ tsl::AsyncValueRef<WhileThunk::ExecuteEvent> WhileThunk::ExecuteWhileLoop(
 
   DCHECK(init_event.IsConcrete());
 
-  while (*condition) {
+  while (*condition != 0) {
     auto body_event = body_executor_.Execute(params);
     auto cond_event = body_event.FlatMap([this, &params](ExecuteEvent) {
       return cond_executor_.Execute(params);
@@ -235,7 +239,7 @@ tsl::AsyncValueRef<WhileThunk::ExecuteEvent> WhileThunk::ExecuteAsyncForLoop(
 
 tsl::AsyncValueRef<WhileThunk::ExecuteEvent> WhileThunk::ExecuteAsyncWhileLoop(
     const ExecuteParams& params, tsl::AsyncValueRef<ExecuteEvent> dependency,
-    bool* condition) {
+    const uint8_t* condition) {
   auto event = tsl::MakeConstructedAsyncValueRef<ExecuteEvent>();
 
   // Allocate while loop iteration function on heap so we can detach its life
@@ -252,7 +256,7 @@ tsl::AsyncValueRef<WhileThunk::ExecuteEvent> WhileThunk::ExecuteAsyncWhileLoop(
       return;
     }
 
-    while (*condition) {
+    while (*condition != 0) {
       auto body_event = body_executor_.Execute(params);
       auto cond_event = body_event.FlatMap([this, &params](ExecuteEvent) {
         return cond_executor_.Execute(params);

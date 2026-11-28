@@ -19,7 +19,9 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
+#include <memory>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -28,12 +30,42 @@ limitations under the License.
 
 namespace xla::cpu::internal {
 
+inline bool ByteRangesOverlap(const void* a, size_t a_bytes, const void* b,
+                              size_t b_bytes) {
+  if (a_bytes == 0 || b_bytes == 0) {
+    return false;
+  }
+  const uintptr_t ua = absl::bit_cast<uintptr_t>(a);
+  const uintptr_t ub = absl::bit_cast<uintptr_t>(b);
+  return ua < ub ? (ub - ua < a_bytes) : (ua - ub < b_bytes);
+}
+
 template <typename T>
 void TopK(int64_t batch_size, int64_t input_size, int64_t k, const T* values,
           T* out_values, int32_t* out_indices) {
+  if (batch_size <= 0 || input_size <= 0 || k <= 0 || k > input_size ||
+      input_size > std::numeric_limits<int32_t>::max() || values == nullptr ||
+      out_values == nullptr || out_indices == nullptr) {
+    return;
+  }
+  const size_t total_inputs =
+      static_cast<size_t>(batch_size) * static_cast<size_t>(input_size);
+  const size_t input_bytes = total_inputs * sizeof(T);
+  const size_t total_outputs =
+      static_cast<size_t>(batch_size) * static_cast<size_t>(k);
+
   // values is managed by the JIT code, so msan can't tell they are initialized.
-  ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(values,
-                                      input_size * batch_size * sizeof(T));
+  ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(values, input_bytes);
+
+  std::unique_ptr<T[]> snapshot;
+  if (ByteRangesOverlap(values, input_bytes, out_values,
+                        total_outputs * sizeof(T)) ||
+      ByteRangesOverlap(values, input_bytes, out_indices,
+                        total_outputs * sizeof(int32_t))) {
+    snapshot = std::make_unique<T[]>(total_inputs);
+    std::memcpy(snapshot.get(), values, input_bytes);
+    values = snapshot.get();
+  }
 
   auto convert_to_int = [](T value) {
     uint32_t x = absl::bit_cast<uint32_t>(value);
@@ -64,7 +96,8 @@ void TopK(int64_t batch_size, int64_t input_size, int64_t k, const T* values,
     int32_t* out_indices_batch = out_indices + batch * k;
     std::copy(temp_indices.begin(), kth_element, out_indices_batch);
     for (int64_t i = 0; i < k; i++) {
-      out_values_batch[i] = values_batch[temp_indices[i]];
+      std::memcpy(&out_values_batch[i], &values_batch[temp_indices[i]],
+                  sizeof(T));
     }
   }
 }

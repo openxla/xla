@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -25,6 +26,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -40,6 +42,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
@@ -1722,6 +1725,172 @@ TEST_P(ParallelSortThunkTest, Sort2DKeyValueDescending) {
 
 INSTANTIATE_TEST_SUITE_P(ParallelSortThunk, ParallelSortThunkTest,
                          testing::Bool(), testing::PrintToStringParamName());
+
+class SingleComparatorLibrary final : public FunctionLibrary {
+ public:
+  SingleComparatorLibrary(absl::string_view name, void* symbol)
+      : name_(name), symbol_(symbol) {}
+  absl::StatusOr<void*> ResolveFunction(TypeId,
+                                        absl::string_view name) override {
+    if (name == name_) {
+      return symbol_;
+    }
+    return absl::NotFoundError(name);
+  }
+
+ private:
+  absl::string_view name_;
+  void* symbol_;
+};
+
+TEST(SortThunkSafetyTest,
+     RejectsPackedLayoutsUndersizedSlicesBadDimsAndNullFunctionLibrary) {
+  BufferAllocation alloc(0, 128, 0);
+  BufferAllocation::Slice s4(&alloc, 0, 4);
+  BufferAllocation::Slice s8(&alloc, 0, 8);
+  BufferAllocation::Slice s64(&alloc, 0, 64);
+
+  // Packed sub-byte S4 (previously wrote 2x past slice end).
+  Shape packed_s4 = ShapeUtil::MakeShape(S4, {8});
+  packed_s4.mutable_layout()->set_element_size_in_bits(4);
+  EXPECT_FALSE(SortThunk::Create({"s"}, {{s4, packed_s4}}, 0, false,
+                                 TypedLessThan<int8_t>, std::nullopt)
+                   .ok());
+
+  // Tiled layout and undersized slice.
+  Shape tiled = ShapeUtil::MakeShape(F32, {4, 4});
+  tiled.mutable_layout()->add_tiles()->add_dimensions(2);
+  tiled.mutable_layout()->mutable_tiles(0)->add_dimensions(2);
+  EXPECT_FALSE(SortThunk::Create({"s"}, {{s64, tiled}}, 0, false,
+                                 TypedLessThan<float>, std::nullopt)
+                   .ok());
+  Shape f32_2 = ShapeUtil::MakeShape(F32, {2});
+  EXPECT_FALSE(SortThunk::Create({"s"}, {{s4, f32_2}}, 0, false,
+                                 TypedLessThan<float>, std::nullopt)
+                   .ok());
+
+  // Out-of-range negative dimensions including INT64_MIN (no signed underflow).
+  EXPECT_FALSE(SortThunk::Create({"s"}, {{s8, f32_2}}, -2, false,
+                                 TypedLessThan<float>, std::nullopt)
+                   .ok());
+  EXPECT_FALSE(SortThunk::Create({"s"}, {{s8, f32_2}},
+                                 std::numeric_limits<int64_t>::min(), false,
+                                 TypedLessThan<float>, std::nullopt)
+                   .ok());
+
+  // Empty callback and empty comparator name.
+  EXPECT_FALSE(SortThunk::Create({"s"}, {{s8, f32_2}}, 0, false,
+                                 SortThunk::LessThan{}, std::nullopt)
+                   .ok());
+  EXPECT_FALSE(SortThunk::Create({"s"}, {{s8, f32_2}}, 0, false,
+                                 /*comparator_name=*/"", std::nullopt)
+                   .ok());
+
+  // Null function_library fails cleanly without dereferencing null or poisoning
+  // subsequent calls that supply a valid FunctionLibrary.
+  TF_ASSERT_OK_AND_ASSIGN(auto named_thunk,
+                          SortThunk::Create({"s"}, {{s8, f32_2}}, 0, false,
+                                            "less_f32", std::nullopt));
+  std::vector<float> vals = {30.0f, 10.0f};
+  BufferAllocations allocations(
+      BufferAllocations::Buffers{se::DeviceAddressBase(vals.data(), 8)});
+  Thunk::ExecuteParams null_params = {nullptr, &allocations};
+  auto err_ev = named_thunk->Execute(null_params);
+  tsl::BlockUntilReady(err_ev);
+  EXPECT_TRUE(err_ev.IsError());
+
+  SingleComparatorLibrary lib("less_f32",
+                              reinterpret_cast<void*>(&TypedLessThan<float>));
+  Thunk::ExecuteParams ok_params = {&lib, &allocations};
+  auto ok_ev = named_thunk->Execute(ok_params);
+  tsl::BlockUntilReady(ok_ev);
+  ASSERT_FALSE(ok_ev.IsError());
+  EXPECT_EQ(vals, (std::vector<float>{10.0f, 30.0f}));
+}
+
+TEST(SortThunkSafetyTest, RejectsOverlappingInputsAndSortsMisalignedSlices) {
+  std::vector<float> shared = {30.0f, 10.0f, 20.0f};
+  BufferAllocations ov_allocs(
+      BufferAllocations::Buffers{se::DeviceAddressBase(shared.data(), 12)});
+  BufferAllocation ov_alloc(0, 12, 0);
+  BufferAllocation::Slice s0(&ov_alloc, 0, 8);
+  BufferAllocation::Slice s1(&ov_alloc, 4, 8);
+  Shape f32_2 = ShapeUtil::MakeShape(F32, {2});
+  Thunk::ExecuteParams ov_params = {nullptr, &ov_allocs};
+
+  for (const auto& second : {s0, s1}) {
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto ov_thunk, SortThunk::Create({"ov"}, {{s0, f32_2}, {second, f32_2}},
+                                         0, false, TypedLessThan<float>,
+                                         SortThunk::SortDirection::kAscending));
+    auto ev = ov_thunk->Execute(ov_params);
+    tsl::BlockUntilReady(ev);
+    EXPECT_TRUE(ev.IsError());
+  }
+
+  // Misaligned (+1 byte) 2-input typed key-value sort and parallel sort
+  // succeed without misaligned pointer accesses.
+  alignas(8) uint8_t raw[64] = {};
+  const float init_keys[3] = {4.0f, -2.0f, 1.0f};
+  const int64_t init_vals[3] = {40, 20, 10};
+  std::memcpy(raw + 1, init_keys, sizeof(init_keys));
+  std::memcpy(raw + 19, init_vals, sizeof(init_vals));
+  BufferAllocations mis_allocs(
+      BufferAllocations::Buffers{se::DeviceAddressBase(raw, sizeof(raw))});
+  BufferAllocation mis_alloc(0, sizeof(raw), 0);
+  BufferAllocation::Slice ks(&mis_alloc, 1, sizeof(init_keys));
+  BufferAllocation::Slice vs(&mis_alloc, 19, sizeof(init_vals));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto mis_thunk, SortThunk::Create({"mis"},
+                                        {{ks, ShapeUtil::MakeShape(F32, {3})},
+                                         {vs, ShapeUtil::MakeShape(S64, {3})}},
+                                        0, true, TypedLessThan<float>,
+                                        SortThunk::SortDirection::kAscending));
+  Thunk::ExecuteParams mis_params = {nullptr, &mis_allocs};
+  auto mis_ev = mis_thunk->Execute(mis_params);
+  tsl::BlockUntilReady(mis_ev);
+  ASSERT_FALSE(mis_ev.IsError());
+  float out_keys[3] = {};
+  int64_t out_vals[3] = {};
+  std::memcpy(out_keys, raw + 1, sizeof(out_keys));
+  std::memcpy(out_vals, raw + 19, sizeof(out_vals));
+  EXPECT_EQ(std::vector<float>(out_keys, out_keys + 3),
+            (std::vector<float>{-2.0f, 1.0f, 4.0f}));
+  EXPECT_EQ(std::vector<int64_t>(out_vals, out_vals + 3),
+            (std::vector<int64_t>{20, 10, 40}));
+
+  // Parallel multi-chunk misaligned sort copies staged results back before
+  // completing the returned ExecuteEvent.
+  constexpr int64_t kRows = 20000;
+  constexpr int64_t kCols = 4;
+  std::vector<uint8_t> big(1 + kRows * kCols * sizeof(int32_t), 0);
+  for (int64_t r = 0; r < kRows; ++r) {
+    const int32_t row[4] = {30, 10, 40, 20};
+    std::memcpy(big.data() + 1 + r * sizeof(row), row, sizeof(row));
+  }
+  BufferAllocations big_allocs(BufferAllocations::Buffers{
+      se::DeviceAddressBase(big.data(), big.size())});
+  BufferAllocation big_alloc(0, big.size(), 0);
+  BufferAllocation::Slice big_slice(&big_alloc, 1,
+                                    kRows * kCols * sizeof(int32_t));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto par_thunk,
+      SortThunk::Create(
+          {"par"}, {{big_slice, ShapeUtil::MakeShape(S32, {kRows, kCols})}}, 1,
+          false, TypedLessThan<int32_t>, SortThunk::SortDirection::kAscending));
+  tsl::thread::ThreadPool pool(tsl::Env::Default(), "sort_mis", 4);
+  Eigen::ThreadPoolDevice device(pool.AsEigenThreadPool(), pool.NumThreads());
+  Thunk::ExecuteParams par_params = {nullptr, &big_allocs, nullptr, &device};
+  auto par_ev = par_thunk->Execute(par_params);
+  tsl::BlockUntilReady(par_ev);
+  ASSERT_FALSE(par_ev.IsError());
+  for (int64_t r : {int64_t{0}, kRows / 2, kRows - 1}) {
+    int32_t row[4] = {};
+    std::memcpy(row, big.data() + 1 + r * sizeof(row), sizeof(row));
+    EXPECT_EQ(std::vector<int32_t>(row, row + 4),
+              (std::vector<int32_t>{10, 20, 30, 40}));
+  }
+}
 
 //===----------------------------------------------------------------------===//
 // Performance benchmarks below.

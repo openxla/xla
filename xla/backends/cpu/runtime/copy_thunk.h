@@ -59,7 +59,8 @@ class CopyThunk final : public Thunk {
  private:
   CopyThunk(Info info, BufferAllocation::Slice src_buffer,
             const Shape& src_shape, BufferAllocation::Slice dst_buffer,
-            const Shape& dst_shape);
+            const Shape& dst_shape,
+            std::unique_ptr<TransposePlan> transpose_plan);
 
   static ParallelBlockParams ComputeParallelBlockParams(const Shape& shape);
 

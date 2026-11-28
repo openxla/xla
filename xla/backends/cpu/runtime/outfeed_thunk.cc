@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/log/log.h"
 #include "absl/memory/memory.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -76,22 +77,38 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> OutfeedThunk::Execute(
 
     // Acquire outfeed buffer from the runtime.
     XfeedBuffer* buffer = xfeed->outfeed()->BlockingDequeueBuffer();
-    if (buffer->length() != outfeed_buffer.slice.size()) {
-      return Internal(
+    if (buffer == nullptr) {
+      return Internal("XLA runtime-managed outfeed buffer must not be null");
+    }
+    const int32_t length = buffer->length();
+    void* data = buffer->data();
+    if (length < 0 || length != outfeed_buffer.slice.size()) {
+      absl::Status err = Internal(
           "XLA runtime-managed outfeed buffer size %d did not match the "
           "outfeed operation parameter buffer size %d",
-          buffer->length(), outfeed_buffer.slice.size());
+          length, outfeed_buffer.slice.size());
+      xfeed->outfeed()->ReleaseCurrentBuffer(length, data, err);
+      return err;
     }
 
     // TODO(ezhulenev): Benchmark multi threaded memcpy and consider add a
     // parallel memcpy that can be reused in Copy thunk.
 
     // Copy data from outfeed buffer to the destination.
-    std::memcpy(buffer->data(), outfeed_data.opaque(), buffer->length());
+    if (length > 0) {
+      if (data == nullptr || outfeed_data.opaque() == nullptr) {
+        absl::Status err = Internal(
+            "XLA runtime-managed outfeed buffer data must not be null for size "
+            "%d",
+            length);
+        xfeed->outfeed()->ReleaseCurrentBuffer(length, data, err);
+        return err;
+      }
+      std::memcpy(data, outfeed_data.opaque(), length);
+    }
 
     // Release outfeed buffer back to the runtime.
-    xfeed->outfeed()->ReleaseCurrentBuffer(buffer->length(), buffer->data(),
-                                           outfeed_buffer.shape);
+    xfeed->outfeed()->ReleaseCurrentBuffer(length, data, outfeed_buffer.shape);
   }
 
   return OkExecuteEvent();

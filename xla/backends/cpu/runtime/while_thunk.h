@@ -69,7 +69,7 @@ class WhileThunk final : public Thunk {
                                                   int64_t trip_count);
 
   tsl::AsyncValueRef<ExecuteEvent> ExecuteWhileLoop(const ExecuteParams& params,
-                                                    bool* condition);
+                                                    const uint8_t* condition);
 
   // If `cond` or `body` thunk sequence return unavailable async values, then
   // we execute the while loop asynchronously by chaining `Execute` calls via
@@ -82,7 +82,7 @@ class WhileThunk final : public Thunk {
 
   tsl::AsyncValueRef<ExecuteEvent> ExecuteAsyncWhileLoop(
       const ExecuteParams& params, tsl::AsyncValueRef<ExecuteEvent> dependency,
-      bool* condition);
+      const uint8_t* condition);
 
   BufferAllocation::Slice cond_buffer_;
   Shape cond_buffer_shape_;
