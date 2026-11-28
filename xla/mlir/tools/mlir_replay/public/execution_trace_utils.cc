@@ -76,6 +76,10 @@ struct TraceInterpreterValueVisitor {
   void Add(uint8_t v) { out.add_uints(v); }
   void Add(bool v) { out.add_ints(static_cast<int64_t>(v)); }
 
+  void operator()(const OpaqueHandle&) {
+    out.set_element_type(TracedValue::UNKNOWN);
+  }
+
   template <typename T>
   void operator()(T v) {
     SetElementType<T>();
@@ -190,6 +194,9 @@ llvm::SmallVector<mlir::Attribute> ValueToAttribute(
   }
 
   if (!value.IsTensor()) {
+    if (value.IsOpaqueHandle()) {
+      return {};
+    }
     return {cast<DenseElementsAttr>(
                 ValueToAttribute(value.AsUnitTensor(),
                                  mlir::RankedTensorType::get({}, type))
