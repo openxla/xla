@@ -460,9 +460,31 @@ void HloLiveRange::CalculateBufferStartEndMap() {
 
     for (const HloValue* value :
          GetValuesDefined(&instruction, alias_analysis_.dataflow_analysis())) {
+      LogicalTime value_start_time = start_time;
+      if (async_context_it != computations_in_async_context_.end()) {
+        // An early bound async output already occupies subshape {1, ...} on
+        // kAsyncStart (or an earlier kAsyncUpdate) even when FlattenSchedule
+        // defers inlining the async computation until a later first fully bound
+        // kAsyncUpdate. Restrict to {1, ...} output positions so internal
+        // forwarding ops and {0, ...} operand positions do not undo the
+        // tightened start time above. Internal scratch buffers that do not
+        // escape into {1, ...} remain anchored at the flattened async body.
+        for (const HloPosition& position :
+             absl::Span<const HloPosition>(value->positions()).subspan(1)) {
+          if ((position.instruction->opcode() != HloOpcode::kAsyncStart &&
+               position.instruction->opcode() != HloOpcode::kAsyncUpdate) ||
+              position.index.empty() || position.index.front() != 1) {
+            continue;
+          }
+          auto pos_it = instruction_schedule_.find(position.instruction);
+          if (pos_it != instruction_schedule_.end()) {
+            value_start_time = std::min(value_start_time, pos_it->second);
+          }
+        }
+      }
       auto [end_time, end_position] =
           ComputeValueLiveRangeEnd(*value, definition_end_time);
-      LiveRangeBounds live_range{start_time, end_time, end_position};
+      LiveRangeBounds live_range{value_start_time, end_time, end_position};
 
       // Readonly entry parameters (parameters that don't alias) live across
       // whole computation.
