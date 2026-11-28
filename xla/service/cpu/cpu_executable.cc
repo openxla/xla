@@ -20,6 +20,7 @@ limitations under the License.
 #include <algorithm>
 #include <cfenv>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -83,6 +84,43 @@ limitations under the License.
 
 namespace xla {
 namespace cpu {
+namespace {
+
+// Wraps an Eigen::ThreadPoolInterface so that every scheduled task executes
+// with denormal flushing disabled (ScopedDontFlushDenormal). Worker threads
+// otherwise enable denormal flushing for their whole lifetime.
+class DontFlushDenormalThreadPool final : public Eigen::ThreadPoolInterface {
+ public:
+  explicit DontFlushDenormalThreadPool(Eigen::ThreadPoolInterface* pool)
+      : pool_(pool) {}
+
+  void Schedule(std::function<void()> fn) override {
+    pool_->Schedule([fn = std::move(fn)]() {
+      tsl::port::ScopedDontFlushDenormal dont_flush;
+      fn();
+    });
+  }
+
+  void ScheduleWithHint(std::function<void()> fn, int start, int end) override {
+    pool_->ScheduleWithHint(
+        [fn = std::move(fn)]() {
+          tsl::port::ScopedDontFlushDenormal dont_flush;
+          fn();
+        },
+        start, end);
+  }
+
+  void Cancel() override { pool_->Cancel(); }
+
+  int NumThreads() const override { return pool_->NumThreads(); }
+
+  int CurrentThreadId() const override { return pool_->CurrentThreadId(); }
+
+ private:
+  Eigen::ThreadPoolInterface* pool_;
+};
+
+}  // namespace
 
 absl::StatusOr<std::unique_ptr<CpuExecutable>> CpuExecutable::Create(
     std::unique_ptr<FunctionLibrary> function_library,
@@ -271,9 +309,29 @@ absl::Status CpuExecutable::ExecuteThunks(
       Thunk::CustomCallExecuteParams custom_call_execute_params,
       Thunk::CustomCallExecuteParams::Create(run_options));
 
+  // Preserve denormals on the caller thread and on intra-op worker threads
+  // when xla_cpu_ftz is disabled.
+  const bool flush_denormals =
+      !has_module() || module_config().debug_options().xla_cpu_ftz();
+  std::optional<tsl::port::ScopedDontFlushDenormal> dont_flush;
+  if (!flush_denormals) {
+    dont_flush.emplace();
+  }
+
   // Use the intra-op thread pool to offload thunk executor tasks.
-  auto* intra_op_thread_pool =
+  const Eigen::ThreadPoolDevice* intra_op_thread_pool =
       run_options ? run_options->intra_op_thread_pool() : nullptr;
+  std::optional<DontFlushDenormalThreadPool> dont_flush_pool;
+  std::optional<Eigen::ThreadPoolDevice> dont_flush_device;
+  if (!flush_denormals && intra_op_thread_pool != nullptr &&
+      intra_op_thread_pool->getPool() != nullptr) {
+    dont_flush_pool.emplace(intra_op_thread_pool->getPool());
+    dont_flush_device.emplace(&*dont_flush_pool,
+                              intra_op_thread_pool->numThreads(),
+                              intra_op_thread_pool->allocator());
+    intra_op_thread_pool = &*dont_flush_device;
+    custom_call_execute_params.intra_op_thread_pool = intra_op_thread_pool;
+  }
   ThreadPoolTaskRunner task_runner(
       intra_op_thread_pool ? intra_op_thread_pool->getPool() : nullptr);
 
@@ -466,8 +524,17 @@ absl::StatusOr<ExecutionOutput> CpuExecutable::ExecuteAsyncOnStream(
   // to execute multiple XLA executable in parallel.
 
   // Because we do not control the caller thread, we need to explicitly set
-  // flags to be consistent with compute thread pools used by TF and XLA.
-  tsl::port::ScopedFlushDenormal flush;
+  // flags to be consistent with compute thread pools used by TF and XLA, unless
+  // xla_cpu_ftz is disabled.
+  const bool flush_denormals =
+      !has_module() || module_config().debug_options().xla_cpu_ftz();
+  std::optional<tsl::port::ScopedFlushDenormal> flush;
+  std::optional<tsl::port::ScopedDontFlushDenormal> dont_flush;
+  if (flush_denormals) {
+    flush.emplace();
+  } else {
+    dont_flush.emplace();
+  }
   tsl::port::ScopedSetRound round(FE_TONEAREST);
 
   DCHECK(has_thunks());
