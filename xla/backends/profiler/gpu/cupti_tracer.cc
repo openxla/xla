@@ -1791,6 +1791,8 @@ absl::Status CuptiTracer::EnableActivityTracing() {
       }
     }
 
+    std::vector<CUpti_ActivityKind> enabled_activities;
+    enabled_activities.reserve(option_->activities_selected.size());
     if (using_v2_subscriber_api_) {
       RETURN_IF_CUPTI_ERROR(ActivityRegisterCallbacksV2(
           subscriber_, RequestCuptiActivityBuffer_v2,
@@ -1803,7 +1805,35 @@ absl::Status CuptiTracer::EnableActivityTracing() {
           // No V2 equivalent exists for this call.
           ConfigureActivityUnifiedMemoryCounter(true);
         }
-        RETURN_IF_CUPTI_ERROR(ActivityEnableV2(subscriber_, activity, nullptr));
+        if (activity == CUPTI_ACTIVITY_KIND_ENVIRONMENT) {
+          CUptiResult err = cupti_interface_->ActivityEnableV2(
+              subscriber_, activity, nullptr);
+          if (err == CUPTI_ERROR_NOT_SUPPORTED ||
+              err == CUPTI_ERROR_NOT_COMPATIBLE ||
+              err == CUPTI_ERROR_INVALID_KIND) {
+            LOG(WARNING) << "CUPTI_ACTIVITY_KIND_ENVIRONMENT is not compatible "
+                            "or supported (error "
+                         << static_cast<int>(err)
+                         << "); skipping environment telemetry.";
+            continue;
+          }
+          if (ABSL_PREDICT_FALSE(err != CUPTI_SUCCESS)) {
+            const char* errstr = "";
+            cupti_interface_->GetResultString(err, &errstr);
+            LOG(ERROR) << "function ActivityEnableV2(subscriber_, activity, "
+                          "nullptr)failed with error "
+                       << errstr;
+            if (err == CUPTI_ERROR_INSUFFICIENT_PRIVILEGES) {
+              return absl::PermissionDeniedError("CUPTI needs root access");
+            }
+            return absl::InternalError(
+                absl::StrCat("CUPTI call error: ", errstr));
+          }
+        } else {
+          RETURN_IF_CUPTI_ERROR(
+              ActivityEnableV2(subscriber_, activity, nullptr));
+        }
+        enabled_activities.push_back(activity);
       }
     } else {
       RETURN_IF_CUPTI_ERROR(ActivityRegisterCallbacks(
@@ -1815,9 +1845,35 @@ absl::Status CuptiTracer::EnableActivityTracing() {
         if (activity == CUPTI_ACTIVITY_KIND_UNIFIED_MEMORY_COUNTER) {
           ConfigureActivityUnifiedMemoryCounter(true);
         }
-        RETURN_IF_CUPTI_ERROR(ActivityEnable(activity));
+        if (activity == CUPTI_ACTIVITY_KIND_ENVIRONMENT) {
+          CUptiResult err = cupti_interface_->ActivityEnable(activity);
+          if (err == CUPTI_ERROR_NOT_SUPPORTED ||
+              err == CUPTI_ERROR_NOT_COMPATIBLE ||
+              err == CUPTI_ERROR_INVALID_KIND) {
+            LOG(WARNING) << "CUPTI_ACTIVITY_KIND_ENVIRONMENT is not compatible "
+                            "or supported (error "
+                         << static_cast<int>(err)
+                         << "); skipping environment telemetry.";
+            continue;
+          }
+          if (ABSL_PREDICT_FALSE(err != CUPTI_SUCCESS)) {
+            const char* errstr = "";
+            cupti_interface_->GetResultString(err, &errstr);
+            LOG(ERROR) << "function ActivityEnable(activity)failed with error "
+                       << errstr;
+            if (err == CUPTI_ERROR_INSUFFICIENT_PRIVILEGES) {
+              return absl::PermissionDeniedError("CUPTI needs root access");
+            }
+            return absl::InternalError(
+                absl::StrCat("CUPTI call error: ", errstr));
+          }
+        } else {
+          RETURN_IF_CUPTI_ERROR(ActivityEnable(activity));
+        }
+        enabled_activities.push_back(activity);
       }
     }
+    option_->activities_selected = std::move(enabled_activities);
     std::move(reset_multi_subscriber_graph_trace).Cancel();
   }
   activity_tracing_enabled_ = true;
