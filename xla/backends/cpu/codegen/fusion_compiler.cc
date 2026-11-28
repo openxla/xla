@@ -343,10 +343,11 @@ void AddXtileToVectorPasses(mlir::OpPassManager& pm, int32_t vector_width) {
 void AddVectorToLLVMPasses(mlir::OpPassManager& pm, bool fast_min_max,
                            int32_t vector_width,
                            absl::string_view cpu_features) {
+  pm.addPass(cpu::createNormalizeVectorContractPass());
+  pm.addNestedPass<mlir::func::FuncOp>(cpu::createHoistGemvReductionPass());
   pm.addNestedPass<mlir::func::FuncOp>(
       mlir::vector::createLowerVectorMultiReductionPass(
           mlir::vector::VectorMultiReductionLowering::InnerParallel));
-  pm.addPass(cpu::createNormalizeVectorContractPass());
   pm.addPass(cpu::createLowerVectorContractPass());
 
   pm.addPass(mlir::createCanonicalizerPass());

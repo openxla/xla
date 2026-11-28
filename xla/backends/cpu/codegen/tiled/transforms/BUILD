@@ -64,6 +64,7 @@ cc_library(
     srcs = [
         "drop_vector_unit_dims_pass.cc",
         "hoist_alloca.cc",
+        "hoist_gemv_reduction.cc",
         "interchange_reduction_loop.cc",
         "legalize_narrow_float_storage.cc",
         "lower_memref_bitcast.cc",

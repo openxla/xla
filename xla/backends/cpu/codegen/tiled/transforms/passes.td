@@ -152,6 +152,16 @@ def NormalizeVectorContractPass
   ];
 }
 
+def HoistGemvReductionPass
+    : Pass<"xtile-cpu-hoist-gemv-reduction", "mlir::func::FuncOp"> {
+  let summary = "Hoists K-minor GEMV horizontal reductions out of scf.for loops.";
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::vector::VectorDialect",
+  ];
+}
+
 def LowerVectorContractPass
     : Pass<"xtile-cpu-lower-vector-contract", "mlir::ModuleOp"> {
   let summary = "Lowers vector.contract via outer products.";
