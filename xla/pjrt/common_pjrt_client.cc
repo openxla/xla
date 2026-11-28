@@ -42,6 +42,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
@@ -4029,22 +4030,24 @@ absl::Status CommonPjRtLoadedExecutable::ExecutePrepareWithOomRetries(
     absl::Span<PjRtBuffer* const> argument_handles, xla::RunId run_id,
     int replica, int partition, const ExecuteOptions& options,
     size_t host_callback_idx, PjRtDevice* device) const {
-  absl::Status prepare_status;
-  int attempts = 0;
-  while (true) {
-    launch_args.emplace();
-    prepare_status =
-        ExecutePrepare(*launch_args, argument_handles, run_id, replica,
-                       partition, options, host_callback_idx, device, attempts);
-    ++attempts;
-    if (!absl::IsResourceExhausted(prepare_status)) {
-      break;
-    }
-    if (!client()->ShouldRetryOnOom(attempts, launch_args->device,
-                                    load_state_.get(), prepare_status)) {
-      break;
-    }
-  }
+  absl::Status prepare_status = client()->RunWithOomRetries(
+      device,
+      [&](int attempt) -> absl::Status {
+        launch_args.emplace();
+        absl::Status status = ExecutePrepare(
+            *launch_args, argument_handles, run_id, replica, partition, options,
+            host_callback_idx, device, attempt);
+        if (!status.ok()) {
+          // Release any acquired buffer holds or partial allocations before
+          // waiting on OomSequencer or running OOM recovery/defragmentation.
+          launch_args.reset();
+        }
+        return status;
+      },
+      [&](int attempts, const absl::Status& status) -> bool {
+        return client()->ShouldRetryOnOom(attempts, device, load_state_.get(),
+                                          status);
+      });
   if (!prepare_status.ok()) {
     LOG(ERROR) << "ExecutePrepareWithOomRetries failed: " << prepare_status;
   }
@@ -6061,6 +6064,7 @@ void CommonPjRtClient::AttachDevices(
     std::vector<std::unique_ptr<PjRtMemorySpace>> memory_spaces) {
   owned_devices_ = std::move(devices);
   owned_memory_spaces_ = std::move(memory_spaces);
+  device_oom_states_.clear();
 
   for (const std::unique_ptr<PjRtDevice>& device : owned_devices_) {
     devices_.push_back(device.get());
@@ -6070,6 +6074,8 @@ void CommonPjRtClient::AttachDevices(
 
     if (device->IsAddressable()) {
       addressable_devices_.push_back(device.get());
+      device_oom_states_.emplace(device.get(),
+                                 std::make_unique<DeviceOomState>());
     }
   }
   // TODO(phawkins): we don't really promise anything about the order of
@@ -6085,6 +6091,121 @@ void CommonPjRtClient::AttachDevices(
        owned_memory_spaces_) {
     memory_spaces_.push_back(memory_space.get());
   }
+}
+
+CommonPjRtClient::DeviceOomState* CommonPjRtClient::GetDeviceOomState(
+    PjRtDevice* device) const {
+  if (device == nullptr) {
+    return nullptr;
+  }
+  auto it = device_oom_states_.find(device);
+  if (it == device_oom_states_.end()) {
+    return nullptr;
+  }
+  return it->second.get();
+}
+
+int CommonPjRtClient::ActiveOomRequestsForTesting(PjRtDevice* device) const {
+  DeviceOomState* oom_state = GetDeviceOomState(device);
+  if (oom_state == nullptr) {
+    return 0;
+  }
+  return oom_state->active_oom_requests.load();
+}
+
+absl::Status CommonPjRtClient::RunWithOomRetries(
+    PjRtDevice* device, absl::FunctionRef<absl::Status(int attempt)> attempt_fn,
+    absl::FunctionRef<bool(int attempts, const absl::Status& status)>
+        should_retry_fn) {
+  DeviceOomState* oom_state = GetDeviceOomState(device);
+  std::optional<OomSequencer> oom_sequencer;
+  if (oom_state != nullptr && oom_state->under_oom()) {
+    oom_sequencer.emplace(oom_state);
+  }
+
+  int recovery_attempts = 0;
+  int generation_retries = 0;
+  // Cap generation-skip retries so concurrent threads on a persistently full
+  // device cannot loop indefinitely if other threads keep bumping generation.
+  constexpr int kMaxGenerationRetries = 8;
+
+  while (true) {
+    const uint64_t seen_generation =
+        oom_state != nullptr ? oom_state->generation.load() : 0;
+    absl::Status status = attempt_fn(recovery_attempts);
+    if (!absl::IsResourceExhausted(status)) {
+      return status;
+    }
+    if (oom_state != nullptr && !oom_sequencer.has_value()) {
+      oom_sequencer.emplace(oom_state);
+    }
+    // If another thread already completed an OOM recovery while we were
+    // attempting or waiting for OomSequencer, retry immediately without
+    // triggering a redundant second recovery ("no double-OOMs").
+    if (oom_state != nullptr &&
+        oom_state->generation.load() != seen_generation &&
+        generation_retries < kMaxGenerationRetries) {
+      ++generation_retries;
+      continue;
+    }
+    ++recovery_attempts;
+    if (!should_retry_fn(recovery_attempts, status)) {
+      return status;
+    }
+    if (oom_state != nullptr) {
+      oom_state->generation.fetch_add(1);
+    }
+  }
+}
+
+absl::StatusOr<PjRtRawBufferRef> CommonPjRtClient::AllocateRawBuffer(
+    PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
+    bool retry_on_oom, PjRtDeviceEventRef allocate_after) {
+  if (!retry_on_oom) {
+    return raw_client()->AllocateRawBuffer(
+        memory_space->ToCApiPtr(), on_device_bytes_count,
+        /*retry_on_oom=*/false, std::move(allocate_after));
+  }
+  // Only serialize on the device's OomSequencer for single-device default
+  // device memory spaces (e.g., HBM). Host memory spaces (pinned/unpinned) must
+  // not block on device HBM OOM recovery (e.g., RecvCallback copying to CPU on
+  // a 1-device host while HBM defragmentation waits for running programs).
+  PjRtDevice* device = nullptr;
+  if (memory_space->devices().size() == 1 &&
+      memory_space->devices()[0]->IsAddressable()) {
+    PjRtDevice* candidate = memory_space->devices()[0];
+    absl::StatusOr<PjRtMemorySpace*> default_ms =
+        candidate->default_memory_space();
+    if (default_ms.ok() && *default_ms == memory_space) {
+      device = candidate;
+    }
+  }
+  if (device == nullptr) {
+    return raw_client()->AllocateRawBuffer(memory_space->ToCApiPtr(),
+                                           on_device_bytes_count, retry_on_oom,
+                                           std::move(allocate_after));
+  }
+
+  absl::StatusOr<PjRtRawBufferRef> result;
+  absl::Status status = RunWithOomRetries(
+      device,
+      [&](int /*attempt*/) -> absl::Status {
+        // Pass a copy of `allocate_after` (not std::move) so retries retain it.
+        result = raw_client()->AllocateRawBuffer(
+            memory_space->ToCApiPtr(), on_device_bytes_count,
+            /*retry_on_oom=*/false, allocate_after);
+        return result.status();
+      },
+      [&](int attempts, const absl::Status& allocate_status) -> bool {
+        return raw_client()->ShouldRetryBufferAllocationOnOom(
+            attempts, memory_space->ToCApiPtr(), on_device_bytes_count,
+            allocate_status);
+      });
+  if (!status.ok()) {
+    LOG(ERROR) << "CommonPjRtClient::AllocateRawBuffer failed: " << status;
+    return status;
+  }
+  return result;
 }
 
 absl::StatusOr<PjRtDevice*> CommonPjRtClient::LookupAddressableDevice(
