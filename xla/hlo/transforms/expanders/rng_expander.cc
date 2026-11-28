@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "xla/comparison_util.h"
 #include "xla/hlo/builder/lib/prng.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -50,6 +51,80 @@ int64_t GetNumberOf32bitUnits(const Shape& shape) {
   return num_elems * (bit_width / 32);
 }
 
+// Converts `sample`, an F32 value drawn uniformly from [a, b), to `type` (F16
+// or BF16) by rounding toward negative infinity. Since a and b are
+// representable in `type`, the result stays in [a, b), and each value v of
+// `type` gets the samples in [v, next(v)). Rounding to nearest instead could
+// return b for samples just below it. The rounding is done without converting
+// back to F32, since SimplifyFPConversions may remove such a round trip.
+absl::StatusOr<HloInstruction*> ConvertUniformSampleRoundingDown(
+    HloInstruction* sample, PrimitiveType type) {
+  HloInstruction* bits = MakeBitcastConvertToHlo(sample, U32);
+  if (type == BF16) {
+    // BF16 is the upper half of F32, so clearing the low 16 bits rounds toward
+    // zero. Negative values that lose nonzero bits then move one BF16 step
+    // away from zero.
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * truncated,
+        MakeBinaryHlo(HloOpcode::kAnd, bits,
+                      MakeScalarLike(bits, uint32_t{0xFFFF0000})));
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * is_negative,
+        MakeCompareHlo(Comparison::Direction::kGe, bits,
+                       MakeScalarLike(bits, uint32_t{0x80000000})));
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * is_inexact,
+        MakeCompareHlo(Comparison::Direction::kNe, bits, truncated));
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * step_away,
+        MakeBinaryHlo(HloOpcode::kAnd, is_negative, is_inexact));
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * stepped,
+        MakeBinaryHlo(HloOpcode::kAdd, truncated,
+                      MakeScalarLike(bits, uint32_t{0x10000})));
+    ABSL_ASSIGN_OR_RETURN(HloInstruction * floored,
+                          MakeSelectHlo(step_away, stepped, truncated));
+    ABSL_ASSIGN_OR_RETURN(HloInstruction * high_bits,
+                          MakeBinaryHlo(HloOpcode::kShiftRightLogical, floored,
+                                        MakeScalarLike(floored, uint32_t{16})));
+    return MakeBitcastConvertToHlo(MakeConvertToHlo(high_bits, U16), BF16);
+  }
+  CHECK_EQ(type, F16);
+  // F16 values are spaced 2^(e - 10) apart in [2^e, 2^(e + 1)) for e >= -14,
+  // and 2^-24 apart below 2^-14. Build that spacing and its inverse from the
+  // sample's exponent bits; both are normal F32 powers of two, so
+  // floor(sample * inverse) * spacing is exact.
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * exponent_bits,
+      MakeBinaryHlo(HloOpcode::kAnd, bits,
+                    MakeScalarLike(bits, uint32_t{0x7F800000})));
+  // 0x38800000 is 2^-14, and 10 << 23 divides by 2^10.
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * binade_bits,
+      MakeBinaryHlo(HloOpcode::kMaximum, exponent_bits,
+                    MakeScalarLike(bits, uint32_t{0x38800000})));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * spacing_bits,
+      MakeBinaryHlo(HloOpcode::kSubtract, binade_bits,
+                    MakeScalarLike(bits, uint32_t{10} << 23)));
+  // For a power of two with biased exponent k, its inverse has 254 - k.
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * inverse_spacing_bits,
+      MakeBinaryHlo(HloOpcode::kSubtract,
+                    MakeScalarLike(bits, uint32_t{254} << 23), spacing_bits));
+  HloInstruction* spacing = MakeBitcastConvertToHlo(spacing_bits, F32);
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * scaled,
+      MakeBinaryHlo(HloOpcode::kMultiply, sample,
+                    MakeBitcastConvertToHlo(inverse_spacing_bits, F32)));
+  ABSL_ASSIGN_OR_RETURN(HloInstruction * floored_scaled,
+                        MakeUnaryHlo(HloOpcode::kFloor, scaled));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * floored,
+      MakeBinaryHlo(HloOpcode::kMultiply, floored_scaled, spacing));
+  return MakeConvertToHlo(floored, F16);
+}
+
 absl::StatusOr<HloInstruction*> ConvertSmallFpRngToF32Rng(HloInstruction* rng) {
   CHECK_EQ(rng->opcode(), HloOpcode::kRng);
   PrimitiveType primitive_type = rng->shape().element_type();
@@ -69,8 +144,14 @@ absl::StatusOr<HloInstruction*> ConvertSmallFpRngToF32Rng(HloInstruction* rng) {
       rng->CloneWithNewOperands(shape, new_operands, &context));
   ABSL_RETURN_IF_ERROR(new_rng->CopyAllControlDepsFrom(rng));
 
-  ABSL_RETURN_IF_ERROR(
-      rng->ReplaceAllUsesWith(MakeConvertToHlo(new_rng, primitive_type)));
+  HloInstruction* converted;
+  if (rng->random_distribution() == RNG_UNIFORM) {
+    ABSL_ASSIGN_OR_RETURN(
+        converted, ConvertUniformSampleRoundingDown(new_rng, primitive_type));
+  } else {
+    converted = MakeConvertToHlo(new_rng, primitive_type);
+  }
+  ABSL_RETURN_IF_ERROR(rng->ReplaceAllUsesWith(converted));
   ABSL_RETURN_IF_ERROR(rng->DropAllControlDeps());
 
   // Since rng is a side-effecting instruction, we can't rely on DCE to remove
