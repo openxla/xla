@@ -42,7 +42,7 @@ extern "C" {
 //==============================================================================
 #define XLA_FFI_Extension_Record 128
 #define XLA_FFI_Extension_Record_MajorVersion 0
-#define XLA_FFI_Extension_Record_MinorVersion 5
+#define XLA_FFI_Extension_Record_MinorVersion 6
 
 //===----------------------------------------------------------------------===//
 // Command Buffer Recording API (FFI Record)
@@ -172,6 +172,21 @@ typedef struct XLA_FFI_RecordApi {
   XLA_FFI_Error* (*create_empty_command)(
       XLA_FFI_RecordContext* ctx, const XLA_FFI_Command* const* dependencies,
       uint32_t num_dependencies, const XLA_FFI_Command** out_command);
+
+  // Creates a memset command filling `size` bytes at `dst` with `value`.
+  // `dst` must be non-null and `size` must be > 0.
+  XLA_FFI_Error* (*create_memset)(XLA_FFI_RecordContext* ctx, void* dst,
+                                  uint8_t value, int64_t size,
+                                  const XLA_FFI_Command* const* dependencies,
+                                  uint32_t num_dependencies,
+                                  const XLA_FFI_Command** out_command);
+
+  // Updates a memset command in place. `dst` must be non-null and `size` must
+  // be > 0 (zero-length updates are unsupported on some backends). Backends
+  // may reject changing `size` in place.
+  XLA_FFI_Error* (*update_memset)(XLA_FFI_RecordContext* ctx,
+                                  const XLA_FFI_Command* command, void* dst,
+                                  uint8_t value, int64_t size);
 } XLA_FFI_RecordApi;
 
 // A record frame struct that wraps all record related data for the record

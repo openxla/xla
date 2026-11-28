@@ -18,8 +18,10 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -124,6 +126,13 @@ TEST_P(RecordStageTest, CreateAndUpdateCommands) {
         *out_command = s->empty_cmd;
         return nullptr;
       },
+      /*create_memset=*/
+      +[](XLA_FFI_RecordContext*, void*, uint8_t, int64_t,
+          const XLA_FFI_Command* const*, uint32_t,
+          const XLA_FFI_Command**) -> XLA_FFI_Error* { return nullptr; },
+      /*update_memset=*/
+      +[](XLA_FFI_RecordContext*, const XLA_FFI_Command*, void*, uint8_t,
+          int64_t) -> XLA_FFI_Error* { return nullptr; },
   };
 
   auto handler = Ffi::BindRecord().Ctx<Extension<RecordExtension>>().To(
@@ -343,6 +352,93 @@ TEST(FfiTest, RecordExtensionVersionMismatch) {
   EXPECT_THAT(
       status.message(),
       testing::HasSubstr("Extension version mismatch for RecordExtension"));
+}
+
+TEST(FfiTest, RecordCreateAndUpdateMemset) {
+  struct State {
+    int create_calls = 0;
+    int update_calls = 0;
+    const XLA_FFI_Command* cmd = nullptr;
+    void* dst = nullptr;
+    uint8_t value = 0;
+    int64_t size = 0;
+    std::vector<const XLA_FFI_Command*> deps;
+    int dummy = 0;
+  } state;
+  uint8_t buffer[16] = {};
+  const auto* dep_cmd = reinterpret_cast<const XLA_FFI_Command*>(0x2);
+
+  XLA_FFI_RecordApi api{};
+  api.create_memset =
+      +[](XLA_FFI_RecordContext* ctx, void* dst, uint8_t value, int64_t size,
+          const XLA_FFI_Command* const* dependencies, uint32_t num_dependencies,
+          const XLA_FFI_Command** out_command) -> XLA_FFI_Error* {
+    auto* s = reinterpret_cast<State*>(ctx);
+    ++s->create_calls;
+    s->dst = dst;
+    s->value = value;
+    s->size = size;
+    s->deps.assign(dependencies, dependencies + num_dependencies);
+    *out_command = reinterpret_cast<const XLA_FFI_Command*>(&s->dummy);
+    return nullptr;
+  };
+  api.update_memset =
+      +[](XLA_FFI_RecordContext* ctx, const XLA_FFI_Command* cmd, void* dst,
+          uint8_t value, int64_t size) -> XLA_FFI_Error* {
+    auto* s = reinterpret_cast<State*>(ctx);
+    ++s->update_calls;
+    s->cmd = cmd;
+    s->dst = dst;
+    s->value = value;
+    s->size = size;
+    return nullptr;
+  };
+
+  const XLA_FFI_Command* commands_storage[1] = {nullptr};
+  int64_t num_commands = 0;
+  XLA_FFI_RecordFrame full_frame = {
+      reinterpret_cast<XLA_FFI_RecordContext*>(&state),
+      &api,
+      XLA_FFI_RecordAction_Create,
+      commands_storage,
+      &num_commands,
+      /*max_commands=*/0};
+  RecordContext full_ctx(Api(), &full_frame);
+  EXPECT_THAT(full_ctx.CreateMemset(buffer, 0, sizeof(buffer)),
+              StatusIs(absl::StatusCode::kResourceExhausted));
+  EXPECT_EQ(state.create_calls, 0);
+
+  XLA_FFI_RecordFrame frame = {reinterpret_cast<XLA_FFI_RecordContext*>(&state),
+                               &api,
+                               XLA_FFI_RecordAction_Create,
+                               commands_storage,
+                               &num_commands,
+                               /*max_commands=*/1};
+  RecordContext ctx(Api(), &frame);
+  EXPECT_THAT(ctx.CreateMemset(buffer, 0, std::numeric_limits<size_t>::max()),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_EQ(state.create_calls, 0);
+
+  ASSERT_OK_AND_ASSIGN(const XLA_FFI_Command* cmd,
+                       ctx.CreateMemset(buffer, 0, sizeof(buffer), {dep_cmd}));
+  EXPECT_EQ(state.create_calls, 1);
+  EXPECT_EQ(state.dst, buffer);
+  EXPECT_EQ(state.value, 0);
+  EXPECT_EQ(state.size, sizeof(buffer));
+  EXPECT_THAT(state.deps, ElementsAre(dep_cmd));
+  EXPECT_EQ(num_commands, 1);
+
+  EXPECT_OK(ctx.UpdateMemset(cmd, &buffer[4], 0xAB, 12));
+  EXPECT_EQ(state.update_calls, 1);
+  EXPECT_EQ(state.cmd, cmd);
+  EXPECT_EQ(state.dst, &buffer[4]);
+  EXPECT_EQ(state.value, 0xAB);
+  EXPECT_EQ(state.size, 12);
+
+  EXPECT_THAT(
+      ctx.UpdateMemset(cmd, buffer, 0, std::numeric_limits<size_t>::max()),
+      StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_EQ(state.update_calls, 1);
 }
 
 }  // namespace
