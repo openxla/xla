@@ -359,6 +359,9 @@ absl::Status HeapSimulator::RunComputation(
     ExtendViewBaseLiveRanges(hlo_live_range, dataflow_analysis,
                              *options_.view_color);
   }
+  if (options_.extend_live_ranges != nullptr) {
+    options_.extend_live_ranges(alias_analysis, hlo_live_range);
+  }
 
   for (const HloValue* value : dataflow_analysis.values()) {
     // Ignore buffers that are not tracked.

@@ -149,6 +149,12 @@ class HloLiveRange {
   // range is not available if the module is partially ordered.
   bool total_order_scheduled() const { return total_order_scheduled_; }
 
+  // Normalizes aliased HloValues within each HloBuffer so their intervals are
+  // pairwise disjoint while preserving the union of their live ranges. Callers
+  // that extend entries in buffer_live_ranges() after Run() should invoke this
+  // to maintain the disjointness invariant.
+  void NormalizeAliasedBuffers();
+
  private:
   explicit HloLiveRange(
       const HloSchedule& schedule, const HloAliasAnalysis& alias_analysis,
@@ -258,9 +264,6 @@ class HloLiveRange {
   //                                              |
   // f = b + 1                                    +
   //
-  // Note there is no overlap of live ranges after normalization.
-  void NormalizeAliasedBuffers();
-
   LogicalTime ComputePeakMemoryMoment() const;
 
   const HloSchedule& schedule_;

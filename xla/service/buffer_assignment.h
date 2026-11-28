@@ -1124,6 +1124,7 @@ class BufferAssigner {
       BufferAssignment::LiveRangeInterferenceOptions;
   using FixedOffset = std::function<std::optional<int64_t>(
       const HloAliasAnalysis&, const HloInstruction*, const ShapeIndex&)>;
+  using LiveRangeExtender = HeapSimulator::LiveRangeExtender;
 
   // The order in which to process buffers during buffer assignment.
   enum class BufferOrder {
@@ -1155,6 +1156,10 @@ class BufferAssigner {
     // Optional callback returning a required fixed offset for a buffer
     // position.
     std::optional<FixedOffset> fixed_offset;
+    // Optional callback to extend buffer live ranges in both BufferAssignment
+    // reuse analysis and HeapSimulator interval packing (invoked before
+    // coloring runs, so implementations must not query HloValue::color()).
+    LiveRangeExtender extend_live_ranges;
     // Description of any buffer offsets that are already set by an earlier
     // pass.
     std::unique_ptr<memory_space_assignment::PresetAssignments>
