@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/gpu/ragged_all_to_all_kernel.h"
+#include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/types.h"  // IWYU pragma: keep
@@ -43,6 +44,15 @@ bool IsRaggedAllToAllKernelSupported(int64_t num_outputs,
 // Returns true if the kernel is supported for the given element type.
 bool IsRaggedAllToAllWithSymmetricMemoryKernelSupported(
     PrimitiveType element_type);
+
+// Returns the block grid that the ragged all-to-all kernels are launched with:
+// (num_outputs, num_block_clusters, blocks_per_group). The updates to an output
+// are split evenly into `num_block_clusters` groups, and `blocks_per_group`
+// blocks cooperate on the updates of one group.
+absl::StatusOr<se::BlockDim> GetRaggedAllToAllBlockDim(
+    PrimitiveType element_type, int64_t num_outputs,
+    int64_t num_updates_per_output, int64_t num_input_rows,
+    int64_t num_row_elements);
 
 using RaggedAllToAllWithSymmetricMemoryKernelType =
     se::gpu::RaggedAllToAllWithSymmetricMemoryKernel<1>::KernelType;
