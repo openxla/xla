@@ -92,6 +92,7 @@ cc_library(
         ["//visibility:private"],
     ),
     deps = [
+        ":tiled_layout_util",
         ":util",
         "//xla:shape_util",
         "@com_google_absl//absl/algorithm:container",
@@ -364,6 +365,22 @@ cc_library(
     hdrs = ["dialect/tpu/stringify_util.h"],
     compatible_with = get_compatible_with_libtpu_portable(),
     deps = ["@llvm-project//llvm:Support"],
+)
+
+cc_library(
+    name = "tiled_layout_util",
+    srcs = ["tiled_layout_util.cc"],
+    hdrs = ["tiled_layout_util.h"],
+    compatible_with = get_compatible_with_libtpu_portable(),
+    deps = [
+        "//xla:shape_util",
+        "@com_google_absl//absl/log:check",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:Support",
+    ],
 )
 
 cc_library(
