@@ -47,6 +47,26 @@ std::optional<absl::StatusOr<PjRtRawBufferRef>> MockFactory(
 
 REGISTER_PJRT_RAW_BUFFER_FACTORY(MockFactory);
 
+namespace {
+
+TEST(RawBufferTest, InternalHostAccessFallsBackToPluginHostPointer) {
+  static int storage;
+  PJRT_RawBuffer_FunctionTable table = {};
+  table.struct_size = PJRT_RawBuffer_FunctionTable_STRUCT_SIZE;
+  table.get_host_pointer =
+      +[](const PJRT_RawBuffer*) -> void* { return &storage; };
+  PjRtRawBufferInterface buffer;
+  buffer.vtable = &table;
+  EXPECT_EQ(buffer.GetHostPointerForInternalUse(
+                PjRtRawBufferInterface::HostAccess::kRead),
+            &storage);
+  EXPECT_EQ(buffer.GetHostPointerForInternalUse(
+                PjRtRawBufferInterface::HostAccess::kWrite),
+            &storage);
+}
+
+}  // namespace
+
 TEST(RawBufferTest, FactoryFallback) {
   auto status = PjRtRawBuffer::CreateRawAliasOfBuffer(nullptr).status();
   ASSERT_THAT(status,
