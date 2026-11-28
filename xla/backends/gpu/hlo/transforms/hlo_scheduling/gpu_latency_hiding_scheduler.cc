@@ -1093,9 +1093,11 @@ ApproximateLatencyEstimator::TimeCost GpuLatencyEstimator::GetLatencyBetween(
 
     return ApproximateLatencyEstimator::kHighLatency;
   }
-  // Every other instruction we consider synchronous, which means the
-  // latency between each of them is always one unit.
-  return ApproximateLatencyEstimator::kLowLatency;
+  // Every other instruction is synchronous, so there is no latency to hide
+  // between them. Returning 0 avoids creating artificial stalls when the
+  // successor's NodeCost is less than kLowLatency (e.g., 0-cost NOPs or
+  // sub-microsecond ops under SolLatencyEstimator).
+  return 0.0;
 }
 
 //===----------------------------------------------------------------------===//
