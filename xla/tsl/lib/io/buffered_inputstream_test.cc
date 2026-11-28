@@ -15,6 +15,15 @@ limitations under the License.
 
 #include "xla/tsl/lib/io/buffered_inputstream.h"
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -524,6 +533,447 @@ TEST(BufferedInputStream, ReadAll_Text) {
     TF_ASSERT_OK(in.ReadAll(&contents));
     EXPECT_EQ(expected, contents);
   }
+}
+
+class PatternFile : public RandomAccessFile {
+ public:
+  explicit PatternFile(uint64_t size, bool short_ok = false,
+                       bool external_view = false)
+      : size_(size), short_ok_(short_ok), external_view_(external_view) {}
+
+  absl::Status Read(uint64_t offset, size_t n, absl::string_view* result,
+                    char* scratch) const override {
+    ++read_calls_;
+    if (offset >= size_) {
+      *result = absl::string_view();
+      return short_ok_ ? absl::OkStatus() : absl::OutOfRangeError("eof");
+    }
+    size_t count = static_cast<size_t>(std::min<uint64_t>(n, size_ - offset));
+    if (short_ok_ && count > 3) {
+      count = 3;
+    }
+    if (external_view_ && count <= backing_.size()) {
+      *result = absl::string_view(backing_).substr(0, count);
+    } else {
+      for (size_t i = 0; i < count; ++i) {
+        scratch[i] = static_cast<char>(((offset + i) * 131 + 17) & 0xFF);
+      }
+      *result = absl::string_view(scratch, count);
+    }
+    return (count < n && !short_ok_) ? absl::OutOfRangeError("eof")
+                                     : absl::OkStatus();
+  }
+
+  int read_calls() const { return read_calls_; }
+
+ private:
+  uint64_t size_;
+  bool short_ok_;
+  bool external_view_;
+  std::string backing_ = "external_bytes";
+  mutable int read_calls_ = 0;
+};
+
+class OversizedSliceFile : public RandomAccessFile {
+ public:
+  absl::Status Read(uint64_t offset, size_t n, absl::string_view* result,
+                    char* scratch) const override {
+    *result = payload_;
+    return absl::OkStatus();
+  }
+
+ private:
+  std::string payload_ = std::string(64, 'z');
+};
+
+class NoTellInputStream : public InputStreamInterface {
+ public:
+  explicit NoTellInputStream(std::string data) : data_(std::move(data)) {}
+
+  absl::Status ReadNBytes(int64_t bytes_to_read, tstring* result) override {
+    if (bytes_to_read < 0) {
+      return absl::InvalidArgumentError("negative");
+    }
+    const size_t n = static_cast<size_t>(
+        std::min<uint64_t>(bytes_to_read, data_.size() - pos_));
+    result->assign(data_.data() + pos_, n);
+    pos_ += n;
+    return n < static_cast<uint64_t>(bytes_to_read)
+               ? absl::OutOfRangeError("eof")
+               : absl::OkStatus();
+  }
+
+  int64_t Tell() const override { return -1; }
+
+  absl::Status Reset() override {
+    pos_ = 0;
+    ++resets_;
+    return absl::OkStatus();
+  }
+
+  int resets() const { return resets_; }
+
+ private:
+  std::string data_;
+  size_t pos_ = 0;
+  int resets_ = 0;
+};
+
+class ZeroByteOkInputStream : public InputStreamInterface {
+ public:
+  explicit ZeroByteOkInputStream(std::string data) : data_(std::move(data)) {}
+
+  absl::Status ReadNBytes(int64_t bytes_to_read, tstring* result) override {
+    if (pos_ >= data_.size()) {
+      result->clear();
+      return absl::OkStatus();
+    }
+    const size_t n = static_cast<size_t>(
+        std::min<uint64_t>(bytes_to_read, data_.size() - pos_));
+    result->assign(data_.data() + pos_, n);
+    pos_ += n;
+    return absl::OkStatus();
+  }
+
+  int64_t Tell() const override { return static_cast<int64_t>(pos_); }
+
+  absl::Status Reset() override {
+    pos_ = 0;
+    return absl::OkStatus();
+  }
+
+ private:
+  std::string data_;
+  size_t pos_ = 0;
+};
+
+class DirtyErrorInputStream : public InputStreamInterface {
+ public:
+  absl::Status ReadNBytes(int64_t bytes_to_read, tstring* result) override {
+    if (calls_++ == 0) {
+      result->assign("abc", 3);
+      return absl::OkStatus();
+    }
+    // Intentionally leave *result untouched on failure.
+    return absl::InternalError("read failed");
+  }
+
+  int64_t Tell() const override { return 3; }
+
+  absl::Status Reset() override {
+    calls_ = 0;
+    return absl::OkStatus();
+  }
+
+ private:
+  int calls_ = 0;
+};
+
+TEST(BufferedInputStream, ReadAllDrainsUnreadBuffer) {
+  Env* env = Env::Default();
+  std::string fname;
+  ASSERT_TRUE(env->LocalTempFilename(&fname));
+  const std::string content = "line one\nline two\nline three";
+  TF_ASSERT_OK(WriteStringToFile(env, fname, content));
+  std::unique_ptr<RandomAccessFile> file;
+  TF_ASSERT_OK(env->NewRandomAccessFile(fname, &file));
+
+  for (int buf_size : BufferSizes()) {
+    {
+      BufferedInputStream in(file.get(), buf_size);
+      std::string line;
+      TF_ASSERT_OK(in.ReadLine(&line));
+      EXPECT_EQ(line, "line one");
+      std::string rest = "stale";
+      TF_ASSERT_OK(in.ReadAll(&rest));
+      EXPECT_EQ(rest, "line two\nline three") << "buf_size=" << buf_size;
+      EXPECT_EQ(in.Tell(), static_cast<int64_t>(content.size()));
+      TF_ASSERT_OK(in.ReadAll(&rest));
+      EXPECT_EQ(rest, "");
+    }
+    {
+      BufferedInputStream in(file.get(), buf_size);
+      tstring prefix;
+      TF_ASSERT_OK(in.ReadNBytes(5, &prefix));
+      EXPECT_EQ(prefix, "line ");
+      tstring rest;
+      TF_ASSERT_OK(in.ReadAll(&rest));
+      EXPECT_EQ(rest, content.substr(5)) << "buf_size=" << buf_size;
+    }
+    {
+      BufferedInputStream in(file.get(), buf_size);
+      TF_ASSERT_OK(in.SkipLine());
+      std::string rest;
+      TF_ASSERT_OK(in.ReadAll(&rest));
+      EXPECT_EQ(rest, "line two\nline three") << "buf_size=" << buf_size;
+    }
+    {
+      BufferedInputStream in(file.get(), buf_size);
+      tstring prefix;
+      TF_ASSERT_OK(in.ReadNBytes(12, &prefix));
+      TF_ASSERT_OK(in.Seek(4));
+      std::string rest;
+      TF_ASSERT_OK(in.ReadAll(&rest));
+      EXPECT_EQ(rest, content.substr(4)) << "buf_size=" << buf_size;
+    }
+  }
+
+  // Must not issue a redundant underlying ReadNBytes after cached OutOfRange.
+  ReadOnceInputStream once;
+  BufferedInputStream in(&once, 64);
+  tstring prefix;
+  TF_ASSERT_OK(in.ReadNBytes(3, &prefix));
+  EXPECT_EQ(prefix, "012");
+  std::string rest;
+  TF_ASSERT_OK(in.ReadAll(&rest));
+  EXPECT_EQ(rest, "3456789");
+  EXPECT_EQ(in.Tell(), 10);
+  TF_ASSERT_OK(in.ReadAll(&rest));
+  EXPECT_EQ(rest, "");
+  EXPECT_TRUE(absl::IsOutOfRange(in.SkipNBytes(2)));
+}
+
+TEST(BufferedInputStream, ZeroAndMaxBufferBytes) {
+  Env* env = Env::Default();
+  std::string fname;
+  ASSERT_TRUE(env->LocalTempFilename(&fname));
+  const std::string content = "alpha\nbeta\ngamma";
+  TF_ASSERT_OK(WriteStringToFile(env, fname, content));
+  std::unique_ptr<RandomAccessFile> file;
+  TF_ASSERT_OK(env->NewRandomAccessFile(fname, &file));
+
+  {
+    BufferedInputStream in(file.get(), 0);
+    tstring chunk;
+    TF_ASSERT_OK(in.ReadNBytes(6, &chunk));
+    EXPECT_EQ(chunk, "alpha\n");
+    std::string line;
+    TF_ASSERT_OK(in.ReadLine(&line));
+    EXPECT_EQ(line, "beta");
+    tstring tline;
+    TF_ASSERT_OK(in.ReadLine(&tline));
+    EXPECT_EQ(tline, "gamma");
+    EXPECT_EQ(in.ReadLineAsString(), "");
+    EXPECT_TRUE(absl::IsOutOfRange(in.ReadLine(&line)));
+    TF_ASSERT_OK(in.Reset());
+    EXPECT_EQ(in.ReadLineAsString(), "alpha\n");
+    TF_ASSERT_OK(in.SkipLine());
+    std::string rest;
+    TF_ASSERT_OK(in.ReadAll(&rest));
+    EXPECT_EQ(rest, "gamma");
+  }
+
+  for (size_t huge_buf :
+       {static_cast<size_t>(std::numeric_limits<int64_t>::max()),
+        static_cast<size_t>(std::numeric_limits<int64_t>::max()) + size_t{1},
+        std::numeric_limits<size_t>::max()}) {
+    BufferedInputStream in(file.get(), huge_buf);
+    tstring chunk;
+    TF_ASSERT_OK(in.ReadNBytes(5, &chunk));
+    EXPECT_EQ(chunk, "alpha");
+    std::string rest;
+    TF_ASSERT_OK(in.ReadAll(&rest));
+    EXPECT_EQ(rest, "\nbeta\ngamma");
+  }
+}
+
+TEST(BufferedInputStream, ReadNBytesInt64MaxAndMultiChunk) {
+  PatternFile small_file(128);
+  {
+    BufferedInputStream in(&small_file, 64);
+    tstring out;
+    EXPECT_TRUE(absl::IsOutOfRange(
+        in.ReadNBytes(std::numeric_limits<int64_t>::max(), &out)));
+    ASSERT_EQ(out.size(), 128);
+    EXPECT_LT(out.capacity(), 4096);
+    for (size_t i = 0; i < out.size(); ++i) {
+      ASSERT_EQ(out[i], static_cast<char>((i * 131 + 17) & 0xFF));
+    }
+  }
+
+  constexpr size_t kLargeSize = 17 * 1024 * 1024 + 37;
+  PatternFile large_file(kLargeSize);
+  BufferedInputStream in(&large_file, 64 * 1024);
+  tstring out;
+  TF_ASSERT_OK(in.ReadNBytes(kLargeSize, &out));
+  ASSERT_EQ(out.size(), kLargeSize);
+  for (size_t i :
+       {size_t{0}, size_t{1}, size_t{8 * 1024 * 1024}, kLargeSize - 1}) {
+    EXPECT_EQ(out[i], static_cast<char>((i * 131 + 17) & 0xFF));
+  }
+}
+
+TEST(BufferedInputStream, SkipNBytesTellSeekOverflowAndBoundaries) {
+  Env* env = Env::Default();
+  std::string fname;
+  ASSERT_TRUE(env->LocalTempFilename(&fname));
+  TF_ASSERT_OK(WriteStringToFile(env, fname, "0123456789"));
+  std::unique_ptr<RandomAccessFile> file;
+  TF_ASSERT_OK(env->NewRandomAccessFile(fname, &file));
+
+  // Exact buffer-boundary skip and seek stay in-buffer without resetting or
+  // advancing the underlying stream.
+  {
+    RandomAccessInputStream raw(file.get());
+    BufferedInputStream in(&raw, 4);
+    tstring out;
+    TF_ASSERT_OK(in.ReadNBytes(1, &out));
+    EXPECT_EQ(out, "0");
+    EXPECT_EQ(raw.Tell(), 4);
+    TF_ASSERT_OK(in.SkipNBytes(3));
+    EXPECT_EQ(in.Tell(), 4);
+    EXPECT_EQ(raw.Tell(), 4);
+    TF_ASSERT_OK(in.Seek(4));
+    TF_ASSERT_OK(in.Seek(0));
+    EXPECT_EQ(raw.Tell(), 4);
+    TF_ASSERT_OK(in.Seek(4));
+    EXPECT_EQ(raw.Tell(), 4);
+    TF_ASSERT_OK(in.Seek(1));
+    TF_ASSERT_OK(in.ReadNBytes(3, &out));
+    EXPECT_EQ(out, "123");
+    EXPECT_TRUE(
+        absl::IsOutOfRange(in.SkipNBytes(std::numeric_limits<int64_t>::max())));
+    EXPECT_EQ(in.Tell(), 10);
+  }
+
+  // Streams returning Tell() == -1 preserve -1 and support Seek without
+  // signed overflow or offset drift.
+  {
+    NoTellInputStream raw("0123456789");
+    BufferedInputStream in(&raw, 4);
+    EXPECT_EQ(in.Tell(), -1);
+    tstring out;
+    TF_ASSERT_OK(in.ReadNBytes(2, &out));
+    EXPECT_EQ(out, "01");
+    EXPECT_EQ(in.Tell(), -1);
+    TF_ASSERT_OK(in.Seek(5));
+    EXPECT_EQ(raw.resets(), 1);
+    TF_ASSERT_OK(in.ReadNBytes(3, &out));
+    EXPECT_EQ(out, "567");
+    EXPECT_TRUE(
+        absl::IsOutOfRange(in.Seek(std::numeric_limits<int64_t>::max())));
+    EXPECT_EQ(in.Tell(), -1);
+  }
+}
+
+TEST(BufferedInputStream, ZeroByteOkDirtyErrorAndNullGuards) {
+  {
+    ZeroByteOkInputStream raw("hi\nthere");
+    BufferedInputStream in(&raw, 4);
+    std::string line;
+    TF_ASSERT_OK(in.ReadLine(&line));
+    EXPECT_EQ(line, "hi");
+    TF_ASSERT_OK(in.ReadLine(&line));
+    EXPECT_EQ(line, "there");
+    EXPECT_TRUE(absl::IsOutOfRange(in.ReadLine(&line)));
+    EXPECT_TRUE(absl::IsOutOfRange(in.SkipLine()));
+    TF_ASSERT_OK(in.Reset());
+    tstring out;
+    EXPECT_TRUE(absl::IsOutOfRange(in.ReadNBytes(16, &out)));
+    EXPECT_EQ(out, "hi\nthere");
+  }
+
+  {
+    DirtyErrorInputStream raw;
+    BufferedInputStream in(&raw, 3);
+    tstring out;
+    EXPECT_TRUE(absl::IsInternal(in.ReadNBytes(6, &out)));
+    EXPECT_EQ(out, "abc");
+    EXPECT_TRUE(absl::IsInternal(in.ReadNBytes(1, &out)));
+    EXPECT_EQ(out, "");
+  }
+
+  {
+    BufferedInputStream null_in(static_cast<InputStreamInterface*>(nullptr), 8);
+    tstring out = "stale";
+    std::string s = "stale";
+    EXPECT_EQ(null_in.Tell(), -1);
+    EXPECT_TRUE(absl::IsInvalidArgument(null_in.ReadNBytes(4, &out)));
+    EXPECT_EQ(out, "");
+    EXPECT_TRUE(absl::IsInvalidArgument(null_in.ReadNBytes(0, &out)));
+    EXPECT_TRUE(absl::IsInvalidArgument(null_in.ReadNBytes(4, nullptr)));
+    EXPECT_TRUE(absl::IsInvalidArgument(null_in.ReadLine(&s)));
+    EXPECT_TRUE(absl::IsInvalidArgument(
+        null_in.ReadLine(static_cast<std::string*>(nullptr))));
+    EXPECT_TRUE(absl::IsInvalidArgument(
+        null_in.ReadAll(static_cast<std::string*>(nullptr))));
+    EXPECT_TRUE(absl::IsInvalidArgument(null_in.ReadAll(&s)));
+    EXPECT_EQ(null_in.ReadLineAsString(), "");
+    EXPECT_TRUE(absl::IsInvalidArgument(null_in.SkipLine()));
+    EXPECT_TRUE(absl::IsInvalidArgument(null_in.SkipNBytes(1)));
+    EXPECT_TRUE(absl::IsInvalidArgument(null_in.Seek(0)));
+    EXPECT_TRUE(absl::IsInvalidArgument(null_in.Reset()));
+
+    BufferedInputStream null_file(static_cast<RandomAccessFile*>(nullptr), 8);
+    EXPECT_EQ(null_file.Tell(), -1);
+    EXPECT_TRUE(absl::IsInvalidArgument(null_file.ReadNBytes(1, &out)));
+  }
+}
+
+TEST(BufferedInputStream, RandomAccessInputStreamInvalidSlicesAndInt64Max) {
+  constexpr int64_t kMax = std::numeric_limits<int64_t>::max();
+  tstring out;
+
+  // External non-scratch slice and short-OK single vs multi-chunk handling.
+  PatternFile ext_file(6, /*short_ok=*/false, /*external_view=*/true);
+  RandomAccessInputStream ext_in(&ext_file);
+  TF_ASSERT_OK(ext_in.ReadNBytes(6, &out));
+  EXPECT_EQ(out, "extern");
+  EXPECT_EQ(ext_in.Tell(), 6);
+
+  PatternFile short_ok(10, /*short_ok=*/true);
+  RandomAccessInputStream short_in(&short_ok);
+  TF_ASSERT_OK(short_in.ReadNBytes(5, &out));
+  EXPECT_EQ(out.size(), 3);
+  EXPECT_TRUE(absl::IsOutOfRange(short_in.ReadNBytes(kMax, &out)));
+  EXPECT_EQ(out.size(), 3);
+  EXPECT_EQ(short_in.Tell(), 6);
+
+  // Oversized Read slice rejected without heap buffer overflow.
+  OversizedSliceFile oversized;
+  RandomAccessInputStream bad_in(&oversized);
+  EXPECT_TRUE(absl::IsInternal(bad_in.ReadNBytes(4, &out)));
+  EXPECT_EQ(out, "");
+  EXPECT_EQ(bad_in.Tell(), 0);
+  EXPECT_TRUE(absl::IsInternal(bad_in.SkipNBytes(4)));
+  EXPECT_EQ(bad_in.Tell(), 0);
+  TF_ASSERT_OK(bad_in.Seek(kMax - 2));
+  EXPECT_TRUE(absl::IsInternal(bad_in.SkipNBytes(5)));
+  EXPECT_EQ(bad_in.Tell(), kMax - 2);
+
+  // In-bounds INT64_MAX skip uses a single 1-byte probe without overflow.
+  PatternFile max_file(static_cast<uint64_t>(kMax));
+  RandomAccessInputStream max_in(&max_file);
+  TF_ASSERT_OK(max_in.SkipNBytes(kMax));
+  EXPECT_EQ(max_in.Tell(), kMax);
+  EXPECT_EQ(max_file.read_calls(), 1);
+  TF_ASSERT_OK(max_in.SkipNBytes(0));
+  EXPECT_TRUE(absl::IsOutOfRange(max_in.SkipNBytes(1)));
+  EXPECT_TRUE(absl::IsOutOfRange(max_in.SkipNBytes(kMax)));
+  TF_ASSERT_OK(max_in.Seek(kMax - 5));
+  TF_ASSERT_OK(max_in.SkipNBytes(5));
+  EXPECT_EQ(max_in.Tell(), kMax);
+  TF_ASSERT_OK(max_in.Seek(kMax - 5));
+  EXPECT_TRUE(absl::IsOutOfRange(max_in.SkipNBytes(6)));
+  EXPECT_EQ(max_in.Tell(), kMax);
+  TF_ASSERT_OK(max_in.Seek(kMax - 5));
+  EXPECT_TRUE(absl::IsOutOfRange(max_in.SkipNBytes(10)));
+  EXPECT_EQ(max_in.Tell(), kMax);
+
+  // Virtual file exceeding INT64_MAX clamps offset and output cleanly.
+  PatternFile huge_file(static_cast<uint64_t>(kMax) + 16);
+  RandomAccessInputStream huge_in(&huge_file);
+  TF_ASSERT_OK(huge_in.Seek(kMax - 2));
+  TF_ASSERT_OK(huge_in.ReadNBytes(2, &out));
+  EXPECT_EQ(out.size(), 2);
+  EXPECT_EQ(huge_in.Tell(), kMax);
+  TF_ASSERT_OK(huge_in.Seek(kMax - 2));
+  EXPECT_TRUE(absl::IsOutOfRange(huge_in.ReadNBytes(5, &out)));
+  EXPECT_EQ(out.size(), 2);
+  EXPECT_EQ(huge_in.Tell(), kMax);
+  TF_ASSERT_OK(huge_in.Seek(kMax - 2));
+  EXPECT_TRUE(absl::IsOutOfRange(huge_in.SkipNBytes(5)));
+  EXPECT_EQ(huge_in.Tell(), kMax);
 }
 
 void BM_BufferedReaderSmallReads(::testing::benchmark::State& state) {
