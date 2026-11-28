@@ -460,3 +460,152 @@ func.func @dedup_manual_computation_full_and_sub_axes(%arg0: tensor<8x16xf32>) -
 
   return %2 : tensor<8x16xf32>
 }
+
+// -----
+
+// CHECK: sdy.mesh @mesh_a = <["a"=6]>
+// CHECK: sdy.mesh @mesh_b = <["x"=2, "y"=3]>
+sdy.mesh @mesh_a = <["a"=6]>
+sdy.mesh @mesh_b = <["x"=2, "y"=3]>
+
+// CHECK-LABEL: func @incompatible_sub_axis_presize_not_divisible
+// CHECK-SAME:  %arg0: tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_a, [{"a":(3)2}, {}]>}
+func.func @incompatible_sub_axis_presize_not_divisible(
+  %arg0: tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_a, [{"a":(3)2}, {}]>}
+) -> tensor<6x6xf32> {
+  return %arg0 : tensor<6x6xf32>
+}
+
+// -----
+
+// CHECK: sdy.mesh @mesh_a = <["a"=6]>
+// CHECK: sdy.mesh @mesh_b = <["x"=2, "y"=3]>
+sdy.mesh @mesh_a = <["a"=6]>
+sdy.mesh @mesh_b = <["x"=2, "y"=3]>
+
+// CHECK-LABEL: func @incompatible_sub_axis_size_not_divisible
+// CHECK-SAME:  %arg0: tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_a, [{"a":(1)3}, {}]>}
+func.func @incompatible_sub_axis_size_not_divisible(
+  %arg0: tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_a, [{"a":(1)3}, {}]>}
+) -> tensor<6x6xf32> {
+  return %arg0 : tensor<6x6xf32>
+}
+
+// -----
+
+// CHECK: sdy.mesh @mesh_a = <["a"=6]>
+// CHECK: sdy.mesh @mesh_b = <["x"=3, "y"=2]>
+sdy.mesh @mesh_a = <["a"=6]>
+sdy.mesh @mesh_b = <["x"=3, "y"=2]>
+
+// CHECK-LABEL: func @incompatible_sub_axis_main_axis_not_divisible_by_presize
+// CHECK-SAME:  %arg0: tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_a, [{"a":(2)3}, {}]>}
+func.func @incompatible_sub_axis_main_axis_not_divisible_by_presize(
+  %arg0: tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_a, [{"a":(2)3}, {}]>}
+) -> tensor<6x6xf32> {
+  return %arg0 : tensor<6x6xf32>
+}
+
+// -----
+
+// CHECK-NOT: sdy.mesh @mesh_a = <["a"=6]>
+// CHECK:     sdy.mesh @mesh_b = <["x"=2, "y"=3]>
+sdy.mesh @mesh_a = <["a"=6]>
+sdy.mesh @mesh_b = <["x"=2, "y"=3]>
+
+// CHECK-LABEL: func @compatible_sub_axis_still_dedups
+// CHECK-SAME:  %arg0: tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_b, [{"x"}, {}]>}
+func.func @compatible_sub_axis_still_dedups(
+  %arg0: tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_a, [{"a":(1)2}, {}]>}
+) -> tensor<6x6xf32> {
+  return %arg0 : tensor<6x6xf32>
+}
+
+// -----
+
+// CHECK: sdy.mesh @mesh_a = <["a"=6]>
+// CHECK: sdy.mesh @mesh_b = <["x"=2, "y"=3]>
+sdy.mesh @mesh_a = <["a"=6]>
+sdy.mesh @mesh_b = <["x"=2, "y"=3]>
+
+// CHECK-LABEL: func @incompatible_sub_axis_in_replicated
+// CHECK-SAME:  %arg0: tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_a, [{}, {}], replicated={"a":(3)2}>}
+func.func @incompatible_sub_axis_in_replicated(
+  %arg0: tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_a, [{}, {}], replicated={"a":(3)2}>}
+) -> tensor<6x6xf32> {
+  return %arg0 : tensor<6x6xf32>
+}
+
+// -----
+
+// CHECK: sdy.mesh @mesh_a = <["a"=6]>
+// CHECK: sdy.mesh @mesh_b = <["x"=2, "y"=3]>
+sdy.mesh @mesh_a = <["a"=6]>
+sdy.mesh @mesh_b = <["x"=2, "y"=3]>
+
+// CHECK-LABEL: func @incompatible_sub_axis_in_unreduced
+// CHECK-SAME:  %arg0: tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_a, [{}, {}], unreduced={"a":(1)3}>}
+func.func @incompatible_sub_axis_in_unreduced(
+  %arg0: tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_a, [{}, {}], unreduced={"a":(1)3}>}
+) -> tensor<6x6xf32> {
+  return %arg0 : tensor<6x6xf32>
+}
+
+// -----
+
+// CHECK: sdy.mesh @mesh_a = <["a"=6]>
+// CHECK: sdy.mesh @mesh_b = <["x"=2, "y"=3]>
+sdy.mesh @mesh_a = <["a"=6]>
+sdy.mesh @mesh_b = <["x"=2, "y"=3]>
+
+// CHECK-LABEL: func @incompatible_sub_axis_in_manual_computation
+func.func @incompatible_sub_axis_in_manual_computation(%arg0: tensor<6x6xf32>) -> tensor<6x6xf32> {
+  // CHECK-NEXT: sdy.manual_computation(%arg0)
+  // CHECK-SAME{LITERAL}: in_shardings=[<@mesh_a, [{}, {}]>]
+  // CHECK-SAME{LITERAL}: out_shardings=[<@mesh_a, [{}, {}]>]
+  // CHECK-SAME{LITERAL}: manual_axes={"a":(3)2}
+  %0 = sdy.manual_computation(%arg0)
+      in_shardings=[<@mesh_a, [{}, {}]>]
+      out_shardings=[<@mesh_a, [{}, {}]>]
+      manual_axes={"a":(3)2} (%arg1: tensor<6x6xf32>) {
+    sdy.return %arg1 : tensor<6x6xf32>
+  } : (tensor<6x6xf32>) -> tensor<6x6xf32>
+  return %0 : tensor<6x6xf32>
+}
+
+// -----
+
+// CHECK: sdy.mesh @mesh_a = <["a"=6]>
+// CHECK: sdy.mesh @mesh_b = <["x"=2, "y"=3]>
+sdy.mesh @mesh_a = <["a"=6]>
+sdy.mesh @mesh_b = <["x"=2, "y"=3]>
+
+// CHECK-LABEL: func @incompatible_sub_axis_in_replica_groups
+func.func @incompatible_sub_axis_in_replica_groups(%arg0: tensor<32xi32>) -> tensor<32xi32> {
+  // CHECK-NEXT: "stablehlo.all_reduce"
+  // CHECK-SAME: replica_groups = #stablehlo.replica_group_mesh_axes<mesh = @mesh_a, axes = [#stablehlo.axis_ref<name = "a", sub_axis_info = (3)2>]>
+  %0 = "stablehlo.all_reduce"(%arg0) ({
+  ^bb0(%arg1: tensor<i32>, %arg2: tensor<i32>):
+    %1 = stablehlo.add %arg1, %arg2 : tensor<i32>
+    stablehlo.return %1 : tensor<i32>
+  }) {replica_groups = #stablehlo.replica_group_mesh_axes<mesh = @mesh_a, axes = [#stablehlo.axis_ref<name = "a", sub_axis_info = (3)2>]>} : (tensor<32xi32>) -> tensor<32xi32>
+  return %0 : tensor<32xi32>
+}
+
+// -----
+
+// CHECK:     sdy.mesh @mesh_device_main = <["a"=6], device_ids=[5, 4, 3, 2, 1, 0]>
+// CHECK:     sdy.mesh @mesh_size_main = <["x"=2, "y"=3]>
+// CHECK-NOT: sdy.mesh @mesh_device_dup = <["_p"=2, "_q"=3], device_ids=[5, 4, 3, 2, 1, 0]>
+sdy.mesh @mesh_device_main = <["a"=6], device_ids=[5, 4, 3, 2, 1, 0]>
+sdy.mesh @mesh_size_main = <["x"=2, "y"=3]>
+sdy.mesh @mesh_device_dup = <["_p"=2, "_q"=3], device_ids=[5, 4, 3, 2, 1, 0]>
+
+// CHECK-LABEL: func @incompatible_device_main_mesh_preserves_axes_and_dedups_same_device_ids
+// CHECK-SAME:  %arg0: tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_device_main, [{"a":(3)2}, {}]>}
+// CHECK-SAME:  -> (tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_device_main, [{"a":(1)2}, {"a":(2)3}]>})
+func.func @incompatible_device_main_mesh_preserves_axes_and_dedups_same_device_ids(
+  %arg0: tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_device_main, [{"a":(3)2}, {}]>}
+) -> (tensor<6x6xf32> {sdy.sharding = #sdy.sharding<@mesh_device_dup, [{"_p"}, {"_q"}]>}) {
+  return %arg0 : tensor<6x6xf32>
+}

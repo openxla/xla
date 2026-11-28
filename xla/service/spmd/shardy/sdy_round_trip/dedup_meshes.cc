@@ -28,6 +28,7 @@ limitations under the License.
 #include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/LogicalResult.h"
 #include "mlir/IR/Attributes.h"
@@ -196,29 +197,24 @@ struct MainMeshInfo {
 };
 using MeshToAxisMap = SmallDenseMap<StringRef, MainMeshInfo>;
 
-void addOrMergeFullAxis(StringRef oldAxisName, AxisRefVector& newAxisRefs,
-                        const MeshAttr& mainMesh, const AxisMap& axisMap) {
-  if (auto it = axisMap.find(oldAxisName); it != axisMap.end()) {
-    for (AxisRefAttr mainAxisRef : it->second) {
-      sdy::addAxisOrMerge(newAxisRefs, mainAxisRef, mainMesh);
-    }
-  }
-}
-
-// Takes an old axis ref, find the mapped new (sub-)axes, add them to the new
-// axis ref list and merge consecutive sub-axes.
-void addOrMergeNewAxisRefAttr(AxisRefAttr oldAxisRef,
-                              AxisRefVector& newAxisRefs, MLIRContext* context,
-                              const MeshAttr& mainMesh,
-                              const AxisMap& axisMap) {
-  if (!oldAxisRef.getSubAxisInfo()) {
-    addOrMergeFullAxis(oldAxisRef.getName(), newAxisRefs, mainMesh, axisMap);
-    return;
-  }
+// Maps `oldAxisRef` to the corresponding (sub-)axes in `mainMesh` according to
+// `axisMap`, invoking `onMappedAxis` for each mapped piece. Returns false if
+// `oldAxisRef` is a sub-axis whose boundaries do not align with `mainMesh`.
+bool mapAxisRef(AxisRefAttr oldAxisRef, MLIRContext* context,
+                const MeshAttr& mainMesh, const AxisMap& axisMap,
+                llvm::function_ref<void(AxisRefAttr)> onMappedAxis) {
   auto it = axisMap.find(oldAxisRef.getName());
+  if (!oldAxisRef.getSubAxisInfo()) {
+    if (it != axisMap.end()) {
+      for (AxisRefAttr mainAxisRef : it->second) {
+        onMappedAxis(mainAxisRef);
+      }
+    }
+    return true;
+  }
   if (it == axisMap.end()) {
     // The old axis is of size 1, skip it.
-    return;
+    return true;
   }
   ArrayRef<AxisRefAttr> mainAxisRefs = it->second;
   // TODO(zenong): We can iterate the list once for sub-axes of a target axis.
@@ -230,12 +226,16 @@ void addOrMergeNewAxisRefAttr(AxisRefAttr oldAxisRef,
     // Find the correct (sub-)axis to start from.
     if (remainingOldPreSize >= mainAxisSize) {
       // Cases like "[a":6] -> ["x":2, "y":3] then "a":(3)2 are not supported.
-      CHECK_EQ(remainingOldPreSize % mainAxisSize, 0);
+      if (remainingOldPreSize % mainAxisSize != 0) {
+        return false;
+      }
       remainingOldPreSize /= mainAxisSize;
       continue;
     }
     // Cases like "[a":6] -> ["x":3, "y":2] then "a":(2)3 are not supported.
-    CHECK_EQ(mainAxisSize % remainingOldPreSize, 0);
+    if (mainAxisSize % remainingOldPreSize != 0) {
+      return false;
+    }
     const int64_t consumableMainAxisSize = mainAxisSize / remainingOldPreSize;
     const int64_t consumedSize =
         std::min(remainingOldSize, consumableMainAxisSize);
@@ -246,15 +246,30 @@ void addOrMergeNewAxisRefAttr(AxisRefAttr oldAxisRef,
                   context, mainAxisRef.getName(),
                   remainingOldPreSize * mainAxisRef.getSubAxisPreSize(),
                   consumedSize);
-    sdy::addAxisOrMerge(newAxisRefs, newAxisRef, mainMesh);
+    onMappedAxis(newAxisRef);
     // Cases like "[a":6] -> ["x":2, "y":3] then "a":(1)3 are not supported.
-    CHECK_EQ(remainingOldSize % consumedSize, 0);
+    if (remainingOldSize % consumedSize != 0) {
+      return false;
+    }
     remainingOldPreSize = 1;
     remainingOldSize /= consumedSize;
     if (remainingOldSize == 1) {
-      break;
+      return true;
     }
   }
+  return remainingOldSize == 1;
+}
+
+// Takes an old axis ref, find the mapped new (sub-)axes, add them to the new
+// axis ref list and merge consecutive sub-axes.
+void addOrMergeNewAxisRefAttr(AxisRefAttr oldAxisRef,
+                              AxisRefVector& newAxisRefs, MLIRContext* context,
+                              const MeshAttr& mainMesh,
+                              const AxisMap& axisMap) {
+  CHECK(mapAxisRef(oldAxisRef, context, mainMesh, axisMap,
+                   [&](AxisRefAttr newAxisRef) {
+                     sdy::addAxisOrMerge(newAxisRefs, newAxisRef, mainMesh);
+                   }));
 }
 
 int64_t countNonSizeOneAxes(MeshOp mesh) {
@@ -274,6 +289,90 @@ bool isBetterMainMesh(MeshOp candidate, MeshOp current) {
   return countNonSizeOneAxes(candidate) > countNonSizeOneAxes(current);
 }
 
+SmallDenseMap<StringRef, SmallVector<AxisRefAttr>> collectSubAxesByMesh(
+    ModuleOp moduleOp, const SymbolTable& symbolTable) {
+  SmallDenseMap<StringRef, SmallVector<AxisRefAttr>> subAxesByMesh;
+  auto collectSubAxes = [&](StringRef meshName, ArrayRef<AxisRefAttr> axes) {
+    for (AxisRefAttr axis : axes) {
+      if (axis.getSubAxisInfo()) {
+        subAxesByMesh[meshName].push_back(axis);
+      }
+    }
+  };
+  sdy::walkShardings(
+      moduleOp,
+      [&](TensorShardingAttr sharding) {
+        if (mlir::isa<MeshAttr>(sharding.getMeshOrRef())) {
+          return;
+        }
+        StringRef meshName = sharding.getMeshName();
+        for (DimensionShardingAttr dimSharding : sharding.getDimShardings()) {
+          collectSubAxes(meshName, dimSharding.getAxes());
+        }
+        collectSubAxes(meshName, sharding.getReplicatedAxes());
+        collectSubAxes(meshName, sharding.getUnreducedAxes());
+      },
+      [&](Operation* op) {
+        if (auto manualComputation =
+                mlir::dyn_cast<sdy::ManualComputationOp>(op)) {
+          if (manualComputation.getManualAxes().empty() ||
+              (manualComputation.getInShardings().empty() &&
+               manualComputation.getOutShardings().empty())) {
+            return;
+          }
+          Attribute meshOrRef = getCommonMeshOrRef(
+              manualComputation.getInShardings().getShardings(),
+              manualComputation.getOutShardings().getShardings(), symbolTable);
+          if (auto symbolRef =
+                  mlir::dyn_cast_or_null<mlir::FlatSymbolRefAttr>(meshOrRef)) {
+            collectSubAxes(symbolRef.getValue(),
+                           manualComputation.getManualAxes());
+          }
+          return;
+        }
+        if (auto rgv3 =
+                op->getAttrOfType<mlir::stablehlo::ReplicaGroupMeshAxesAttr>(
+                    "replica_groups")) {
+          Attribute meshAttr = rgv3.getMesh();
+          StringRef meshName;
+          if (auto symbolRef =
+                  mlir::dyn_cast<mlir::FlatSymbolRefAttr>(meshAttr)) {
+            meshName = symbolRef.getValue();
+          } else if (auto stringAttr =
+                         mlir::dyn_cast<mlir::StringAttr>(meshAttr)) {
+            meshName = stringAttr.getValue();
+          }
+          if (meshName.empty()) {
+            return;
+          }
+          MLIRContext* context = moduleOp.getContext();
+          for (Attribute axis : rgv3.getAxes()) {
+            auto axisRef = mlir::cast<mlir::stablehlo::AxisRefAttr>(axis);
+            if (auto subAxisInfo = axisRef.getSubAxisInfo()) {
+              subAxesByMesh[meshName].push_back(AxisRefAttr::get(
+                  context, axisRef.getName(),
+                  SubAxisInfoAttr::get(context, subAxisInfo.getPreSize(),
+                                       subAxisInfo.getSize())));
+            }
+          }
+        }
+      });
+  return subAxesByMesh;
+}
+
+bool areSubAxesCompatible(
+    StringRef meshName,
+    const SmallDenseMap<StringRef, SmallVector<AxisRefAttr>>& subAxesByMesh,
+    MLIRContext* context, const MeshAttr& mainMesh, const AxisMap& axisMap) {
+  auto it = subAxesByMesh.find(meshName);
+  if (it == subAxesByMesh.end()) {
+    return true;
+  }
+  return llvm::all_of(it->second, [&](AxisRefAttr subAxis) {
+    return mapAxisRef(subAxis, context, mainMesh, axisMap, [](AxisRefAttr) {});
+  });
+}
+
 // Builds a map of meshes to the main mesh that will be used (which has the
 // same total number of devices and device_ids), the final MeshAttr of that main
 // mesh (aligned to the canonical mesh for that total device count when
@@ -282,7 +381,10 @@ bool isBetterMainMesh(MeshOp candidate, MeshOp current) {
 //
 // A main mesh whose axes are already canonical will not be saved as a key in
 // the map, since it won't need to be updated or replaced.
-MeshToAxisMap buildDuplicateMeshesToAxisMap(ModuleOp moduleOp) {
+MeshToAxisMap buildDuplicateMeshesToAxisMap(ModuleOp moduleOp,
+                                            const SymbolTable& symbolTable) {
+  SmallDenseMap<StringRef, SmallVector<AxisRefAttr>> subAxesByMesh =
+      collectSubAxesByMesh(moduleOp, symbolTable);
   MeshIdentifierToMainMeshesMap meshIdentifierToMainMeshesMap;
   SmallDenseMap<int64_t, MeshOp, 4> totalDeviceCountToMainMeshMap;
   for (MeshOp meshOp : moduleOp.getOps<MeshOp>()) {
@@ -309,11 +411,13 @@ MeshToAxisMap buildDuplicateMeshesToAxisMap(ModuleOp moduleOp) {
       continue;
     }
     AxisMap targetToMainAxisMap;
+    MeshAttr newMeshAttr =
+        MeshAttr::get(context, sizeMainMesh.getMesh().getAxes(),
+                      deviceMainMesh.getMesh().getDeviceIds());
     if (mapTargetAxesToMainAxes(deviceMainMesh, sizeMainMesh,
-                                targetToMainAxisMap, context)) {
-      MeshAttr newMeshAttr =
-          MeshAttr::get(context, sizeMainMesh.getMesh().getAxes(),
-                        deviceMainMesh.getMesh().getDeviceIds());
+                                targetToMainAxisMap, context) &&
+        areSubAxesCompatible(deviceMainMesh.getSymName(), subAxesByMesh,
+                             context, newMeshAttr, targetToMainAxisMap)) {
       duplicateMeshesToAxisMap.try_emplace(
           deviceMainMesh.getSymName(),
           MainMeshInfo{deviceMainMesh.getSymName(), newMeshAttr,
@@ -341,7 +445,9 @@ MeshToAxisMap buildDuplicateMeshesToAxisMap(ModuleOp moduleOp) {
 
     AxisMap targetToMainAxisMap;
     if (mapTargetAxesToMainAxes(targetMesh, axisMainMesh, targetToMainAxisMap,
-                                context)) {
+                                context) &&
+        areSubAxesCompatible(targetMesh.getSymName(), subAxesByMesh, context,
+                             mainMeshAttr, targetToMainAxisMap)) {
       duplicateMeshesToAxisMap.try_emplace(
           targetMesh.getSymName(),
           MainMeshInfo{deviceMainMesh.getSymName(), mainMeshAttr,
@@ -560,13 +666,13 @@ class SdyRoundTripDedupMeshesPass
       return;
     }
 
+    SymbolTable symbolTable(moduleOp);
     MeshToAxisMap duplicateMeshesToAxisMap =
-        buildDuplicateMeshesToAxisMap(moduleOp);
+        buildDuplicateMeshesToAxisMap(moduleOp, symbolTable);
     if (duplicateMeshesToAxisMap.empty()) {
       // No meshes to dedup.
       return;
     }
-    SymbolTable symbolTable(moduleOp);
     dedupMeshes(moduleOp, symbolTable, duplicateMeshesToAxisMap);
     eraseMeshes(symbolTable, duplicateMeshesToAxisMap);
   }
