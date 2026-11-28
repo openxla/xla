@@ -17,10 +17,13 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/log/check.h"
@@ -47,6 +50,7 @@ namespace xla {
 namespace {
 
 using ::testing::Each;
+using ::testing::ElementsAre;
 using ::testing::Ge;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
@@ -2232,6 +2236,587 @@ TEST(CoordinationService, RedundantGetAliveTasks) {
   service->GetAliveTasksAsync(1, tasks.tasks, done);
   service->GetAliveTasksAsync(2, tasks.tasks, done);
   finished.Wait();
+}
+
+class FakeClockEnv : public tsl::EnvWrapper {
+ public:
+  explicit FakeClockEnv(uint64_t now_us)
+      : tsl::EnvWrapper(tsl::Env::Default()), now_us_(now_us) {}
+
+  uint64_t NowMicros() const override {
+    return now_us_.load(std::memory_order_relaxed);
+  }
+  void SetNowMicros(uint64_t now_us) {
+    now_us_.store(now_us, std::memory_order_relaxed);
+  }
+  void AdvanceMicros(int64_t delta_us) {
+    const uint64_t cur = NowMicros();
+    SetNowMicros(delta_us >= 0 ? cur + static_cast<uint64_t>(delta_us)
+                               : cur - static_cast<uint64_t>(-delta_us));
+  }
+
+ private:
+  std::atomic<uint64_t> now_us_;
+};
+
+template <typename>
+struct StartThreadCallback;
+template <typename R, typename C, typename Opts, typename Name, typename Fn>
+struct StartThreadCallback<R (C::*)(Opts, Name, Fn)> {
+  using type = Fn;
+};
+
+class StopHookEnv : public tsl::EnvWrapper {
+ public:
+  StopHookEnv(absl::Notification* stopped, absl::Notification* resume)
+      : tsl::EnvWrapper(tsl::Env::Default()),
+        stopped_(stopped),
+        resume_(resume) {}
+
+  tsl::Thread* StartThread(
+      const tsl::ThreadOptions& thread_options, const std::string& name,
+      typename StartThreadCallback<
+          decltype(&tsl::EnvWrapper::StartThread)>::type fn) override {
+    tsl::Thread* inner =
+        tsl::EnvWrapper::StartThread(thread_options, name, std::move(fn));
+    return new HookThread(inner, stopped_, resume_);
+  }
+
+ private:
+  class HookThread : public tsl::Thread {
+   public:
+    HookThread(tsl::Thread* inner, absl::Notification* stopped,
+               absl::Notification* resume)
+        : inner_(inner), stopped_(stopped), resume_(resume) {}
+    ~HookThread() override {
+      inner_.reset();
+      stopped_->Notify();
+      resume_->WaitForNotification();
+    }
+
+   private:
+    std::unique_ptr<tsl::Thread> inner_;
+    absl::Notification* stopped_;
+    absl::Notification* resume_;
+  };
+
+  absl::Notification* stopped_;
+  absl::Notification* resume_;
+};
+
+TEST(CoordinationService,
+     GetAliveTasksRecoverableSilentReconnectWaitsForNewIncarnation) {
+  CoordinationService::Config config = DefaultConfig(3);
+  config.recoverable = true;
+  config.heartbeat_timeout = absl::Seconds(30);
+  std::unique_ptr<CoordinationService> service = Start(config);
+  Tasks tasks = RegisterTasks(config, *service);
+
+  auto old0_a = std::make_shared<std::optional<absl::Status>>();
+  auto old0_b = std::make_shared<std::optional<absl::Status>>();
+  auto capture_old = [](std::shared_ptr<std::optional<absl::Status>> out) {
+    return [out](const absl::Status& s,
+                 const std::vector<CoordinationService::TaskId>& alive,
+                 const std::vector<IncarnationId>& incs) {
+      *out = s;
+      EXPECT_THAT(alive, IsEmpty());
+      EXPECT_THAT(incs, IsEmpty());
+    };
+  };
+  // Task 0 enters redundantly and task 1 enters before task 0 restarts.
+  service->GetAliveTasksAsync(0, tasks.tasks, capture_old(old0_a));
+  service->GetAliveTasksAsync(0, tasks.tasks, capture_old(old0_b));
+
+  std::atomic<int> completed{0};
+  auto check_new = [&](const absl::Status& s,
+                       const std::vector<CoordinationService::TaskId>& alive,
+                       const std::vector<IncarnationId>& incs) {
+    EXPECT_OK(s);
+    EXPECT_THAT(alive, ElementsAre(0, 1, 2));
+    EXPECT_THAT(incs, ElementsAre(IncarnationId(900), IncarnationId(1),
+                                  IncarnationId(2)));
+    completed.fetch_add(1, std::memory_order_relaxed);
+  };
+  service->GetAliveTasksAsync(1, tasks.tasks, check_new);
+
+  // Task 0 silently reconnects with a new incarnation before heartbeat timeout.
+  ASSERT_OK(service->RegisterTask(0, IncarnationId(900)));
+  ASSERT_TRUE(old0_a->has_value());
+  ASSERT_TRUE(old0_b->has_value());
+  EXPECT_THAT(**old0_a, StatusIs(absl::StatusCode::kCancelled));
+  EXPECT_THAT(**old0_b, StatusIs(absl::StatusCode::kCancelled));
+  EXPECT_EQ(completed.load(), 0);
+
+  // Task 2 joins; barrier must wait for the restarted task 0 incarnation.
+  service->GetAliveTasksAsync(2, tasks.tasks, check_new);
+  EXPECT_EQ(completed.load(), 0);
+
+  service->GetAliveTasksAsync(0, tasks.tasks, check_new);
+  EXPECT_EQ(completed.load(), 3);
+}
+
+TEST(CoordinationService,
+     GetAliveTasksRecoverablePostTimeoutAndBarrierReconnect) {
+  for (bool register_with_barrier : {false, true}) {
+    FakeClockEnv env(/*now_us=*/10'000'000);
+    CoordinationService::Config config = DefaultConfig(3);
+    config.recoverable = true;
+    config.cluster_register_with_barrier = register_with_barrier;
+    config.heartbeat_timeout = absl::Seconds(2);
+    CoordinationService service(&env, config);
+
+    absl::BlockingCounter reg(3);
+    for (int i = 0; i < 3; ++i) {
+      service.RegisterTaskAsync(i, IncarnationId(i), [&](absl::Status s) {
+        EXPECT_OK(s);
+        reg.DecrementCount();
+      });
+    }
+    reg.Wait();
+
+    auto old0 = std::make_shared<std::optional<absl::Status>>();
+    service.GetAliveTasksAsync(
+        0, {0, 1, 2},
+        [old0](const absl::Status& s,
+               const std::vector<CoordinationService::TaskId>&,
+               const std::vector<IncarnationId>&) { *old0 = s; });
+
+    // Expire only task 0's heartbeat, then reconnect task 0 with a new ID.
+    env.AdvanceMicros(1'500'000);
+    ASSERT_OK(service.RecordHeartbeat(1, IncarnationId(1)));
+    ASSERT_OK(service.RecordHeartbeat(2, IncarnationId(2)));
+    env.AdvanceMicros(1'000'000);
+    absl::Status hb0 = absl::OkStatus();
+    for (int attempt = 0; attempt < 50 && hb0.ok(); ++attempt) {
+      tsl::Env::Default()->SleepForMicroseconds(100'000);
+      ASSERT_OK(service.RecordHeartbeat(1, IncarnationId(1)));
+      ASSERT_OK(service.RecordHeartbeat(2, IncarnationId(2)));
+      // Probe task 0 with a non-matching incarnation so its heartbeat stays
+      // stale until CheckHeartbeatTimeout marks task 0 unavailable.
+      hb0 = service.RecordHeartbeat(0, IncarnationId(999));
+    }
+    ASSERT_THAT(hb0, StatusIs(absl::StatusCode::kAborted));
+    EXPECT_TRUE(old0->has_value());
+    if (old0->has_value()) {
+      EXPECT_THAT(**old0, StatusIs(absl::StatusCode::kCancelled));
+    }
+
+    ASSERT_OK(service.RegisterTask(0, IncarnationId(777)));
+
+    std::atomic<int> completed{0};
+    auto check_new = [&](const absl::Status& s,
+                         const std::vector<CoordinationService::TaskId>& alive,
+                         const std::vector<IncarnationId>& incs) {
+      EXPECT_OK(s);
+      EXPECT_THAT(alive, ElementsAre(0, 1, 2));
+      EXPECT_THAT(incs, ElementsAre(IncarnationId(777), IncarnationId(1),
+                                    IncarnationId(2)));
+      completed.fetch_add(1, std::memory_order_relaxed);
+    };
+    service.GetAliveTasksAsync(1, {0, 1, 2}, check_new);
+    service.GetAliveTasksAsync(2, {0, 1, 2}, check_new);
+    EXPECT_EQ(completed.load(), 0);
+
+    service.GetAliveTasksAsync(0, {0, 1, 2}, check_new);
+    EXPECT_EQ(completed.load(), 3);
+  }
+}
+
+TEST(CoordinationService, GetAliveTasksShutdownAndCallerStateValidation) {
+  absl::Notification stopped;
+  absl::Notification resume;
+  StopHookEnv env(&stopped, &resume);
+  CoordinationService::Config config = DefaultConfig(3);
+  config.recoverable = true;
+  config.heartbeat_timeout = absl::Seconds(30);
+  auto service = std::make_unique<CoordinationService>(&env, config);
+  ASSERT_OK(service->RegisterTask(0, IncarnationId(10)));
+  ASSERT_OK(service->RegisterTask(1, IncarnationId(11)));
+
+  // Non-cluster tasks, unregistered tasks, disconnected tasks, and errored
+  // tasks must be rejected without entering the barrier.
+  auto expect_code = [&](CoordinationService::TaskId caller,
+                         const std::vector<CoordinationService::TaskId>& set,
+                         absl::StatusCode code) {
+    std::optional<absl::Status> got;
+    service->GetAliveTasksAsync(
+        caller, set,
+        [&](const absl::Status& s,
+            const std::vector<CoordinationService::TaskId>&,
+            const std::vector<IncarnationId>&) { got = s; });
+    ASSERT_TRUE(got.has_value());
+    EXPECT_THAT(*got, StatusIs(code));
+  };
+  expect_code(99, {99}, absl::StatusCode::kInvalidArgument);
+  expect_code(0, {0, 99}, absl::StatusCode::kInvalidArgument);
+  expect_code(2, {0, 2}, absl::StatusCode::kFailedPrecondition);
+
+  ASSERT_OK(service->ReportTaskError(1, absl::InternalError("boom")));
+  expect_code(1, {0, 1}, absl::StatusCode::kFailedPrecondition);
+  ASSERT_OK(service->ResetTask(1));
+  expect_code(1, {0, 1}, absl::StatusCode::kFailedPrecondition);
+  ASSERT_OK(service->RegisterTask(1, IncarnationId(12)));
+
+  // Queue a pending GetAliveTasks call, then stop the service.
+  auto pending_status = std::make_shared<std::optional<absl::Status>>();
+  service->GetAliveTasksAsync(
+      0, {0, 1},
+      [pending_status](const absl::Status& s,
+                       const std::vector<CoordinationService::TaskId>&,
+                       const std::vector<IncarnationId>&) {
+        *pending_status = s;
+      });
+
+  CoordinationService* raw = service.get();
+  std::optional<absl::Status> post_stop_status;
+  std::unique_ptr<tsl::Thread> probe(
+      tsl::Env::Default()->StartThread({}, "post_stop_probe", [&]() {
+        stopped.WaitForNotification();
+        raw->GetAliveTasksAsync(
+            0, {0},
+            [&](const absl::Status& s,
+                const std::vector<CoordinationService::TaskId>& alive,
+                const std::vector<IncarnationId>& incs) {
+              post_stop_status = s;
+              EXPECT_THAT(alive, IsEmpty());
+              EXPECT_THAT(incs, IsEmpty());
+            });
+        resume.Notify();
+      }));
+  service.reset();
+  probe.reset();
+
+  ASSERT_TRUE(pending_status->has_value());
+  EXPECT_THAT(**pending_status, StatusIs(absl::StatusCode::kAborted));
+  ASSERT_TRUE(post_stop_status.has_value());
+  EXPECT_THAT(*post_stop_status, StatusIs(absl::StatusCode::kInternal));
+}
+
+TEST(CoordinationService, RecoverableSameIncarnationRegisterRetryIsIdempotent) {
+  CoordinationService::Config config = DefaultConfig(2);
+  config.recoverable = true;
+  config.heartbeat_timeout = absl::Seconds(30);
+  std::unique_ptr<CoordinationService> service = Start(config);
+  ASSERT_OK(service->RegisterTask(0, IncarnationId(100)));
+  ASSERT_OK(service->RegisterTask(1, IncarnationId(200)));
+
+  auto poll0 = std::make_shared<std::optional<absl::Status>>();
+  service->PollForErrorAsync(0, [poll0](const absl::Status& s) { *poll0 = s; });
+
+  std::optional<absl::Status> barrier0;
+  service->BarrierAsync("retry_barrier", 0, absl::Seconds(10), 0, {0, 1},
+                        [&](const absl::Status& s, int64_t) { barrier0 = s; });
+  std::optional<absl::Status> alive0;
+  service->GetAliveTasksAsync(
+      0, {0, 1},
+      [&](const absl::Status& s,
+          const std::vector<CoordinationService::TaskId>&,
+          const std::vector<IncarnationId>&) { alive0 = s; });
+
+  // Retrying RegisterTask with the same incarnation must keep live calls open.
+  ASSERT_OK(service->RegisterTask(0, IncarnationId(100)));
+  EXPECT_FALSE(poll0->has_value());
+  EXPECT_FALSE(barrier0.has_value());
+  EXPECT_FALSE(alive0.has_value());
+
+  std::optional<absl::Status> barrier1;
+  service->BarrierAsync("retry_barrier", 0, absl::Seconds(10), 1, {0, 1},
+                        [&](const absl::Status& s, int64_t) { barrier1 = s; });
+  std::optional<absl::Status> alive1;
+  service->GetAliveTasksAsync(
+      1, {0, 1},
+      [&](const absl::Status& s,
+          const std::vector<CoordinationService::TaskId>&,
+          const std::vector<IncarnationId>&) { alive1 = s; });
+  ASSERT_TRUE(barrier0.has_value());
+  ASSERT_TRUE(barrier1.has_value());
+  EXPECT_OK(*barrier0);
+  EXPECT_OK(*barrier1);
+  ASSERT_TRUE(alive0.has_value());
+  ASSERT_TRUE(alive1.has_value());
+  EXPECT_OK(*alive0);
+  EXPECT_OK(*alive1);
+  EXPECT_FALSE(poll0->has_value());
+
+  // Reconnecting with a distinct incarnation cancels stale poll/barrier/alive.
+  std::optional<absl::Status> stale_barrier;
+  service->BarrierAsync(
+      "restart_barrier", 0, absl::Seconds(10), 0, {0, 1},
+      [&](const absl::Status& s, int64_t) { stale_barrier = s; });
+  std::optional<absl::Status> stale_alive;
+  service->GetAliveTasksAsync(
+      0, {0, 1},
+      [&](const absl::Status& s,
+          const std::vector<CoordinationService::TaskId>&,
+          const std::vector<IncarnationId>&) { stale_alive = s; });
+  ASSERT_OK(service->RegisterTask(0, IncarnationId(101)));
+  ASSERT_TRUE(poll0->has_value());
+  EXPECT_THAT(**poll0, StatusIs(absl::StatusCode::kCancelled));
+  ASSERT_TRUE(stale_barrier.has_value());
+  EXPECT_THAT(*stale_barrier, StatusIs(absl::StatusCode::kCancelled));
+  ASSERT_TRUE(stale_alive.has_value());
+  EXPECT_THAT(*stale_alive, StatusIs(absl::StatusCode::kCancelled));
+}
+
+TEST(CoordinationService, BarrierAndCancelBarrierRejectOutOfRangeCaller) {
+  CoordinationService::Config config = DefaultConfig(2);
+  std::unique_ptr<CoordinationService> service = Start(config);
+  ASSERT_OK(service->RegisterTask(0, IncarnationId(0)));
+
+  for (CoordinationService::TaskId bad_task : {-1, 2, 99}) {
+    std::optional<absl::Status> status;
+    service->BarrierAsync("cluster_barrier", 0, absl::Seconds(5), bad_task, {},
+                          [&](const absl::Status& s, int64_t) { status = s; });
+    ASSERT_TRUE(status.has_value());
+    EXPECT_THAT(*status, StatusIs(absl::StatusCode::kInvalidArgument));
+    EXPECT_THAT(service->CancelBarrier("cluster_barrier", 0, bad_task),
+                StatusIs(absl::StatusCode::kInvalidArgument));
+  }
+
+  // Default empty participating_tasks blocks for all configured cluster tasks
+  // (including not-yet-connected task 1), not only connected tasks.
+  std::optional<absl::Status> s0;
+  std::optional<absl::Status> s1;
+  service->BarrierAsync("cluster_barrier", 0, absl::Seconds(5), 0, {},
+                        [&](const absl::Status& s, int64_t) { s0 = s; });
+  EXPECT_FALSE(s0.has_value());
+  ASSERT_OK(service->RegisterTask(1, IncarnationId(1)));
+  service->BarrierAsync("cluster_barrier", 0, absl::Seconds(5), 1, {},
+                        [&](const absl::Status& s, int64_t) { s1 = s; });
+  ASSERT_TRUE(s0.has_value());
+  ASSERT_TRUE(s1.has_value());
+  EXPECT_OK(*s0);
+  EXPECT_OK(*s1);
+}
+
+TEST(CoordinationService, BarrierDeduplicatesParticipatingTasks) {
+  CoordinationService::Config config = DefaultConfig(3);
+  std::unique_ptr<CoordinationService> service = Start(config);
+  RegisterTasks(config, *service);
+
+  // Conflicting duplicate {1, 1} must not match {0, 1}.
+  absl::Status c0;
+  absl::Status c1;
+  service->BarrierAsync("conflict_dup", 0, absl::Seconds(5), 0, {0, 1},
+                        [&](const absl::Status& s, int64_t) { c0 = s; });
+  service->BarrierAsync("conflict_dup", 0, absl::Seconds(5), 1, {1, 1},
+                        [&](const absl::Status& s, int64_t) { c1 = s; });
+  EXPECT_THAT(c0, StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(c1, StatusIs(absl::StatusCode::kInvalidArgument));
+
+  // Redundant duplicate {0, 1, 1} denotes the same set as {0, 1}.
+  absl::Status d0 = absl::UnknownError("pending");
+  absl::Status d1 = absl::UnknownError("pending");
+  service->BarrierAsync("same_set_dup", 0, absl::Seconds(5), 0, {0, 1, 1},
+                        [&](const absl::Status& s, int64_t) { d0 = s; });
+  service->BarrierAsync("same_set_dup", 0, absl::Seconds(5), 1, {0, 1},
+                        [&](const absl::Status& s, int64_t) { d1 = s; });
+  EXPECT_OK(d0);
+  EXPECT_OK(d1);
+
+  // Failed InitializeTasksAtBarrier on {0, 67} must not leave partial {0}.
+  absl::Status bad_init;
+  service->BarrierAsync("partial_init", 0, absl::Seconds(5), 0, {0, 67},
+                        [&](const absl::Status& s, int64_t) { bad_init = s; });
+  EXPECT_THAT(bad_init, StatusIs(absl::StatusCode::kInvalidArgument));
+  std::optional<absl::Status> next0;
+  std::optional<absl::Status> next1;
+  service->BarrierAsync("partial_init", 1, absl::Seconds(5), 0, {0, 1},
+                        [&](const absl::Status& s, int64_t) { next0 = s; });
+  EXPECT_FALSE(next0.has_value());
+  service->BarrierAsync("partial_init", 1, absl::Seconds(5), 1, {0, 1},
+                        [&](const absl::Status& s, int64_t) { next1 = s; });
+  ASSERT_TRUE(next0.has_value());
+  ASSERT_TRUE(next1.has_value());
+  EXPECT_OK(*next0);
+  EXPECT_OK(*next1);
+}
+
+TEST(CoordinationService, BarrierPostPassErrorsPreserveResultAndCounterBounds) {
+  CoordinationService::Config config = DefaultConfig(3);
+  std::unique_ptr<CoordinationService> service = Start(config);
+  RegisterTasks(config, *service);
+
+  absl::Status s0;
+  absl::Status s1;
+  service->BarrierAsync("sub", 0, absl::Seconds(5), 0, {0, 1},
+                        [&](const absl::Status& s, int64_t) { s0 = s; });
+  service->BarrierAsync("sub", 0, absl::Seconds(5), 1, {0, 1},
+                        [&](const absl::Status& s, int64_t) { s1 = s; });
+  ASSERT_OK(s0);
+  ASSERT_OK(s1);
+
+  constexpr int64_t kMax = std::numeric_limits<int64_t>::max();
+  auto call = [&](absl::string_view id, int64_t counter,
+                  CoordinationService::TaskId task,
+                  const std::vector<CoordinationService::TaskId>& args,
+                  int64_t* out_counter = nullptr) {
+    absl::Status out = absl::UnknownError("uncalled");
+    service->BarrierAsync(std::string(id), counter, absl::Seconds(5), task,
+                          args, [&](const absl::Status& s, int64_t c) {
+                            out = s;
+                            if (out_counter != nullptr) *out_counter = c;
+                          });
+    return out;
+  };
+  int64_t got_counter = -1;
+  EXPECT_THAT(call("sub", 0, 2, {0, 1}),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(call("sub", 0, 2, {}),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(call("sub", 0, 0, {0, 1, 2}),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(call("sub", -1, 0, {0, 1}, &got_counter),
+              StatusIs(absl::StatusCode::kInternal));
+  EXPECT_EQ(got_counter, 0);
+  EXPECT_THAT(call("sub", 2, 0, {0, 1}, &got_counter),
+              StatusIs(absl::StatusCode::kInternal));
+  EXPECT_EQ(got_counter, 0);
+  EXPECT_THAT(call("sub", kMax, 0, {0, 1}, &got_counter),
+              StatusIs(absl::StatusCode::kInternal));
+  EXPECT_EQ(got_counter, 0);
+
+  // Legitimate same-counter retry must still receive the passed OK status.
+  got_counter = -1;
+  EXPECT_OK(call("sub", 0, 0, {0, 1}, &got_counter));
+  EXPECT_EQ(got_counter, 0);
+
+  // First-call counter mismatch stamps barrier id and handles INT64_MAX.
+  EXPECT_THAT(
+      call("uninit_mismatch", 1, 0, {}),
+      StatusIs(absl::StatusCode::kInternal, HasSubstr("uninit_mismatch::1")));
+  EXPECT_THAT(call("uninit_max", kMax, 0, {}),
+              StatusIs(absl::StatusCode::kInternal));
+}
+
+TEST(CoordinationService, CancelBarrierBeforeCreateAndNonZeroUnknownCounter) {
+  constexpr int64_t kMax = std::numeric_limits<int64_t>::max();
+  for (bool recoverable : {false, true}) {
+    CoordinationService::Config config = DefaultConfig(2);
+    config.recoverable = recoverable;
+    std::unique_ptr<CoordinationService> service = Start(config);
+    RegisterTasks(config, *service);
+
+    // Unknown non-zero counter cancel fails without poisoning counter 0.
+    EXPECT_THAT(service->CancelBarrier("unknown_nz", 3, 0),
+                StatusIs(absl::StatusCode::kFailedPrecondition));
+    EXPECT_THAT(service->CancelBarrier("unknown_nz", kMax, 0),
+                StatusIs(absl::StatusCode::kFailedPrecondition));
+    absl::Status ok_status = absl::UnknownError("uncalled");
+    service->BarrierAsync(
+        "unknown_nz", 0, absl::Seconds(5), 0, {0},
+        [&](const absl::Status& s, int64_t) { ok_status = s; });
+    EXPECT_OK(ok_status);
+
+    // Pre-created counter==0 cancellation returns kCancelled on counter 0 and
+    // allows counter 1 to proceed cleanly.
+    ASSERT_OK(service->CancelBarrier("pre_cancelled", 0, 0));
+    std::optional<absl::Status> c0;
+    int64_t c0_counter = -1;
+    service->BarrierAsync("pre_cancelled", 0, absl::Seconds(5), 0, {},
+                          [&](const absl::Status& s, int64_t c) {
+                            c0 = s;
+                            c0_counter = c;
+                          });
+    ASSERT_TRUE(c0.has_value());
+    EXPECT_THAT(*c0, StatusIs(absl::StatusCode::kCancelled));
+    EXPECT_EQ(c0_counter, 0);
+
+    std::optional<absl::Status> next;
+    int64_t next_counter = -1;
+    service->BarrierAsync("pre_cancelled", 1, absl::Seconds(5), 0, {0},
+                          [&](const absl::Status& s, int64_t c) {
+                            next = s;
+                            next_counter = c;
+                          });
+    ASSERT_TRUE(next.has_value());
+    EXPECT_OK(*next);
+    EXPECT_EQ(next_counter, 1);
+  }
+}
+
+TEST(CoordinationService, HeartbeatClockStepBackAndSaturatingBarrierDeadlines) {
+  // Null env defaults cleanly to tsl::Env::Default().
+  {
+    CoordinationService null_env_service(nullptr, DefaultConfig(1));
+    EXPECT_OK(null_env_service.RegisterTask(0, IncarnationId(42)));
+  }
+
+  // At now_us == 0, an unregistered task is still beyond disconnect grace.
+  FakeClockEnv env(/*now_us=*/0);
+  CoordinationService::Config config = DefaultConfig(2);
+  config.heartbeat_timeout = absl::Milliseconds(500);
+  CoordinationService service(&env, config);
+  EXPECT_THAT(service.RecordHeartbeat(0, IncarnationId(0)),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  absl::Status poll_status;
+  service.PollForErrorAsync(0, [&](const absl::Status& s) { poll_status = s; });
+  EXPECT_THAT(poll_status, StatusIs(absl::StatusCode::kFailedPrecondition));
+
+  // Backward 1-us wall-clock step must not underflow and expire heartbeats.
+  env.SetNowMicros(10'000'000);
+  ASSERT_OK(service.RegisterTask(0, IncarnationId(1)));
+  ASSERT_OK(service.RegisterTask(1, IncarnationId(2)));
+  env.SetNowMicros(9'999'999);
+  tsl::Env::Default()->SleepForMicroseconds(1'500'000);
+  ASSERT_OK(service.RecordHeartbeat(0, IncarnationId(1)));
+  ASSERT_OK(service.RecordHeartbeat(1, IncarnationId(2)));
+
+  // Negative and -InfiniteDuration barrier timeouts saturate to now_us.
+  absl::Notification neg_n;
+  absl::Status neg_status;
+  service.BarrierAsync("neg_timeout", 0, absl::Seconds(-1000), 0, {0, 1},
+                       [&](const absl::Status& s, int64_t) {
+                         neg_status = s;
+                         neg_n.Notify();
+                       });
+  absl::Notification neg_inf_n;
+  absl::Status neg_inf_status;
+  service.BarrierAsync("neg_inf_timeout", 0, -absl::InfiniteDuration(), 0,
+                       {0, 1}, [&](const absl::Status& s, int64_t) {
+                         neg_inf_status = s;
+                         neg_inf_n.Notify();
+                       });
+  env.AdvanceMicros(1);
+  ASSERT_TRUE(neg_n.WaitForNotificationWithTimeout(absl::Seconds(5)));
+  ASSERT_TRUE(neg_inf_n.WaitForNotificationWithTimeout(absl::Seconds(5)));
+  EXPECT_THAT(neg_status, StatusIs(absl::StatusCode::kDeadlineExceeded));
+  EXPECT_THAT(neg_inf_status, StatusIs(absl::StatusCode::kDeadlineExceeded));
+
+  // InfiniteDuration at high timestamps saturates to UINT64_MAX without wrap.
+  constexpr uint64_t kHighNow =
+      static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 10'000'000;
+  env.SetNowMicros(kHighNow);
+  ASSERT_OK(service.RecordHeartbeat(0, IncarnationId(1)));
+  ASSERT_OK(service.RecordHeartbeat(1, IncarnationId(2)));
+  std::atomic<bool> inf_done{false};
+  absl::Status inf0;
+  absl::Status inf1;
+  service.BarrierAsync("inf_high", 0, absl::InfiniteDuration(), 0, {0, 1},
+                       [&](const absl::Status& s, int64_t) {
+                         inf0 = s;
+                         inf_done.store(true, std::memory_order_release);
+                       });
+  tsl::Env::Default()->SleepForMicroseconds(1'500'000);
+  EXPECT_FALSE(inf_done.load(std::memory_order_acquire));
+  service.BarrierAsync("inf_high", 0, absl::InfiniteDuration(), 1, {0, 1},
+                       [&](const absl::Status& s, int64_t) { inf1 = s; });
+  ASSERT_TRUE(inf_done.load(std::memory_order_acquire));
+  EXPECT_OK(inf0);
+  EXPECT_OK(inf1);
+
+  // Advancing past heartbeat_timeout on the injected clock marks tasks stale.
+  absl::Notification stale_n;
+  absl::Status stale_poll;
+  service.PollForErrorAsync(0, [&](const absl::Status& s) {
+    stale_poll = s;
+    stale_n.Notify();
+  });
+  env.AdvanceMicros(1'000'000);
+  ASSERT_TRUE(stale_n.WaitForNotificationWithTimeout(absl::Seconds(5)));
+  EXPECT_THAT(stale_poll, StatusIs(absl::StatusCode::kUnavailable));
+  EXPECT_THAT(service.RecordHeartbeat(0, IncarnationId(1)),
+              StatusIs(absl::StatusCode::kAborted));
 }
 
 }  // namespace

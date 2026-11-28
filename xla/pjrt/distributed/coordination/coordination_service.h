@@ -211,7 +211,7 @@ class CoordinationService {
   // instantly.
   //
   // If no tasks are specified (default), the barrier will block for all the
-  // connected tasks.
+  // configured tasks in the cluster.
   //
   // Possible service errors:
   //   - DeadlineExceeded: Timed out waiting for specified tasks at the barrier.
@@ -386,7 +386,11 @@ class CoordinationService {
   // A task reaches the barrier.
   void ReachBarrier(BarrierState* barrier, TaskId task)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
-  void FailBarrierWithCounterMismatch(BarrierState* barrier, int64_t counter)
+  void FailBarrierOrCaller(BarrierState* barrier, TaskId task,
+                           const absl::Status& error)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
+  void FailBarrierWithCounterMismatch(BarrierState* barrier, TaskId task,
+                                      int64_t counter)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Propagates same result back to task.
   void RepeatBarrierResult(BarrierState* barrier, TaskId task)
@@ -477,17 +481,17 @@ class CoordinationService {
     void SetTaskIncarnation(IncarnationId task_incarnation) {
       task_incarnation_ = task_incarnation;
     }
-    void Connect() {
-      SetConnected(task_incarnation_);
+    void Connect(uint64_t now_us) {
+      SetConnected(task_incarnation_, now_us);
       LOG(INFO) << task_id_
                 << " has connected to coordination service. Incarnation: "
                 << task_incarnation_;
     }
-    void SetConnected(IncarnationId task_incarnation);
-    void Disconnect(uint64_t grace_period_duration_us);
+    void SetConnected(IncarnationId task_incarnation, uint64_t now_us);
+    void Disconnect(uint64_t grace_period_deadline_us);
     absl::Status RecordHeartbeat(IncarnationId task_incarnation,
-                                 bool recoverable);
-    int64_t TimeSinceLastHeartbeatMs();
+                                 bool recoverable, uint64_t now_us);
+    int64_t TimeSinceLastHeartbeatMs(uint64_t now_us);
     // Sets the error and returns true if the task state is not ERROR.
     // Otherwise, don't overwrite the error and return false.
     bool SetError(const absl::Status& status);
@@ -504,7 +508,7 @@ class CoordinationService {
     // and no further agent requests are expected. Note that the grace period
     // accounts for the lag time between the service recording the state change
     // and the agent stopping heartbeats/error polling.
-    bool IsDisconnectedBeyondGracePeriod();
+    bool IsDisconnectedBeyondGracePeriod(uint64_t now_us) const;
 
    private:
     TaskId task_id_;
@@ -515,15 +519,21 @@ class CoordinationService {
         xla::coordination::TaskState::DISCONNECTED;
     absl::Status status_;
     absl::Mutex last_heartbeat_mu_;
-    uint64_t last_heartbeat_us_ ABSL_GUARDED_BY(last_heartbeat_mu_);
+    uint64_t last_heartbeat_us_ ABSL_GUARDED_BY(last_heartbeat_mu_) = 0;
     // This denotes the deadline after which we stop accepting heartbeats or
     // error polling requests from a disconnected task. This grace period
     // accounts for the lag time between the service recording the state change
     // and the agent stopping heartbeats/error polling.
     uint64_t disconnect_grace_period_us_ = 0;
+    bool ever_connected_ = false;
     // For now, we assume there won't be many simultaneous barriers so we simply
     // use a set.
     absl::flat_hash_set<std::string> ongoing_barriers_for_task_;
+  };
+
+  struct PendingAlivenessCall {
+    TaskId task;
+    GetAliveTasksCallback done;
   };
 
   // AlivenessState tracks the state of pending GetAliveTasks calls.
@@ -531,14 +541,16 @@ class CoordinationService {
     // All tasks that can participate in the GetAliveTasks barrier.
     absl::flat_hash_set<TaskId> tasks;
     // All tasks currently blocked on the barrier.
-    absl::flat_hash_set<TaskId> in_barrier;
+    absl::flat_hash_map<TaskId, IncarnationId> in_barrier;
     // Done callbacks for the tasks blocked on the barrier.
-    std::vector<GetAliveTasksCallback> dones;
+    std::vector<PendingAlivenessCall> dones;
   };
 
   // Returns the set of alive tasks drawn from the provided set of tasks.
   absl::flat_hash_set<TaskId> AliveTasks(
       const absl::flat_hash_set<TaskId>& tasks) const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
+  void LeavePendingAliveness(TaskId task, absl::string_view reason)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
 
   // Returns the incarnation ids of the provided tasks, in the same order.
