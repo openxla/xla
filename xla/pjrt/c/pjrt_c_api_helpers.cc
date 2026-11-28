@@ -67,6 +67,15 @@ limitations under the License.
 
 namespace pjrt {
 
+namespace {
+
+template <typename R, typename... Params, typename... Args>
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI R NoCfiCall(R (*fn)(Params...), Args&&... args) {
+  return fn(std::forward<Args>(args)...);
+}
+
+}  // namespace
+
 ABSL_CONST_INIT const absl::string_view kHloFormat = "hlo";
 ABSL_CONST_INIT const absl::string_view kMlirFormat = "mlir";
 ABSL_CONST_INIT const absl::string_view kHloWithConfigFormat =
@@ -79,22 +88,25 @@ PJRT_ClientDeleter MakeClientDeleter(const PJRT_Api* api) {
     destroy_args.extension_start = nullptr;
     destroy_args.client = client;
 
-    pjrt::LogFatalIfPjrtError(api->PJRT_Client_Destroy(&destroy_args), api);
+    pjrt::LogFatalIfPjrtError(
+        NoCfiCall(api->PJRT_Client_Destroy, &destroy_args), api);
   };
 }
 
 PJRT_AsyncHostToDeviceTransferManagerDeleter
 MakeAsyncHostToDeviceTransferManagerDeleter(const PJRT_Api* api) {
-  return [api](
-             PJRT_AsyncHostToDeviceTransferManager* transfer_manager) -> void {
-    PJRT_AsyncHostToDeviceTransferManager_Destroy_Args destroy_args;
-    destroy_args.struct_size =
-        PJRT_AsyncHostToDeviceTransferManager_Destroy_Args_STRUCT_SIZE;
-    destroy_args.extension_start = nullptr;
-    destroy_args.transfer_manager = transfer_manager;
-    pjrt::LogFatalIfPjrtError(
-        api->PJRT_AsyncHostToDeviceTransferManager_Destroy(&destroy_args), api);
-  };
+  return
+      [api](PJRT_AsyncHostToDeviceTransferManager* transfer_manager) -> void {
+        PJRT_AsyncHostToDeviceTransferManager_Destroy_Args destroy_args;
+        destroy_args.struct_size =
+            PJRT_AsyncHostToDeviceTransferManager_Destroy_Args_STRUCT_SIZE;
+        destroy_args.extension_start = nullptr;
+        destroy_args.transfer_manager = transfer_manager;
+        pjrt::LogFatalIfPjrtError(
+            NoCfiCall(api->PJRT_AsyncHostToDeviceTransferManager_Destroy,
+                      &destroy_args),
+            api);
+      };
 }
 
 PJRT_BufferDeleter MakeBufferDeleter(const PJRT_Api* api) {
@@ -104,7 +116,8 @@ PJRT_BufferDeleter MakeBufferDeleter(const PJRT_Api* api) {
     destroy_args.extension_start = nullptr;
     destroy_args.buffer = buffer;
 
-    pjrt::LogFatalIfPjrtError(api->PJRT_Buffer_Destroy(&destroy_args), api);
+    pjrt::LogFatalIfPjrtError(
+        NoCfiCall(api->PJRT_Buffer_Destroy, &destroy_args), api);
   };
 }
 
@@ -114,7 +127,8 @@ PJRT_ExecutableDeleter MakeExecutableDeleter(const PJRT_Api* api) {
     args.struct_size = PJRT_Executable_Destroy_Args_STRUCT_SIZE;
     args.extension_start = nullptr;
     args.executable = executable;
-    pjrt::LogFatalIfPjrtError(api->PJRT_Executable_Destroy(&args), api);
+    pjrt::LogFatalIfPjrtError(NoCfiCall(api->PJRT_Executable_Destroy, &args),
+                              api);
   };
 }
 
@@ -124,7 +138,8 @@ PJRT_LoadedExecutableDeleter MakeLoadedExecutableDeleter(const PJRT_Api* api) {
     args.struct_size = PJRT_LoadedExecutable_Destroy_Args_STRUCT_SIZE;
     args.extension_start = nullptr;
     args.executable = executable;
-    pjrt::LogFatalIfPjrtError(api->PJRT_LoadedExecutable_Destroy(&args), api);
+    pjrt::LogFatalIfPjrtError(
+        NoCfiCall(api->PJRT_LoadedExecutable_Destroy, &args), api);
   };
 }
 
@@ -138,7 +153,7 @@ PJRT_TopologyDescriptionDeleter MakeTopologyDescriptionDeleter(
     destroy_args.topology = topology;
 
     pjrt::LogFatalIfPjrtError(
-        api->PJRT_TopologyDescription_Destroy(&destroy_args), api);
+        NoCfiCall(api->PJRT_TopologyDescription_Destroy, &destroy_args), api);
   };
 }
 
@@ -152,8 +167,8 @@ PJRT_Layouts_MemoryLayoutDeleter MakeMemoryLayoutDeleter(const PJRT_Api* api) {
     args.struct_size = PJRT_Layouts_MemoryLayout_Destroy_Args_STRUCT_SIZE;
     args.extension_start = nullptr;
     args.layout = layout;
-    pjrt::LogFatalIfPjrtError(ext_api->PJRT_Layouts_MemoryLayout_Destroy(&args),
-                              api);
+    pjrt::LogFatalIfPjrtError(
+        NoCfiCall(ext_api->PJRT_Layouts_MemoryLayout_Destroy, &args), api);
   };
 }
 
@@ -165,7 +180,7 @@ PJRT_EventDeleter MakeEventDeleter(const PJRT_Api* api) {
     args.extension_start = nullptr;
     args.event = managed;
 
-    LogFatalIfPjrtError(api->PJRT_Event_Destroy(&args), api);
+    LogFatalIfPjrtError(NoCfiCall(api->PJRT_Event_Destroy, &args), api);
   };
 }
 
@@ -399,7 +414,7 @@ xla::Future<> ConvertCEventToCppFuture(PJRT_Event* c_event,
     delete set_future;
   };
 
-  PJRT_Error* error = c_api->PJRT_Event_OnReady(&event_onready_args);
+  PJRT_Error* error = NoCfiCall(c_api->PJRT_Event_OnReady, &event_onready_args);
   if (error != nullptr) {
     return xla::Future<>(::pjrt::PjrtErrorToStatus(error, c_api));
   }
@@ -615,7 +630,7 @@ absl::string_view GetPlatformVersion(PJRT_Client* client, const PJRT_Api* api) {
   args.struct_size = PJRT_Client_PlatformVersion_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
   args.client = client;
-  LogFatalIfPjrtError(api->PJRT_Client_PlatformVersion(&args), api);
+  LogFatalIfPjrtError(NoCfiCall(api->PJRT_Client_PlatformVersion, &args), api);
 
   absl::string_view platform_version(args.platform_version,
                                      args.platform_version_size);
@@ -629,7 +644,7 @@ absl::string_view GetPlatformVersion(PJRT_TopologyDescription* c_topology,
   args.extension_start = nullptr;
   args.topology = c_topology;
   pjrt::LogFatalIfPjrtError(
-      api->PJRT_TopologyDescription_PlatformVersion(&args), api);
+      NoCfiCall(api->PJRT_TopologyDescription_PlatformVersion, &args), api);
   return absl::string_view(args.platform_version, args.platform_version_size);
 }
 
@@ -638,7 +653,8 @@ absl::string_view GetPlatformName(PJRT_Client* client, const PJRT_Api* api) {
   args.client = client;
   args.struct_size = PJRT_Client_PlatformName_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
-  pjrt::LogFatalIfPjrtError(api->PJRT_Client_PlatformName(&args), api);
+  pjrt::LogFatalIfPjrtError(NoCfiCall(api->PJRT_Client_PlatformName, &args),
+                            api);
 
   absl::string_view platform_name(args.platform_name, args.platform_name_size);
   return platform_name;
@@ -650,7 +666,8 @@ absl::StatusOr<PJRT_TopologyDescription*> GetTopologyDescription(
   args.struct_size = PJRT_Client_TopologyDescription_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
   args.client = client;
-  RETURN_STATUS_IF_PJRT_ERROR(api->PJRT_Client_TopologyDescription(&args), api);
+  RETURN_STATUS_IF_PJRT_ERROR(
+      NoCfiCall(api->PJRT_Client_TopologyDescription, &args), api);
   return args.topology;
 }
 
@@ -693,7 +710,8 @@ PJRT_DeviceDescription* GetDeviceDescription(const PJRT_Api* api,
   args.struct_size = PJRT_Device_GetDescription_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
   args.device = device;
-  pjrt::LogFatalIfPjrtError(api->PJRT_Device_GetDescription(&args), api);
+  pjrt::LogFatalIfPjrtError(NoCfiCall(api->PJRT_Device_GetDescription, &args),
+                            api);
   return args.device_description;
 }
 
@@ -703,14 +721,16 @@ absl::Span<PJRT_Memory* const> GetAddressableMemories(const PJRT_Api* api,
   args.struct_size = PJRT_Device_AddressableMemories_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
   args.device = device;
-  pjrt::LogFatalIfPjrtError(api->PJRT_Device_AddressableMemories(&args), api);
+  pjrt::LogFatalIfPjrtError(
+      NoCfiCall(api->PJRT_Device_AddressableMemories, &args), api);
   return absl::MakeSpan(args.memories, args.num_memories);
 }
 
 int GetId(const PJRT_Api* api, PJRT_DeviceDescription* device_desc) {
   PJRT_DeviceDescription_Id_Args args = PJRT_DeviceDescription_Id_Args{
       PJRT_DeviceDescription_Id_Args_STRUCT_SIZE, nullptr, device_desc};
-  pjrt::LogFatalIfPjrtError(api->PJRT_DeviceDescription_Id(&args), api);
+  pjrt::LogFatalIfPjrtError(NoCfiCall(api->PJRT_DeviceDescription_Id, &args),
+                            api);
   return args.id;
 }
 
@@ -724,9 +744,9 @@ static PJRT_KeyValueGetCFunc ToKVGetCFunc(
                       absl::Milliseconds(args->timeout_in_ms));
     if (!output.ok()) {
       absl::string_view message = output.status().message();
-      return (*args->callback_error)(
-          StatusCodeToPjrtErrorCode(output.status().code()), message.data(),
-          message.size());
+      return NoCfiCall(*args->callback_error,
+                       StatusCodeToPjrtErrorCode(output.status().code()),
+                       message.data(), message.size());
     }
     args->value = new char[output->size()];
     std::copy(output->begin(), output->end(), args->value);
@@ -743,9 +763,9 @@ static PJRT_KeyValueTryGetCFunc ToKVTryGetCFunc(
         kv_store->TryGet(absl::string_view(args->key, args->key_size));
     if (!output.ok()) {
       absl::string_view message = output.status().message();
-      return (*args->callback_error)(
-          StatusCodeToPjrtErrorCode(output.status().code()), message.data(),
-          message.size());
+      return NoCfiCall(*args->callback_error,
+                       StatusCodeToPjrtErrorCode(output.status().code()),
+                       message.data(), message.size());
     }
     args->value = new char[output->size()];
     std::copy(output->begin(), output->end(), args->value);
@@ -763,8 +783,9 @@ static PJRT_KeyValuePutCFunc ToKVPutCFunc(
                       absl::string_view(args->value, args->value_size));
     if (!status.ok()) {
       absl::string_view message = status.message();
-      return (*args->callback_error)(StatusCodeToPjrtErrorCode(status.code()),
-                                     message.data(), message.size());
+      return NoCfiCall(*args->callback_error,
+                       StatusCodeToPjrtErrorCode(status.code()), message.data(),
+                       message.size());
     }
     return nullptr;
   };
@@ -778,9 +799,9 @@ static PJRT_KeyValueGetCallback ToCKVGetCallback(
     if (kv_get_c_func == nullptr) {
       absl::Status status = xla::InvalidArgument(
           "got nullptr for PJRT_KeyValueGet_Args.user_arg");
-      return (*args->callback_error)(StatusCodeToPjrtErrorCode(status.code()),
-                                     status.message().data(),
-                                     status.message().size());
+      return NoCfiCall(*args->callback_error,
+                       StatusCodeToPjrtErrorCode(status.code()),
+                       status.message().data(), status.message().size());
     }
     return (*kv_get_c_func)(args);
   };
@@ -794,9 +815,9 @@ static PJRT_KeyValueTryGetCallback ToCKVTryGetCallback(
     if (kv_try_get_c_func == nullptr) {
       absl::Status status = xla::InvalidArgument(
           "got nullptr for PJRT_KeyValueTryGet_Args.user_arg");
-      return (*args->callback_error)(StatusCodeToPjrtErrorCode(status.code()),
-                                     status.message().data(),
-                                     status.message().size());
+      return NoCfiCall(*args->callback_error,
+                       StatusCodeToPjrtErrorCode(status.code()),
+                       status.message().data(), status.message().size());
     }
     return (*kv_try_get_c_func)(args);
   };
@@ -810,9 +831,9 @@ static PJRT_KeyValuePutCallback ToCKVPutCallback(
     if (kv_put_c_func == nullptr) {
       absl::Status status = xla::InvalidArgument(
           "got nullptr for PJRT_KeyValuePut_Args.user_arg");
-      return (*args->callback_error)(StatusCodeToPjrtErrorCode(status.code()),
-                                     status.message().data(),
-                                     status.message().size());
+      return NoCfiCall(*args->callback_error,
+                       StatusCodeToPjrtErrorCode(status.code()),
+                       status.message().data(), status.message().size());
     }
     return (*kv_put_c_func)(args);
   };
@@ -936,7 +957,7 @@ PJRT_Buffer_Type GetElementType(const PJRT_Api* api, PJRT_Buffer* buffer) {
   args.struct_size = PJRT_Buffer_ElementType_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
   args.buffer = buffer;
-  LogFatalIfPjrtError(api->PJRT_Buffer_ElementType(&args), api);
+  LogFatalIfPjrtError(NoCfiCall(api->PJRT_Buffer_ElementType, &args), api);
   return args.type;
 }
 
@@ -946,7 +967,7 @@ absl::Span<const int64_t> GetDimensions(const PJRT_Api* api,
   args.struct_size = PJRT_Buffer_Dimensions_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
   args.buffer = buffer;
-  LogFatalIfPjrtError(api->PJRT_Buffer_Dimensions(&args), api);
+  LogFatalIfPjrtError(NoCfiCall(api->PJRT_Buffer_Dimensions, &args), api);
   return {args.dims, args.num_dims};
 }
 
@@ -960,8 +981,8 @@ GetMemoryLayout(const PJRT_Api* api, PJRT_Buffer* buffer) {
       FindExtension<PJRT_Layouts_Extension>(api, PJRT_Extension_Type_Layouts);
   CHECK_NE(ext_api, nullptr) << "GetMemoryLayout called with PJRT_Api that "
                                 "doesn't support layouts extension";
-  LogFatalIfPjrtError(ext_api->PJRT_Layouts_PJRT_Buffer_MemoryLayout(&args),
-                      api);
+  LogFatalIfPjrtError(
+      NoCfiCall(ext_api->PJRT_Layouts_PJRT_Buffer_MemoryLayout, &args), api);
   return std::unique_ptr<PJRT_Layouts_MemoryLayout,
                          PJRT_Layouts_MemoryLayoutDeleter>(
       args.layout, MakeMemoryLayoutDeleter(api));
@@ -1012,7 +1033,8 @@ absl::string_view PlatformName(const PJRT_Api* api,
   args.struct_size = PJRT_TopologyDescription_PlatformName_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
   args.topology = topo_desc;
-  LogFatalIfPjrtError(api->PJRT_TopologyDescription_PlatformName(&args), api);
+  LogFatalIfPjrtError(
+      NoCfiCall(api->PJRT_TopologyDescription_PlatformName, &args), api);
   return {args.platform_name, args.platform_name_size};
 }
 
@@ -1024,7 +1046,8 @@ absl::Span<PJRT_DeviceDescription* const> DeviceDescriptions(
   args.extension_start = nullptr;
   args.topology = topo_desc;
   LogFatalIfPjrtError(
-      api->PJRT_TopologyDescription_GetDeviceDescriptions(&args), api);
+      NoCfiCall(api->PJRT_TopologyDescription_GetDeviceDescriptions, &args),
+      api);
   return {args.descriptions, args.num_descriptions};
 }
 
@@ -1038,7 +1061,7 @@ absl::StatusOr<xla::CompiledMemoryStats> GetCompiledMemoryStats(
   args.total_size_in_bytes = 0;
 
   RETURN_STATUS_IF_PJRT_ERROR(
-      api->PJRT_Executable_GetCompiledMemoryStats(&args), api);
+      NoCfiCall(api->PJRT_Executable_GetCompiledMemoryStats, &args), api);
   xla::CompiledMemoryStats results;
   results.generated_code_size_in_bytes = args.generated_code_size_in_bytes;
   results.argument_size_in_bytes = args.argument_size_in_bytes;
@@ -1113,7 +1136,8 @@ std::vector<xla::PjRtMemorySpaceDescription> GetMemorySpaceDescriptions(
   mem_desc_args.extension_start = nullptr;
   mem_desc_args.device_description = device_description;
   pjrt::LogFatalIfPjrtError(
-      extension->PJRT_DeviceDescription_MemoryDescriptions(&mem_desc_args),
+      NoCfiCall(extension->PJRT_DeviceDescription_MemoryDescriptions,
+                &mem_desc_args),
       c_api);
 
   std::vector<xla::PjRtMemorySpaceDescription> memory_space_descriptions;
@@ -1123,7 +1147,7 @@ std::vector<xla::PjRtMemorySpaceDescription> GetMemorySpaceDescriptions(
     kind_args.extension_start = nullptr;
     kind_args.memory_description = mem_desc_args.memory_descriptions[i];
     pjrt::LogFatalIfPjrtError(
-        extension->PJRT_MemoryDescription_Kind(&kind_args), c_api);
+        NoCfiCall(extension->PJRT_MemoryDescription_Kind, &kind_args), c_api);
     xla::PjRtMemorySpaceDescription description(
         std::string(kind_args.kind, kind_args.kind_size), kind_args.kind_id);
     memory_space_descriptions.push_back(description);
@@ -1158,7 +1182,7 @@ PJRT_Error* InvokePjRtEventWhenReady(
       (*on_done_with_event)(error);
       delete on_done_with_event;
     };
-    return api->PJRT_Event_OnReady(&event_args);
+    return NoCfiCall(api->PJRT_Event_OnReady, &event_args);
   }
   return nullptr;
 }

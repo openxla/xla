@@ -22,6 +22,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/attributes.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "tsl/profiler/lib/profiler_interface.h"
@@ -37,6 +38,11 @@ using tensorflow::profiler::XPlane;
 using tensorflow::profiler::XSpace;
 
 namespace {
+
+template <typename R, typename... Params, typename... Args>
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI R NoCfiCall(R (*fn)(Params...), Args&&... args) {
+  return fn(std::forward<Args>(args)...);
+}
 
 #define RETURN_STATUS_IF_PLUGIN_PROFILER_ERROR(expr, c_api)                  \
   do {                                                                       \
@@ -58,7 +64,7 @@ std::function<void(PLUGIN_Profiler_Error*)> MakeErrorDeleter(
     destroy_args.priv = nullptr;
     destroy_args.error = error;
 
-    api->error_destroy(&destroy_args);
+    NoCfiCall(api->error_destroy, &destroy_args);
   };
 }
 
@@ -68,7 +74,7 @@ absl::string_view GetPluginProfilerErrorMessage(
   message_args.struct_size = PLUGIN_Profiler_Error_Message_Args_STRUCT_SIZE;
   message_args.priv = nullptr;
   message_args.error = error;
-  api->error_message(&message_args);
+  NoCfiCall(api->error_message, &message_args);
   return absl::string_view(message_args.message, message_args.message_size);
 }
 
@@ -78,7 +84,7 @@ absl::StatusCode PluginProfilerErrorToStatusCode(
   args.struct_size = PLUGIN_Profiler_Error_GetCode_Args_STRUCT_SIZE;
   args.priv = nullptr;
   args.error = error;
-  PLUGIN_Profiler_Error* get_code_error = api->error_get_code(&args);
+  PLUGIN_Profiler_Error* get_code_error = NoCfiCall(api->error_get_code, &args);
   if (get_code_error != nullptr) {
     std::unique_ptr<PLUGIN_Profiler_Error,
                     std::function<void(PLUGIN_Profiler_Error*)>>
@@ -120,7 +126,7 @@ PluginTracer::PluginTracer(const PLUGIN_Profiler_Api* profiler_api,
   std::string options_str = options.SerializeAsString();
   args.options = options_str.c_str();
   args.options_size = options_str.size();
-  PLUGIN_Profiler_Error* error = profiler_api_->create(&args);
+  PLUGIN_Profiler_Error* error = NoCfiCall(profiler_api_->create, &args);
   if (error != nullptr) {
     std::unique_ptr<PLUGIN_Profiler_Error,
                     std::function<void(PLUGIN_Profiler_Error*)>>
@@ -138,7 +144,7 @@ PluginTracer::~PluginTracer() {
   }
   PLUGIN_Profiler_Destroy_Args args;
   args.profiler = profiler_;
-  PLUGIN_Profiler_Error* error = profiler_api_->destroy(&args);
+  PLUGIN_Profiler_Error* error = NoCfiCall(profiler_api_->destroy, &args);
   if (error != nullptr) {
     std::unique_ptr<PLUGIN_Profiler_Error,
                     std::function<void(PLUGIN_Profiler_Error*)>>
@@ -151,7 +157,7 @@ PluginTracer::~PluginTracer() {
 absl::Status PluginTracer::Start() {
   PLUGIN_Profiler_Start_Args args;
   args.profiler = profiler_;
-  RETURN_STATUS_IF_PLUGIN_PROFILER_ERROR(profiler_api_->start(&args),
+  RETURN_STATUS_IF_PLUGIN_PROFILER_ERROR(NoCfiCall(profiler_api_->start, &args),
                                          profiler_api_);
   return absl::OkStatus();
 }
@@ -159,7 +165,7 @@ absl::Status PluginTracer::Start() {
 absl::Status PluginTracer::Stop() {
   PLUGIN_Profiler_Stop_Args args;
   args.profiler = profiler_;
-  RETURN_STATUS_IF_PLUGIN_PROFILER_ERROR(profiler_api_->stop(&args),
+  RETURN_STATUS_IF_PLUGIN_PROFILER_ERROR(NoCfiCall(profiler_api_->stop, &args),
                                          profiler_api_);
   return absl::OkStatus();
 }
@@ -168,8 +174,8 @@ absl::Status PluginTracer::CollectData(XSpace* space) {
   PLUGIN_Profiler_CollectData_Args args;
   args.profiler = profiler_;
   args.buffer = nullptr;
-  RETURN_STATUS_IF_PLUGIN_PROFILER_ERROR(profiler_api_->collect_data(&args),
-                                         profiler_api_);
+  RETURN_STATUS_IF_PLUGIN_PROFILER_ERROR(
+      NoCfiCall(profiler_api_->collect_data, &args), profiler_api_);
   if (args.buffer_size_in_bytes > 0) {
     std::vector<uint8_t> buffer(args.buffer_size_in_bytes);
     XSpace xspace;
@@ -193,7 +199,7 @@ absl::StatusOr<tsl::profiler::ConsumeResult> PluginTracer::Consume() {
   args.profiler = profiler_;
   args.result = nullptr;
 
-  PLUGIN_Profiler_Error* error = profiler_api_->consume(&args);
+  PLUGIN_Profiler_Error* error = NoCfiCall(profiler_api_->consume, &args);
   if (error != nullptr) {
     std::unique_ptr<PLUGIN_Profiler_Error,
                     std::function<void(PLUGIN_Profiler_Error*)>>
@@ -210,7 +216,7 @@ absl::StatusOr<tsl::profiler::ConsumeResult> PluginTracer::Consume() {
       destroy_args.struct_size =
           PLUGIN_Profiler_ConsumeResult_Destroy_Args_STRUCT_SIZE;
       destroy_args.consume_result = res;
-      profiler_api->consume_result_destroy(&destroy_args);
+      NoCfiCall(profiler_api->consume_result_destroy, &destroy_args);
     }
   };
   std::shared_ptr<PLUGIN_Profiler_ConsumeResult> handle(args.result, deleter);
@@ -242,7 +248,7 @@ absl::Status PluginTracer::Serialize(std::any data,
   args.serialized_bytes = nullptr;
   args.serialized_size = 0;
 
-  PLUGIN_Profiler_Error* error = profiler_api_->serialize(&args);
+  PLUGIN_Profiler_Error* error = NoCfiCall(profiler_api_->serialize, &args);
   if (error != nullptr) {
     std::unique_ptr<PLUGIN_Profiler_Error,
                     std::function<void(PLUGIN_Profiler_Error*)>>

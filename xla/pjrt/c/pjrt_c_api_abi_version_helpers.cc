@@ -17,7 +17,9 @@ limitations under the License.
 
 #include <memory>
 #include <string>
+#include <utility>
 
+#include "absl/base/attributes.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
@@ -29,6 +31,15 @@ limitations under the License.
 #include "xla/pjrt/proto/pjrt_abi_version.pb.h"
 
 namespace pjrt {
+
+namespace {
+
+template <typename R, typename... Params, typename... Args>
+ABSL_ATTRIBUTE_NO_SANITIZE_CFI R NoCfiCall(R (*fn)(Params...), Args&&... args) {
+  return fn(std::forward<Args>(args)...);
+}
+
+}  // namespace
 
 absl::StatusOr<std::unique_ptr<xla::PjRtRuntimeAbiVersion>>
 CApiRuntimeAbiVersionFromProto(const xla::PjRtRuntimeAbiVersionProto& proto,
@@ -53,8 +64,8 @@ CApiRuntimeAbiVersionFromProto(const xla::PjRtRuntimeAbiVersionProto& proto,
   args.struct_size = PJRT_RuntimeAbiVersion_FromProto_Args_STRUCT_SIZE;
   args.serialized_proto = serialized_proto.c_str();
   args.serialized_proto_size = serialized_proto.size();
-  RETURN_STATUS_IF_PJRT_ERROR(extension->runtime_abi_version_from_proto(&args),
-                              c_api);
+  RETURN_STATUS_IF_PJRT_ERROR(
+      NoCfiCall(extension->runtime_abi_version_from_proto, &args), c_api);
   return std::make_unique<xla::PjRtCApiRuntimeAbiVersion>(args.abi_version,
                                                           c_api, extension);
 }
@@ -83,7 +94,7 @@ CApiExecutableAbiVersionFromProto(
   args.serialized_proto = serialized_proto.c_str();
   args.serialized_proto_size = serialized_proto.size();
   RETURN_STATUS_IF_PJRT_ERROR(
-      extension->executable_abi_version_from_proto(&args), c_api);
+      NoCfiCall(extension->executable_abi_version_from_proto, &args), c_api);
   return std::make_unique<xla::PjRtCApiExecutableAbiVersion>(args.abi_version,
                                                              c_api, extension);
 }

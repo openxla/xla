@@ -116,6 +116,7 @@ cc_library(
         "//xla/pjrt:pjrt_abi_version",
         "//xla/pjrt/c_api_client:pjrt_c_api_client",
         "//xla/pjrt/proto:pjrt_abi_version_proto_cc",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
     ],
