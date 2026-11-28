@@ -1290,6 +1290,7 @@ xla_cc_test(
         "//xla/hlo/utils:hlo_matchers",
         "//xla/hlo/utils:hlo_query",
         "//xla/service:buffer_value",
+        "//xla/service:hlo_buffer",
         "//xla/service:hlo_graph_dumper",
         "//xla/service:hlo_module_config",
         "//xla/tests:xla_internal_test_main",
