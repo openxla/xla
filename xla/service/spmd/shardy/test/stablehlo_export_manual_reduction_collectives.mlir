@@ -813,6 +813,30 @@ func.func @unreduced_max_sharded_transpose_of_sharded_dot_without_unreduced(%arg
   return %1 : tensor<2x8xf32>
 }
 
+// -----
+
+sdy.mesh @mesh = <["x"=2, "y"=2]>
+
+// CHECK-LABEL: func @sharded_and_replicated_to_unreduced_complex
+func.func @sharded_and_replicated_to_unreduced_complex(
+    %arg0: tensor<4x4xcomplex<f32>> {sdy.sharding = #sdy.sharding<@mesh, [{"x"}, {}]>},
+    %arg1: tensor<3x4xcomplex<f64>> {sdy.sharding = #sdy.sharding<@mesh, [{"y"}, {}]>})
+    -> (tensor<4x4xcomplex<f32>>, tensor<3x4xcomplex<f64>>) {
+  // CHECK-NEXT: %[[MC0:.*]] = sdy.manual_computation(%arg0)
+  // CHECK:        %[[ZERO0:.*]] = stablehlo.constant dense<(0.000000e+00,0.000000e+00)> : tensor<complex<f32>>
+  // CHECK-NEXT:   %[[BCAST0:.*]] = stablehlo.broadcast %[[ZERO0]], sizes = [4, 4]
+  // CHECK:        stablehlo.dynamic_update_slice %[[BCAST0]], %{{.*}}
+  // CHECK:      %[[PAD_ZERO:.*]] = stablehlo.constant dense<(0.000000e+00,0.000000e+00)> : tensor<complex<f64>>
+  // CHECK-NEXT: %[[PADDED:.*]] = stablehlo.pad %arg1, %[[PAD_ZERO]]
+  // CHECK-NEXT: %[[MC1:.*]] = sdy.manual_computation(%[[PADDED]])
+  // CHECK:        %[[ZERO1:.*]] = stablehlo.constant dense<(0.000000e+00,0.000000e+00)> : tensor<complex<f64>>
+  // CHECK-NEXT:   %[[BCAST1:.*]] = stablehlo.broadcast %[[ZERO1]], sizes = [2, 4]
+  // CHECK-NEXT:   stablehlo.select %{{.*}}, %{{.*}}, %[[BCAST1]]
+  %0 = sdy.sharded_to_unreduced [{"x"}, {}] %arg0 out_sharding=<@mesh, [{}, {}], unreduced={"x"}> : tensor<4x4xcomplex<f32>>
+  %1 = sdy.replicated_to_unreduced {"x"} %arg1 out_sharding=<@mesh, [{"y"}, {}], unreduced={"x"}> : tensor<3x4xcomplex<f64>>
+  return %0, %1 : tensor<4x4xcomplex<f32>>, tensor<3x4xcomplex<f64>>
+}
+
 
 
 

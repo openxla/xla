@@ -6,9 +6,19 @@ HloModule Test
 ENTRY Test {
   constant.2 = pred[] constant(false)
   constant.1 = s32[3]{0} constant({0, 1, 2})
-  ROOT convert.3 = pred[3]{0} convert(constant.1)
+  c64_param = c64[3]{0} parameter(0)
+  c128_dyn = c128[<=4]{0} parameter(1)
+  conv_s32 = pred[3]{0} convert(constant.1)
+  conv_c64 = pred[3]{0} convert(c64_param)
+  conv_c128 = pred[<=4]{0} convert(c128_dyn)
+  ROOT out = (pred[3]{0}, pred[3]{0}, pred[<=4]{0}) tuple(conv_s32, conv_c64, conv_c128)
 }
 // Conversion to "pred" is like a "cast to bool" in C/C++, it has to be
 // translated to a compared instead of a convert to i1 (which is truncating).
-// CHECK: %[[ZERO:.*]] = mhlo.constant dense<0> : tensor<3xi32>
-// CHECK: mhlo.compare NE, %{{.*}}, %[[ZERO]]
+// CHECK-DAG: %[[ZERO_I32:.*]] = mhlo.constant dense<0> : tensor<3xi32>
+// CHECK-DAG: mhlo.compare NE, %{{.*}}, %[[ZERO_I32]]
+// CHECK-DAG: %[[ZERO_C64:.*]] = mhlo.constant dense<(0.000000e+00,0.000000e+00)> : tensor<3xcomplex<f32>>
+// CHECK-DAG: mhlo.compare NE, %arg0, %[[ZERO_C64]]
+// CHECK-DAG: %[[ZERO_C128:.*]] = mhlo.constant dense<(0.000000e+00,0.000000e+00)> : tensor<4xcomplex<f64>>
+// CHECK-DAG: %[[DYN_ZERO:.*]] = "mhlo.set_dimension_size"(%[[ZERO_C128]], %{{.*}}) <{dimension = 0 : i64}>
+// CHECK-DAG: mhlo.compare NE, %arg1, %[[DYN_ZERO]]

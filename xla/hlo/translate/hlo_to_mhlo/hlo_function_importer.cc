@@ -226,6 +226,18 @@ Operation* GetTupleElementOp(mlir::OpBuilder* builder, Value value,
 // %1 = set_dimension_size %c, %0, bounded_dim={0}
 //
 // Note: Currently this only supports a single bounded dimension.
+// OpBuilder::getZeroAttr returns null for ComplexType; build a (0, 0) splat.
+mlir::Attribute getZeroConstantAttr(mlir::RankedTensorType type,
+                                    mlir::OpBuilder* builder) {
+  if (auto complex_type =
+          mlir::dyn_cast<mlir::ComplexType>(type.getElementType())) {
+    mlir::Attribute zero = builder->getZeroAttr(complex_type.getElementType());
+    return mlir::DenseElementsAttr::get(type,
+                                        builder->getArrayAttr({zero, zero}));
+  }
+  return builder->getZeroAttr(type);
+}
+
 absl::StatusOr<mlir::Value> createConstantZeroLike(mlir::Value operand,
                                                    Shape input_shape,
                                                    mlir::OpBuilder* builder,
@@ -237,8 +249,8 @@ absl::StatusOr<mlir::Value> createConstantZeroLike(mlir::Value operand,
   LLVM_DEBUG(llvm::dbgs() << "CreateConstantZeroLike: " << operand << ", "
                           << type << '\n');
   if (type.hasStaticShape()) {
-    return mlir::stablehlo::ConstantOp::create(*builder, loc,
-                                               builder->getZeroAttr(type))
+    return mlir::stablehlo::ConstantOp::create(
+               *builder, loc, getZeroConstantAttr(type, builder))
         ->getResult(0);
   }
 
@@ -259,7 +271,7 @@ absl::StatusOr<mlir::Value> createConstantZeroLike(mlir::Value operand,
   auto padded_type =
       mlir::RankedTensorType::get(padded_dims, type.getElementType());
   auto padded_constant = mlir::stablehlo::ConstantOp::create(
-      *builder, loc, builder->getZeroAttr(padded_type));
+      *builder, loc, getZeroConstantAttr(padded_type, builder));
 
   // Get or Set the dimensions size based on the operand type.
   auto dim_size = mlir::stablehlo::GetDimensionSizeOp::create(

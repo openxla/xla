@@ -3217,6 +3217,35 @@ TEST_P(ShardyXLATest, CustomSPMDPartitioningCallbackErrorPropagated) {
       StatusIs(absl::StatusCode::kUnknown, HasSubstr("already manual")));
 }
 
+TEST_P(ShardyXLATest, ConvertGlobalToLocalComplexReduceScatterAndPredConvert) {
+  const char* const hloString = R"(
+    HloModule complex_spmd, num_partitions=4
+
+    ENTRY %main {
+      %lhs = c64[8,16] parameter(0), sharding={devices=[1,4]<=[4]}
+      %rhs = c64[16,8] parameter(1), sharding={devices=[4,1]<=[4]}
+      %dot = c64[8,8] dot(%lhs, %rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sharding={devices=[4,1]<=[4]}
+      %c128_in = c128[8,8] parameter(2), sharding={devices=[4,1]<=[4]}
+      %mask = pred[8,8] convert(%c128_in), sharding={devices=[4,1]<=[4]}
+      ROOT %out = (c64[8,8], pred[8,8]) tuple(%dot, %mask)
+    })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hloString));
+  mlir::sdy::PropagationOptions propagationOptions;
+  propagationOptions.partitionerStage =
+      mlir::sdy::PartitionerStage::kConvertGlobalToLocal;
+  runShardy(module.get(), /*stablehloImport=*/true,
+            /*runSdyShardingPropagation=*/true, /*expectChanged=*/true,
+            propagationOptions);
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_TRUE(root->shape().IsTuple());
+  EXPECT_EQ(root->shape().tuple_shapes(0), ShapeUtil::MakeShape(C64, {2, 8}));
+  EXPECT_EQ(root->shape().tuple_shapes(1), ShapeUtil::MakeShape(PRED, {2, 8}));
+  EXPECT_THAT(root->operand(0), op::ReduceScatter());
+  EXPECT_THAT(root->operand(1), op::Compare());
+}
+
 // NOLINTEND(misc-override-with-different-visibility)
 
 INSTANTIATE_TEST_SUITE_P(
