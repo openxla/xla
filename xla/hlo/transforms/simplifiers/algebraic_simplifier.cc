@@ -1462,7 +1462,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleAllReduceOrReduceScatter(
       PrimitiveType element_type = collective->shape().element_type();
       const Literal& literal = uniform->scalar_literal;
 
-      Literal new_literal;
+      std::optional<Literal> new_literal;
       primitive_util::ArrayTypeSwitch(
           [&](auto type_constant) {
             using T = primitive_util::NativeTypeOf<type_constant>;
@@ -1472,16 +1472,21 @@ absl::Status AlgebraicSimplifierVisitor::HandleAllReduceOrReduceScatter(
               T result = val * static_cast<T>(group_size);
               new_literal = LiteralUtil::CreateR0<T>(result);
             }
+            if constexpr (primitive_util::IsComplexType(type_constant)) {
+              T val = literal.Get<T>({});
+              T result = val * static_cast<typename T::value_type>(group_size);
+              new_literal = LiteralUtil::CreateR0<T>(result);
+            }
           },
           element_type);
 
-      if (!ShapeUtil::IsInitialized(new_literal.shape())) {
+      if (!new_literal.has_value()) {
         return absl::OkStatus();
       }
 
       return ReplaceWithNewInstruction(
           collective, CreateUniformCollectiveReplacement(
-                          collective, {std::move(new_literal), nullptr},
+                          collective, {std::move(*new_literal), nullptr},
                           options_, simplifier_, this));
     }
     default:

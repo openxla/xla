@@ -577,6 +577,7 @@ xla_cc_test(
         "//xla/service:memory_annotations_hdr",
         "//xla/service:pattern_matcher",
         "//xla/service:shape_inference",
+        "//xla/tests:literal_test_util",
         "//xla/tests:test_utils",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:logging",

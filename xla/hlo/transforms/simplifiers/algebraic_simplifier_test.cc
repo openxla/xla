@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/service/shape_inference.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/logging.h"
@@ -15996,6 +15997,53 @@ TEST_F(AlgebraicSimplifierTest, AllReduceAndReduceScatterSumOfConstant) {
   EXPECT_EQ(vmem_root->shape().layout().memory_space(), 1);
   EXPECT_EQ(vmem_root->operand(0)->shape().layout().memory_space(),
             Layout::kDefaultMemorySpace);
+}
+
+TEST_F(AlgebraicSimplifierTest, AllReduceAndReduceScatterSumOfConstantComplex) {
+  constexpr absl::string_view kAllReduceSumHlo = R"hlo(
+    HloModule m
+    add {
+      p0 = c64[] parameter(0)
+      p1 = c64[] parameter(1)
+      ROOT a = c64[] add(p0, p1)
+    }
+    ENTRY test {
+      c = c64[] constant((inf, 2))
+      ROOT ar = c64[] all-reduce(c), to_apply=add, replica_groups={{0,1,2,3}}
+    })hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> ar_module,
+                       ParseAndReturnVerifiedModule(kAllReduceSumHlo));
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(ar_module.get()),
+              absl_testing::IsOkAndHolds(true));
+  const HloInstruction* ar_root =
+      ar_module->entry_computation()->root_instruction();
+  EXPECT_TRUE(ShapeUtil::IsScalar(ar_root->shape()));
+  xla::LiteralTestUtil::ExpectR0Near<xla::complex64>(
+      xla::complex64{std::numeric_limits<float>::infinity(), 8},
+      ar_root->literal(), xla::ErrorSpec(0, 0));
+
+  constexpr absl::string_view kReduceScatterSumHlo = R"hlo(
+    HloModule m
+    add {
+      p0 = c64[] parameter(0)
+      p1 = c64[] parameter(1)
+      ROOT a = c64[] add(p0, p1)
+    }
+    ENTRY test {
+      c = c64[8] constant({(1, -inf), (1, -inf), (1, -inf), (1, -inf), (1, -inf), (1, -inf), (1, -inf), (1, -inf),})
+      ROOT rs = c64[2] reduce-scatter(c), dimensions={0}, to_apply=add,
+        replica_groups={{0,1,2,3}}
+    })hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> rs_module,
+                       ParseAndReturnVerifiedModule(kReduceScatterSumHlo));
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(rs_module.get()),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(rs_module->entry_computation()->root_instruction(),
+              GmockMatch(m::Broadcast(m::ConstantScalar())));
+  xla::LiteralTestUtil::ExpectR0Near<xla::complex64>(
+      xla::complex64{4, -std::numeric_limits<float>::infinity()},
+      rs_module->entry_computation()->root_instruction()->operand(0)->literal(),
+      xla::ErrorSpec(0, 0));
 }
 
 TEST_F(AlgebraicSimplifierTest, UniformCollectiveNegativeCases) {
