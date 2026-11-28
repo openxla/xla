@@ -2844,15 +2844,19 @@ AlgebraicSimplifierVisitor::RemoveDegenerateDimensionFromDot(
 
   HloInstruction* new_lhs =
       num_degenerate_lhs_dims > 0
-          ? dot->parent()->AddInstruction(HloInstruction::CreateReshape(
-                ShapeUtil::DropDegenerateDimensions(lhs_shape),
-                dot->mutable_operand(0)))
+          ? dot->parent()->AddInstruction(
+                HloInstruction::CreateReshape(
+                    ShapeUtil::DropDegenerateDimensions(lhs_shape),
+                    dot->mutable_operand(0)),
+                &dot->metadata())
           : dot->mutable_operand(0);
   HloInstruction* new_rhs =
       num_degenerate_rhs_dims > 0
-          ? dot->parent()->AddInstruction(HloInstruction::CreateReshape(
-                ShapeUtil::DropDegenerateDimensions(rhs_shape),
-                dot->mutable_operand(1)))
+          ? dot->parent()->AddInstruction(
+                HloInstruction::CreateReshape(
+                    ShapeUtil::DropDegenerateDimensions(rhs_shape),
+                    dot->mutable_operand(1)),
+                &dot->metadata())
           : dot->mutable_operand(1);
   ABSL_ASSIGN_OR_RETURN(auto new_dot, MakeDotHlo(new_lhs, new_rhs, new_dnums,
                                                  dot->precision_config(),
@@ -3112,15 +3116,19 @@ AlgebraicSimplifierVisitor::NormalizeDotOperandToBatchMajorAndContractingMinor(
 }
 
 HloInstruction* AlgebraicSimplifierVisitor::AddReduce(
-    HloInstruction* hlo, absl::Span<const int64_t> dims, PrimitiveType type) {
-  HloInstruction* zero =
-      computation_->AddInstruction(simplifier_->CreateConstantWithLayoutUpdated(
-          LiteralUtil::Zero(hlo->shape().element_type()).Clone()));
+    HloInstruction* hlo, absl::Span<const int64_t> dims, PrimitiveType type,
+    const OpMetadata& metadata) {
+  HloInstruction* zero = computation_->AddInstruction(
+      simplifier_->CreateConstantWithLayoutUpdated(
+          LiteralUtil::Zero(hlo->shape().element_type()).Clone()),
+      &metadata);
   HloComputation* AddReduce_computation = GetOrCreateScalarAddComputation(type);
   Shape shape = ShapeUtil::DeleteDimensions(dims, hlo->shape());
   simplifier_->UpdateLayout(&shape);
-  return computation_->AddInstruction(HloInstruction::CreateReduce(
-      shape, hlo, zero, dims, AddReduce_computation));
+  return computation_->AddInstruction(
+      HloInstruction::CreateReduce(shape, hlo, zero, dims,
+                                   AddReduce_computation),
+      &metadata);
 }
 
 absl::StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfConcat(
@@ -4285,16 +4293,24 @@ absl::Status AlgebraicSimplifierVisitor::RewriteBatchPlusContractingAsReduce(
                         NormalizeDotOperandToBatchMajorAndContractingMinor(
                             lhs, dnums.lhs_batch_dimensions(),
                             dnums.lhs_contracting_dimensions()));
+  if (new_lhs != lhs) {
+    new_lhs->set_metadata(dot->metadata());
+  }
   if (!ShapeUtil::SameElementType(dot->shape(), new_lhs->shape())) {
-    new_lhs = MakeConvertToHlo(new_lhs, dot->shape().element_type());
+    new_lhs = MakeConvertToHlo(new_lhs, dot->shape().element_type(),
+                               &dot->metadata());
   }
 
   ABSL_ASSIGN_OR_RETURN(HloInstruction * new_rhs,
                         NormalizeDotOperandToBatchMajorAndContractingMinor(
                             rhs, dnums.rhs_batch_dimensions(),
                             dnums.rhs_contracting_dimensions()));
+  if (new_rhs != rhs) {
+    new_rhs->set_metadata(dot->metadata());
+  }
   if (!ShapeUtil::SameElementType(dot->shape(), new_rhs->shape())) {
-    new_rhs = MakeConvertToHlo(new_rhs, dot->shape().element_type());
+    new_rhs = MakeConvertToHlo(new_rhs, dot->shape().element_type(),
+                               &dot->metadata());
   }
 
   int64_t lhs_outer_dims = lhs->shape().dimensions().size() -
@@ -4347,17 +4363,18 @@ absl::Status AlgebraicSimplifierVisitor::RewriteBatchPlusContractingAsReduce(
   ABSL_ASSIGN_OR_RETURN(
       HloInstruction * new_dot,
       MakeMultiplyForPrecisionAlgorithm(dot, new_lhs, new_rhs));
+  new_dot->set_metadata(dot->metadata());
 
   std::vector<int64_t> reduce_dims(dnums.lhs_contracting_dimensions_size());
   PrimitiveType dot_type =
       ShapeUtil::ElementIsFloating(dot->shape())
           ? (dot->shape().element_type() == F64 ? F64 : F32)
           : dot->shape().element_type();
-  new_dot = AsType(new_dot, dot_type);
+  new_dot = AsType(new_dot, dot_type, dot->metadata());
   const int64_t outer_dims = lhs_outer_dims + rhs_outer_dims;
   absl::c_iota(reduce_dims, outer_dims + dnums.lhs_batch_dimensions_size());
-  new_dot = AddReduce(new_dot, reduce_dims, dot_type);
-  new_dot = AsType(new_dot, dot->shape().element_type());
+  new_dot = AddReduce(new_dot, reduce_dims, dot_type, dot->metadata());
+  new_dot = AsType(new_dot, dot->shape().element_type(), dot->metadata());
   return ReplaceInstruction(dot, new_dot);
 }
 
