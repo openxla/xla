@@ -15,7 +15,6 @@
 #include "xla/python/ifrt_proxy/client/client.h"
 
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
