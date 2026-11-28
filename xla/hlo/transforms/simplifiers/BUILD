@@ -1860,6 +1860,7 @@ cc_library(
     deps = [
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/transforms/expanders:op_expander_pass",
         "//xla/service:gather_scatter_utils",
@@ -1876,7 +1877,11 @@ xla_cc_test(
     srcs = ["gather_simplifier_test.cc"],
     deps = [
         ":gather_simplifier",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:gather_scatter_utils",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",

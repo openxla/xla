@@ -32,14 +32,38 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout_util.h"
 #include "xla/literal_util.h"
+#include "xla/overflow_util.h"
 #include "xla/permutation_util.h"
+#include "xla/primitive_util.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/util.h"
 
 namespace xla {
 
 namespace {
+
+void CopyAttrs(const Shape& src, Shape* dst) {
+  if (LayoutUtil::HasLayout(src) && LayoutUtil::HasLayout(*dst)) {
+    dst->mutable_layout()->set_element_size_in_bits(
+        src.layout().element_size_in_bits());
+    dst->mutable_layout()->set_memory_space(src.layout().memory_space());
+  }
+}
+
+absl::StatusOr<HloInstruction*> InsertUnitDim(HloInstruction* op, int64_t dim,
+                                              const Shape& layout_src) {
+  std::vector<int64_t> dims(op->shape().dimensions().begin(),
+                            op->shape().dimensions().end());
+  std::vector<bool> dyn(op->shape().dynamic_dimensions().begin(),
+                        op->shape().dynamic_dimensions().end());
+  dims.insert(dims.begin() + dim, 1);
+  dyn.insert(dyn.begin() + dim, false);
+  Shape out = ShapeUtil::MakeShape(op->shape().element_type(), dims, dyn);
+  CopyAttrs(layout_src, &out);
+  return MakeReshapeHlo(out, op);
+}
 
 // Generates the HLO to calculate the implicit and explicit batch dimension
 // indices and returns the explicit batch dimension to the HLO indices in the
@@ -96,24 +120,30 @@ std::vector<HloInstruction*> GenerateExplicitBatchDimIndices(
 
 absl::StatusOr<HloInstruction*> TransformStartIndices(
     HloInstruction* indices, int64_t index_vector_dim) {
-  int64_t rank = indices->shape().dimensions().size();
+  const Shape orig_shape = indices->shape();
+  int64_t rank = orig_shape.dimensions().size();
   if (index_vector_dim == rank) {
-    // Add a size 1 dimension to the indices if the index_vector_dim is
-    // implicit.
     ABSL_ASSIGN_OR_RETURN(indices,
-                          InsertDegenerateDims(indices, {index_vector_dim}));
+                          InsertUnitDim(indices, index_vector_dim, orig_shape));
     ++rank;
   } else if (index_vector_dim < rank - 1) {
-    // Ensure index_vector_dim is the last dimension in scatter_indices.
     ABSL_ASSIGN_OR_RETURN(indices,
                           MoveDimensionToEnd(indices, index_vector_dim, rank));
   }
 
   // Flatten indices, making it two-dimensional.
   if (rank > 2) {
+    int64_t lead = 1;
+    for (int64_t i = 0; i < rank - 1; ++i) {
+      auto [prod, bad] =
+          OverflowSafeMultiply(lead, indices->shape().dimensions(i));
+      if (bad) return InvalidArgument("Start indices batch size overflows.");
+      lead = prod;
+    }
     ABSL_ASSIGN_OR_RETURN(indices, CollapseFirstNDims(indices, rank - 1));
+    CopyAttrs(orig_shape, indices->mutable_shape());
   } else if (rank == 1) {
-    ABSL_ASSIGN_OR_RETURN(indices, InsertDegenerateDims(indices, {0}));
+    ABSL_ASSIGN_OR_RETURN(indices, InsertUnitDim(indices, 0, orig_shape));
   }
   return indices;
 }
@@ -138,18 +168,13 @@ absl::StatusOr<HloInstruction*> MaybeTranspose(
     return operand;
   }
   ABSL_ASSIGN_OR_RETURN(auto* result, MakeTransposeHlo(operand, permutation));
-  // Assign the default layout to the transpose. This method is also used after
-  // layout normalization, and before, we don't care about the layout.
-  *result->mutable_shape()->mutable_layout() =
-      LayoutUtil::GetDefaultLayoutForShape(result->shape());
-  // Propagate the element size in bits of the operand to the newly created
-  // transpose. For sub-byte types, there is no canonical cross-platform
-  // normalization for packing, so `GetDefaultLayoutForShape` may not end up
-  // setting the element size in bits correctly.
-  int64_t element_size_in_bits =
-      operand->shape().layout().element_size_in_bits();
-  result->mutable_shape()->mutable_layout()->set_element_size_in_bits(
-      element_size_in_bits);
+  if (LayoutUtil::HasLayout(operand->shape())) {
+    *result->mutable_shape()->mutable_layout() =
+        LayoutUtil::GetDefaultLayoutForShape(result->shape());
+    CopyAttrs(operand->shape(), result->mutable_shape());
+  } else {
+    result->mutable_shape()->clear_layout();
+  }
   return result;
 }
 
@@ -192,17 +217,30 @@ absl::StatusOr<HloInstruction*> ExpandIndexVectorIntoOperandSpace(
         LiteralUtil::CreateFromDimensions(index_shape.element_type(), {0})));
   }
 
+  auto convert_to = [](HloInstruction* v, PrimitiveType ty) {
+    Shape s = ShapeUtil::ChangeElementType(v->shape(), ty);
+    if (LayoutUtil::HasLayout(s))
+      s.mutable_layout()->set_element_size_in_bits(0);
+    return v->parent()->AddInstruction(HloInstruction::CreateConvert(s, v));
+  };
+  PrimitiveType coord_type = index_shape.element_type();
+  if (!start_indices_batching_dims.empty()) {
+    PrimitiveType ind_type = induction_var->shape().element_type();
+    if (primitive_util::BitWidth(coord_type) <
+        primitive_util::BitWidth(ind_type)) {
+      coord_type = (primitive_util::IsSignedIntegralType(ind_type) ||
+                    primitive_util::IsUnsignedIntegralType(coord_type))
+                       ? ind_type
+                       : S64;
+      index_vector = convert_to(index_vector, coord_type);
+    }
+    if (ind_type != coord_type) {
+      induction_var = convert_to(induction_var, coord_type);
+    }
+  }
   HloInstruction* zero =
       computation->AddInstruction(HloInstruction::CreateConstant(
-          LiteralUtil::CreateFromDimensions(index_shape.element_type(), {1})));
-
-  if (induction_var->shape().element_type() != index_shape.element_type()) {
-    induction_var =
-        induction_var->parent()->AddInstruction(HloInstruction::CreateConvert(
-            ShapeUtil::ChangeElementType(induction_var->shape(),
-                                         index_shape.element_type()),
-            induction_var));
-  }
+          LiteralUtil::CreateFromDimensions(coord_type, {1})));
   // We extract out individual components from the smaller index and concatenate
   // them (interspersing zeros as needed) into the larger index.
   std::vector<HloInstruction*> expanded_index_components;
@@ -212,8 +250,13 @@ absl::StatusOr<HloInstruction*> ExpandIndexVectorIntoOperandSpace(
                                       induction_var);
   int64_t seen_explicit_batch_dims = 0;
   for (int i = 0; i < operand_rank; i++) {
-    int64_t index_vector_dim_index = FindIndex(start_index_map, i);
-    if (index_vector_dim_index != start_index_map.size()) {
+    if (absl::c_linear_search(operand_batching_dims, i)) {
+      expanded_index_components.push_back(MakeBroadcastHlo(
+          explicit_batch_dim_indices[seen_explicit_batch_dims++],
+          /*broadcast_dimensions=*/{},
+          /*result_shape_bounds=*/{1}));
+    } else if (int64_t index_vector_dim_index = FindIndex(start_index_map, i);
+               index_vector_dim_index != start_index_map.size()) {
       ABSL_ASSIGN_OR_RETURN(
           HloInstruction * component_to_concat,
           MakeSliceHlo(index_vector, /*start_indices=*/{index_vector_dim_index},
@@ -221,14 +264,7 @@ absl::StatusOr<HloInstruction*> ExpandIndexVectorIntoOperandSpace(
                        /*strides=*/{1}));
       expanded_index_components.push_back(component_to_concat);
     } else {
-      if (absl::c_linear_search(operand_batching_dims, i)) {
-        expanded_index_components.push_back(MakeBroadcastHlo(
-            explicit_batch_dim_indices[seen_explicit_batch_dims++],
-            /*broadcast_dimensions=*/{},
-            /*result_shape_bounds=*/{1}));
-      } else {
-        expanded_index_components.push_back(zero);
-      }
+      expanded_index_components.push_back(zero);
     }
   }
 
