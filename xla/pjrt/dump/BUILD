@@ -30,6 +30,7 @@ cc_library(
     compatible_with = (get_compatible_with_libtpu_portable() + get_compatible_with_portable()),
     deps = [
         ":mlir",
+        "//xla:util",
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_executable",
         "//xla/service:dump",
