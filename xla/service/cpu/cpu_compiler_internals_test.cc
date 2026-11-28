@@ -43,6 +43,7 @@ limitations under the License.
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/CodeGen.h"
 #include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter_config.h"
 #include "xla/backends/cpu/runtime/collective_thunk.h"
 #include "xla/backends/cpu/runtime/kernel_thunk.h"
@@ -752,6 +753,85 @@ TEST_F(CpuCompilerInternalsTest, CollectiveThunksUseInstructionUniqueIdAsOpId) {
   });
 
   EXPECT_EQ(unique_op_ids.size(), 3);
+}
+
+TEST_F(CpuCompilerInternalsTest, PicLevelSetOnJitModules) {
+  using ::testing::Each;
+  using ::testing::IsEmpty;
+  using ::testing::Not;
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> hlo_module,
+      ParseAndReturnVerifiedModule(kAddExponentialOfScatterHlo));
+  hlo_module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_cpu_aot_emit_shared_object(true);
+
+  CpuCompiler compiler;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> optimized_module,
+      compiler.RunHloPasses(std::move(hlo_module), /*stream_exec=*/nullptr,
+                            /*options=*/{}));
+
+  absl::Mutex mu;
+  std::vector<llvm::PICLevel::Level> pic_levels;
+  std::vector<bool> direct_access_external_data;
+  compiler.SetPreOptimizationHook([&](const llvm::Module& llvm_module) {
+    absl::MutexLock lock(mu);
+    pic_levels.push_back(llvm_module.getPICLevel());
+    direct_access_external_data.push_back(
+        llvm_module.getDirectAccessExternalData());
+  });
+  ASSERT_OK(compiler.RunBackend(std::move(optimized_module),
+                                /*stream_exec=*/nullptr, /*options=*/{}));
+  compiler.RemovePreOptimizationHook();
+
+  EXPECT_THAT(pic_levels, Not(IsEmpty()));
+  EXPECT_THAT(pic_levels, Each(llvm::PICLevel::SmallPIC));
+  EXPECT_THAT(direct_access_external_data, Each(false));
+}
+
+TEST_F(CpuCompilerInternalsTest, PicLevelPreservedOnAotLinking) {
+  using ::testing::Each;
+  using ::testing::IsEmpty;
+  using ::testing::Not;
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> hlo_module,
+      ParseAndReturnVerifiedModule(kAddExponentialOfScatterHlo));
+  hlo_module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_cpu_aot_emit_shared_object(true);
+
+  CpuCompiler compiler;
+  CpuCompiler::CompileOptions compile_options;
+  compile_options.is_aot_compile = true;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> optimized_module,
+      compiler.RunHloPasses(std::move(hlo_module), /*stream_exec=*/nullptr,
+                            compile_options));
+
+  absl::Mutex mu;
+  std::vector<llvm::PICLevel::Level> pic_levels;
+  std::vector<bool> direct_access_external_data;
+  bool saw_extra_options_flag = false;
+  compiler.SetPreOptimizationHook([&](const llvm::Module& llvm_module) {
+    absl::MutexLock lock(mu);
+    pic_levels.push_back(llvm_module.getPICLevel());
+    direct_access_external_data.push_back(
+        llvm_module.getDirectAccessExternalData());
+    if (llvm_module.getModuleFlag("xla_backend_extra_options") != nullptr) {
+      saw_extra_options_flag = true;
+    }
+  });
+  ASSERT_OK(compiler.RunBackend(std::move(optimized_module),
+                                /*stream_exec=*/nullptr, compile_options));
+  compiler.RemovePreOptimizationHook();
+
+  EXPECT_TRUE(saw_extra_options_flag);
+  EXPECT_THAT(pic_levels, Not(IsEmpty()));
+  EXPECT_THAT(pic_levels, Each(llvm::PICLevel::SmallPIC));
+  EXPECT_THAT(direct_access_external_data, Each(false));
 }
 
 }  // namespace

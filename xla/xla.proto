@@ -250,6 +250,10 @@ message DebugOptions {
   // XLA:CPU optimization preset.
   optional CpuOptPreset xla_cpu_opt_preset = 467;
 
+  // When true, XLA:CPU bundles all compiled kernels into a single shared
+  // object.
+  optional bool xla_cpu_aot_emit_shared_object = 592;
+
   // The number of seconds to wait before terminating a rendezvous call
   optional int32 xla_cpu_collective_call_terminate_timeout_seconds = 417;
 
@@ -2112,7 +2116,7 @@ message DebugOptions {
   // (MI350). Default false.
   optional bool xla_gpu_enable_nontemporal_hints = 591;
 
-  // Next id: 592
+  // Next id: 593
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

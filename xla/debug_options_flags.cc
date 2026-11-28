@@ -267,6 +267,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
       DebugOptions::LIBRARY_FUSION_TYPE_REDUCE);
 
   opts.set_xla_cpu_parallel_codegen_split_count(32);
+  opts.set_xla_cpu_aot_emit_shared_object(false);
   opts.set_xla_cpu_scheduler_type(DebugOptions::CPU_SCHEDULER_TYPE_DEFAULT);
   opts.set_xla_cpu_prefer_vector_width(256);
   opts.set_xla_cpu_max_isa("");
@@ -1775,6 +1776,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         debug_options->xla_cpu_parallel_codegen_split_count(),
         "Split LLVM module into at most this many parts before codegen to "
         "enable parallel compilation for the CPU backend."));
+    flag_list->push_back(tsl::Flag(
+        "xla_cpu_aot_emit_shared_object",
+        bool_setter_for(&DebugOptions::set_xla_cpu_aot_emit_shared_object),
+        debug_options->xla_cpu_aot_emit_shared_object(),
+        "When true, XLA:CPU bundles all compiled kernels into a single shared "
+        "object."));
     flag_list->push_back(tsl::Flag("xla_cpu_copy_insertion_use_region_analysis",
                                    noop_flag_setter<bool>, false,
                                    "[Deprecated, do not use]."));

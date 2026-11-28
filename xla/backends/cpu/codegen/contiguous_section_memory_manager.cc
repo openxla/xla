@@ -56,8 +56,11 @@ class DefaultMemoryMapper final
 }  // namespace
 
 ContiguousSectionMemoryManager::ContiguousSectionMemoryManager(
-    llvm::SectionMemoryManager::MemoryMapper* mmapper)
-    : mmapper_(mmapper), mmapper_is_owned_(false) {
+    llvm::SectionMemoryManager::MemoryMapper* mmapper,
+    uintptr_t extra_rw_data_size)
+    : mmapper_(mmapper),
+      mmapper_is_owned_(false),
+      extra_rw_data_size_(extra_rw_data_size) {
   if (mmapper_ == nullptr) {
     mmapper_ = new DefaultMemoryMapper();
     mmapper_is_owned_ = true;
@@ -91,7 +94,8 @@ void ContiguousSectionMemoryManager::reserveAllocationSpace(
 
   code_size = RoundUpTo<uintptr_t>(code_size, code_align_val);
   ro_data_size = RoundUpTo<uintptr_t>(ro_data_size, ro_data_align_val);
-  rw_data_size = RoundUpTo<uintptr_t>(rw_data_size, rw_data_align_val);
+  rw_data_size = RoundUpTo<uintptr_t>(rw_data_size + extra_rw_data_size_,
+                                      rw_data_align_val);
 
   const uintptr_t total_size = code_size + ro_data_size + rw_data_size +
                                code_align_val + ro_data_align_val +
