@@ -197,7 +197,7 @@ HloComputation::HloComputation(
   bool root_found = false;
 
   if (preserve_instruction_ids) {
-    // Pre-allocate all instructions in the vector since it state should be
+    // Pre-allocate all instructions in the vector since its state should be
     // identical.
     int32_t max_instruction_local_id = 0;
     for (auto& instruction : *instructions) {
@@ -207,13 +207,15 @@ HloComputation::HloComputation(
       }
     }
     instructions_.resize(max_instruction_local_id + 1);
+    next_instruction_unique_id_ = instructions_.size();
   }
 
   for (auto& instruction : *instructions) {
     if (instruction == nullptr) {
-      // The instruction is actually a gap left in the instructions vector which
-      // should be represented by an empty HloInstructionInfo.
-      instructions_.push_back(HloInstructionInfo());
+      // Nullptr entries only occur as pre-allocated local-ID gaps when
+      // preserving instruction IDs; their empty HloInstructionInfo slots were
+      // already created by instructions_.resize() above.
+      CHECK(preserve_instruction_ids);
       continue;
     }
     if (instruction->opcode() == HloOpcode::kParameter) {
