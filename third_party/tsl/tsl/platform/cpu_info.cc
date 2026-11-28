@@ -29,7 +29,8 @@ limitations under the License.
 #if defined(PLATFORM_IS_X86)
 #include <mutex>  // NOLINT
 #endif
-#if defined(PLATFORM_IS_ARM64) && !defined(__APPLE__) && !defined(__OpenBSD__)
+#if defined(PLATFORM_IS_ARM64) && !defined(__APPLE__) && \
+    !defined(__OpenBSD__) && !defined(PLATFORM_WINDOWS)
 #include <asm/hwcap.h> /* Get HWCAP bits from asm/hwcap.h */
 #include <sys/auxv.h>
 #ifndef HWCAP_CPUID
@@ -390,7 +391,8 @@ void InitCPUIDInfo() {
 
 #endif  // PLATFORM_IS_X86
 
-#if defined(PLATFORM_IS_ARM64) && !defined(__APPLE__) && !defined(__OpenBSD__)
+#if defined(PLATFORM_IS_ARM64) && !defined(__APPLE__) && \
+    !defined(__OpenBSD__) && !defined(PLATFORM_WINDOWS)
 
 class CPUIDInfo;
 void InitCPUIDInfo();
@@ -420,7 +422,6 @@ class CPUIDInfo {
     }
 
     int present_cpu = -1;
-#ifndef PLATFORM_WINDOWS
     std::ifstream CPUspresent;
     CPUspresent.open("/sys/devices/system/cpu/present", std::ios::in);
     if (CPUspresent.is_open()) {
@@ -441,13 +442,11 @@ class CPUIDInfo {
         present_cpu = std::stoi(line);
       }
     }
-#endif  // !PLATFORM_WINDOWS
 
     if (present_cpu == -1) {
       return;
     }
 
-#ifndef PLATFORM_WINDOWS
     std::stringstream str;
     str << "/sys/devices/system/cpu/cpu" << present_cpu
         << "/regs/identification/midr_el1";
@@ -477,7 +476,6 @@ class CPUIDInfo {
         }
       }
     }
-#endif  // !PLATFORM_WINDOWS
   }
   static void InitializeCPUFeature() {
     // Initialize CPUIDInfo pointer.
@@ -547,7 +545,8 @@ void InitCPUIDFeatureInfo() {
 bool TestCPUFeature(CPUFeature feature) {
 #ifdef PLATFORM_IS_X86
   return CPUIDInfo::TestFeature(feature);
-#elif defined(PLATFORM_IS_ARM64) && !defined(__APPLE__) && !defined(__OpenBSD__)
+#elif defined(PLATFORM_IS_ARM64) && !defined(__APPLE__) && \
+    !defined(__OpenBSD__) && !defined(PLATFORM_WINDOWS)
   return CPUIDInfo::TestAarch64Feature(feature);
 #else
   return false;
@@ -555,7 +554,8 @@ bool TestCPUFeature(CPUFeature feature) {
 }
 
 bool TestAarch64CPU(Aarch64CPU cpu) {
-#if defined(PLATFORM_IS_ARM64) && !defined(__APPLE__) && !defined(__OpenBSD__)
+#if defined(PLATFORM_IS_ARM64) && !defined(__APPLE__) && \
+    !defined(__OpenBSD__) && !defined(PLATFORM_WINDOWS)
   return CPUIDInfo::TestAarch64CPU(cpu);
 #else
   return false;
@@ -575,7 +575,8 @@ int CPUFamily() {
 #ifdef PLATFORM_IS_X86
   InitCPUIDInfo();
   return cpuid->family();
-#elif defined(PLATFORM_IS_ARM64) && !defined(__APPLE__) && !defined(__OpenBSD__)
+#elif defined(PLATFORM_IS_ARM64) && !defined(__APPLE__) && \
+    !defined(__OpenBSD__) && !defined(PLATFORM_WINDOWS)
   InitCPUIDInfo();
   return cpuid->implementer();
 #else
@@ -587,7 +588,8 @@ int CPUModelNum() {
 #ifdef PLATFORM_IS_X86
   InitCPUIDInfo();
   return cpuid->model_num();
-#elif defined(PLATFORM_IS_ARM64) && !defined(__APPLE__) && !defined(__OpenBSD__)
+#elif defined(PLATFORM_IS_ARM64) && !defined(__APPLE__) && \
+    !defined(__OpenBSD__) && !defined(PLATFORM_WINDOWS)
   InitCPUIDInfo();
   return cpuid->cpunum();
 #else

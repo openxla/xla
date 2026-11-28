@@ -38,6 +38,8 @@ def if_mkl(if_true, if_false = []):
         Label("//xla/tsl/mkl:build_with_mkl_aarch64"): if_true,
         Label("//xla/tsl:linux_aarch64_with_onednn_async"): if_true,
         Label("//xla/tsl:linux_x86_64"): if_true,
+        # oneDNN is not built for Windows ARM64 (same as macOS arm64).
+        Label("//xla/tsl:windows_aarch64"): if_false,
         Label("//xla/tsl:windows"): if_true,
         "//conditions:default": if_false,
     })
@@ -112,6 +114,8 @@ def mkl_deps():
         Label("//xla/tsl:linux_aarch64_with_onednn_async"): ["@onednn_async_aarch64//:mkl_dnn"],
         Label("//xla/tsl/mkl:build_with_mkl_aarch64"): ["@mkl_dnn_acl_compatible//:mkl_dnn_acl"],
         Label("//xla/tsl:linux_x86_64"): ["@onednn_async//:mkl_dnn"],
+        # oneDNN is not built for Windows ARM64 (same as macOS arm64).
+        Label("//xla/tsl:windows_aarch64"): [],
         Label("//xla/tsl:windows"): ["@onednn_async//:mkl_dnn"],
         "//conditions:default": [],
     })
@@ -131,6 +135,8 @@ def mkl_dep():
         Label("//xla/tsl:linux_aarch64_with_onednn_async"): "@onednn_async_aarch64//:mkl_dnn",
         Label("//xla/tsl/mkl:build_with_mkl_aarch64"): "@mkl_dnn_acl_compatible//:mkl_dnn_acl",
         Label("//xla/tsl:linux_x86_64"): "@onednn_async//:mkl_dnn",
+        # oneDNN is not built for Windows ARM64 (same as macOS arm64).
+        Label("//xla/tsl:windows_aarch64"): "//xla/tsl/mkl:dummy_mkl_dnn",
         Label("//xla/tsl:windows"): "@onednn_async//:mkl_dnn",
         "//conditions:default": "//xla/tsl/mkl:dummy_mkl_dnn",
     })
@@ -146,6 +152,8 @@ def if_onednn_async(if_true, if_false = []):
     return select({
         Label("//xla/tsl:linux_aarch64_with_onednn_async"): if_true,
         Label("//xla/tsl:linux_x86_64"): if_true,
+        # oneDNN is not built for Windows ARM64 (same as macOS arm64).
+        Label("//xla/tsl:windows_aarch64"): if_false,
         Label("//xla/tsl:windows"): if_true,
         "//conditions:default": if_false,
     })
@@ -161,6 +169,8 @@ def onednn_v3_define():
         Label("//xla/tsl:linux_aarch64_with_onednn_async"): ["-DENABLE_ONEDNN_V3"],
         Label("//xla/tsl/mkl:build_with_mkl_aarch64"): ["-DENABLE_ONEDNN_V3"],
         Label("//xla/tsl:linux_x86_64"): ["-DENABLE_ONEDNN_V3"],
+        # oneDNN is not built for Windows ARM64 (same as macOS arm64).
+        Label("//xla/tsl:windows_aarch64"): [],
         Label("//xla/tsl:windows"): ["-DENABLE_ONEDNN_V3"],
         "//conditions:default": [],
     })
