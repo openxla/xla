@@ -1682,6 +1682,8 @@ cc_library(
     srcs = ["slice_sinker.cc"],
     hdrs = ["slice_sinker.h"],
     deps = [
+        "//xla:comparison_util",
+        "//xla:literal",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -1695,7 +1697,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:errors",
     ],
 )
 
