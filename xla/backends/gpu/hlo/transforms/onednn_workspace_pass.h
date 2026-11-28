@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_BACKENDS_GPU_HLO_TRANSFORMS_SYCL_GEMM_WORKSPACE_PASS_H_
-#define XLA_BACKENDS_GPU_HLO_TRANSFORMS_SYCL_GEMM_WORKSPACE_PASS_H_
+#ifndef XLA_BACKENDS_GPU_HLO_TRANSFORMS_ONEDNN_WORKSPACE_PASS_H_
+#define XLA_BACKENDS_GPU_HLO_TRANSFORMS_ONEDNN_WORKSPACE_PASS_H_
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
@@ -26,16 +26,17 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// Resizes the cuBLASLt matmul workspace to the size oneDNN's matmul primitive
-// requires for its scratchpad (oneDNN's term for workspace).
-// Added only by IntelGpuCompiler, after the generic GPU post-layout-assignment
-// pipeline.
-class SyclGemmWorkspacePass : public HloModulePass {
+// Resizes the workspace of cuBLASLt matmul and DNN convolution custom calls to
+// what the oneDNN primitive behind them needs at run time. For matmul that is
+// the scratchpad; for convolution it is the scratchpad plus the pre-packed
+// filter. Added only by IntelGpuCompiler, after layout assignment. The sizes
+// are computed for the device with the given ordinal.
+class OneDnnWorkspacePass : public HloModulePass {
  public:
-  explicit SyclGemmWorkspacePass(se::GpuComputeCapability gpu_version)
-      : gpu_version_(gpu_version) {}
+  OneDnnWorkspacePass(se::GpuComputeCapability gpu_version, int device_ordinal)
+      : gpu_version_(gpu_version), device_ordinal_(device_ordinal) {}
 
-  absl::string_view name() const override { return "sycl-gemm-workspace"; }
+  absl::string_view name() const override { return "onednn-workspace"; }
 
  protected:
   absl::StatusOr<bool> RunImpl(
@@ -44,9 +45,10 @@ class SyclGemmWorkspacePass : public HloModulePass {
 
  private:
   se::GpuComputeCapability gpu_version_;
+  int device_ordinal_;
 };
 
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_BACKENDS_GPU_HLO_TRANSFORMS_SYCL_GEMM_WORKSPACE_PASS_H_
+#endif  // XLA_BACKENDS_GPU_HLO_TRANSFORMS_ONEDNN_WORKSPACE_PASS_H_

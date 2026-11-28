@@ -35,7 +35,14 @@ dnnl::memory::dims ComputeRowMajorStrides(
     const dnnl::memory::dims& dims_tf_order);
 
 // Thread-safe cache of oneDNN engines per SYCL queue.
+// TODO(intel-tf): Look up the engine by the queue's device ordinal with
+// GetEngineForDevice, so compile time and run time share one engine per device.
 dnnl::engine FindOrCreateEngine(::sycl::queue* stream);
+
+// Returns the oneDNN engine for a device in the SYCL device pool, on the
+// pool's shared context. The compiler sizes workspaces with it, so it sees the
+// same device and context as the engine of a stream on that device.
+absl::StatusOr<dnnl::engine> GetEngineForDevice(int device_ordinal);
 
 // Reads XLA_FP32_MATH_MODE environment variable (fp32/tf32/bf32).
 // Returns corresponding dnnl::fpmath_mode. Fatal error if unsupported.
