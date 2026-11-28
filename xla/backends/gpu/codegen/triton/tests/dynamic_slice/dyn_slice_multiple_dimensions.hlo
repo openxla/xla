@@ -16,7 +16,7 @@
 // CHECK:         %[[SCALAR:.*]] = tensor.extract %[[EXTRACT]][] : tensor<i32>
 // CHECK:         %[[MAX:.*]] = arith.maxsi %[[SCALAR]], %[[C0_I32]] : i32
 // CHECK:         %[[MIN:.*]] = arith.minsi %[[MAX]], %[[C22]] : i32
-// CHECK:         %[[CAST:.*]] = arith.index_cast %[[MIN]] : i32 to index
+// CHECK:         %[[CAST:.*]] = arith.index_cast %[[MIN]] {xla.range = [0 : index, 22 : index]} : i32 to index
 // CHECK:         %[[IDX0:.*]] = xla.apply_indexing #[[MAP]](%[[ARG3]], %[[CAST]])
 // CHECK:         %[[TILE:.*]] = xtile.extract %[[ARG0]][%[[C50]], %[[IDX0]], %[[C0]]] [32, 8, 8] [1, 1, 1] : memref<64x32x16xi32> -> tensor<32x8x8xi32>
 // CHECK:         %[[IDX1:.*]] = xla.apply_indexing #[[MAP1]](%[[ARG3]])

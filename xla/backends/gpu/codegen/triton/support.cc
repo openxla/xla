@@ -906,11 +906,15 @@ CodegenDecision IsTritonSupportedDynamicSlice(
       case S16:
       case S32:
       case S64:
+      case U8:
+      case U16:
+      case U32:
+      case U64:
         break;  // supported
       default:
         return CodegenDecision::Forbid(
-            "Dynamic slice is only supported with S8, S16, S32, or S64 "
-            "offsets.");
+            "Dynamic slice is only supported with S8, S16, S32, S64, U8, U16, "
+            "U32, or U64 offsets.");
     }
   }
   return CodegenDecision(instr.shape().element_type() != S4,

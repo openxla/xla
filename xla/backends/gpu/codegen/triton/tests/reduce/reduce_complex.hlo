@@ -16,11 +16,9 @@ fusion {
 }
 // Regression test for b/448150702 - reduction with a constant inside returned
 // early, not fully emitting the reduction.
-// CHECK: "tt.reduce"
-// CHECK: ^bb0(%[[ARG0:.*]]: f32, %[[ARG1:.*]]: f32)
-// CHECK: %[[ADD:.*]] = arith.addf %[[ARG0]], %[[ARG1]]
-// CHECK: %[[MIN:.*]] = arith.minimumf %[[ADD]]
-// CHECK: tt.reduce.return %[[MIN]]
+// CHECK: %[[LHS:.*]], %[[RHS:.*]] = tt.split %{{.*}} : tensor<1x2xf32> -> tensor<1xf32>
+// CHECK: %[[ADD:.*]] = arith.addf %[[LHS]], %[[RHS]] : tensor<1xf32>
+// CHECK: %[[MIN:.*]] = arith.minimumf %[[ADD]], %{{.*}} : tensor<1xf32>
 
 ENTRY main {
   p = f32[2,2]{1,0} parameter(0)

@@ -47,6 +47,7 @@ limitations under the License.
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Location.h"
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
@@ -321,22 +322,82 @@ class LowerReduce : public mlir::OpRewritePattern<stablehlo::ReduceOp> {
     return val;
   }
 
-  // Combines the results of the ttir::ReduceOp with the init_values
+  // Applies `old_block`'s reducer body elementwise to `(lhs_vals, rhs_vals)`.
+  llvm::SmallVector<Value> ApplyReducerBlock(
+      mlir::Block& old_block, mlir::ValueRange lhs_vals,
+      mlir::ValueRange rhs_vals, mlir::PatternRewriter& rewriter) const {
+    std::size_t num_inputs = lhs_vals.size();
+    mlir::IRMapping combine_mapping;
+    for (std::size_t i = 0; i < num_inputs; ++i) {
+      combine_mapping.map(old_block.getArgument(i), lhs_vals[i]);
+      combine_mapping.map(old_block.getArgument(num_inputs + i), rhs_vals[i]);
+    }
+
+    bool is_multi_dim = false;
+    ShapedType target_shaped_ty = nullptr;
+    if (auto shaped_ty = mlir::dyn_cast<ShapedType>(rhs_vals[0].getType())) {
+      is_multi_dim = shaped_ty.getRank() > 0;
+      target_shaped_ty = shaped_ty;
+    }
+
+    for (mlir::Operation& body_op : old_block.without_terminator()) {
+      SmallVector<Type> new_result_types;
+      bool keep_scalar_const = body_op.getNumOperands() == 0;
+      for (Type orig_type : body_op.getResultTypes()) {
+        if (is_multi_dim && !keep_scalar_const) {
+          Type elem_type = mlir::getElementTypeOrSelf(orig_type);
+          new_result_types.push_back(mlir::RankedTensorType::get(
+              target_shaped_ty.getShape(), elem_type));
+        } else {
+          new_result_types.push_back(orig_type);
+        }
+      }
+      OperationState state(body_op.getLoc(), body_op.getName().getStringRef());
+      for (Value operand : body_op.getOperands()) {
+        Value operand_val = combine_mapping.lookupOrDefault(operand);
+        if (is_multi_dim && target_shaped_ty) {
+          operand_val = AdaptOperandToMultiDim(operand_val, target_shaped_ty,
+                                               body_op.getLoc(), rewriter);
+        }
+        state.addOperands(operand_val);
+      }
+      state.addTypes(new_result_types);
+      state.addAttributes(body_op.getAttrs());
+      Operation* cloned_op = rewriter.create(state);
+      for (auto [orig_res, cloned_res] :
+           llvm::zip(body_op.getResults(), cloned_op->getResults())) {
+        combine_mapping.map(orig_res, cloned_res);
+      }
+    }
+
+    llvm::SmallVector<Value> new_results;
+    new_results.reserve(num_inputs);
+    mlir::Operation* terminator = old_block.getTerminator();
+    for (std::size_t i = 0; i < num_inputs; ++i) {
+      Value combined_res =
+          combine_mapping.lookupOrDefault(terminator->getOperand(i));
+      if (is_multi_dim && target_shaped_ty) {
+        combined_res = AdaptOperandToMultiDim(combined_res, target_shaped_ty,
+                                              terminator->getLoc(), rewriter);
+      }
+      new_results.push_back(combined_res);
+    }
+    return new_results;
+  }
+
+  // Combines the results of the reduction with the init_values
   // post-reduction by cloning the reducer block operations.
   llvm::SmallVector<Value> CombineReduceResultsWithInitValues(
-      stablehlo::ReduceOp op, ttir::ReduceOp triton_reduce_op,
+      stablehlo::ReduceOp op, mlir::ValueRange reduced_vals,
       mlir::Block& old_block, mlir::PatternRewriter& rewriter) const {
-    rewriter.setInsertionPointAfter(triton_reduce_op);
-
     std::size_t num_inputs = op.getInputs().size();
     llvm::SmallVector<Value> res_tensors;
     res_tensors.reserve(num_inputs);
     llvm::SmallVector<Value> broadcasted_inits;
     broadcasted_inits.reserve(num_inputs);
 
-    for (auto [idx, tuple] :
-         llvm::enumerate(llvm::zip(triton_reduce_op.getResults(),
-                                   op.getInitValues(), op.getResultTypes()))) {
+    for (auto [idx, tuple] : llvm::enumerate(llvm::zip(
+             reduced_vals, op.getInitValues(), op.getResultTypes()))) {
       auto [triton_result, init_val, op_result_type] = tuple;
       Value res_tensor = triton_result;
       auto result_shaped_type = mlir::cast<mlir::ShapedType>(op_result_type);
@@ -366,60 +427,30 @@ class LowerReduce : public mlir::OpRewritePattern<stablehlo::ReduceOp> {
       broadcasted_inits.push_back(broadcasted_init);
     }
 
-    mlir::IRMapping combine_mapping;
-    for (std::size_t i = 0; i < num_inputs; ++i) {
-      // Argument i is the accumulator, argument num_inputs + i is the current
-      // element. The tt.reduce result plays the role of the element here, the
-      // init value the role of the accumulator.
-      combine_mapping.map(old_block.getArgument(i), broadcasted_inits[i]);
-      combine_mapping.map(old_block.getArgument(num_inputs + i),
-                          res_tensors[i]);
-    }
+    // Argument i is the accumulator (init), argument num_inputs + i is the
+    // reduced value.
+    return ApplyReducerBlock(old_block, broadcasted_inits, res_tensors,
+                             rewriter);
+  }
 
-    for (mlir::Operation& body_op : old_block.without_terminator()) {
-      bool is_multi_dim = false;
-      ShapedType target_shaped_ty = nullptr;
-      Value first_res = res_tensors[0];
-      if (auto shaped_ty =
-              mlir::dyn_cast<mlir::ShapedType>(first_res.getType())) {
-        is_multi_dim = shaped_ty.getRank() > 0;
-        target_shaped_ty = shaped_ty;
-      }
-      SmallVector<Type> new_result_types;
-      for (Type orig_type : body_op.getResultTypes()) {
-        if (is_multi_dim) {
-          Type elem_type = mlir::getElementTypeOrSelf(orig_type);
-          new_result_types.push_back(mlir::RankedTensorType::get(
-              target_shaped_ty.getShape(), elem_type));
-        } else {
-          new_result_types.push_back(orig_type);
-        }
-      }
-      OperationState state(body_op.getLoc(), body_op.getName().getStringRef());
-      for (Value operand : body_op.getOperands()) {
-        Value operand_val = combine_mapping.lookupOrDefault(operand);
-        if (is_multi_dim && target_shaped_ty) {
-          operand_val = AdaptOperandToMultiDim(operand_val, target_shaped_ty,
-                                               body_op.getLoc(), rewriter);
-        }
-        state.addOperands(operand_val);
-      }
-      state.addTypes(new_result_types);
-      state.addAttributes(body_op.getAttrs());
-      Operation* cloned_op = rewriter.create(state);
-      for (auto [orig_res, cloned_res] :
-           llvm::zip(body_op.getResults(), cloned_op->getResults())) {
-        combine_mapping.map(orig_res, cloned_res);
-      }
+  // Size-2 reductions on rank >= 2 tensors can be lowered directly via
+  // `tt.split` (after moving `axis` to the last dim if needed) + elementwise
+  // combiner, avoiding a cross-warp `tt.reduce` and its shared-memory barriers.
+  bool CanLowerSizeTwoAxisWithSplit(mlir::ValueRange vals, int64_t axis,
+                                    mlir::Block& old_block) const {
+    if (!llvm::all_of(old_block.without_terminator(), [](mlir::Operation& o) {
+          return o.getNumRegions() == 0 &&
+                 (o.hasTrait<mlir::OpTrait::Elementwise>() ||
+                  mlir::isa<arith::ConstantOp, stablehlo::ConstantOp,
+                            ttir::ExternElementwiseOp>(o));
+        })) {
+      return false;
     }
-
-    llvm::SmallVector<Value> new_results;
-    for (std::size_t i = 0; i < num_inputs; ++i) {
-      Value combined_res = combine_mapping.lookupOrDefault(
-          old_block.getTerminator()->getOperand(i));
-      new_results.push_back(combined_res);
-    }
-    return new_results;
+    return llvm::all_of(vals, [axis](Value val) {
+      auto ty = mlir::dyn_cast<RankedTensorType>(val.getType());
+      return ty && ty.getRank() >= 2 && ty.getDimSize(axis) == 2 &&
+             !ty.getElementType().isUnsignedInteger();
+    });
   }
 
   mlir::LogicalResult matchAndRewrite(
@@ -454,13 +485,40 @@ class LowerReduce : public mlir::OpRewritePattern<stablehlo::ReduceOp> {
       }
     }
 
-    ttir::ReduceOp triton_reduce_op;
     mlir::Block& old_block = op.getBody().front();
 
-    // Peel off reduction dimensions one at a time from highest axis to lowest,
-    // creating a sequential chain of 1D tt.reduce instructions.
+    // Peel off reduction dimensions one at a time from highest axis to lowest.
     for (auto [k, axis] : llvm::enumerate(sorted_dims)) {
       bool is_last = (k == sorted_dims.size() - 1);
+      if (CanLowerSizeTwoAxisWithSplit(current_vals, axis, old_block)) {
+        SmallVector<Value> lhs_vals;
+        SmallVector<Value> rhs_vals;
+        lhs_vals.reserve(current_vals.size());
+        rhs_vals.reserve(current_vals.size());
+        for (Value val : current_vals) {
+          auto ty = cast<RankedTensorType>(val.getType());
+          int64_t rank = ty.getRank();
+          Value to_split = val;
+          if (axis != rank - 1) {
+            SmallVector<int32_t> order;
+            order.reserve(rank);
+            for (int32_t d = 0; d < rank; ++d) {
+              if (d != axis) {
+                order.push_back(d);
+              }
+            }
+            order.push_back(static_cast<int32_t>(axis));
+            to_split = ttir::TransOp::create(rewriter, op.getLoc(), val, order);
+          }
+          auto split = ttir::SplitOp::create(rewriter, op.getLoc(), to_split);
+          lhs_vals.push_back(split.getOutLHS());
+          rhs_vals.push_back(split.getOutRHS());
+        }
+        current_vals =
+            ApplyReducerBlock(old_block, lhs_vals, rhs_vals, rewriter);
+        continue;
+      }
+
       SmallVector<Type> step_result_types;
       if (is_last) {
         step_result_types = final_result_types;
@@ -471,7 +529,7 @@ class LowerReduce : public mlir::OpRewritePattern<stablehlo::ReduceOp> {
         }
       }
 
-      triton_reduce_op = ttir::ReduceOp::create(
+      auto triton_reduce_op = ttir::ReduceOp::create(
           rewriter, op.getLoc(), step_result_types, current_vals, axis);
 
       BuildTritonReduceBlock(op, old_block, triton_reduce_op.getCombineOp(),
@@ -485,7 +543,7 @@ class LowerReduce : public mlir::OpRewritePattern<stablehlo::ReduceOp> {
     llvm::SmallVector<Value> new_results;
     if (AllInitValuesAreNeutral(op, old_block)) {
       for (auto [triton_result, op_result_type] :
-           llvm::zip(triton_reduce_op.getResults(), op.getResultTypes())) {
+           llvm::zip(current_vals, op.getResultTypes())) {
         auto result_shaped_type = mlir::cast<mlir::ShapedType>(op_result_type);
         if (result_shaped_type.getRank() == 0) {
           if (!mlir::isa<mlir::ShapedType>(triton_result.getType())) {
@@ -500,7 +558,7 @@ class LowerReduce : public mlir::OpRewritePattern<stablehlo::ReduceOp> {
         }
       }
     } else {
-      new_results = CombineReduceResultsWithInitValues(op, triton_reduce_op,
+      new_results = CombineReduceResultsWithInitValues(op, current_vals,
                                                        old_block, rewriter);
     }
 

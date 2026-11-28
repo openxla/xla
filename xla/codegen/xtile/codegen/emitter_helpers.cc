@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/codegen/xtile/codegen/emitter_helpers.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <utility>
@@ -114,11 +115,39 @@ Value EmitClampedIndex(mlir::ImplicitLocOpBuilder& b, Value value,
   // `lower` and `upper` may not fit in the type of `value`, e.g. an s8 offset
   // into a dimension of size 300 has `upper` = 299. The constants are built in
   // the type of `value` and would be truncated silently, so in that case
-  // extend `value` to 64 bits first. XLA signed integers are signless here and
-  // are sign-extended. Unsigned integers are not supported by the arith ops
-  // below and are rejected by the Triton support checks for runtime variables.
-  if (auto int_type = mlir::dyn_cast<mlir::IntegerType>(value.getType());
-      int_type && int_type.isSignless() && int_type.getWidth() < 64 &&
+  // extend `value` to 64 bits first. Note that we check signed `isIntN` even
+  // for unsigned offsets because `arith.index_cast` sign-extends operands
+  // narrower than `index`: if `upper` fits in `u8` (e.g. 192) but not signed
+  // `i8`, keeping `i8` would sign-extend the clamped value to a negative index.
+  auto int_type = mlir::dyn_cast<mlir::IntegerType>(value.getType());
+  if (int_type && int_type.isUnsignedInteger()) {
+    CHECK_GE(upper, 0)
+        << "Unsigned index clamp requires non-negative upper bound.";
+    int64_t unsigned_lower = std::max<int64_t>(0, lower);
+    value = UnsignedIntegerToSignlessInteger(b, value);
+    if (int_type.getWidth() < 64 &&
+        (!llvm::isIntN(int_type.getWidth(), unsigned_lower) ||
+         !llvm::isIntN(int_type.getWidth(), upper))) {
+      value = ma::ExtUIOp::create(b, b.getI64Type(), value);
+    }
+    Value clamped_index = value;
+    if (unsigned_lower > 0) {
+      clamped_index = ma::MaxUIOp::create(
+          b, clamped_index,
+          CreateConst(b, clamped_index.getType(), unsigned_lower));
+    }
+    clamped_index = ma::MinUIOp::create(
+        b, clamped_index, CreateConst(b, clamped_index.getType(), upper));
+    auto index_cast =
+        ma::IndexCastOp::create(b, b.getIndexType(), clamped_index);
+    if (unsigned_lower <= upper) {
+      index_cast->setAttr("xla.range",
+                          b.getIndexArrayAttr({unsigned_lower, upper}));
+    }
+    return index_cast;
+  }
+
+  if (int_type && int_type.isSignless() && int_type.getWidth() < 64 &&
       (!llvm::isIntN(int_type.getWidth(), lower) ||
        !llvm::isIntN(int_type.getWidth(), upper))) {
     value = ma::ExtSIOp::create(b, b.getI64Type(), value);
@@ -127,7 +156,11 @@ Value EmitClampedIndex(mlir::ImplicitLocOpBuilder& b, Value value,
       ma::MaxSIOp::create(b, value, CreateConst(b, value.getType(), lower));
   clamped_index = ma::MinSIOp::create(b, clamped_index,
                                       CreateConst(b, value.getType(), upper));
-  return ma::IndexCastOp::create(b, b.getIndexType(), clamped_index);
+  auto index_cast = ma::IndexCastOp::create(b, b.getIndexType(), clamped_index);
+  if (lower <= upper) {
+    index_cast->setAttr("xla.range", b.getIndexArrayAttr({lower, upper}));
+  }
+  return index_cast;
 }
 
 // Emit code corresponding to a fusion instruction somehow nested within the
