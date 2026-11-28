@@ -24,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
@@ -71,15 +72,18 @@ struct GatherScatterDims {
       absl::Span<const int64_t> offset_or_window_dims);
 };
 
-// Apply the formatting steps.
+// Apply the formatting steps. If `metadata` is non-null, attaches it to each
+// formatting instruction emitted.
 HloInstruction* FormatShape(HloInstruction* data,
                             absl::Span<const FormattingStep> formatting_steps,
-                            HloComputation* computation);
+                            HloComputation* computation,
+                            const OpMetadata* absl_nullable metadata);
 
-// Reverse the formatting steps.
+// Reverse the formatting steps. If `metadata` is non-null, attaches it to each
+// formatting instruction emitted.
 HloInstruction* ReverseFormatShape(
     HloInstruction* data, absl::Span<const FormattingStep> formatting_steps,
-    HloComputation* computation);
+    HloComputation* computation, const OpMetadata* absl_nullable metadata);
 
 // Determines if the first operand 'potential_subsharding' is a subsharding of
 // the second operand 'sharding'.

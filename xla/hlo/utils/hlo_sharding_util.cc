@@ -30,6 +30,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/nullability.h"
 #include "absl/container/btree_set.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -71,7 +72,8 @@ namespace hlo_sharding_util {
 // Apply the formatting steps to get a shardable shape.
 HloInstruction* FormatShape(HloInstruction* data,
                             absl::Span<const FormattingStep> formatting_steps,
-                            HloComputation* computation) {
+                            HloComputation* computation,
+                            const OpMetadata* absl_nullable metadata) {
   for (const FormattingStep& step : formatting_steps) {
     switch (step.formatting_opcode) {
       case HloOpcode::kBitcast:
@@ -112,13 +114,16 @@ HloInstruction* FormatShape(HloInstruction* data,
       default:
         LOG(FATAL) << "Unsupported formatting step";
     }
+    if (metadata != nullptr) {
+      data->set_metadata(*metadata);
+    }
   }
   return data;
 }
 
 HloInstruction* ReverseFormatShape(
     HloInstruction* data, absl::Span<const FormattingStep> formatting_steps,
-    HloComputation* computation) {
+    HloComputation* computation, const OpMetadata* absl_nullable metadata) {
   for (int64_t i = formatting_steps.size() - 1; i >= 0; --i) {
     const FormattingStep& step = formatting_steps[i];
     const Shape& previous_shape =
@@ -159,6 +164,9 @@ HloInstruction* ReverseFormatShape(
       }
       default:
         LOG(FATAL) << "Unsupported formatting step";
+    }
+    if (metadata != nullptr) {
+      data->set_metadata(*metadata);
     }
   }
   return data;
