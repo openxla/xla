@@ -118,6 +118,8 @@ message BufferIsolationConfig {
 // If FAST_MERGE, a faster variant that merges the live range of colocations.
 // If FAST_SPLIT, a faster variant that splits the memory space for buffers with
 // colocations and buffers without colocations.
+// If FAST_MULTI_SWEEP, tries FAST_MERGE and MultiSweepHeap (see
+// heap_simulator/multi_sweep_heap.h) and keeps the smaller result.
 message BufferAssignmentAlgorithmProto {
   enum Value {
     DEFAULT = 0;
@@ -127,6 +129,7 @@ message BufferAssignmentAlgorithmProto {
     FAST_MERGE = 4;
     FAST_SPLIT = 5;
     FAST_MERGE_WITH_FALLBACK = 6;
+    FAST_MULTI_SWEEP = 7;
   }
   optional Value fallback_algorithm = 1;
 }

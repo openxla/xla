@@ -1209,8 +1209,9 @@ class BufferAssigner {
     //     * For computations without a sequential ordering, FAST_MERGE is
     //       replaced with
     //       `fallback_algorithm_for_computations_without_ordering`.
-    //     * For the other computations, FAST_MERGE, FAST_SPLIT, SPATIAL and
-    //       TEMPORAL are replaced with `fallback_algorithm`.
+    //     * For the other computations, FAST_MERGE, FAST_SPLIT,
+    //       FAST_MULTI_SWEEP, SPATIAL and TEMPORAL are replaced with
+    //       `fallback_algorithm`.
     //
     // A DEFAULT `fallback_algorithm` tries SPATIAL and then TEMPORAL. This is
     // equivalent to BEST_OF_SPATIAL_TEMPORAL, but skips TEMPORAL if SPATIAL
@@ -1230,7 +1231,8 @@ class BufferAssigner {
     std::function<int64_t(LogicalBuffer::Color)> color_memory_limit;
 
     // Whether a buffer color supports fast buffer assignment (FAST_MERGE /
-    // FAST_SPLIT); unsupported colors use the DEFAULT algorithm.
+    // FAST_SPLIT / FAST_MULTI_SWEEP); unsupported colors use the DEFAULT
+    // algorithm.
     std::function<bool(LogicalBuffer::Color)> supports_fast_buffer_assignment =
         [](LogicalBuffer::Color) { return true; };
 
