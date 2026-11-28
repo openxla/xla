@@ -222,6 +222,19 @@ func.func @sync() -> (tensor<8x4xf32>, tensor<8x4xf32>) {
 
 // -----
 
+func.func @sync_cluster() -> tensor<8x4xf32> {
+  %shared = xla_gpu.allocate_shared : tensor<8x4xf32>
+  %sync = xla_gpu.sync_threads scope <cluster> %shared : tensor<8x4xf32>
+  return %sync : tensor<8x4xf32>
+}
+// CHECK-LABEL: func.func @sync_cluster() -> tensor<32xf32> {
+// CHECK:         %[[SHARED:.*]] = xla_gpu.allocate_shared : tensor<32xf32>
+// CHECK:         %[[SYNC:.*]] = xla_gpu.sync_threads scope <cluster> %[[SHARED]]
+// CHECK-SAME:      : tensor<32xf32>
+// CHECK-NEXT:    return
+
+// -----
+
 func.func @sync_mixed_rank(%i: index) -> (tensor<16xf32>, f32) {
   %shared1 = xla_gpu.allocate_shared : tensor<16xf32>
   %shared2 = xla_gpu.allocate_shared : tensor<8x4xf32>
@@ -542,3 +555,28 @@ func.func @set_dynamic_dim_size(
 // CHECK-NOT:     builtin.unrealized_conversion_cast
 // CHECK:         %[[RES:.*]] = xla.set_dynamic_dim_size %[[SIZE]] into %[[TENSOR]][1] : tensor<512xf32>
 // CHECK:         return %[[RES]] : tensor<512xf32>
+
+// -----
+
+func.func @preserve_dsmem_attrs(
+    %t2d: tensor<2x4xf32>, %idx: index, %val: f32) -> (f32, f32, tensor<2x4xf32>) {
+  %e = tensor.extract %t2d[%idx, %idx] {xla_gpu.dsmem} : tensor<2x4xf32>
+  %i = tensor.insert %val into %t2d[%idx, %idx] {xla_gpu.dsmem} : tensor<2x4xf32>
+  %rmw = xla.atomic_rmw %i[%idx, %idx] : tensor<2x4xf32> {
+    ^bb0(%cur: f32):
+      %add = arith.addf %cur, %val : f32
+      xla.yield %add : f32
+  } {xla_gpu.dsmem}
+  %st = xla.atomic_store %val into %rmw[%idx, %idx] {xla_gpu.dsmem} : tensor<2x4xf32>
+  %le = xla.linear_extract %st[%idx] {xla_gpu.dsmem} : tensor<2x4xf32>
+  %li = xla.linear_insert %val into %st[%idx] {xla_gpu.dsmem} : tensor<2x4xf32>
+  func.return %e, %le, %li : f32, f32, tensor<2x4xf32>
+}
+// CHECK-LABEL: func.func @preserve_dsmem_attrs(
+// CHECK:         tensor.extract %{{.*}}[%{{.*}}] {xla_gpu.dsmem} : tensor<8xf32>
+// CHECK:         tensor.insert %{{.*}} into %{{.*}}[%{{.*}}] {xla_gpu.dsmem} : tensor<8xf32>
+// CHECK:         xla.atomic_rmw %{{.*}}[%{{.*}}] : tensor<8xf32> {
+// CHECK:         } {xla_gpu.dsmem}
+// CHECK:         xla.atomic_store %{{.*}} into %{{.*}}[%{{.*}}] {xla_gpu.dsmem} : tensor<8xf32>
+// CHECK:         tensor.extract %{{.*}}[%{{.*}}] {xla_gpu.dsmem} : tensor<8xf32>
+// CHECK:         tensor.insert %{{.*}} into %{{.*}}[%{{.*}}] {xla_gpu.dsmem} : tensor<8xf32>

@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/numeric/bits.h"
+#include "absl/strings/string_view.h"
 #include "google/protobuf/text_format.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseSet.h"
@@ -64,6 +65,8 @@ namespace emitters {
 #include "xla/codegen/emitters/transforms/passes.h.inc"
 
 namespace {
+
+constexpr absl::string_view kDsmemAttr = "xla_gpu.dsmem";
 
 using mlir::Value;
 
@@ -282,6 +285,9 @@ struct VectorizeLoad : mlir::OpRewritePattern<mlir::tensor::ExtractOp> {
   mlir::LogicalResult matchAndRewrite(
       mlir::tensor::ExtractOp op,
       mlir::PatternRewriter& rewriter) const override {
+    if (op->hasAttr(kDsmemAttr)) {
+      return rewriter.notifyMatchFailure(op, "cannot vectorize DSMEM load");
+    }
     auto loop = mlir::dyn_cast_or_null<scf::ForOp>(op->getParentOp());
     if (!loop) {
       return rewriter.notifyMatchFailure(op, "no loop found");
@@ -470,6 +476,9 @@ struct VectorizeStore : mlir::OpRewritePattern<mlir::tensor::InsertOp> {
   mlir::LogicalResult matchAndRewrite(
       mlir::tensor::InsertOp op,
       mlir::PatternRewriter& rewriter) const override {
+    if (op->hasAttr(kDsmemAttr)) {
+      return rewriter.notifyMatchFailure(op, "cannot vectorize DSMEM store");
+    }
     auto loop = mlir::dyn_cast_or_null<scf::ForOp>(op->getParentOp());
     if (!loop) {
       return rewriter.notifyMatchFailure(op, "no loop found");

@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/functional/function_ref.h"
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Attributes.h"
@@ -40,6 +41,11 @@ limitations under the License.
 
 namespace xla {
 namespace emitters {
+
+// Maps `(builder, shared_ptr, cta_rank_i32)` to a peer CTA DSMEM pointer for
+// ops marked with `xla_gpu.dsmem`.
+using CreateDsmemPointerFn = llvm::function_ref<mlir::Value(
+    mlir::ImplicitLocOpBuilder&, mlir::Value, mlir::Value)>;
 
 struct LowerTensorsConfig {
   // Signature lowering policy: CPU allows mixed tensor and non-tensor function
@@ -69,6 +75,9 @@ struct LowerTensorsConfig {
   // for 8/16/32/64-bit scalars and 8-byte-aligned `complex<f32>` (CPU: true;
   // GPU: false, handled by backend patterns).
   bool direct_scalar_atomics = false;
+  // Callback to resolve peer CTA DSMEM pointers for `xla_gpu.dsmem` ops. Left
+  // null on targets without DSMEM support (e.g., CPU).
+  CreateDsmemPointerFn create_dsmem_pointer = nullptr;
 };
 
 // Runs the two-stage tensor-to-LLVM lowering (`tensor_patterns`, unlowered
@@ -98,10 +107,12 @@ std::optional<mlir::LLVM::AtomicBinOp> GetIntegralAtomicBinOp(
     AtomicRMWKind kind);
 
 // Builds an `inbounds` GEP to element `indices` of `tensor`'s traced
-// destination buffer.
+// destination buffer, remapping to peer DSMEM if `op` has `xla_gpu.dsmem` and
+// `create_dsmem_pointer` is provided.
 mlir::LLVM::GEPOp CreateAtomicGep(
     mlir::TypedValue<mlir::RankedTensorType> tensor, mlir::ValueRange indices,
-    mlir::ImplicitLocOpBuilder& b);
+    mlir::ImplicitLocOpBuilder& b, mlir::Operation* op = nullptr,
+    CreateDsmemPointerFn create_dsmem_pointer = nullptr);
 
 // Creates a naturally aligned atomic `llvm.load` with `ordering` and optional
 // `sync_scope`.
