@@ -22,6 +22,7 @@ limitations under the License.
 #include <functional>
 #include <limits>
 #include <memory>
+#include <vector>
 
 #include "absl/strings/string_view.h"
 #include "xla/error_spec.h"
@@ -31,6 +32,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
+#include "xla/hlo/transforms/dynamic_padder.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal.h"
@@ -2287,6 +2289,579 @@ TEST_F(DotMergerTest, NoMergeOfTaggedAndUntaggedDots) {
   ASSERT_NE(dot1, nullptr);
   EXPECT_EQ(dot0->get_frontend_attribute("_scheduling_group_id"), "1");
   EXPECT_FALSE(dot1->has_frontend_attributes());
+}
+
+TEST_F(DotMergerTest, BitcastOperandDoesNotAbortCompilation) {
+  constexpr absl::string_view kStandaloneBitcastDot = R"(
+  HloModule module
+  ENTRY main {
+    raw = f32[32,16]{1,0} parameter(0)
+    lhs = f32[16,32]{1,0} bitcast(raw)
+    rhs = f32[32,8]{1,0} parameter(1)
+    ROOT dot0 = f32[16,8]{1,0} dot(lhs, rhs),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> standalone,
+                       ParseAndReturnVerifiedModule(kStandaloneBitcastDot));
+  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, standalone.get()));
+  EXPECT_FALSE(changed);
+
+  constexpr absl::string_view kMergeSharedBitcast = R"(
+  HloModule module
+  ENTRY main {
+    raw = f32[64,32]{1,0} parameter(0)
+    lhs = f32[32,64]{1,0} bitcast(raw)
+    rhs0 = f32[64,8]{1,0} parameter(1)
+    rhs1 = f32[64,16]{1,0} parameter(2)
+    dot0 = f32[32,8]{1,0} dot(lhs, rhs0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    dot1 = f32[32,16]{1,0} dot(lhs, rhs1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    ROOT out = (f32[32,8]{1,0}, f32[32,16]{1,0}) tuple(dot0, dot1)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> merged,
+                       ParseAndReturnVerifiedModule(kMergeSharedBitcast));
+  ASSERT_OK_AND_ASSIGN(changed, this->RunHloPass(&pass, merged.get()));
+  EXPECT_TRUE(changed);
+}
+
+TEST_F(DotMergerTest, SimplifyConsumerChainPreservesBitcastTypeLayoutAndRoot) {
+  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
+
+  // Type-changing and precision-reinterpreting post-dot bitcasts.
+  constexpr absl::string_view kTypeChangingBitcast = R"(
+  HloModule module
+  ENTRY main {
+    lhs = f16[32,64]{1,0} parameter(0)
+    rhs0 = f16[64,8]{1,0} parameter(1)
+    rhs1 = f16[64,16]{1,0} parameter(2)
+    dot0 = f16[32,8]{1,0} dot(lhs, rhs0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    dot1 = f16[32,16]{1,0} dot(lhs, rhs1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    bc0 = bf16[32,8]{1,0} bitcast(dot0)
+    bc1 = s32[32,8]{1,0} bitcast(dot1)
+    ROOT out = (bf16[32,8]{1,0}, s32[32,8]{1,0}) tuple(bc0, bc1)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_type,
+                       ParseAndReturnVerifiedModule(kTypeChangingBitcast));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, m_type.get()));
+  EXPECT_TRUE(changed);
+  const HloInstruction* root_type =
+      m_type->entry_computation()->root_instruction();
+  EXPECT_EQ(root_type->operand(0)->shape().element_type(), BF16);
+  EXPECT_EQ(root_type->operand(1)->shape().element_type(), S32);
+
+  // Same-type layout-reinterpreting bitcast feeding a narrower bitcast.
+  constexpr absl::string_view kLayoutBitcast = R"(
+  HloModule module
+  ENTRY main {
+    lhs = f32[2,4]{1,0} parameter(0)
+    rhs0 = f32[4,4]{1,0} parameter(1)
+    rhs1 = f32[4,4]{1,0} parameter(2)
+    dot0 = f32[2,4]{1,0} dot(lhs, rhs0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    dot1 = f32[2,4]{1,0} dot(lhs, rhs1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    t0 = f32[4,2]{0,1} bitcast(dot0)
+    bytes0 = u16[8,2]{0,1} bitcast(t0)
+    ROOT out = (u16[8,2]{0,1}, f32[2,4]{1,0}) tuple(bytes0, dot1)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> before,
+                       ParseAndReturnVerifiedModule(kLayoutBitcast));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> after,
+                       ParseAndReturnVerifiedModule(kLayoutBitcast));
+  ASSERT_OK_AND_ASSIGN(changed, this->RunHloPass(&pass, after.get()));
+  EXPECT_TRUE(changed);
+  const Literal l_lhs =
+      LiteralUtil::CreateR2<float>({{1, 2, 3, 4}, {5, 6, 7, 8}});
+  const Literal l_rhs0 = LiteralUtil::CreateR2<float>(
+      {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}});
+  const Literal l_rhs1 = LiteralUtil::CreateR2<float>(
+      {{2, 0, 0, 0}, {0, 2, 0, 0}, {0, 0, 2, 0}, {0, 0, 0, 2}});
+  const std::vector<const Literal*> args = {&l_lhs, &l_rhs0, &l_rhs1};
+  ASSERT_OK_AND_ASSIGN(Literal expected,
+                       HloEvaluator().Evaluate(*before, args));
+  ASSERT_OK_AND_ASSIGN(Literal actual, HloEvaluator().Evaluate(*after, args));
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected, actual));
+
+  // Root instruction that also has an orphaned consumer must not be removed.
+  constexpr absl::string_view kRootWithUser = R"(
+  HloModule module
+  ENTRY main {
+    lhs = f32[20,32]{1,0} parameter(0)
+    rhs0 = f32[32,10]{1,0} parameter(1)
+    rhs1 = f32[32,16]{1,0} parameter(2)
+    dot0 = f32[20,10]{1,0} dot(lhs, rhs0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    dot1 = f32[20,16]{1,0} dot(lhs, rhs1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    ROOT tr0 = f32[10,20]{1,0} transpose(dot0), dimensions={1,0}
+    dead_r = f32[200]{0} reshape(tr0)
+    dead_keep = (f32[200]{0}, f32[20,16]{1,0}) tuple(dead_r, dot1)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_root,
+                       ParseAndReturnVerifiedModule(kRootWithUser));
+  ASSERT_OK(this->RunHloPass(&pass, m_root.get()).status());
+  EXPECT_TRUE(ShapeUtil::Compatible(
+      m_root->entry_computation()->root_instruction()->shape(),
+      ShapeUtil::MakeShape(F32, {10, 20})));
+}
+
+TEST_F(DotMergerTest, NoMergeBlockScaledSparseScalarOrDeadDots) {
+  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
+
+  constexpr absl::string_view kBlockScaled = R"(
+  HloModule module
+  ENTRY main {
+    lhs = f8e4m3fn[32,64] parameter(0)
+    rhs0 = f8e4m3fn[64,16] parameter(1)
+    rhs1 = f8e4m3fn[64,32] parameter(2)
+    ls = f8e8m0fnu[32,2] parameter(3)
+    rs0 = f8e8m0fnu[2,16] parameter(4)
+    rs1 = f8e8m0fnu[2,32] parameter(5)
+    dot0 = f32[32,16] dot(lhs, rhs0, ls, rs0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0},
+        block_scaling_config={lhs={scale_idx=2 block_sizes=1x32}
+                              rhs={scale_idx=3 block_sizes=32x1}}
+    dot1 = f32[32,32] dot(lhs, rhs1, ls, rs1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0},
+        block_scaling_config={lhs={scale_idx=2 block_sizes=1x32}
+                              rhs={scale_idx=3 block_sizes=32x1}}
+    ROOT out = (f32[32,16], f32[32,32]) tuple(dot0, dot1)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_scaled,
+                       ParseAndReturnVerifiedModule(kBlockScaled));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, m_scaled.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(FindInstruction(m_scaled.get(), "dot0")->operand_count(), 4);
+  EXPECT_EQ(FindInstruction(m_scaled.get(), "dot1")->operand_count(), 4);
+
+  constexpr absl::string_view kSparseAndScalarAndDead = R"(
+  HloModule module
+  ENTRY main {
+    lhs = f32[32,64] parameter(0)
+    rhs0 = f32[32,16] parameter(1)
+    rhs1 = f32[32,32] parameter(2)
+    idx0 = u8[16,16] parameter(3)
+    idx1 = u8[16,32] parameter(4)
+    sp0 = f32[32,16] dot(lhs, rhs0, idx0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0},
+        sparsity_config={rhs={sparsity=2x4 dimension=0 stride=1 idx=2}}
+    sp1 = f32[32,32] dot(lhs, rhs1, idx1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0},
+        sparsity_config={rhs={sparsity=2x4 dimension=0 stride=1 idx=2}}
+    sc_a = f32[] parameter(5)
+    sc_b = f32[] parameter(6)
+    sc_c = f32[] parameter(7)
+    sc0 = f32[] dot(sc_a, sc_b)
+    sc1 = f32[] dot(sc_a, sc_c)
+    d_rhs0 = f32[64,16] parameter(8)
+    d_rhs1 = f32[64,32] parameter(9)
+    dead0 = f32[32,16] dot(lhs, d_rhs0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    dead1 = f32[32,32] dot(lhs, d_rhs1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    ROOT out = (f32[32,16], f32[32,32], f32[], f32[]) tuple(sp0, sp1, sc0, sc1)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_sparse,
+                       ParseAndReturnVerifiedModule(kSparseAndScalarAndDead));
+  ASSERT_OK_AND_ASSIGN(changed, this->RunHloPass(&pass, m_sparse.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(DotMergerTest, NoMergeAcrossDifferentBackendConfigs) {
+  constexpr absl::string_view kHlo = R"(
+  HloModule module
+  ENTRY main {
+    lhs = f32[200,100] parameter(0)
+    rhs0 = f32[100,10] parameter(1)
+    rhs1 = f32[100,16] parameter(2)
+    dot0 = f32[200,10] dot(lhs, rhs0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0},
+        backend_config={"operation_queue_id":"0","alpha_real":1}
+    dot1 = f32[200,16] dot(lhs, rhs1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0},
+        backend_config={"operation_queue_id":"0","alpha_real":3}
+    ROOT out = (f32[200,10], f32[200,16]) tuple(dot0, dot1)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  DotMerger pass(
+      /*max_size_to_merge=*/std::numeric_limits<int64_t>::max(),
+      /*queue_id=*/[](const HloInstruction*) { return 0; });
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(FindInstruction(module.get(), "dot0")->raw_backend_config_string(),
+            R"({"operation_queue_id":"0","alpha_real":1})");
+  EXPECT_EQ(FindInstruction(module.get(), "dot1")->raw_backend_config_string(),
+            R"({"operation_queue_id":"0","alpha_real":3})");
+}
+
+TEST_F(DotMergerTest, ResultAccuracyKeyedBitExactAndPropagatedOnMerge) {
+  constexpr absl::string_view kHlo = R"(
+  HloModule module
+  ENTRY main {
+    lhs = f32[200,100] parameter(0)
+    rhs0 = f32[100,10] parameter(1)
+    rhs1 = f32[100,50] parameter(2)
+    dot0 = f32[200,10] dot(lhs, rhs0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    dot1 = f32[200,50] dot(lhs, rhs1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    ROOT out = (f32[200,10], f32[200,50]) tuple(dot0, dot1)
+  })";
+  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
+  auto set_abs_tol = [](ResultAccuracy* acc, double value) {
+    constexpr auto kSetAtol = &ResultAccuracy::Tolerance::set_atol;
+    (acc->mutable_tolerance()->*kSetAtol)(value);
+  };
+
+  // Mismatched result_accuracy blocks merging.
+  {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                         ParseAndReturnVerifiedModule(kHlo));
+    ResultAccuracy acc0;
+    set_abs_tol(&acc0, 1e-4);
+    acc0.mutable_tolerance()->set_rtol(1e-3);
+    acc0.mutable_tolerance()->set_ulps(2);
+    ResultAccuracy acc1 = acc0;
+    acc1.mutable_tolerance()->set_ulps(4);
+    FindInstruction(m.get(), "dot0")->set_result_accuracy(acc0);
+    FindInstruction(m.get(), "dot1")->set_result_accuracy(acc1);
+    ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, m.get()));
+    EXPECT_FALSE(changed);
+  }
+
+  // Signed-zero tolerance mismatch (+0.0 vs -0.0) blocks merging.
+  {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                         ParseAndReturnVerifiedModule(kHlo));
+    ResultAccuracy acc0;
+    set_abs_tol(&acc0, 0.0);
+    ResultAccuracy acc1;
+    set_abs_tol(&acc1, -0.0);
+    FindInstruction(m.get(), "dot0")->set_result_accuracy(acc0);
+    FindInstruction(m.get(), "dot1")->set_result_accuracy(acc1);
+    ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, m.get()));
+    EXPECT_FALSE(changed);
+  }
+
+  // Matching result_accuracy merges and propagates to the merged dot.
+  {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                         ParseAndReturnVerifiedModule(kHlo));
+    ResultAccuracy acc;
+    set_abs_tol(&acc, 1e-4);
+    acc.mutable_tolerance()->set_rtol(1e-3);
+    acc.mutable_tolerance()->set_ulps(2);
+    FindInstruction(m.get(), "dot0")->set_result_accuracy(acc);
+    FindInstruction(m.get(), "dot1")->set_result_accuracy(acc);
+    ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, m.get()));
+    EXPECT_TRUE(changed);
+    const HloInstruction* merged_dot =
+        hlo_query::FindInstruction(m->entry_computation(), HloOpcode::kDot);
+    ASSERT_NE(merged_dot, nullptr);
+    ASSERT_TRUE(merged_dot->has_result_accuracy());
+    EXPECT_EQ(merged_dot->result_accuracy().tolerance().atol(), 1e-4);
+    EXPECT_EQ(merged_dot->result_accuracy().tolerance().rtol(), 1e-3);
+    EXPECT_EQ(merged_dot->result_accuracy().tolerance().ulps(), 2);
+  }
+}
+
+TEST_F(DotMergerTest, AsymmetricOperandPrecisionKeyedAndSwappedBySide) {
+  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
+
+  // Shared has HIGHEST in dot0 (LHS) but DEFAULT in dot1 (RHS): must not merge.
+  constexpr absl::string_view kMismatchedSidePrecision = R"(
+  HloModule module
+  ENTRY main {
+    shared = f32[64,64] parameter(0)
+    a = f32[64,16] parameter(1)
+    b = f32[10,64] parameter(2)
+    dot0 = f32[64,16] dot(shared, a),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0},
+        operand_precision={highest,default}
+    dot1 = f32[10,64] dot(b, shared),
+        lhs_contracting_dims={1}, rhs_contracting_dims={1},
+        operand_precision={highest,default}
+    ROOT out = (f32[64,16], f32[10,64]) tuple(dot0, dot1)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_mismatch,
+                       ParseAndReturnVerifiedModule(kMismatchedSidePrecision));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, m_mismatch.get()));
+  EXPECT_FALSE(changed);
+
+  // Shared has HIGHEST on both dots (LHS in dot0 w/ tz=4, RHS in dot1 w/ tz=1);
+  // merged dot places shared on RHS (tie -> RHS) and swaps operand_precision to
+  // {DEFAULT, HIGHEST}.
+  constexpr absl::string_view kMatchingSidePrecision = R"(
+  HloModule module
+  ENTRY main {
+    shared = f32[64,64] parameter(0)
+    a = f32[64,16] parameter(1)
+    b = f32[10,64] parameter(2)
+    dot0 = f32[64,16] dot(shared, a),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0},
+        operand_precision={highest,default}
+    dot1 = f32[10,64] dot(b, shared),
+        lhs_contracting_dims={1}, rhs_contracting_dims={1},
+        operand_precision={default,highest}
+    ROOT out = (f32[64,16], f32[10,64]) tuple(dot0, dot1)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_match,
+                       ParseAndReturnVerifiedModule(kMatchingSidePrecision));
+  ASSERT_OK_AND_ASSIGN(changed, this->RunHloPass(&pass, m_match.get()));
+  EXPECT_TRUE(changed);
+  const HloInstruction* merged_dot =
+      hlo_query::FindInstruction(m_match->entry_computation(), HloOpcode::kDot);
+  ASSERT_NE(merged_dot, nullptr);
+  ASSERT_EQ(merged_dot->precision_config().operand_precision_size(), 2);
+  EXPECT_EQ(merged_dot->precision_config().operand_precision(0),
+            PrecisionConfig::DEFAULT);
+  EXPECT_EQ(merged_dot->precision_config().operand_precision(1),
+            PrecisionConfig::HIGHEST);
+}
+
+TEST_F(DotMergerTest,
+       ShardingPropagatedForReplicatedAndManualAndBlockedForTiledOrMismatch) {
+  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
+
+  // Replicated dots (with LHS/RHS swap generating a post-slice transpose) keep
+  // replicated sharding on concat, merged dot, slices, and post-slice ops.
+  constexpr absl::string_view kReplicated = R"(
+  HloModule module
+  ENTRY main {
+    shared = f32[64,64] parameter(0), sharding={replicated}
+    a = f32[64,16] parameter(1), sharding={replicated}
+    b = f32[10,64] parameter(2), sharding={replicated}
+    dot0 = f32[64,16] dot(shared, a),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0},
+        sharding={replicated}
+    dot1 = f32[10,64] dot(b, shared),
+        lhs_contracting_dims={1}, rhs_contracting_dims={1},
+        sharding={replicated}
+    ROOT out = (f32[64,16], f32[10,64]) tuple(dot0, dot1)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_rep,
+                       ParseAndReturnVerifiedModule(kReplicated));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, m_rep.get()));
+  EXPECT_TRUE(changed);
+  for (const HloInstruction* inst :
+       m_rep->entry_computation()->instructions()) {
+    if (inst->opcode() == HloOpcode::kTuple) {
+      continue;
+    }
+    EXPECT_TRUE(inst->has_sharding() && inst->sharding().IsReplicated())
+        << inst->ToString();
+  }
+
+  // Tiled and mismatched shardings are not merged.
+  constexpr absl::string_view kTiledAndMismatched = R"(
+  HloModule module
+  ENTRY main {
+    lhs = f32[64,64] parameter(0)
+    r0 = f32[64,16] parameter(1)
+    r1 = f32[64,16] parameter(2)
+    r2 = f32[64,16] parameter(3)
+    d_tiled0 = f32[64,16] dot(lhs, r0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0},
+        sharding={devices=[2,1]<=[2]}
+    d_tiled1 = f32[64,16] dot(lhs, r1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0},
+        sharding={devices=[2,1]<=[2]}
+    d_rep = f32[64,16] dot(lhs, r0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0},
+        sharding={replicated}
+    d_man = f32[64,16] dot(lhs, r1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0},
+        sharding={manual}
+    d_none = f32[64,16] dot(lhs, r2),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    ROOT out = (f32[64,16], f32[64,16], f32[64,16], f32[64,16], f32[64,16])
+        tuple(d_tiled0, d_tiled1, d_rep, d_man, d_none)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_blocked,
+                       ParseAndReturnVerifiedModule(kTiledAndMismatched));
+  ASSERT_OK_AND_ASSIGN(changed, this->RunHloPass(&pass, m_blocked.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(DotMergerTest, NoMergeDynamicOrZeroSizedDots) {
+  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
+
+  // Bounded dynamic non-contracting dims must not be merged into static slices.
+  constexpr absl::string_view kDynamic = R"(
+  HloModule module
+  ENTRY main {
+    lhs = f32[2,4] parameter(0)
+    rhs0_raw = f32[4,4] parameter(1)
+    rhs1_raw = f32[4,4] parameter(2)
+    d0 = s32[] parameter(3)
+    d1 = s32[] parameter(4)
+    rhs0 = f32[4,<=4] set-dimension-size(rhs0_raw, d0), dimensions={1}
+    rhs1 = f32[4,<=4] set-dimension-size(rhs1_raw, d1), dimensions={1}
+    dot0 = f32[2,<=4] dot(lhs, rhs0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    dot1 = f32[2,<=4] dot(lhs, rhs1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    ROOT out = (f32[2,<=4], f32[2,<=4]) tuple(dot0, dot1)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_dyn,
+                       ParseAndReturnVerifiedModule(kDynamic));
+  auto before_dyn = m_dyn->Clone();
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, m_dyn.get()));
+  EXPECT_FALSE(changed);
+
+  DynamicPadderOptions padder_options;
+  padder_options.slice_dynamic_output = false;
+  DynamicPadder padder(padder_options);
+  ASSERT_OK(padder.Run(before_dyn.get()).status());
+  ASSERT_OK(padder.Run(m_dyn.get()).status());
+  const Literal l_lhs =
+      LiteralUtil::CreateR2<float>({{1, 2, 3, 4}, {5, 6, 7, 8}});
+  const Literal l_rhs0 = LiteralUtil::CreateR2<float>({{1, 999, 999, 999},
+                                                       {1, 999, 999, 999},
+                                                       {1, 999, 999, 999},
+                                                       {1, 999, 999, 999}});
+  const Literal l_rhs1 = LiteralUtil::CreateR2<float>(
+      {{2, 0, 1, 0}, {2, 0, 1, 0}, {2, 0, 1, 0}, {2, 0, 1, 0}});
+  const Literal l_d0 = LiteralUtil::CreateR0<int32_t>(1);
+  const Literal l_d1 = LiteralUtil::CreateR0<int32_t>(4);
+  const std::vector<const Literal*> args = {&l_lhs, &l_rhs0, &l_rhs1, &l_d0,
+                                            &l_d1};
+  ASSERT_OK_AND_ASSIGN(Literal expected,
+                       HloEvaluator().Evaluate(*before_dyn, args));
+  ASSERT_OK_AND_ASSIGN(Literal actual, HloEvaluator().Evaluate(*m_dyn, args));
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected, actual));
+
+  // Zero-sized dots must not crash in ShapeTracker or bypass NaN savings check.
+  constexpr absl::string_view kZeroSized = R"(
+  HloModule module
+  ENTRY main {
+    lhs_a = f32[128,128] parameter(0)
+    rhs_a0 = f32[128,0] parameter(1)
+    rhs_a1 = f32[128,0] parameter(2)
+    da0 = f32[128,0] dot(lhs_a, rhs_a0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    da1 = f32[128,0] dot(lhs_a, rhs_a1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    lhs_b = f32[0,0] parameter(3)
+    rhs_b0 = f32[0,16] parameter(4)
+    rhs_b1 = f32[0,16] parameter(5)
+    db0 = f32[0,16] dot(lhs_b, rhs_b0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    db1 = f32[0,16] dot(lhs_b, rhs_b1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    ROOT out = (f32[128,0], f32[128,0], f32[0,16], f32[0,16])
+        tuple(da0, da1, db0, db1)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_zero,
+                       ParseAndReturnVerifiedModule(kZeroSized));
+  ASSERT_OK_AND_ASSIGN(changed, this->RunHloPass(&pass, m_zero.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(DotMergerTest, ControlDependencyOnIntermediateTransposePreserved) {
+  constexpr absl::string_view kCtrlDep = R"(
+  HloModule module
+  ENTRY main {
+    tok = token[] custom-call(), custom_call_target="SideEffect",
+        custom_call_has_side_effect=true
+    src = f32[64,32] parameter(0)
+    tr0 = f32[32,64] transpose(src), dimensions={1,0},
+        control-predecessors={tok}
+    tr1 = f32[32,64] transpose(src), dimensions={1,0}
+    rhs0 = f32[64,8] parameter(1)
+    rhs1 = f32[64,16] parameter(2)
+    dot0 = f32[32,8] dot(tr0, rhs0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    dot1 = f32[32,16] dot(tr1, rhs1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    ROOT out = (f32[32,8], f32[32,16]) tuple(dot0, dot1)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_ctrl,
+                       ParseAndReturnVerifiedModule(kCtrlDep));
+  DotMerger max_pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&max_pass, m_ctrl.get()));
+  EXPECT_FALSE(changed);
+  const HloInstruction* tr0 = FindInstruction(m_ctrl.get(), "tr0");
+  ASSERT_NE(tr0, nullptr);
+  EXPECT_EQ(tr0->control_predecessors().size(), 1);
+}
+
+TEST_F(DotMergerTest, LargeShapeCostCalculationNoOverflow) {
+  // Large ShapeUtil-valid dimensions must neither overflow signed int64 in cost
+  // calculations nor materialize a merged tensor exceeding INT64_MAX bytes.
+  DotMerger max_pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
+  constexpr int64_t kDefaultThreshold = int64_t{64} << 20;
+  DotMerger default_pass(/*max_size_to_merge=*/kDefaultThreshold);
+  DotMerger neg_pass(/*max_size_to_merge=*/-1);
+
+  constexpr absl::string_view kOverflowBytesPerNcAndProduct = R"(
+  HloModule module
+  ENTRY main {
+    s_a = s8[432345564227567616,2,2] parameter(0)
+    c_a0 = s64[432345564227567616,2,1] parameter(1)
+    c_a1 = s64[432345564227567616,2,1] parameter(2)
+    da0 = s64[432345564227567616,2,1] dot(s_a, c_a0),
+        lhs_batch_dims={0}, rhs_batch_dims={0},
+        lhs_contracting_dims={2}, rhs_contracting_dims={1}
+    da1 = s64[432345564227567616,2,1] dot(s_a, c_a1),
+        lhs_batch_dims={0}, rhs_batch_dims={0},
+        lhs_contracting_dims={2}, rhs_contracting_dims={1}
+
+    s_b = s8[1,1] parameter(3)
+    c_b0 = s8[1,576460752303423488] parameter(4)
+    c_b1 = s8[1,576460752303423488] parameter(5)
+    db0 = s8[1,576460752303423488] dot(s_b, c_b0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    db1 = s8[1,576460752303423488] dot(s_b, c_b1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+
+    s_c = f32[1048576,1048576,1048576] parameter(6)
+    c_c0 = f32[1048576,1048576,1572864] parameter(7)
+    c_c1 = f32[1048576,1048576,1572864] parameter(8)
+    dc0 = f32[1048576,1048576,1572864] dot(s_c, c_c0),
+        lhs_batch_dims={0}, rhs_batch_dims={0},
+        lhs_contracting_dims={2}, rhs_contracting_dims={1}
+    dc1 = f32[1048576,1048576,1572864] dot(s_c, c_c1),
+        lhs_batch_dims={0}, rhs_batch_dims={0},
+        lhs_contracting_dims={2}, rhs_contracting_dims={1}
+
+    ROOT out = (s64[432345564227567616,2,1], s64[432345564227567616,2,1],
+                s8[1,576460752303423488], s8[1,576460752303423488],
+                f32[1048576,1048576,1572864], f32[1048576,1048576,1572864])
+        tuple(da0, da1, db0, db1, dc0, dc1)
+  })";
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> m_ovf,
+      ParseAndReturnVerifiedModule(kOverflowBytesPerNcAndProduct));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       this->RunHloPass(&default_pass, m_ovf.get()));
+  EXPECT_FALSE(changed);
+  ASSERT_OK_AND_ASSIGN(changed, this->RunHloPass(&neg_pass, m_ovf.get()));
+  EXPECT_FALSE(changed);
+
+  // Merged shape bytes exceeding INT64_MAX under max_size_to_merge = INT64_MAX.
+  constexpr absl::string_view kMergedShapeByteOverflow = R"(
+  HloModule module
+  ENTRY main {
+    lhs = f32[1,1] parameter(0)
+    rhs0 = f32[1,288230376151711744] parameter(1)
+    rhs1 = f32[1,2017612633061982208] parameter(2)
+    dot0 = f32[1,288230376151711744] dot(lhs, rhs0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    dot1 = f32[1,2017612633061982208] dot(lhs, rhs1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    ROOT out = (f32[1,288230376151711744], f32[1,2017612633061982208])
+        tuple(dot0, dot1)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_byte_ovf,
+                       ParseAndReturnVerifiedModule(kMergedShapeByteOverflow));
+  ASSERT_OK_AND_ASSIGN(changed, this->RunHloPass(&max_pass, m_byte_ovf.get()));
+  EXPECT_FALSE(changed);
 }
 
 }  // namespace

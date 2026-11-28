@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <numeric>
 #include <optional>
 #include <string>
@@ -28,6 +29,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -36,6 +38,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
 #include "absl/numeric/bits.h"
+#include "absl/numeric/int128.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -48,6 +51,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/layout_util.h"
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/graphcycles/graphcycles.h"
@@ -80,10 +85,93 @@ bool HasSubByteUpcast(const HloInstruction* instr) {
 
 using ReplacementMap = HloInstructionMap<HloInstruction*>;
 
+bool HasNonDefaultLayout(const Shape& shape) {
+  return LayoutUtil::HasLayout(shape) &&
+         shape.layout() != LayoutUtil::GetDefaultLayoutForShape(shape);
+}
+
+// Returns 0 (unsharded), 1 (V2 replicated), or 2 (V2 manual), or std::nullopt
+// for tuple, NamedSharding, shard-group, or tiled/subgroup shardings.
+std::optional<int> GetRankIndependentShardingTag(const HloInstruction* inst) {
+  if (!inst->has_sharding()) {
+    return 0;
+  }
+  const HloSharding& sharding = inst->sharding();
+  if (sharding.IsTuple() || sharding.UseNamedShardingLeaf() ||
+      sharding.IsShardGroup()) {
+    return std::nullopt;
+  }
+  if (sharding.IsReplicated()) {
+    return 1;
+  }
+  if (sharding.IsManual()) {
+    return 2;
+  }
+  return std::nullopt;
+}
+
+void CopyShardingAlongUnaryChain(const HloInstruction* source_with_sharding,
+                                 const HloInstruction* stop_exclusive,
+                                 HloInstruction* tail) {
+  if (!source_with_sharding->has_sharding()) {
+    return;
+  }
+  const HloSharding& sharding = source_with_sharding->sharding();
+  for (HloInstruction* cur = tail;
+       cur != nullptr && cur != stop_exclusive && cur->operand_count() == 1;
+       cur = cur->mutable_operand(0)) {
+    cur->set_sharding(sharding);
+  }
+}
+
+struct ResultAccuracyKey {
+  bool present = false;
+  int mode = 0;
+  bool has_tolerance = false;
+  uint64_t atol_bits = 0;
+  uint64_t rtol_bits = 0;
+  int64_t ulps = 0;
+
+  auto AsTuple() const {
+    return std::tie(present, mode, has_tolerance, atol_bits, rtol_bits, ulps);
+  }
+
+  template <typename H>
+  friend H AbslHashValue(H h, const ResultAccuracyKey& k) {
+    return H::combine(std::move(h), k.present, k.mode, k.has_tolerance,
+                      k.atol_bits, k.rtol_bits, k.ulps);
+  }
+
+  bool operator==(const ResultAccuracyKey& other) const {
+    return AsTuple() == other.AsTuple();
+  }
+
+  bool operator<(const ResultAccuracyKey& other) const {
+    return AsTuple() < other.AsTuple();
+  }
+};
+
+ResultAccuracyKey MakeResultAccuracyKey(const HloInstruction* dot) {
+  ResultAccuracyKey key;
+  if (!dot->has_result_accuracy()) {
+    return key;
+  }
+  const ResultAccuracy& acc = dot->result_accuracy();
+  key.present = true;
+  key.mode = acc.has_mode() ? static_cast<int>(acc.mode()) : -1;
+  if (acc.has_tolerance()) {
+    key.has_tolerance = true;
+    key.atol_bits = absl::bit_cast<uint64_t>(acc.tolerance().atol());
+    key.rtol_bits = absl::bit_cast<uint64_t>(acc.tolerance().rtol());
+    key.ulps = acc.tolerance().ulps();
+  }
+  return key;
+}
+
 // In order to be mergeable, the shared operand should have the same dimension
 // categories for non-degenerate dimensions, the same operand and output
-// types, and the same algorithm/precision config, queue_id, and frontend
-// attributes.
+// types, and the same side-relative precision/algorithm, queue_id, backend
+// config, result accuracy, sharding, and frontend attributes.
 struct EquivalenceKey {
   const HloInstruction* source;
   std::vector<DotOperandDims::Category> dim_categories;
@@ -91,14 +179,22 @@ struct EquivalenceKey {
   PrimitiveType shared_op_type;
   PrimitiveType concat_op_type;
   PrimitiveType dot_type;
-  std::string precision_config_bytes;
+  PrecisionConfig::Precision shared_op_precision;
+  PrecisionConfig::Precision concat_op_precision;
+  PrecisionConfig::Algorithm algorithm;
+  int algorithm_shared_side;
+  std::string raw_backend_config;
+  ResultAccuracyKey result_accuracy;
+  int sharding_tag;
   absl::btree_map<std::string, std::string> frontend_attributes;
 
   template <typename H>
   friend H AbslHashValue(H h, const EquivalenceKey& k) {
     return H::combine(std::move(h), k.source, k.dim_categories, k.queue_id,
                       k.shared_op_type, k.concat_op_type, k.dot_type,
-                      k.precision_config_bytes, k.frontend_attributes);
+                      k.shared_op_precision, k.concat_op_precision, k.algorithm,
+                      k.algorithm_shared_side, k.raw_backend_config,
+                      k.result_accuracy, k.sharding_tag, k.frontend_attributes);
   }
 
   bool operator==(const EquivalenceKey& other) const {
@@ -107,7 +203,13 @@ struct EquivalenceKey {
            shared_op_type == other.shared_op_type &&
            concat_op_type == other.concat_op_type &&
            dot_type == other.dot_type &&
-           precision_config_bytes == other.precision_config_bytes &&
+           shared_op_precision == other.shared_op_precision &&
+           concat_op_precision == other.concat_op_precision &&
+           algorithm == other.algorithm &&
+           algorithm_shared_side == other.algorithm_shared_side &&
+           raw_backend_config == other.raw_backend_config &&
+           result_accuracy == other.result_accuracy &&
+           sharding_tag == other.sharding_tag &&
            frontend_attributes == other.frontend_attributes;
   }
 
@@ -116,11 +218,15 @@ struct EquivalenceKey {
     int64_t id2 = other.source->unique_id();
     auto t1 =
         std::tie(id1, queue_id, dim_categories, shared_op_type, concat_op_type,
-                 dot_type, precision_config_bytes, frontend_attributes);
-    auto t2 =
-        std::tie(id2, other.queue_id, other.dim_categories,
-                 other.shared_op_type, other.concat_op_type, other.dot_type,
-                 other.precision_config_bytes, other.frontend_attributes);
+                 dot_type, shared_op_precision, concat_op_precision, algorithm,
+                 algorithm_shared_side, raw_backend_config, result_accuracy,
+                 sharding_tag, frontend_attributes);
+    auto t2 = std::tie(
+        id2, other.queue_id, other.dim_categories, other.shared_op_type,
+        other.concat_op_type, other.dot_type, other.shared_op_precision,
+        other.concat_op_precision, other.algorithm, other.algorithm_shared_side,
+        other.raw_backend_config, other.result_accuracy, other.sharding_tag,
+        other.frontend_attributes);
     return t1 < t2;
   }
 };
@@ -136,7 +242,7 @@ struct DotOperandUsage {
 
 absl::StatusOr<EquivalenceKey> GetEquivalenceKey(
     const HloInstruction* dot, const HloInstruction* operand,
-    int shared_operand_idx, const HloInstruction* source,
+    int shared_operand_idx, int sharding_tag, const HloInstruction* source,
     const DotOperandDims& dims,
     const std::function<int64_t(const HloInstruction* dot)>& queue_id) {
   DotOperandDims canonical_dims = dims;
@@ -150,19 +256,32 @@ absl::StatusOr<EquivalenceKey> GetEquivalenceKey(
   PrimitiveType concat_op_type =
       dot->operand(1 - shared_operand_idx)->shape().element_type();
   PrimitiveType dot_type = dot->shape().element_type();
-  std::string precision_config_bytes =
-      dot->precision_config().SerializeAsString();
+  const PrecisionConfig& pc = dot->precision_config();
+  auto operand_precision = [&](int idx) {
+    return idx >= 0 && idx < pc.operand_precision_size()
+               ? pc.operand_precision(idx)
+               : PrecisionConfig::DEFAULT;
+  };
+  const PrecisionConfig::Algorithm algorithm = pc.algorithm();
+  const int algorithm_shared_side =
+      (algorithm == PrecisionConfig::ALG_UNSET) ? 0 : shared_operand_idx;
   absl::btree_map<std::string, std::string> frontend_attributes(
       dot->frontend_attributes().map().begin(),
       dot->frontend_attributes().map().end());
 
   return EquivalenceKey{source,
-                        dim_categories,
+                        std::move(dim_categories),
                         queue_id(dot),
                         shared_op_type,
                         concat_op_type,
                         dot_type,
-                        std::move(precision_config_bytes),
+                        operand_precision(shared_operand_idx),
+                        operand_precision(1 - shared_operand_idx),
+                        algorithm,
+                        algorithm_shared_side,
+                        std::string(dot->raw_backend_config_string()),
+                        MakeResultAccuracyKey(dot),
+                        sharding_tag,
                         std::move(frontend_attributes)};
 }
 
@@ -177,8 +296,12 @@ GetOperandSourceWithCategories(HloInstruction* dot, int operand_number) {
                         DotOperandDims::FromDotOperand(dot, operand_number));
   HloInstruction* current = operand;
   while (current->opcode() == HloOpcode::kTranspose ||
-         current->opcode() == HloOpcode::kReshape ||
-         current->opcode() == HloOpcode::kBitcast) {
+         current->opcode() == HloOpcode::kReshape) {
+    if (current->HasControlDependencies() || current->has_sharding() ||
+        current->has_frontend_attributes() ||
+        !current->operand(0)->shape().is_static()) {
+      break;
+    }
     ABSL_ASSIGN_OR_RETURN(std::optional<DotOperandDims> mapped,
                           dims.MapBackward(current));
     if (!mapped.has_value()) {
@@ -200,16 +323,41 @@ BuildEquivalenceClasses(
   absl::btree_map<EquivalenceKey, std::vector<DotOperandUsage>>
       equivalence_classes;
 
+  auto is_static_nonempty_array = [](const Shape& shape) {
+    return shape.IsArray() && shape.is_static() &&
+           !ShapeUtil::IsZeroElementArray(shape);
+  };
+
   for (HloInstruction* instr : comp->instructions()) {
-    if (instr->opcode() != HloOpcode::kDot ||
-        !instr->control_predecessors().empty() ||
-        !instr->control_successors().empty() ||
+    if (instr->opcode() != HloOpcode::kDot || instr->IsDead() ||
+        instr->operand_count() != 2 || instr->HasControlDependencies() ||
+        instr->sparsity_config().has_lhs() ||
+        instr->sparsity_config().has_rhs() ||
+        instr->block_scaling_config().has_lhs() ||
+        instr->block_scaling_config().has_rhs() ||
+        !is_static_nonempty_array(instr->shape()) ||
+        !is_static_nonempty_array(instr->operand(0)->shape()) ||
+        !is_static_nonempty_array(instr->operand(1)->shape()) ||
+        instr->operand(0)->shape().dimensions().empty() ||
+        instr->operand(1)->shape().dimensions().empty() ||
+        !GetRankIndependentShardingTag(instr->operand(0)).has_value() ||
+        !GetRankIndependentShardingTag(instr->operand(1)).has_value() ||
+        (HasNonDefaultLayout(instr->shape()) &&
+         absl::c_any_of(instr->users(),
+                        [](const HloInstruction* user) {
+                          return user->opcode() == HloOpcode::kBitcast;
+                        })) ||
         absl::c_any_of(instr->operands(), HasSubByteUpcast)) {
       continue;
     }
+    const std::optional<int> sharding_tag =
+        GetRankIndependentShardingTag(instr);
+    if (!sharding_tag.has_value()) {
+      continue;
+    }
 
-    // Go from operands up through the chain of transposes/reshapes/bitcasts
-    // while possible. The result is the "source" of that operand.
+    // Go from operands up through the chain of transposes/reshapes while
+    // possible. The result is the "source" of that operand.
     ABSL_ASSIGN_OR_RETURN(auto lhs, GetOperandSourceWithCategories(instr, 0));
     ABSL_ASSIGN_OR_RETURN(auto rhs, GetOperandSourceWithCategories(instr, 1));
 
@@ -220,8 +368,8 @@ BuildEquivalenceClasses(
       ABSL_ASSIGN_OR_RETURN(
           EquivalenceKey key,
           GetEquivalenceKey(instr, instr->operand(shared_operand_idx),
-                            shared_operand_idx, shared.first, shared.second,
-                            queue_id));
+                            shared_operand_idx, *sharding_tag, shared.first,
+                            shared.second, queue_id));
 
       int64_t concat_nc_size =
           concat.second.TotalSize(DotOperandDims::kNonContracting);
@@ -278,8 +426,12 @@ absl::StatusOr<HloInstruction*> CreateSharedOperand(
   if (source->shape() == target_shared_dims.shape()) {
     return source;
   }
-  return source->parent()->AddInstruction(
+  HloInstruction* reshaped = source->parent()->AddInstruction(
       HloInstruction::CreateReshape(target_shared_dims.shape(), source));
+  if (source->has_sharding()) {
+    reshaped->set_sharding(source->sharding());
+  }
+  return reshaped;
 }
 
 // Given the operand shapes before/after transformation, and the dot dimensions
@@ -496,7 +648,7 @@ absl::StatusOr<std::vector<ConcatTargetInfo>> ComputeTargetConcatDims(
         ConcatTargetInfo info,
         TransformConcatDims(concat_dims_at_dot, shared_dims_at_dot,
                             target_shared_dims, shared_dot_to_target,
-                            usage.dot->shape().element_type(),
+                            concat_dims_at_dot.shape().element_type(),
                             contracting_is_minor));
 
     // TransformConcatDims returns a old->new tracker for the concat operand.
@@ -523,6 +675,10 @@ absl::StatusOr<std::vector<HloInstruction*>> CreateMergedConcatOperands(
     ABSL_ASSIGN_OR_RETURN(
         HloInstruction * new_concat_op,
         info.tracker.ToInstructionChain(usage.concat_operand_source));
+    CopyShardingAlongUnaryChain(usage.concat_operand_source->has_sharding()
+                                    ? usage.concat_operand_source
+                                    : usage.dot,
+                                usage.concat_operand_source, new_concat_op);
     transformed_concat_ops.push_back(new_concat_op);
   }
   return transformed_concat_ops;
@@ -565,10 +721,21 @@ absl::StatusOr<HloInstruction*> CreateNewDot(
                             /*preferred_element_type=*/
                             dots_to_merge[0].dot->shape().element_type()));
 
-  HloInstruction* new_dot = dot_lhs->AddInstruction(
-      HloInstruction::CreateDot(new_dot_shape, dot_lhs, dot_rhs, dnums,
-                                dots_to_merge[0].dot->precision_config()));
-  new_dot->CopyBackendConfigFrom(dots_to_merge[0].dot);
+  const HloInstruction* ref_dot = dots_to_merge[0].dot;
+  PrecisionConfig precision_config = ref_dot->precision_config();
+  if (precision_config.operand_precision_size() == 2 &&
+      (dots_to_merge[0].shared_operand_idx == 0) != target_is_lhs) {
+    precision_config.mutable_operand_precision()->SwapElements(0, 1);
+  }
+  HloInstruction* new_dot = dot_lhs->AddInstruction(HloInstruction::CreateDot(
+      new_dot_shape, dot_lhs, dot_rhs, dnums, precision_config));
+  new_dot->CopyBackendConfigFrom(ref_dot);
+  if (ref_dot->has_result_accuracy()) {
+    new_dot->set_result_accuracy(ref_dot->result_accuracy());
+  }
+  if (ref_dot->has_sharding()) {
+    new_dot->set_sharding(ref_dot->sharding());
+  }
 
   auto it = absl::c_find_if(dots_to_merge, [](const DotOperandUsage& usage) {
     return !usage.dot->metadata().op_name().empty();
@@ -576,7 +743,7 @@ absl::StatusOr<HloInstruction*> CreateNewDot(
   if (it != dots_to_merge.end()) {
     new_dot->set_metadata(it->dot->metadata());
   }
-  new_dot->set_frontend_attributes(dots_to_merge[0].dot->frontend_attributes());
+  new_dot->set_frontend_attributes(ref_dot->frontend_attributes());
 
   return new_dot;
 }
@@ -677,6 +844,9 @@ absl::Status SliceAndReplaceOutput(
 
   HloInstruction* slice = new_dot->AddInstruction(HloInstruction::CreateSlice(
       slice_shape, new_dot, start_indices, limit_indices, strides));
+  if (original_dot->has_sharding()) {
+    slice->set_sharding(original_dot->sharding());
+  }
 
   // 2. Now we have required elements, but they may be in wrong order.
   // We need to "undo" the transformations we did to our operands.
@@ -706,6 +876,7 @@ absl::Status SliceAndReplaceOutput(
   // 3. Materialize the tracker chain and update the replacements map.
   ABSL_ASSIGN_OR_RETURN(HloInstruction * result,
                         output_tracker.ToInstructionChain(slice));
+  CopyShardingAlongUnaryChain(original_dot, slice, result);
   replacements[original_dot] = result;
 
   slice_start += slice_size;
@@ -743,7 +914,7 @@ absl::StatusOr<std::vector<DotOperandUsage>> FindDotsToMerge(
   // arbitrary factors.
   constexpr double kMinSavingsRatio = 1e-5;
 
-  if (compatible_dots.size() < 2) {
+  if (compatible_dots.size() < 2 || max_size_to_merge < 0) {
     return std::vector<DotOperandUsage>{};
   }
 
@@ -764,23 +935,33 @@ absl::StatusOr<std::vector<DotOperandUsage>> FindDotsToMerge(
 
   const int64_t shared_op_bytes =
       ShapeUtil::ByteSizeOfElements(shared_op->shape());
-  const int64_t concat_and_out_bytes_per_nc =
-      batch * (contracting * ShapeUtil::ByteSizeOfPrimitiveType(
-                                 concat_op->shape().element_type()) +
-               shared_nc * ShapeUtil::ByteSizeOfPrimitiveType(
-                               first.dot->shape().element_type()));
+  const absl::int128 concat_bytes_per_nc =
+      absl::int128(batch) * contracting *
+      ShapeUtil::ByteSizeOfPrimitiveType(concat_op->shape().element_type());
+  const absl::int128 out_bytes_per_nc =
+      absl::int128(batch) * shared_nc *
+      ShapeUtil::ByteSizeOfPrimitiveType(first.dot->shape().element_type());
+  const absl::int128 concat_and_out_bytes_per_nc =
+      concat_bytes_per_nc + out_bytes_per_nc;
 
   // The cost of a dot (before or after the merge) per non-contracting
   // element, in "HBM transfer bytes" (but also includes flops by dividing by
   // kFlopsPerByte).
   const double cost_per_nc =
-      (2.0 * batch * shared_nc * contracting / kFlopsPerByte) +
-      concat_and_out_bytes_per_nc;
+      (2.0 * static_cast<double>(batch) * static_cast<double>(shared_nc) *
+       static_cast<double>(contracting) / kFlopsPerByte) +
+      static_cast<double>(concat_and_out_bytes_per_nc);
 
   auto is_connected = [&](const HloInstruction* a, const HloInstruction* b) {
     int32_t id1 = graph_id(a), id2 = graph_id(b);
     return graph.IsReachableNonConst(id1, id2) ||
            graph.IsReachableNonConst(id2, id1);
+  };
+
+  constexpr absl::int128 kInt64Max = std::numeric_limits<int64_t>::max();
+  auto product_exceeds = [](absl::int128 lhs, absl::int128 rhs,
+                            absl::int128 limit) {
+    return lhs > 0 && rhs > limit / lhs;
   };
 
   // Try all dots as seeds, and append dots of increasing size (as they come
@@ -791,15 +972,17 @@ absl::StatusOr<std::vector<DotOperandUsage>> FindDotsToMerge(
     const DotOperandUsage& first_dot = compatible_dots[i];
     std::vector<DotOperandUsage> group = {first_dot};
     int64_t sum_nc = first_dot.concat_nc_size;
-    const int64_t max_allowed_nc = sum_nc * kMaxNonContractingRatio;
+    const absl::int128 max_allowed_nc =
+        absl::int128(sum_nc) * kMaxNonContractingRatio;
 
     for (size_t j = i + 1; j < compatible_dots.size(); ++j) {
-      if (concat_and_out_bytes_per_nc * sum_nc > max_size_to_merge) {
+      if (product_exceeds(concat_and_out_bytes_per_nc, sum_nc,
+                          max_size_to_merge)) {
         break;
       }
 
       const DotOperandUsage& cand_dot = compatible_dots[j];
-      if (cand_dot.concat_nc_size > max_allowed_nc) {
+      if (absl::int128(cand_dot.concat_nc_size) > max_allowed_nc) {
         break;  // Subsequent elements violate the kMaxNonContractingRatio.
       }
 
@@ -809,15 +992,23 @@ absl::StatusOr<std::vector<DotOperandUsage>> FindDotsToMerge(
         continue;
       }
 
-      const int64_t next_sum = sum_nc + cand_dot.concat_nc_size;
+      const absl::int128 next_sum =
+          absl::int128(sum_nc) + cand_dot.concat_nc_size;
+      if (next_sum > kInt64Max ||
+          product_exceeds(concat_bytes_per_nc, next_sum, kInt64Max) ||
+          product_exceeds(out_bytes_per_nc, next_sum, kInt64Max)) {
+        break;
+      }
       const double sum_runtime =
-          cost_per_nc * next_sum + (group.size() + 1) * shared_op_bytes;
-      if (shared_op_bytes * group.size() / sum_runtime <= kMinSavingsRatio) {
+          cost_per_nc * static_cast<double>(next_sum) +
+          static_cast<double>(group.size() + 1) * shared_op_bytes;
+      if (!(sum_runtime > 0.0) ||
+          shared_op_bytes * group.size() / sum_runtime <= kMinSavingsRatio) {
         continue;
       }
 
       group.push_back(cand_dot);
-      sum_nc = next_sum;
+      sum_nc = static_cast<int64_t>(next_sum);
     }
 
     if (group.size() >= 2) {
@@ -913,6 +1104,9 @@ absl::StatusOr<HloInstruction*> MergeCluster(
   ABSL_ASSIGN_OR_RETURN(HloInstruction * concatenated_concat_op,
                         CreateConcatenatedOperand(
                             new_shared_op, transformed_concat_ops, concat_dim));
+  if (dots_to_merge[0].dot->has_sharding()) {
+    concatenated_concat_op->set_sharding(dots_to_merge[0].dot->sharding());
+  }
 
   // Make the new dot.
   HloInstruction* dot_lhs =
@@ -960,7 +1154,7 @@ absl::Status BuildDependencyGraph(
 }
 
 absl::Status SimplifyConsumerChain(HloInstruction* chain_start) {
-  if (chain_start->operand_count() != 1) {
+  if (chain_start->IsDead() || chain_start->operand_count() != 1) {
     return absl::OkStatus();
   }
 
@@ -969,17 +1163,22 @@ absl::Status SimplifyConsumerChain(HloInstruction* chain_start) {
   ShapeTracker tracker(producer->shape());
   std::vector<HloInstruction*> chain;
   HloInstruction* curr = chain_start;
-  // Build a chain of transposes/reshapes/bitcasts while they have one user.
+  // Build a chain of transposes/reshapes while they have one user.
   while (curr->opcode() == HloOpcode::kTranspose ||
-         curr->opcode() == HloOpcode::kReshape ||
-         curr->opcode() == HloOpcode::kBitcast) {
-    if (!curr->control_predecessors().empty() ||
-        !curr->control_successors().empty()) {
+         curr->opcode() == HloOpcode::kReshape) {
+    const bool feeds_bitcast =
+        absl::c_any_of(curr->users(), [](const HloInstruction* user) {
+          return user->opcode() == HloOpcode::kBitcast;
+        });
+    if (curr->HasControlDependencies() || curr->has_sharding() ||
+        curr->has_frontend_attributes() ||
+        (HasNonDefaultLayout(curr->shape()) &&
+         (curr->IsRoot() || feeds_bitcast))) {
       break;
     }
     ABSL_RETURN_IF_ERROR(tracker.AppendInstruction(curr));
     chain.push_back(curr);
-    if (curr->user_count() != 1) {
+    if (curr->IsRoot() || curr->user_count() != 1) {
       break;
     }
     curr = curr->users()[0];
