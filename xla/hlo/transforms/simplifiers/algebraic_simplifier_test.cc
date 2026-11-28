@@ -16983,5 +16983,91 @@ TEST_F(AlgebraicSimplifierTest, CanonicalizesMultiDimShuffleRotate) {
   EXPECT_EQ(shuffle->rotate().shifts(1), 3);
 }
 
+TEST_F(AlgebraicSimplifierTest,
+       RemoveDegenerateDimensionFromDotPreservesLhsReshapeMetadata) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+    ENTRY test {
+      lhs = f32[1,8] parameter(0)
+      rhs = f32[8,4] parameter(1)
+      ROOT dot = f32[1,4] dot(lhs, rhs),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0},
+        metadata={op_type="dot_general" op_name="jit(_gemm)/dot_general" source_file="test.py" source_line=42},
+        frontend_attributes={MUST_FUSE="123"}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  const OpMetadata expected_metadata =
+      m->entry_computation()->root_instruction()->metadata();
+  ASSERT_THAT(AlgebraicSimplifier(default_options_).Run(m.get()),
+              absl_testing::IsOkAndHolds(true));
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  const HloInstruction* lhs_reshape = nullptr;
+  ASSERT_THAT(
+      root, GmockMatch(m::Reshape(m::Dot(
+                m::Reshape(&lhs_reshape, m::Parameter(0)), m::Parameter(1)))));
+  EXPECT_THAT(lhs_reshape, op::Metadata(expected_metadata));
+  EXPECT_FALSE(lhs_reshape->has_frontend_attributes());
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       RemoveDegenerateDimensionFromDotPreservesRhsReshapeMetadata) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+    ENTRY test {
+      lhs = f32[4,8] parameter(0)
+      rhs = f32[8,1] parameter(1)
+      ROOT dot = f32[4,1] dot(lhs, rhs),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0},
+        metadata={op_type="dot_general" op_name="jit(_gemm)/dot_general" source_file="test.py" source_line=43},
+        frontend_attributes={MUST_FUSE="456"}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  const OpMetadata expected_metadata =
+      m->entry_computation()->root_instruction()->metadata();
+  ASSERT_THAT(AlgebraicSimplifier(default_options_).Run(m.get()),
+              absl_testing::IsOkAndHolds(true));
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  const HloInstruction* rhs_reshape = nullptr;
+  ASSERT_THAT(
+      root, GmockMatch(m::Reshape(m::Dot(
+                m::Parameter(0), m::Reshape(&rhs_reshape, m::Parameter(1))))));
+  EXPECT_THAT(rhs_reshape, op::Metadata(expected_metadata));
+  EXPECT_FALSE(rhs_reshape->has_frontend_attributes());
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       RewriteBatchPlusContractingAsReducePreservesMetadata) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+    ENTRY test {
+      lhs = f8e4m3fn[8] parameter(0), metadata={op_name="lhs_param"}
+      rhs = f8e4m3fn[8,4] parameter(1), metadata={op_name="rhs_param"}
+      ROOT dot = bf16[4] dot(lhs, rhs),
+        lhs_contracting_dims={0}, rhs_contracting_dims={0},
+        metadata={op_type="dot_general" op_name="jit(_gemm)/dot_general" source_file="test.py" source_line=44},
+        frontend_attributes={MUST_FUSE="789"}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  const HloInstruction* orig_dot = m->entry_computation()->root_instruction();
+  const OpMetadata lhs_param_metadata = orig_dot->operand(0)->metadata();
+  const OpMetadata rhs_param_metadata = orig_dot->operand(1)->metadata();
+  const OpMetadata expected_metadata = orig_dot->metadata();
+  ASSERT_THAT(AlgebraicSimplifier(default_options_).Run(m.get()),
+              absl_testing::IsOkAndHolds(true));
+  for (const HloInstruction* inst : m->entry_computation()->instructions()) {
+    if (inst->opcode() == HloOpcode::kParameter) {
+      EXPECT_THAT(inst, op::Metadata(inst->parameter_number() == 0
+                                         ? lhs_param_metadata
+                                         : rhs_param_metadata));
+    } else {
+      EXPECT_THAT(inst, op::Metadata(expected_metadata))
+          << "Unexpected metadata on " << inst->ToString();
+    }
+  }
+}
+
 }  // namespace
 }  // namespace xla

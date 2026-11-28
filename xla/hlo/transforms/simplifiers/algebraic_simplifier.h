@@ -340,9 +340,9 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   absl::StatusOr<bool> TryFoldTransposeIntoScatter(HloInstruction* transpose);
 
   // Converts to primitive type if the input hlo is not that type, otherwise
-  // returns the original hlo.
-  HloInstruction* AsType(HloInstruction* hlo,
-                         const PrimitiveType element_type) {
+  // returns the original hlo. Attaches `metadata` to the created convert.
+  HloInstruction* AsType(HloInstruction* hlo, const PrimitiveType element_type,
+                         const OpMetadata& metadata) {
     if (hlo->shape().element_type() == element_type) {
       return hlo;
     }
@@ -350,7 +350,7 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
         ShapeUtil::ChangeElementType(hlo->shape(), element_type);
     simplifier_->UpdateLayout(&changed_shape);
     return computation_->AddInstruction(
-        HloInstruction::CreateConvert(changed_shape, hlo));
+        HloInstruction::CreateConvert(changed_shape, hlo), &metadata);
   }
 
   // Transposes a dot operand such that the batch dimensions are the most major,
@@ -370,8 +370,9 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   absl::StatusOr<bool> RemoveTransposesFromDotOperands(HloDotInstruction* dot);
 
   // Helper method to perform and add reduction on a list of dimensions.
+  // Attaches `metadata` to the created zero constant and reduce instructions.
   HloInstruction* AddReduce(HloInstruction* hlo, absl::Span<const int64_t> dims,
-                            PrimitiveType type);
+                            PrimitiveType type, const OpMetadata& metadata);
 
   // Move scalar multiply to the smallest side of convolution to
   // reduce multiply computations.
