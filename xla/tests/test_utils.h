@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "tsl/platform/protobuf.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout_util.h"
@@ -68,8 +69,8 @@ class PseudorandomGenerator {
 using GetIndexKnownZeroesFn =
     std::function<std::optional<uint64_t>(const HloInstruction*, int64_t)>;
 
-// Options for generating fake arguments with MakeFakeArguments and
-// MakeDataflowConstrainedArguments.
+// Options for generating fake arguments with MakeFakeArguments,
+// FakeArgumentsGenerator, and MakeDataflowConstrainedArguments.
 struct FakeArgumentsOptions {
   // Optional random number generator. Passing a generator enables generation
   // of different random values across sequential calls by reusing the same
@@ -151,6 +152,64 @@ struct FakeArgumentsOptions {
   // parameter shapes (e.g. `subtract(p0, p1)`) while bounding generation work
   // in deep models with many identically shaped layer weights.
   int max_cached_variants_per_shape = 2;
+};
+
+// Move-only generator that precomputes the internal dataflow analysis once for
+// a single `HloModule` so repeated fake argument generation (for example across
+// multiple devices) avoids repeating the analysis on every call.
+//
+// Preconditions:
+//  - `module` must be non-null, outlive the generator, and not be mutated after
+//    `Create()` returns.
+//  - Thread-compatible, not thread-safe: callers must not invoke generation
+//    methods concurrently on the same `FakeArgumentsGenerator` instance.
+class FakeArgumentsGenerator {
+ public:
+  static absl::StatusOr<FakeArgumentsGenerator> Create(const HloModule* module);
+
+  FakeArgumentsGenerator(const FakeArgumentsGenerator&) = delete;
+  FakeArgumentsGenerator& operator=(const FakeArgumentsGenerator&) = delete;
+  FakeArgumentsGenerator(FakeArgumentsGenerator&&) noexcept = default;
+  FakeArgumentsGenerator& operator=(FakeArgumentsGenerator&&) noexcept =
+      default;
+  ~FakeArgumentsGenerator() = default;
+
+  // Generates a vector of fake arguments for the module using the precomputed
+  // analysis. Equivalent to `MakeFakeArguments(module, options)`.
+  // Note: `parameter_ranges` in `options` is not supported and returns an
+  // Unimplemented error if provided.
+  absl::StatusOr<std::vector<Literal>> MakeArguments(
+      const FakeArgumentsOptions& options = {});
+
+  // Like `MakeArguments`, but returns shared pointers to immutable literals so
+  // default-memory-space cached array arguments can be reused without copying
+  // into transient host RAM. Parameters with non-default layout memory spaces
+  // (such as `Layout::kHostMemorySpace` / `S(5)`) and non-flattened tuples fall
+  // back to cloning into owned literals.
+  // Note: `parameter_ranges` in `options` is not supported and returns an
+  // Unimplemented error if provided.
+  absl::StatusOr<std::vector<std::shared_ptr<const Literal>>>
+  MakeSharedArguments(const FakeArgumentsOptions& options = {});
+
+  // Like `MakeSharedArguments`, but requires `module` to have a single tuple
+  // entry parameter and returns its top-level elements directly without
+  // constructing an owned wrapper tuple literal (returning `InvalidArgument`
+  // otherwise). Default-memory-space cached array leaves are reused without
+  // copying; leaves with non-default layout memory spaces (such as
+  // `Layout::kHostMemorySpace`) or nested tuples fall back to cloning into
+  // owned literals.
+  // Note: `parameter_ranges` in `options` is not supported and returns an
+  // Unimplemented error if provided.
+  absl::StatusOr<std::vector<std::shared_ptr<const Literal>>>
+  MakeFlattenedSharedArguments(const FakeArgumentsOptions& options = {});
+
+ private:
+  FakeArgumentsGenerator(
+      const HloModule* module,
+      std::unique_ptr<HloDataflowAnalysis> dataflow_analysis);
+
+  const HloModule* module_;
+  std::unique_ptr<HloDataflowAnalysis> dataflow_analysis_;
 };
 
 // Generates a vector of arguments containing fake data. The number, shape and
