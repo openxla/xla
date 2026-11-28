@@ -103,6 +103,80 @@ TEST_F(CholeskyTest, NonPSDBatched) {
                              ErrorSpec(1e-4, 1e-4));
 }
 
+TEST_F(CholeskyTest, ZeroPivotUnblockedAndUnitBlock) {
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  for (PrimitiveType type : {F32, BF16, F16}) {
+    SCOPED_TRACE(ShapeUtil::HumanString(ShapeUtil::MakeShape(type, {})));
+
+    {
+      XlaBuilder builder("unit_block_zero_pivot");
+      Array3D<float> a_vals({{{4.0f}}, {{0.0f}}, {{-0.0f}}});
+      XlaOp a;
+      auto a_data = CreateR3Parameter<float>(a_vals, 0, "a", &builder, &a);
+      XlaOp typed_a = (type == F32) ? a : ConvertElementType(a, type);
+      ConvertElementType(Cholesky(typed_a, /*lower=*/true), F32);
+      Array3D<float> expected({{{2.0f}}, {{nan}}, {{nan}}});
+      ComputeAndCompareR3<float>(&builder, expected, {&a_data},
+                                 ErrorSpec(1e-4, 1e-4));
+    }
+
+    {
+      XlaBuilder builder("unblocked_final_row_zero_pivot");
+      Array3D<float> a_vals({
+          {{4.0f, 2.0f}, {2.0f, 5.0f}},
+          {{1.0f, 1.0f}, {1.0f, 1.0f}},
+          {{4.0f, 0.0f}, {0.0f, -0.0f}},
+      });
+      XlaOp a;
+      auto a_data = CreateR3Parameter<float>(a_vals, 0, "a", &builder, &a);
+      XlaOp typed_a = (type == F32) ? a : ConvertElementType(a, type);
+      ConvertElementType(Cholesky(typed_a, /*lower=*/true), F32);
+      Array3D<float> expected({
+          {{2.0f, 0.0f}, {1.0f, 2.0f}},
+          {{nan, nan}, {nan, nan}},
+          {{nan, nan}, {nan, nan}},
+      });
+      ComputeAndCompareR3<float>(&builder, expected, {&a_data},
+                                 ErrorSpec(1e-4, 1e-4));
+    }
+  }
+}
+
+TEST_F(CholeskyTest, ZeroFinalPivotBlockedBatched129) {
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  constexpr int64_t kSize = 129;
+  for (PrimitiveType type : {F32, BF16, F16}) {
+    if (type == F16 &&
+        (test_runner().HasProperty(HloRunnerPropertyTag::kUsingGpuCuda) ||
+         test_runner().HasProperty(HloRunnerPropertyTag::kUsingGpuRocm) ||
+         test_runner().HasProperty(HloRunnerPropertyTag::kUsingGpuOneAPI))) {
+      // Blocked Cholesky (n > 128) emits TriangularSolve, and GPU
+      // TriangularSolveThunk does not support F16.
+      continue;
+    }
+    SCOPED_TRACE(ShapeUtil::HumanString(ShapeUtil::MakeShape(type, {})));
+
+    XlaBuilder builder("blocked_129_final_zero_pivot");
+    Array3D<float> a_vals(2, kSize, kSize, 0.0f);
+    Array3D<float> expected(2, kSize, kSize, 0.0f);
+    for (int64_t r = 0; r < kSize; ++r) {
+      a_vals(0, r, r) = 4.0f;
+      expected(0, r, r) = 2.0f;
+      a_vals(1, r, r) = (r + 1 < kSize) ? 4.0f : 0.0f;
+      for (int64_t c = 0; c < kSize; ++c) {
+        expected(1, r, c) = nan;
+      }
+    }
+
+    XlaOp a;
+    auto a_data = CreateR3Parameter<float>(a_vals, 0, "a", &builder, &a);
+    XlaOp typed_a = (type == F32) ? a : ConvertElementType(a, type);
+    ConvertElementType(Cholesky(typed_a, /*lower=*/true), F32);
+    ComputeAndCompareR3<float>(&builder, expected, {&a_data},
+                               ErrorSpec(1e-4, 1e-4));
+  }
+}
+
 TEST_F(CholeskyTest, Lower) {
   XlaBuilder builder(TestName());
 
