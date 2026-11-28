@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_CODEGEN_XTILE_CODEGEN_FUSION_EMITTER_H_
 #define XLA_CODEGEN_XTILE_CODEGEN_FUSION_EMITTER_H_
 
+#include <cstdint>
 #include <optional>
 
 #include "absl/status/statusor.h"
@@ -45,7 +46,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
     const ::xla::gpu::TiledHloComputation& tiled_computation,
     mlir::MLIRContext& mlir_context, const CollectiveEntrySpec& collective_spec,
     const std::optional<stream_executor::GpuComputeCapability>& gpu_cc,
-    int num_tiles_per_pid, bool is_cpu = false);
+    int64_t num_tiles_per_pid, bool is_cpu = false);
 
 }  // namespace xla::xtile
 

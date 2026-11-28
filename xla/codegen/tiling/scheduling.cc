@@ -39,6 +39,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/MathExtras.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/codegen/tiling/tile.h"
 #include "xla/codegen/tiling/tiled_hlo.h"
@@ -61,124 +62,144 @@ namespace xla::gpu {
 
 namespace {
 
+absl::StatusOr<int64_t> CheckedMul(int64_t a, int64_t b) {
+  int64_t result = 0;
+  if (llvm::MulOverflow(a, b, result)) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("Tile count overflows int64: %d * %d.", a, b));
+  }
+  return result;
+}
+
+absl::StatusOr<int64_t> CheckedProduct(absl::Span<const int64_t> xs) {
+  for (int64_t x : xs) {
+    if (x < 0) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Negative tile count: %d.", x));
+    }
+    if (x == 0) {
+      return 0;
+    }
+  }
+  int64_t product = 1;
+  for (int64_t x : xs) {
+    ABSL_ASSIGN_OR_RETURN(product, CheckedMul(product, x));
+  }
+  return product;
+}
+
+absl::StatusOr<int64_t> GetCheckedNumTiles(
+    const TilingSpace& tiling_space, const TilingSpace::DimensionInfo& dim) {
+  TF_RET_CHECK(!tiling_space.IsSymbolic() && dim.tile_size.has_value());
+  if (*dim.tile_size <= 0 || dim.dimension_size < 0) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("Invalid dimension size %d or tile size %d.",
+                        dim.dimension_size, *dim.tile_size));
+  }
+  int64_t step = *dim.tile_size;
+  if (dim.peer_dim.has_value()) {
+    llvm::SmallVector<TilingSpace::DimensionInfo, 4> dims =
+        tiling_space.dimensions();
+    int64_t peer_id = dim.peer_dim->dim_id.value();
+    TF_RET_CHECK(peer_id >= 0 && peer_id < static_cast<int64_t>(dims.size()));
+    int64_t peers = dims[peer_id].dimension_size;
+    if (peers <= 0) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Invalid peer count: %d.", peers));
+    }
+    ABSL_ASSIGN_OR_RETURN(step, CheckedMul(step, peers));
+  }
+  return CeilOfRatio(dim.dimension_size, step);
+}
+
+// Uses effective stride CeilOfRatio(num_tiles, num_pids) to match
+// Schedule::GetNumTilesPerPid() and cover [0, num_tiles) without gaps or OOB.
+SymbolicExpr BuildGlobalTileId(int64_t num_tiles, int64_t num_tiles_per_pid,
+                               mlir::MLIRContext* ctx, int64_t* num_pids) {
+  *num_pids = CeilOfRatio(num_tiles, num_tiles_per_pid);
+  int64_t effective_tiles_per_pid = CeilOfRatio(num_tiles, *num_pids);
+  SymbolicExpr pid = CreateDimExpr(0, ctx);
+  return effective_tiles_per_pid > 1
+             ? pid * effective_tiles_per_pid + CreateDimExpr(1, ctx)
+             : pid;
+}
+
+std::optional<int64_t> GetParallelDimensionPosition(
+    const TilingSpace& tiling_space, TiledDimId target_id) {
+  int64_t pos = 0;
+  for (const TilingSpace::DimensionInfo& dim : tiling_space.dimensions()) {
+    if (dim.type == TilingSpace::DimensionSemantics::kParallel) {
+      if (dim.id == target_id) {
+        return pos;
+      }
+      ++pos;
+    }
+  }
+  return std::nullopt;
+}
+
+llvm::SmallVector<int64_t> SwapParallelDimensions(
+    const HloInstruction& root, const TilingSpace& tiling_space, int64_t dim_a,
+    int64_t dim_b, int64_t num_parallel_dims) {
+  const int64_t rank = root.shape().dimensions().size();
+  if (dim_a < 0 || dim_b < 0 || dim_a >= rank || dim_b >= rank) {
+    return {};
+  }
+  const TilingSpace::DimensionInfo& a_info =
+      tiling_space.GetDimensionInfo(root, dim_a);
+  const TilingSpace::DimensionInfo& b_info =
+      tiling_space.GetDimensionInfo(root, dim_b);
+  if (a_info.type != TilingSpace::DimensionSemantics::kParallel ||
+      b_info.type != TilingSpace::DimensionSemantics::kParallel) {
+    return {};
+  }
+  std::optional<int64_t> a_pos =
+      GetParallelDimensionPosition(tiling_space, a_info.id);
+  std::optional<int64_t> b_pos =
+      GetParallelDimensionPosition(tiling_space, b_info.id);
+  if (!a_pos.has_value() || !b_pos.has_value() || *a_pos == *b_pos ||
+      *a_pos >= num_parallel_dims || *b_pos >= num_parallel_dims) {
+    return {};
+  }
+  llvm::SmallVector<int64_t> permutation(num_parallel_dims);
+  std::iota(permutation.begin(), permutation.end(), 0);
+  std::swap(permutation[*a_pos], permutation[*b_pos]);
+  return permutation;
+}
+
 // Computes the parallel-dimensions permutation for the ragged non-contracting
 // case.
-//
-// kRaggedNonContracting: output is (M_total, N).  G and K are kSequential,
-//   so M and N are the only two kParallel dims.
-//   Use M_total/G as a static estimate of per-group M (M_avg).
-//   If M_avg < N → LHS activation tiles are smaller → traverse N slowly.
 llvm::SmallVector<int64_t> GetRaggedNonContractingPermutation(
     const HloInstruction& root, const TilingSpace& tiling_space,
     const DotDimensionNumbers& dot_dims, int64_t num_parallel_dims,
     int64_t M_avg) {
-  // kRaggedNonContracting: parallel dims are M (output dim num_batch) and N
-  // (output dim num_batch+1).  The M parallel dim covers M_total tokens,
-  // but each group only uses M_avg rows on average.  Compare M_avg
-  // (≈ per-group LHS non-contracting size) against N (fixed RHS
-  // non-contracting size).
-  const int64_t num_batch = dot_dims.lhs_batch_dimensions_size();
-  // N is at output position num_batch+1 (after batch dims and M).
-  if (M_avg >= root.shape().dimensions(num_batch + 1)) {
-    return {};  // LHS not smaller; no swap beneficial.
-  }
-  // M is at output dim num_batch, N is at output dim num_batch+1.
-  const TilingSpace::DimensionInfo& m_dim_info =
-      tiling_space.GetDimensionInfo(root, num_batch);
-  const TilingSpace::DimensionInfo& n_dim_info =
-      tiling_space.GetDimensionInfo(root, num_batch + 1);
-  if (m_dim_info.type != TilingSpace::DimensionSemantics::kParallel ||
-      n_dim_info.type != TilingSpace::DimensionSemantics::kParallel) {
+  const int64_t m_output_dim = dot_dims.lhs_batch_dimensions_size();
+  const int64_t n_output_dim = m_output_dim + 1;
+  if (n_output_dim >= static_cast<int64_t>(root.shape().dimensions().size()) ||
+      M_avg >= root.shape().dimensions(n_output_dim)) {
     return {};
   }
-  llvm::SmallVector<int64_t> permutation(num_parallel_dims);
-  std::iota(permutation.begin(), permutation.end(), 0);
-  std::swap(permutation[m_dim_info.id.value()],
-            permutation[n_dim_info.id.value()]);
-  return permutation;
+  return SwapParallelDimensions(root, tiling_space, m_output_dim, n_output_dim,
+                                num_parallel_dims);
 }
 
 // Computes the parallel-dimensions permutation for the ragged contracting case.
-//
-// kRaggedContracting: output is (G, K, N).  G, K, N are all kParallel.
-//   The ragged accumulation dimension (M) is kSequential.
-//   Apply the same heuristic to the K/N pair (treating K like M in the
-//   regular dot case):
-//   Use M_total/G as estimate for per-group activation rows (M_avg).
-//   If M_avg * K < K * N, i.e., M_avg < N → swap K and N traversal order.
 llvm::SmallVector<int64_t> GetRaggedContractingPermutation(
     const HloInstruction& root, const TilingSpace& tiling_space,
     const DotDimensionNumbers& dot_dims, int64_t num_parallel_dims,
     int64_t M_avg) {
-  // kRaggedContracting: parallel dims are G (output dim 0), K (output dim
-  // 1), N (output dim 2).  Apply the M/N-like heuristic to K vs N:
-  // M_avg is the average number of contracting elements per group; if it
-  // is small, the per-tile LHS slice (M_avg × K) is smaller than the
-  // per-tile RHS slice (M_avg × N), so traverse N more slowly.
-  const int64_t num_batch = dot_dims.lhs_batch_dimensions_size();
   // Output ordering: [G, batch..., K (lhs_nc), N (rhs_nc)].
-  const int64_t k_output_dim = 1 + num_batch;
+  const int64_t k_output_dim = 1 + dot_dims.lhs_batch_dimensions_size();
   const int64_t n_output_dim = k_output_dim + 1;
-
-  if (n_output_dim >= root.shape().dimensions().size()) {
+  if (n_output_dim >= static_cast<int64_t>(root.shape().dimensions().size()) ||
+      M_avg >= root.shape().dimensions(n_output_dim)) {
     return {};
   }
-  if (M_avg >= root.shape().dimensions(n_output_dim)) {
-    return {};  // Per-group LHS not smaller; no swap beneficial.
-  }
-
-  const TilingSpace::DimensionInfo& k_dim_info =
-      tiling_space.GetDimensionInfo(root, k_output_dim);
-  const TilingSpace::DimensionInfo& n_dim_info =
-      tiling_space.GetDimensionInfo(root, n_output_dim);
-  if (k_dim_info.type != TilingSpace::DimensionSemantics::kParallel ||
-      n_dim_info.type != TilingSpace::DimensionSemantics::kParallel) {
-    return {};
-  }
-  // Compute the parallel-position index (rank among kParallel dims only)
-  // for K and N.  We must NOT use the global dimension IDs here because
-  // the permutation has size num_parallel_dims, but G's global ID is 0,
-  // which shifts K to global ID 1 and N to global ID 2.  Using global IDs
-  // directly would index the permutation out of bounds.
-  int64_t k_parallel_pos = -1, n_parallel_pos = -1;
-  {
-    int64_t pos = 0;
-    for (const auto& d : tiling_space.dimensions()) {
-      if (d.type == TilingSpace::DimensionSemantics::kParallel) {
-        if (d.id == k_dim_info.id) {
-          k_parallel_pos = pos;
-        }
-        if (d.id == n_dim_info.id) {
-          n_parallel_pos = pos;
-        }
-        ++pos;
-      }
-    }
-  }
-  if (k_parallel_pos < 0 || n_parallel_pos < 0 ||
-      k_parallel_pos >= num_parallel_dims ||
-      n_parallel_pos >= num_parallel_dims) {
-    return {};  // safety check
-  }
-  llvm::SmallVector<int64_t> permutation(num_parallel_dims);
-  std::iota(permutation.begin(), permutation.end(), 0);
-  std::swap(permutation[k_parallel_pos], permutation[n_parallel_pos]);
-  return permutation;
+  return SwapParallelDimensions(root, tiling_space, k_output_dim, n_output_dim,
+                                num_parallel_dims);
 }
 
 // Computes the parallel-dimensions permutation for a ragged dot.
-//
-// kRaggedNonContracting: output is (M_total, N).  G and K are kSequential,
-//   so M and N are the only two kParallel dims.
-//   Use M_total/G as a static estimate of per-group M (M_avg).
-//   If M_avg < N → LHS activation tiles are smaller → traverse N slowly.
-//
-// kRaggedContracting: output is (G, K, N).  G, K, N are all kParallel.
-//   The ragged accumulation dimension (M) is kSequential.
-//   Apply the same heuristic to the K/N pair (treating K like M in the
-//   regular dot case):
-//   Use M_total/G as estimate for per-group activation rows (M_avg).
-//   If M_avg * K < K * N, i.e., M_avg < N → swap K and N traversal order.
 llvm::SmallVector<int64_t> GetRaggedDotPermutation(
     const HloInstruction& root, const TilingSpace& tiling_space,
     int64_t num_parallel_dims) {
@@ -186,20 +207,36 @@ llvm::SmallVector<int64_t> GetRaggedDotPermutation(
   const RaggedDotDimensionNumbers& ragged_dims =
       ragged_dot->ragged_dot_dimension_numbers();
   const DotDimensionNumbers& dot_dims = ragged_dims.dot_dimension_numbers();
-
+  if (ragged_dims.lhs_ragged_dimensions_size() != 1) {
+    return {};
+  }
+  const Shape& lhs_shape = root.operand(0)->shape();
+  const Shape& rhs_shape = root.operand(1)->shape();
+  const Shape& group_sizes_shape = root.operand(2)->shape();
   const int64_t lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
-  const bool is_contracting =
-      absl::c_count(dot_dims.lhs_contracting_dimensions(), lhs_ragged_dim) > 0;
-  const bool is_batch =
-      absl::c_count(dot_dims.lhs_batch_dimensions(), lhs_ragged_dim) > 0;
-  if (is_batch) {
-    return {};  // kRaggedBatch not yet implemented.
+  if (lhs_ragged_dim < 0 ||
+      lhs_ragged_dim >= static_cast<int64_t>(lhs_shape.dimensions().size()) ||
+      group_sizes_shape.dimensions().empty() ||
+      absl::c_contains(dot_dims.lhs_batch_dimensions(), lhs_ragged_dim)) {
+    return {};
+  }
+  const int64_t num_lhs_non_contracting =
+      lhs_shape.dimensions().size() -
+      dot_dims.lhs_contracting_dimensions_size() -
+      dot_dims.lhs_batch_dimensions_size();
+  const int64_t num_rhs_non_contracting =
+      rhs_shape.dimensions().size() -
+      dot_dims.rhs_contracting_dimensions_size() -
+      dot_dims.rhs_batch_dimensions_size() -
+      ragged_dims.rhs_group_dimensions_size();
+  if (num_lhs_non_contracting != 1 || num_rhs_non_contracting != 1) {
+    return {};
   }
 
-  const Shape& lhs_shape = root.operand(0)->shape();
-  const Shape& group_sizes_shape = root.operand(2)->shape();
+  const bool is_contracting =
+      absl::c_contains(dot_dims.lhs_contracting_dimensions(), lhs_ragged_dim);
   const int64_t M_total = lhs_shape.dimensions(lhs_ragged_dim);
-  const int64_t G = group_sizes_shape.dimensions(0);
+  const int64_t G = group_sizes_shape.dimensions().back();
   const int64_t M_avg = M_total / std::max<int64_t>(G, 1);
 
   if (!is_contracting) {
@@ -253,23 +290,9 @@ llvm::SmallVector<int64_t> GetParallelDimensionsPermutation(
       return {};
     }
 
-    const TilingSpace::DimensionInfo& m_dim_info =
-        tiling_space.GetDimensionInfo(
-            *root, dimension_numbers.lhs_batch_dimensions_size());
-    const TilingSpace::DimensionInfo& n_dim_info =
-        tiling_space.GetDimensionInfo(
-            *root, dimension_numbers.lhs_batch_dimensions_size() + 1);
-    if (m_dim_info.type != TilingSpace::DimensionSemantics::kParallel ||
-        n_dim_info.type != TilingSpace::DimensionSemantics::kParallel) {
-      return {};
-    }
-
-    // Return a permutation that swaps 'm' and 'n' traversal order.
-    llvm::SmallVector<int64_t> permutation(num_parallel_dims);
-    std::iota(permutation.begin(), permutation.end(), 0);
-    std::swap(permutation[m_dim_info.id.value()],
-              permutation[n_dim_info.id.value()]);
-    return permutation;
+    const int64_t m_output_dim = dimension_numbers.lhs_batch_dimensions_size();
+    return SwapParallelDimensions(*root, tiling_space, m_output_dim,
+                                  m_output_dim + 1, num_parallel_dims);
   }
 
   // ---- Ragged dot ----
@@ -335,6 +358,12 @@ absl::StatusOr<IndexWiseVariadicInfo> BuildIndexWiseVariadicInfo(
   llvm::SmallVector<int64_t, 4> tile_sizes;
   tile_sizes.reserve(num_dims);
   for (const TilingSpace::DimensionInfo& dim : dims) {
+    if (!dim.tile_size.has_value() || *dim.tile_size <= 0 ||
+        dim.dimension_size < 0) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Invalid dimension %d: size=%d, tile_size=%d.", dim.id.value(),
+          dim.dimension_size, dim.tile_size.value_or(-1)));
+    }
     tile_sizes.push_back(*dim.tile_size);
   }
   // Variables are laid out as [tile ids, tile sizes, runtime variables].
@@ -354,11 +383,24 @@ absl::StatusOr<IndexWiseVariadicInfo> BuildIndexWiseVariadicInfo(
       TF_RET_CHECK(tile.num_replica_ids() == 1)
           << "Only one replica dimension is supported.";
       const DimTile& replica_dim_tile = tile.replica_ids().back();
+      if (!replica_dim_tile.upper_bound ||
+          replica_dim_tile.upper_bound.GetType() !=
+              SymbolicExprType::kConstant) {
+        return absl::UnimplementedError(absl::StrFormat(
+            "Replica upper bound of output %d of %s must be constant.",
+            output_index, hlo.name()));
+      }
       const int64_t num_replicas = replica_dim_tile.upper_bound.GetValue();
+      if (num_replicas <= 0) {
+        return absl::InvalidArgumentError(absl::StrFormat(
+            "Replica count of output %d of %s must be positive, got %d.",
+            output_index, hlo.name(), num_replicas));
+      }
       SymbolicExpr peer = replica_dim_tile.offset;
       llvm::DenseSet<VariableID> used_vars;
       peer.GetUsedVariables(used_vars);
-      if (used_vars.size() != 1 || *used_vars.begin() >= num_dims ||
+      if (used_vars.size() != 1 || *used_vars.begin() < 0 ||
+          *used_vars.begin() >= num_dims ||
           dims[*used_vars.begin()].type !=
               TilingSpace::DimensionSemantics::kParallel) {
         return absl::UnimplementedError(absl::StrFormat(
@@ -370,7 +412,7 @@ absl::StatusOr<IndexWiseVariadicInfo> BuildIndexWiseVariadicInfo(
       // Number of blocks across all replicas.
       const int64_t num_blocks =
           CeilOfRatio(dims[dim_id].dimension_size, tile_sizes[dim_id]);
-      if (num_blocks < num_replicas || num_blocks % num_replicas != 0) {
+      if (num_blocks % num_replicas != 0) {
         return absl::UnimplementedError(absl::StrFormat(
             "Dimension %d of output %d of %s has %d blocks, which is not a "
             "multiple of the number of peers %d.",
@@ -405,6 +447,11 @@ absl::StatusOr<IndexWiseVariadicInfo> BuildIndexWiseVariadicInfo(
   for (const TilingSpace::DimensionInfo& dim : dims) {
     if (dim.type != TilingSpace::DimensionSemantics::kReplica) {
       continue;
+    }
+    if (dim.dimension_size <= 0) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Replica dimension %d of %s must be positive, got %d.",
+          dim.id.value(), dim.hlo->name(), dim.dimension_size));
     }
     if (num_peers.has_value() && *num_peers != dim.dimension_size) {
       return absl::InvalidArgumentError(absl::StrFormat(
@@ -464,15 +511,20 @@ absl::StatusOr<llvm::SmallVector<RootDims, 2>> BuildRootsForIndexWiseVariadic(
           continue;
         }
       }
+      ABSL_ASSIGN_OR_RETURN(int64_t num_blocks,
+                            GetCheckedNumTiles(tiling_space, *dim));
       root.non_peer_dim_ids.push_back(dim_id);
-      root.non_peer_block_counts.push_back(tiling_space.GetNumTiles(*dim));
+      root.non_peer_block_counts.push_back(num_blocks);
     }
     if (info.num_peers > 1 && !root.peer_dim_id.has_value()) {
       return absl::UnimplementedError(
           absl::StrFormat("Output %d of %s does not depend on the peer index.",
                           root_index, hlo.name()));
     }
-    root.num_tiles = Product(root.non_peer_block_counts) * root.tiles_per_peer;
+    ABSL_ASSIGN_OR_RETURN(int64_t non_peer_tiles,
+                          CheckedProduct(root.non_peer_block_counts));
+    ABSL_ASSIGN_OR_RETURN(root.num_tiles,
+                          CheckedMul(non_peer_tiles, root.tiles_per_peer));
   }
   if (num_grouped_dims != tiling_space.num_parallel_dimensions()) {
     return absl::UnimplementedError(
@@ -484,14 +536,45 @@ absl::StatusOr<llvm::SmallVector<RootDims, 2>> BuildRootsForIndexWiseVariadic(
 absl::StatusOr<Schedule> BuildIndexWiseVariadicSchedule(
     mlir::MLIRContext* ctx, const TilingSpace& tiling_space,
     const IndexWiseVariadicInfo& info, llvm::ArrayRef<RootDims> roots,
-    int64_t num_tiles_per_pid, int64_t max_tiles, SymbolicExpr global_tile_id) {
+    int64_t num_tiles_per_pid, int64_t max_tiles) {
+  ABSL_ASSIGN_OR_RETURN(int64_t total_tiles,
+                        CheckedMul(info.num_peers, max_tiles));
   Schedule schedule;
+  llvm::SmallVector<TilingSpace::DimensionInfo, 4> dims =
+      tiling_space.dimensions();
+  SymbolicExpr zero = CreateSymbolicConstant(0, ctx);
+  auto set_root_zero = [&](const RootDims& root) {
+    for (int64_t dim_id : root.non_peer_dim_ids) {
+      schedule.dim_id_to_pid_expr[dim_id] = zero;
+    }
+    if (root.peer_dim_id.has_value()) {
+      const TilingSpace::DimensionInfo& peer_dim = dims[*root.peer_dim_id];
+      int64_t id = peer_dim.peer_dim.has_value()
+                       ? peer_dim.peer_dim->dim_id.value()
+                       : *root.peer_dim_id;
+      schedule.dim_id_to_pid_expr.try_emplace(id, zero);
+    }
+  };
+  if (total_tiles == 0) {
+    for (const RootDims& root : roots) {
+      set_root_zero(root);
+    }
+    schedule.num_tiles = 0;
+    schedule.num_pids = 0;
+    return schedule;
+  }
+
+  int64_t num_pids = 0;
+  SymbolicExpr global_tile_id =
+      BuildGlobalTileId(total_tiles, num_tiles_per_pid, ctx, &num_pids);
   SymbolicExpr peer = global_tile_id.floorDiv(max_tiles);
   SymbolicExpr intra_peer_tile_id =
       info.num_peers > 1 ? global_tile_id % max_tiles : global_tile_id;
-  llvm::SmallVector<TilingSpace::DimensionInfo, 4> dims =
-      tiling_space.dimensions();
   for (const RootDims& root : roots) {
+    if (root.num_tiles == 0) {
+      set_root_zero(root);
+      continue;
+    }
     llvm::SmallVector<int64_t, 4> block_counts = root.non_peer_block_counts;
     if (root.tiles_per_peer > 1) {
       block_counts.push_back(root.tiles_per_peer);
@@ -528,15 +611,17 @@ absl::StatusOr<Schedule> BuildIndexWiseVariadicSchedule(
                       TilingSpace::PeerIndexing::kPerPeerBuffer
               ? peer_dim.peer_dim->dim_id.value()
               : *root.peer_dim_id;
+      ABSL_ASSIGN_OR_RETURN(int64_t pad_stride,
+                            CheckedMul(info.num_peers, root.num_tiles));
       SymbolicExpr& padded_pid_expr =
           schedule.dim_id_to_pid_expr[padded_dim_id];
       padded_pid_expr =
-          padded_pid_expr + intra_peer_tile_id.floorDiv(root.num_tiles) *
-                                (info.num_peers * root.num_tiles);
+          padded_pid_expr +
+          intra_peer_tile_id.floorDiv(root.num_tiles) * pad_stride;
     }
   }
-  schedule.num_tiles = info.num_peers * max_tiles;
-  schedule.num_pids = CeilOfRatio(schedule.num_tiles, num_tiles_per_pid);
+  schedule.num_tiles = total_tiles;
+  schedule.num_pids = num_pids;
   return schedule;
 }
 
@@ -552,22 +637,20 @@ absl::StatusOr<Schedule> BuildIndexWiseVariadicSchedule(
 // padded tiles are mapped out of bounds so that the emitter masks them.
 absl::StatusOr<Schedule> GetIndexWiseVariadicSchedule(
     const TiledHloComputation& tiled_computation,
-    const IndexWiseVariadicInfo& info, SymbolicExpr global_tile_id,
-    int64_t num_tiles_per_pid) {
+    const IndexWiseVariadicInfo& info, int64_t num_tiles_per_pid) {
   mlir::MLIRContext* ctx = tiled_computation.GetMLIRContext();
   using Roots = llvm::SmallVector<RootDims, 2>;
   ABSL_ASSIGN_OR_RETURN(
       Roots roots, BuildRootsForIndexWiseVariadic(tiled_computation, info));
 
   // Find the maximum number of tiles across all roots.
-  int64_t max_tiles = 1;
+  int64_t max_tiles = roots.empty() ? 1 : 0;
   for (const RootDims& root : roots) {
     max_tiles = std::max(max_tiles, root.num_tiles);
   }
-  // Now build the scheduled rooted on the output with the max number of tiles.
   return BuildIndexWiseVariadicSchedule(ctx, tiled_computation.tiling_space(),
                                         info, roots, num_tiles_per_pid,
-                                        max_tiles, global_tile_id);
+                                        max_tiles);
 }
 
 }  // namespace
@@ -590,24 +673,23 @@ std::string Schedule::ToString() const {
 
 absl::StatusOr<Schedule> GetSchedule(
     const TiledHloComputation& tiled_computation, int64_t num_tiles_per_pid) {
-  mlir::MLIRContext* ctx = tiled_computation.GetMLIRContext();
-  SymbolicExpr program_id = CreateDimExpr(0, ctx);
-  SymbolicExpr global_tile_id = program_id;
-  if (num_tiles_per_pid > 1) {
-    SymbolicExpr tile_id = CreateDimExpr(1, ctx);
-    global_tile_id = program_id * num_tiles_per_pid + tile_id;
+  if (num_tiles_per_pid <= 0) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "num_tiles_per_pid must be positive, got %d.", num_tiles_per_pid));
   }
   ABSL_ASSIGN_OR_RETURN(IndexWiseVariadicInfo variadic_info,
                         BuildIndexWiseVariadicInfo(tiled_computation));
   if (!variadic_info.instructions.empty()) {
     return GetIndexWiseVariadicSchedule(tiled_computation, variadic_info,
-                                        global_tile_id, num_tiles_per_pid);
+                                        num_tiles_per_pid);
   }
 
   // Compute the block counts for each replica and parallel dimension.
   // Replica dimensions are placed outermost so each contiguous group of
   // parallel blocks targets the same peer.
   const TilingSpace& tiling_space = tiled_computation.tiling_space();
+  TF_RET_CHECK(!tiling_space.IsSymbolic())
+      << "Expected tile sizes to be assigned at this point.";
   llvm::SmallVector<int64_t, 4> block_counts;
   llvm::SmallVector<int64_t, 4> dim_ids;
   llvm::SmallVector<int64_t, 4> parallel_dim_block_counts;
@@ -615,10 +697,14 @@ absl::StatusOr<Schedule> GetSchedule(
   for (const auto& [dim_id, dimension] :
        llvm::enumerate(tiling_space.dimensions())) {
     if (dimension.type == TilingSpace::DimensionSemantics::kReplica) {
-      block_counts.push_back(tiling_space.GetNumTiles(dimension));
+      ABSL_ASSIGN_OR_RETURN(int64_t count,
+                            GetCheckedNumTiles(tiling_space, dimension));
+      block_counts.push_back(count);
       dim_ids.push_back(dim_id);
     } else if (dimension.type == TilingSpace::DimensionSemantics::kParallel) {
-      parallel_dim_block_counts.push_back(tiling_space.GetNumTiles(dimension));
+      ABSL_ASSIGN_OR_RETURN(int64_t count,
+                            GetCheckedNumTiles(tiling_space, dimension));
+      parallel_dim_block_counts.push_back(count);
       parallel_dim_ids.push_back(dim_id);
     }
   }
@@ -634,18 +720,36 @@ absl::StatusOr<Schedule> GetSchedule(
   block_counts.append(parallel_dim_block_counts);
   dim_ids.append(parallel_dim_ids);
 
+  mlir::MLIRContext* ctx = tiled_computation.GetMLIRContext();
+  ABSL_ASSIGN_OR_RETURN(int64_t num_tiles, CheckedProduct(block_counts));
+  Schedule schedule;
+  if (num_tiles == 0) {
+    SymbolicExpr zero = CreateSymbolicConstant(0, ctx);
+    for (int64_t dim_id : dim_ids) {
+      schedule.dim_id_to_pid_expr[dim_id] = zero;
+    }
+    schedule.num_tiles = 0;
+    schedule.num_pids = 0;
+    return schedule;
+  }
+
+  int64_t num_pids = 0;
+  SymbolicExpr global_tile_id =
+      BuildGlobalTileId(num_tiles, num_tiles_per_pid, ctx, &num_pids);
   llvm::SmallVector<SymbolicExpr, 4> delinearized_pid =
       DelinearizeIndex(block_counts, global_tile_id, ctx);
-  Schedule schedule;
   for (const auto& [dim_id, expr] : llvm::zip(dim_ids, delinearized_pid)) {
     schedule.dim_id_to_pid_expr[dim_id] = expr;
   }
-  schedule.num_tiles = Product(block_counts);
-  schedule.num_pids = CeilOfRatio(schedule.num_tiles, num_tiles_per_pid);
+  schedule.num_tiles = num_tiles;
+  schedule.num_pids = num_pids;
   return schedule;
 }
 
 int64_t Schedule::GetNumTilesPerPid() const {
+  if (num_tiles <= 0 || num_pids <= 0) {
+    return 0;
+  }
   return CeilOfRatio(num_tiles, num_pids);
 }
 
