@@ -50,6 +50,8 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/device_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
@@ -496,6 +498,15 @@ bool IsAllReplicasLocal(const GpuTopology& gpu_topology,
                         const DeviceAssignment* device_assignment) {
   return IsAllReplicasLocal(gpu_topology.num_devices_per_process(),
                             replica_groups, group_mode, device_assignment);
+}
+
+bool IsCollectiveFusion(const HloInstruction& instr) {
+  const HloInstruction* target =
+      instr.IsAsynchronous() ? instr.async_wrapped_instruction() : &instr;
+  if (target == nullptr || !target->IsCustomFusion()) {
+    return false;
+  }
+  return IsGpuFusionKind(*target, kTritonCollectiveFusionKind);
 }
 
 bool IsTritonCollectiveKernel(

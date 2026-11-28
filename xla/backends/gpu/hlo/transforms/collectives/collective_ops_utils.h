@@ -156,6 +156,10 @@ bool IsAllReplicasLocal(const GpuTopology& gpu_topology,
 // that carried the attribute are combined).
 bool IsSpmdGenerated(const HloInstruction& instr);
 
+// Returns true if `instr` is a collective fusion or an async wrapper
+// (`async-start`, `async-update`, `async-done`) around one.
+bool IsCollectiveFusion(const HloInstruction& instr);
+
 // Returns true if the instruction is a Triton collective kernel.
 bool IsTritonCollectiveKernel(
     CollectiveBackendConfig::CollectiveKernelStrategy kernel_strategy);

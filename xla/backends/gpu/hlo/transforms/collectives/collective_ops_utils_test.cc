@@ -1159,5 +1159,72 @@ TEST(GetCollectiveOutputTilesTest, RejectsNonDivisibleCollectiveDim) {
       Not(IsOk()));
 }
 
+TEST(IsCollectiveFusionTest, MatchesSyncAndAsyncCollectiveFusions) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule m, replica_count=2
+
+    fused_ag {
+      p0 = f32[4] parameter(0)
+      ROOT ag = f32[8] all-gather(p0), dimensions={0}, replica_groups={{0,1}}
+    }
+
+    fused_ag_async {
+      p0 = f32[4] parameter(0)
+      ROOT ag_async = f32[8] all-gather(p0), dimensions={0}, replica_groups={{0,1}}
+    }
+
+    async_wrapped_only_inner_config {
+      p0 = f32[4] parameter(0)
+      ROOT inner_fusion = f32[8] fusion(p0), kind=kCustom, calls=fused_ag_async,
+          backend_config={"fusion_backend_config":{"kind":"__triton_collective"}}
+    }
+
+    fused_gemm {
+      p0 = f32[4] parameter(0)
+      ROOT sum = f32[4] add(p0, p0)
+    }
+
+    fused_add {
+      p0 = f32[4] parameter(0)
+      ROOT sum = f32[4] add(p0, p0)
+    }
+
+    ENTRY main {
+      p0 = f32[4] parameter(0)
+      raw_ag = f32[8] all-gather(p0), dimensions={0}, replica_groups={{0,1}}
+      sync_fusion = f32[8] fusion(p0), kind=kCustom, calls=fused_ag,
+          backend_config={"fusion_backend_config":{"kind":"__triton_collective"}}
+      gemm_fusion = f32[4] fusion(p0), kind=kCustom, calls=fused_gemm,
+          backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+      start = ((f32[4]), f32[8]) async-start(p0),
+          calls=async_wrapped_only_inner_config
+      update = ((f32[4]), f32[8]) async-update(start)
+      done = f32[8] async-done(update)
+      other_start = ((f32[4]), f32[4]) fusion-start(p0), kind=kLoop,
+          calls=fused_add
+      other_done = f32[4] fusion-done(other_start)
+      ROOT result = (f32[8], f32[8], f32[4], f32[8], f32[4])
+          tuple(raw_ag, sync_fusion, gemm_fusion, done, other_done)
+    }
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kHlo));
+  HloComputation* entry = module->entry_computation();
+
+  EXPECT_FALSE(IsCollectiveFusion(*entry->GetInstructionWithName("raw_ag")));
+  EXPECT_TRUE(
+      IsCollectiveFusion(*entry->GetInstructionWithName("sync_fusion")));
+  EXPECT_FALSE(
+      IsCollectiveFusion(*entry->GetInstructionWithName("gemm_fusion")));
+  EXPECT_TRUE(IsCollectiveFusion(*entry->GetInstructionWithName("start")));
+  EXPECT_TRUE(IsCollectiveFusion(*entry->GetInstructionWithName("update")));
+  EXPECT_TRUE(IsCollectiveFusion(*entry->GetInstructionWithName("done")));
+  EXPECT_FALSE(
+      IsCollectiveFusion(*entry->GetInstructionWithName("other_start")));
+  EXPECT_FALSE(
+      IsCollectiveFusion(*entry->GetInstructionWithName("other_done")));
+}
+
 }  // namespace
 }  // namespace xla::gpu

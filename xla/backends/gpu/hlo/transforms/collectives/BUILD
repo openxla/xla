@@ -215,6 +215,8 @@ cc_library(
         "//xla/service:gpu_topology",
         "//xla/service:hlo_module_config",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu:ir_emission_utils",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",

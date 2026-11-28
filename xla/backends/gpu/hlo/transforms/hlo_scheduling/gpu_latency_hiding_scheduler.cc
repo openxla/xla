@@ -104,12 +104,14 @@ bool IsNopInstruction(const HloInstruction& hlo) {
 bool IsAsyncComputeStartOp(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kAsyncStart &&
          !hlo_query::IsCollectiveCommunicationOp(hlo.async_wrapped_opcode()) &&
+         !IsCollectiveFusion(hlo) &&
          hlo.async_execution_thread() != hlo.parent()->execution_thread();
 }
 
 bool IsAsyncComputeDoneOp(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kAsyncDone &&
          !hlo_query::IsCollectiveCommunicationOp(hlo.async_wrapped_opcode()) &&
+         !IsCollectiveFusion(hlo) &&
          hlo.async_execution_thread() != hlo.parent()->execution_thread();
 }
 
@@ -266,7 +268,8 @@ bool IsGpuAsyncStart(const HloInstruction& hlo) {
   const bool is_collective_start =
       hlo_query::IsAsyncCollectiveStartOp(&hlo,
                                           /*include_send_recv=*/true) ||
-      IsCollectivesGroupAsyncStartOp(hlo);
+      IsCollectivesGroupAsyncStartOp(hlo) ||
+      (hlo.opcode() == HloOpcode::kAsyncStart && IsCollectiveFusion(hlo));
   if (is_collective_start && IsGPUSyncCollective(hlo)) {
     return false;
   }
@@ -279,7 +282,8 @@ bool IsGpuAsyncDone(const HloInstruction& hlo) {
   const bool is_collective_done =
       hlo_query::IsAsyncCollectiveDoneOp(&hlo,
                                          /*include_send_recv=*/true) ||
-      IsCollectivesGroupAsyncDoneOp(hlo);
+      IsCollectivesGroupAsyncDoneOp(hlo) ||
+      (hlo.opcode() == HloOpcode::kAsyncDone && IsCollectiveFusion(hlo));
   if (is_collective_done && IsGPUSyncCollective(*hlo.operand(0))) {
     return false;
   }
@@ -832,7 +836,8 @@ ResourcesVector GpuAsyncTracker::GetResourcesFromInstructionImpl(
                   : ResourceUsageType::kResourceOccupy;
       resource = hlo_query::IsCollectiveCommunicationOp(op.inner) ||
                          IsCustomCollectiveOp(&instr) ||
-                         IsCollectivesGroupAsyncOp(instr)
+                         IsCollectivesGroupAsyncOp(instr) ||
+                         IsCollectiveFusion(instr)
                      ? GetCollectiveResource(instr)
                      : GpuResourceType::kGpuAsyncStreamComputes;
     }
