@@ -212,6 +212,23 @@ XlaOp IsNegZero(XlaOp operand) {
   });
 }
 
+namespace {
+
+// Unlike a comparison with zero, reading the sign bit is not affected by
+// flushing subnormals to zero.
+XlaOp SignBitIsSet(XlaOp operand) {
+  auto& b = *operand.builder();
+  return b.ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
+    ABSL_ASSIGN_OR_RETURN(Shape shape, b.GetShape(operand));
+    PrimitiveType int_type = primitive_util::SignedIntegralTypeForBitWidth(
+        primitive_util::BitWidth(shape.element_type()));
+    XlaOp bits = BitcastConvertType(operand, int_type);
+    return Lt(bits, ScalarLike(bits, 0));
+  });
+}
+
+}  // namespace
+
 XlaOp Square(XlaOp operand) { return operand * operand; }
 
 XlaOp Reciprocal(XlaOp operand) { return ScalarLike(operand, 1.0) / operand; }
@@ -712,14 +729,18 @@ XlaOp Digamma(XlaOp input) {
         y - pi * Cos(pi * reduced_input) / Sin(pi * reduced_input);
     XlaOp real_result = Select(need_to_reflect, reflection, y);
 
-    // Digamma has poles at zero and at the negative integers. The two one-sided
-    // limits agree at zero, so return -inf there; at the negative integers they
-    // disagree, so return nan. This matches the eager CPU kernel in
-    // tensorflow/core/kernels/cwise_ops.h.
+    // Digamma has poles at zero and at the negative integers. At zero the limit
+    // is -inf from the right and +inf from the left, so the sign of the zero
+    // picks the side; at the negative integers nothing picks a side, so return
+    // nan. This matches the eager CPU kernel in
+    // tensorflow/core/kernels/cwise_ops.h. With FTZ, a negative subnormal also
+    // compares equal to zero, so the side comes from the sign bit.
     XlaOp is_negative_integer = And(Lt(input, zero), Eq(input, Floor(input)));
-    XlaOp result = Select(
-        Eq(input, zero),
-        FullLike(input, -std::numeric_limits<float>::infinity()), real_result);
+    XlaOp inf_at_zero =
+        Select(SignBitIsSet(input),
+               FullLike(input, std::numeric_limits<float>::infinity()),
+               FullLike(input, -std::numeric_limits<float>::infinity()));
+    XlaOp result = Select(Eq(input, zero), inf_at_zero, real_result);
     return Select(is_negative_integer,
                   FullLike(input, std::numeric_limits<float>::quiet_NaN()),
                   result);
