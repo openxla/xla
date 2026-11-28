@@ -448,6 +448,7 @@ cc_library(
     hdrs = ["mhlo/transforms/transformation_helpers.h"],
     strip_include_prefix = ".",
     deps = [
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ArithUtils",
         "@llvm-project//mlir:IR",

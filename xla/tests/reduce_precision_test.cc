@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "absl/base/casts.h"
@@ -525,6 +526,16 @@ INSTANTIATE_TEST_CASE_P(ReducedPrecisionAccuracyTest,
 
 using ReducedPrecisionTest =
     ClientLibraryTestRunnerMixin<HloInterpreterReferenceMixin<HloTestBase>>;
+
+TEST_F(ReducedPrecisionTest, ZeroMantissaMapsNaNsToPositiveInfinity) {
+  XlaBuilder builder(TestName());
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float inf = std::numeric_limits<float>::infinity();
+  Literal input = LiteralUtil::CreateR1<float>({nan, -nan, inf, -inf, 1.5f});
+  auto x = Parameter(&builder, 0, input.shape(), "x");
+  ReducePrecision(x, /*exponent_bits=*/8, /*mantissa_bits=*/0);
+  ComputeAndCompareR1<float>(&builder, {inf, inf, inf, -inf, 2.0f}, {&input});
+}
 
 TEST_F(ReducedPrecisionTest, IdentityReducePrecisionF8E4M3FN) {
   XlaBuilder builder(TestName());
