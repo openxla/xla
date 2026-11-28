@@ -30,6 +30,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "Eigen/Core"
+#include "absl/base/casts.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -857,6 +860,233 @@ TEST(GlooCollectives, MismatchedLoopCounterTimesOut) {
 
   EXPECT_FALSE(statuses[0].ok());
   EXPECT_FALSE(statuses[1].ok());
+}
+
+template <typename T>
+void TestGlooFloatIeeeMinMax(PrimitiveType dtype) {
+  using Bits =
+      typename Eigen::numext::get_integer_by_size<sizeof(T)>::unsigned_type;
+  constexpr int kMantissaBits = std::numeric_limits<T>::digits - 1;
+  constexpr Bits kSignBit = Bits{1} << (sizeof(Bits) * 8 - 1);
+  constexpr Bits kAbsMask = static_cast<Bits>(kSignBit - 1);
+  constexpr Bits kMantissaMask =
+      static_cast<Bits>((Bits{1} << kMantissaBits) - 1);
+  constexpr Bits kInfBits = static_cast<Bits>(kAbsMask ^ kMantissaMask);
+  constexpr Bits kQuietBit = static_cast<Bits>(Bits{1} << (kMantissaBits - 1));
+
+  const T pos_zero = absl::bit_cast<T>(Bits{0});
+  const T neg_zero = absl::bit_cast<T>(kSignBit);
+  const T qnan = std::numeric_limits<T>::quiet_NaN();
+  const T snan = absl::bit_cast<T>(static_cast<Bits>(kInfBits | Bits{1}));
+  const T pos_sub = absl::bit_cast<T>(Bits{1});
+  const T neg_sub = absl::bit_cast<T>(static_cast<Bits>(kSignBit | Bits{1}));
+  const T one = static_cast<T>(1.0f);
+
+  // Use 16 elements so F16 exercises lanes >= 8 (previously vectorized with
+  // non-NaN-propagating SSE/AVX min/max in Gloo).
+  const std::vector<T> r0 = {
+      qnan, one, snan,     one,      neg_zero, pos_zero, pos_sub,  neg_sub,
+      qnan, one, neg_zero, pos_zero, snan,     one,      pos_zero, neg_sub};
+  const std::vector<T> r1 = {
+      one, qnan, one,      snan,     pos_zero, neg_zero, pos_zero, pos_zero,
+      one, qnan, pos_zero, neg_zero, one,      snan,     pos_sub,  pos_zero};
+
+  std::vector<GlobalDeviceId> devices = {GlobalDeviceId(0), GlobalDeviceId(1)};
+  auto kv_store = std::make_shared<xla::InMemoryKeyValueStore>();
+  std::vector<std::vector<T>> ar_min(2, std::vector<T>(16));
+  std::vector<std::vector<T>> ar_max(2, std::vector<T>(16));
+  std::vector<std::vector<T>> rs_min(2, std::vector<T>(8));
+  std::vector<std::vector<T>> rs_max(2, std::vector<T>(8));
+  {
+    tsl::thread::ThreadPool pool(tsl::Env::Default(), "GlooIeeeMinMax", 2);
+    for (int rank = 0; rank < 2; ++rank) {
+      pool.Schedule([&, rank]() {
+        ASSERT_OK_AND_ASSIGN(auto comm,
+                             GetCommunicator(devices, kv_store, rank));
+        const std::vector<T>& in = rank == 0 ? r0 : r1;
+        auto exec = [&](int64_t op_id) {
+          return CpuCollectives::Executor(
+              RendezvousKey(RunId(1), devices, 2, RendezvousKey::kCrossReplica,
+                            op_id),
+              kTimeout);
+        };
+        ASSERT_OK(comm->AllReduce(AsDeviceMemory(in),
+                                  AsDeviceMemory(ar_min[rank]), dtype, 16,
+                                  ReductionKind::MIN, exec(1))
+                      .Await());
+        ASSERT_OK(comm->AllReduce(AsDeviceMemory(in),
+                                  AsDeviceMemory(ar_max[rank]), dtype, 16,
+                                  ReductionKind::MAX, exec(2))
+                      .Await());
+        ASSERT_OK(comm->ReduceScatter(AsDeviceMemory(in),
+                                      AsDeviceMemory(rs_min[rank]), dtype, 8,
+                                      ReductionKind::MIN, exec(3))
+                      .Await());
+        ASSERT_OK(comm->ReduceScatter(AsDeviceMemory(in),
+                                      AsDeviceMemory(rs_max[rank]), dtype, 8,
+                                      ReductionKind::MAX, exec(4))
+                      .Await());
+      });
+    }
+  }
+
+  auto check_16 = [&](const std::vector<T>& v, bool is_max) {
+    for (int i : {0, 1, 8, 9}) {
+      EXPECT_TRUE(Eigen::numext::isnan(v[i]))
+          << PrimitiveType_Name(dtype) << " i=" << i;
+    }
+    for (int i : {2, 3, 12, 13}) {
+      EXPECT_TRUE(Eigen::numext::isnan(v[i]))
+          << PrimitiveType_Name(dtype) << " i=" << i;
+      EXPECT_EQ(absl::bit_cast<Bits>(v[i]) & kQuietBit, kQuietBit)
+          << PrimitiveType_Name(dtype) << " i=" << i;
+    }
+    const Bits want_zero = is_max ? Bits{0} : kSignBit;
+    for (int i : {4, 5, 10, 11}) {
+      EXPECT_EQ(absl::bit_cast<Bits>(v[i]), want_zero)
+          << PrimitiveType_Name(dtype) << " i=" << i;
+    }
+    EXPECT_EQ(absl::bit_cast<Bits>(v[6]), is_max ? Bits{1} : Bits{0});
+    EXPECT_EQ(absl::bit_cast<Bits>(v[7]),
+              is_max ? Bits{0} : static_cast<Bits>(kSignBit | Bits{1}));
+    EXPECT_EQ(absl::bit_cast<Bits>(v[14]), is_max ? Bits{1} : Bits{0});
+    EXPECT_EQ(absl::bit_cast<Bits>(v[15]),
+              is_max ? Bits{0} : static_cast<Bits>(kSignBit | Bits{1}));
+  };
+  for (int rank = 0; rank < 2; ++rank) {
+    check_16(ar_min[rank], /*is_max=*/false);
+    check_16(ar_max[rank], /*is_max=*/true);
+  }
+  std::vector<T> rs_min_all = rs_min[0];
+  rs_min_all.insert(rs_min_all.end(), rs_min[1].begin(), rs_min[1].end());
+  std::vector<T> rs_max_all = rs_max[0];
+  rs_max_all.insert(rs_max_all.end(), rs_max[1].begin(), rs_max[1].end());
+  check_16(rs_min_all, /*is_max=*/false);
+  check_16(rs_max_all, /*is_max=*/true);
+}
+
+TEST(GlooCollectives, FloatIeeeMinMaxNanSignedZeroAndSubnormals) {
+  TestGlooFloatIeeeMinMax<float>(F32);
+  TestGlooFloatIeeeMinMax<double>(F64);
+  TestGlooFloatIeeeMinMax<bfloat16>(BF16);
+  TestGlooFloatIeeeMinMax<half>(F16);
+}
+
+TEST(GlooCollectives, RejectsSubByteAndNonArrayDataTypes) {
+  std::vector<GlobalDeviceId> devices = {GlobalDeviceId(0)};
+  auto kv_store = std::make_shared<xla::InMemoryKeyValueStore>();
+  ASSERT_OK_AND_ASSIGN(auto comm, GetCommunicator(devices, kv_store, 0));
+  CpuCollectives::Executor exec(MakeRendezvousKey(devices), kTimeout);
+  std::vector<uint8_t> a(16, 1), b(16, 2);
+  se::DeviceAddressBase in = AsDeviceMemory(a);
+  se::DeviceAddressBase out = AsDeviceMemory(b);
+  std::vector<Communicator::AllReduceBuffer> many = {{in, out, 2},
+                                                     {in, out, 2}};
+
+  for (PrimitiveType dt : {S4, U4, F4E2M1FN, TUPLE, TOKEN}) {
+    EXPECT_THAT(
+        comm->AllReduce(in, out, dt, 2, ReductionKind::SUM, exec).Await(),
+        StatusIs(absl::StatusCode::kUnimplemented));
+    EXPECT_THAT(comm->AllReduceMany(many, dt, ReductionKind::SUM, exec).Await(),
+                StatusIs(absl::StatusCode::kUnimplemented));
+    EXPECT_THAT(
+        comm->ReduceScatter(in, out, dt, 2, ReductionKind::SUM, exec).Await(),
+        StatusIs(absl::StatusCode::kUnimplemented));
+    EXPECT_THAT(comm->AllGather(in, out, dt, 2, exec).Await(),
+                StatusIs(absl::StatusCode::kUnimplemented));
+    EXPECT_THAT(comm->AllToAll({in}, {out}, dt, 2, exec).Await(),
+                StatusIs(absl::StatusCode::kUnimplemented));
+    EXPECT_THAT(
+        comm->CollectivePermute(in, out, dt, 2, RankId(0), {RankId(0)}, exec)
+            .Await(),
+        StatusIs(absl::StatusCode::kUnimplemented));
+  }
+}
+
+TEST(GlooCollectives, InPlaceAndZeroCountCollectives) {
+  std::vector<GlobalDeviceId> devices = {GlobalDeviceId(0), GlobalDeviceId(1)};
+  auto kv_store = std::make_shared<xla::InMemoryKeyValueStore>();
+  {
+    tsl::thread::ThreadPool pool(tsl::Env::Default(), "GlooInPlace", 2);
+    for (int rank = 0; rank < 2; ++rank) {
+      pool.Schedule([&, rank]() {
+        auto comm_or = GetCommunicator(devices, kv_store, rank);
+        ASSERT_OK(comm_or.status());
+        Communicator* comm = comm_or->get();
+        auto exec = [&](int64_t op_id) {
+          return CpuCollectives::Executor(
+              RendezvousKey(RunId(7), devices, 2, RendezvousKey::kCrossReplica,
+                            op_id),
+              kTimeout);
+        };
+
+        // Own-slot and base-aliased AllGather.
+        std::vector<int32_t> ag_slot(4, -1);
+        ag_slot[rank * 2] = rank * 10 + 1;
+        ag_slot[rank * 2 + 1] = rank * 10 + 2;
+        ASSERT_OK(comm->AllGather(se::DeviceAddressBase(&ag_slot[rank * 2],
+                                                        2 * sizeof(int32_t)),
+                                  AsDeviceMemory(ag_slot), S32, 2, exec(1))
+                      .Await());
+        EXPECT_EQ(ag_slot, (std::vector<int32_t>{1, 2, 11, 12}));
+
+        std::vector<int32_t> ag_base = {rank * 10 + 3, rank * 10 + 4, -1, -1};
+        ASSERT_OK(comm->AllGather(se::DeviceAddressBase(ag_base.data(),
+                                                        2 * sizeof(int32_t)),
+                                  AsDeviceMemory(ag_base), S32, 2, exec(2))
+                      .Await());
+        EXPECT_EQ(ag_base, (std::vector<int32_t>{3, 4, 13, 14}));
+
+        // In-place AllToAll (send_buffers[i] == recv_buffers[i]).
+        std::vector<int32_t> a2a = {rank * 100 + 1, rank * 100 + 2,
+                                    rank * 100 + 11, rank * 100 + 12};
+        absl::InlinedVector<se::DeviceAddressBase, 4> slices = {
+            se::DeviceAddressBase(&a2a[0], 2 * sizeof(int32_t)),
+            se::DeviceAddressBase(&a2a[2], 2 * sizeof(int32_t)),
+        };
+        ASSERT_OK(comm->AllToAll(slices, slices, S32, 2, exec(3)).Await());
+        if (rank == 0) {
+          EXPECT_EQ(a2a, (std::vector<int32_t>{1, 2, 101, 102}));
+        } else {
+          EXPECT_EQ(a2a, (std::vector<int32_t>{11, 12, 111, 112}));
+        }
+
+        // In-place CollectivePermute swap (0 <-> 1) and one-way shift (0 -> 1).
+        std::vector<int32_t> cp = {rank + 50, rank + 60};
+        const RankId peer(1 - rank);
+        ASSERT_OK(comm->CollectivePermute(AsDeviceMemory(cp),
+                                          AsDeviceMemory(cp), S32, 2, peer,
+                                          {peer}, exec(4))
+                      .Await());
+        EXPECT_EQ(cp, (std::vector<int32_t>{(1 - rank) + 50, (1 - rank) + 60}));
+
+        std::vector<int32_t> shift = {77, 88};
+        std::optional<RankId> src =
+            rank == 1 ? std::optional<RankId>(RankId(0)) : std::nullopt;
+        std::vector<RankId> dst =
+            rank == 0 ? std::vector<RankId>{RankId(1)} : std::vector<RankId>{};
+        ASSERT_OK(comm->CollectivePermute(AsDeviceMemory(shift),
+                                          AsDeviceMemory(shift), S32, 2, src,
+                                          dst, exec(5))
+                      .Await());
+        EXPECT_EQ(shift, (rank == 0 ? std::vector<int32_t>{0, 0}
+                                    : std::vector<int32_t>{77, 88}));
+
+        // Zero-count collectives with null pointers.
+        se::DeviceAddressBase empty;
+        ASSERT_OK(
+            comm->AllReduce(empty, empty, F32, 0, ReductionKind::SUM, exec(6))
+                .Await());
+        ASSERT_OK(comm->AllGather(empty, empty, S32, 0, exec(7)).Await());
+        ASSERT_OK(
+            comm->AllToAll({empty, empty}, {empty, empty}, S32, 0, exec(8))
+                .Await());
+        ASSERT_OK(
+            comm->CollectivePermute(empty, empty, S32, 0, peer, {peer}, exec(9))
+                .Await());
+      });
+    }
+  }
 }
 
 }  // namespace

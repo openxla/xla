@@ -151,14 +151,32 @@ cc_library(
 )
 
 cc_library(
+    name = "cpu_collective_reduction",
+    hdrs = ["cpu_collective_reduction.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:types",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@eigen_archive//:eigen3",
+    ],
+)
+
+cc_library(
     name = "in_process_communicator",
     srcs = ["in_process_communicator.cc"],
     hdrs = ["in_process_communicator.h"],
     deps = [
+        ":cpu_collective_reduction",
         ":cpu_collectives",
         "//xla:debug_options_flags",
         "//xla:future",
         "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/core/collectives:communicator",
@@ -168,11 +186,8 @@ cc_library(
         "//xla/service:rendezvous",
         "//xla/stream_executor:device_address",
         "//xla/tsl/lib/math:math_util",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:inlined_vector",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
@@ -182,6 +197,43 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "in_process_communicator_test",
+    srcs = ["in_process_communicator_test.cc"],
+    deps = [
+        ":cpu_clique_key",
+        ":cpu_collectives",
+        ":in_process_collectives",
+        ":in_process_communicator",
+        "//xla:executable_run_options",
+        "//xla:shape_util",
+        "//xla:types",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/cpu/runtime:all_reduce_thunk",
+        "//xla/backends/cpu/runtime:buffer_allocations",
+        "//xla/backends/cpu/runtime:collective_thunk",
+        "//xla/backends/cpu/runtime:thunk",
+        "//xla/core/collectives:communicator",
+        "//xla/core/collectives:rank_id",
+        "//xla/core/collectives:reduction_kind",
+        "//xla/runtime:device_id",
+        "//xla/service:buffer_assignment",
+        "//xla/service:collective_rendezvous",
+        "//xla/stream_executor:device_address",
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest_main",
+        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -261,6 +313,8 @@ xla_cc_test(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:status_matchers",
@@ -268,6 +322,7 @@ xla_cc_test(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
+        "@eigen_archive//:eigen3",
     ] + select({
         # Gloo's transport_tcp is not available on MacOS
         "//xla/tsl:macos": [
@@ -295,6 +350,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":cpu_collective_reduction",
         ":cpu_collectives",
         "//xla:executable_run_options",
         "//xla:future",

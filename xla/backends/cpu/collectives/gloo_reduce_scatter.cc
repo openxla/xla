@@ -37,6 +37,7 @@ limitations under the License.
 #include "gloo/math.h"
 #include "gloo/transport/unbound_buffer.h"
 #include "gloo/types.h"
+#include "xla/backends/cpu/collectives/cpu_collective_reduction.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/primitive_util.h"
 #include "xla/stream_executor/device_address.h"
@@ -165,6 +166,9 @@ absl::StatusOr<ReduceFn> GetReduceFunction(ReductionKind reduction_kind) {
       return static_cast<ReduceFn>(&gloo::product<T>);
     case ReductionKind::MIN:
       if constexpr (!is_complex_v<T>) {
+        if constexpr (is_specialized_floating_point_v<T>) {
+          return static_cast<ReduceFn>(&IeeeMinMaxReduce<T, /*kIsMax=*/false>);
+        }
         return static_cast<ReduceFn>(&gloo::min<T>);
       } else {
         return absl::InvalidArgumentError(
@@ -172,6 +176,9 @@ absl::StatusOr<ReduceFn> GetReduceFunction(ReductionKind reduction_kind) {
       }
     case ReductionKind::MAX:
       if constexpr (!is_complex_v<T>) {
+        if constexpr (is_specialized_floating_point_v<T>) {
+          return static_cast<ReduceFn>(&IeeeMinMaxReduce<T, /*kIsMax=*/true>);
+        }
         return static_cast<ReduceFn>(&gloo::max<T>);
       } else {
         return absl::InvalidArgumentError(
@@ -724,6 +731,12 @@ absl::StatusOr<ReduceFn> GetReduceFunctionForType(
     case BF16:
       return GetReduceFunction<bfloat16>(reduction_kind);
     case F16:
+      if (reduction_kind == ReductionKind::MIN ||
+          reduction_kind == ReductionKind::MAX) {
+        static_assert(sizeof(half) == sizeof(gloo::float16) &&
+                      alignof(half) == alignof(gloo::float16));
+        return GetReduceFunction<half>(reduction_kind);
+      }
       return GetReduceFunction<gloo::float16>(reduction_kind);
     case F32:
       return GetReduceFunction<float>(reduction_kind);
@@ -746,11 +759,21 @@ absl::Status GlooReduceScatter(const std::shared_ptr<gloo::Context>& context,
                                PrimitiveType dtype, size_t count,
                                ReductionKind reduction_kind,
                                absl::Duration timeout, uint32_t tag) {
+  ABSL_RETURN_IF_ERROR(ValidateByteArrayDataType(dtype));
   ABSL_ASSIGN_OR_RETURN(ReduceFn reduce_fn,
                         GetReduceFunctionForType(dtype, reduction_kind));
-  return RunReduceScatterHalvingDoubling(
-      context, send_buffer.opaque(), recv_buffer.opaque(), count,
-      primitive_util::ByteWidth(dtype), reduce_fn, timeout, tag);
+  const size_t element_bytes = primitive_util::ByteWidth(dtype);
+  ABSL_RETURN_IF_ERROR(RunReduceScatterHalvingDoubling(
+      context, send_buffer.opaque(), recv_buffer.opaque(), count, element_bytes,
+      reduce_fn, timeout, tag));
+  if (context != nullptr && context->size == 1 && count > 0 &&
+      (reduction_kind == ReductionKind::MIN ||
+       reduction_kind == ReductionKind::MAX) &&
+      primitive_util::IsFloatingPointType(dtype)) {
+    reduce_fn(recv_buffer.opaque(), recv_buffer.opaque(), recv_buffer.opaque(),
+              count);
+  }
+  return absl::OkStatus();
 }
 
 }  // namespace xla::cpu
