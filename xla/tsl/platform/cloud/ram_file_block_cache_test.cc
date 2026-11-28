@@ -15,7 +15,17 @@ limitations under the License.
 
 #include "xla/tsl/platform/cloud/ram_file_block_cache.h"
 
+#include <algorithm>
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <limits>
+#include <list>
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
 
 #include "absl/status/status.h"
 #include "absl/strings/ascii.h"
@@ -576,6 +586,356 @@ TEST(RamFileBlockCacheTest, Flush) {
   cache.Flush();
   TF_EXPECT_OK(ReadCache(&cache, "", 0, 16, &out));
   EXPECT_EQ(calls, 2);
+}
+
+class RecordingCacheStats : public FileBlockCacheStatsInterface {
+ public:
+  void Configure(const FileBlockCache* block_cache) override {}
+  void RecordCacheHitBlockSize(size_t bytes_transferred) override {
+    hits.fetch_add(1, std::memory_order_relaxed);
+    hit_bytes.fetch_add(bytes_transferred, std::memory_order_relaxed);
+  }
+  void RecordCacheMissBlockSize(size_t bytes_transferred) override {
+    misses.fetch_add(1, std::memory_order_relaxed);
+    miss_bytes.fetch_add(bytes_transferred, std::memory_order_relaxed);
+  }
+
+  std::atomic<int> hits{0};
+  std::atomic<int> misses{0};
+  std::atomic<size_t> hit_bytes{0};
+  std::atomic<size_t> miss_bytes{0};
+};
+
+TEST(RamFileBlockCacheTest, PruneMultiBlockNonSsoFilename) {
+  auto fetcher = [](const std::string& filename, size_t offset, size_t n,
+                    char* buffer, size_t* bytes_transferred) {
+    memset(buffer, filename[0], n);
+    *bytes_transferred = n;
+    return absl::OkStatus();
+  };
+  NowSecondsEnv env;
+  env.SetNowSeconds(100);
+  RamFileBlockCache cache(8, 64, /*max_staleness=*/1, fetcher, &env);
+  const std::string file_a(64, 'a');
+  const std::string file_b(64, 'b');
+  std::vector<char> out;
+  TF_EXPECT_OK(ReadCache(&cache, file_a, 0, 8, &out));
+  env.SetNowSeconds(101);
+  TF_EXPECT_OK(ReadCache(&cache, file_a, 8, 8, &out));
+  TF_EXPECT_OK(ReadCache(&cache, file_a, 16, 8, &out));
+  TF_EXPECT_OK(ReadCache(&cache, file_b, 0, 8, &out));
+  EXPECT_EQ(cache.CacheSize(), 32);
+
+  env.SetNowSeconds(102);
+  for (int i = 0; i < 40 && cache.CacheSize() == 32; ++i) {
+    Env::Default()->SleepForMicroseconds(100000);
+  }
+  EXPECT_EQ(cache.CacheSize(), 8);
+  TF_EXPECT_OK(ReadCache(&cache, file_b, 0, 8, &out));
+  EXPECT_EQ(out, std::vector<char>(8, 'b'));
+
+  env.SetNowSeconds(103);
+  for (int i = 0; i < 40 && cache.CacheSize() > 0; ++i) {
+    Env::Default()->SleepForMicroseconds(100000);
+  }
+  EXPECT_EQ(cache.CacheSize(), 0);
+}
+
+TEST(RamFileBlockCacheTest, ConcurrentFlushDuringFetchAndReads) {
+  absl::Notification fetch_started;
+  absl::Notification allow_finish;
+  std::atomic<bool> block_first{true};
+  auto fetcher = [&](const std::string& filename, size_t offset, size_t n,
+                     char* buffer, size_t* bytes_transferred) {
+    if (block_first.exchange(false)) {
+      fetch_started.Notify();
+      allow_finish.WaitForNotification();
+    }
+    memset(buffer, 'z', n);
+    *bytes_transferred = n;
+    return absl::OkStatus();
+  };
+  NowSecondsEnv env;
+  env.SetNowSeconds(10);
+  RamFileBlockCache cache(16, 32, /*max_staleness=*/1, fetcher, &env);
+
+  std::unique_ptr<Thread> reader(Env::Default()->StartThread({}, "reader", [&] {
+    std::vector<char> out;
+    TF_EXPECT_OK(ReadCache(&cache, "inflight", 0, 16, &out));
+    EXPECT_EQ(out, std::vector<char>(16, 'z'));
+  }));
+  fetch_started.WaitForNotification();
+  cache.Flush();
+  allow_finish.Notify();
+  reader.reset();
+  EXPECT_EQ(cache.CacheSize(), 0);
+
+  // Stress concurrent cache hits, misses, LRU trims, and Flush calls.
+  std::atomic<bool> stop_flush{false};
+  std::unique_ptr<Thread> flusher(
+      Env::Default()->StartThread({}, "flusher", [&] {
+        while (!stop_flush.load(std::memory_order_relaxed)) {
+          cache.Flush();
+          // Up to 4 concurrent readers may be between MaybeFetch cleanup and
+          // UpdateLRU Trim; CacheSize() must never wrap or exceed that bound.
+          EXPECT_LE(cache.CacheSize(),
+                    cache.max_bytes() + 4 * cache.block_size());
+        }
+      }));
+  std::vector<std::unique_ptr<Thread>> workers;
+  workers.reserve(4);
+  for (int t = 0; t < 4; ++t) {
+    workers.emplace_back(Env::Default()->StartThread({}, "worker", [&, t] {
+      std::vector<char> out;
+      for (int i = 0; i < 64; ++i) {
+        TF_EXPECT_OK(ReadCache(&cache, "shared", ((t + i) % 4) * 16, 16, &out));
+        EXPECT_EQ(out, std::vector<char>(16, 'z'));
+      }
+    }));
+  }
+  workers.clear();
+  stop_flush.store(true, std::memory_order_relaxed);
+  flusher.reset();
+  EXPECT_LE(cache.CacheSize(), cache.max_bytes());
+  // Ensure Prune wakes safely after concurrent Flush and reads.
+  env.SetNowSeconds(20);
+  for (int i = 0; i < 40 && cache.CacheSize() > 0; ++i) {
+    Env::Default()->SleepForMicroseconds(100000);
+  }
+  EXPECT_EQ(cache.CacheSize(), 0);
+}
+
+TEST(RamFileBlockCacheTest, InFlightAndErrorEvictionAccountingAndStats) {
+  RecordingCacheStats stats;
+  absl::Notification fetch_started;
+  absl::Notification waiter_started;
+  absl::Notification allow_finish;
+  std::atomic<int> mode{0};
+  std::atomic<int> calls{0};
+  auto fetcher = [&](const std::string& filename, size_t offset, size_t n,
+                     char* buffer, size_t* bytes_transferred) {
+    calls.fetch_add(1, std::memory_order_relaxed);
+    int m = mode.load(std::memory_order_acquire);
+    if (m == 0) {
+      fetch_started.Notify();
+      allow_finish.WaitForNotification();
+      memset(buffer, 'k', n);
+      *bytes_transferred = n;
+      return absl::OkStatus();
+    }
+    if (m == 1) {
+      // Intentionally leave *bytes_transferred untouched on failure.
+      return absl::UnavailableError("transient failure");
+    }
+    memset(buffer, 'm', n);
+    *bytes_transferred = n;
+    return absl::OkStatus();
+  };
+
+  RamFileBlockCache cache(16, 32, 0, fetcher);
+  cache.SetStats(&stats);
+
+  std::unique_ptr<Thread> r1(Env::Default()->StartThread({}, "r1", [&] {
+    std::vector<char> out;
+    TF_EXPECT_OK(ReadCache(&cache, "f", 0, 16, &out));
+    EXPECT_EQ(out, std::vector<char>(16, 'k'));
+  }));
+  fetch_started.WaitForNotification();
+  std::unique_ptr<Thread> r2(Env::Default()->StartThread({}, "r2", [&] {
+    waiter_started.Notify();
+    std::vector<char> out;
+    TF_EXPECT_OK(ReadCache(&cache, "f", 0, 8, &out));
+    EXPECT_EQ(out, std::vector<char>(8, 'k'));
+  }));
+  waiter_started.WaitForNotification();
+  Env::Default()->SleepForMicroseconds(20000);
+  cache.RemoveFile("f");
+  allow_finish.Notify();
+  r1.reset();
+  r2.reset();
+  EXPECT_EQ(cache.CacheSize(), 0);
+  EXPECT_EQ(stats.hits.load(), 0);
+  EXPECT_EQ(stats.misses.load(), 1);
+  EXPECT_EQ(stats.miss_bytes.load(), 16);
+
+  // Error fetch leaves *bytes_transferred unset, must not record a miss, and
+  // evicting the ERROR block must not underflow CacheSize().
+  mode.store(1, std::memory_order_release);
+  std::vector<char> out;
+  EXPECT_TRUE(cache.ValidateAndUpdateFileSignature("err", 1));
+  EXPECT_EQ(ReadCache(&cache, "err", 0, 16, &out).code(),
+            absl::StatusCode::kUnavailable);
+  EXPECT_EQ(stats.misses.load(), 1);
+  EXPECT_EQ(cache.CacheSize(), 0);
+  EXPECT_FALSE(cache.ValidateAndUpdateFileSignature("err", 2));
+  EXPECT_EQ(cache.CacheSize(), 0);
+
+  // Subsequent reads still cache and serve hits without spurious Trim eviction.
+  mode.store(2, std::memory_order_release);
+  int before = calls.load();
+  TF_EXPECT_OK(ReadCache(&cache, "ok", 0, 16, &out));
+  TF_EXPECT_OK(ReadCache(&cache, "ok", 0, 16, &out));
+  EXPECT_EQ(calls.load() - before, 1);
+  EXPECT_EQ(cache.CacheSize(), 16);
+  EXPECT_EQ(stats.hits.load(), 1);
+  EXPECT_EQ(stats.hit_bytes.load(), 16);
+  EXPECT_EQ(stats.misses.load(), 2);
+}
+
+TEST(RamFileBlockCacheTest, ZeroTimestampChargesTrimsAndRemoves) {
+  int calls = 0;
+  auto fetcher = [&calls](const std::string& filename, size_t offset, size_t n,
+                          char* buffer, size_t* bytes_transferred) {
+    ++calls;
+    memset(buffer, 'q', n);
+    *bytes_transferred = n;
+    return absl::OkStatus();
+  };
+  NowSecondsEnv env;
+  env.SetNowSeconds(0);
+  RamFileBlockCache cache(8, 16, 0, fetcher, &env);
+  std::vector<char> out;
+
+  TF_EXPECT_OK(ReadCache(&cache, "z", 0, 8, &out));
+  EXPECT_EQ(cache.CacheSize(), 8);
+  TF_EXPECT_OK(ReadCache(&cache, "z", 8, 8, &out));
+  EXPECT_EQ(cache.CacheSize(), 16);
+  // Touch offset 0 so offset 8 is LRU, then load offset 16 to trigger Trim.
+  TF_EXPECT_OK(ReadCache(&cache, "z", 0, 8, &out));
+  EXPECT_EQ(calls, 2);
+  TF_EXPECT_OK(ReadCache(&cache, "z", 16, 8, &out));
+  EXPECT_EQ(cache.CacheSize(), 16);
+  TF_EXPECT_OK(ReadCache(&cache, "z", 0, 8, &out));
+  EXPECT_EQ(calls, 3);
+
+  cache.RemoveFile("z");
+  EXPECT_EQ(cache.CacheSize(), 0);
+}
+
+TEST(RamFileBlockCacheTest, BackwardClockStepDoesNotExpireFreshBlock) {
+  std::atomic<int> calls{0};
+  auto fetcher = [&calls](const std::string& filename, size_t offset, size_t n,
+                          char* buffer, size_t* bytes_transferred) {
+    calls.fetch_add(1, std::memory_order_relaxed);
+    memset(buffer, 'w', n);
+    *bytes_transferred = n;
+    return absl::OkStatus();
+  };
+  NowSecondsEnv env;
+  env.SetNowSeconds(1000);
+  RamFileBlockCache cache(8, 16, /*max_staleness=*/5, fetcher, &env);
+  std::vector<char> out;
+
+  TF_EXPECT_OK(ReadCache(&cache, "clock", 0, 8, &out));
+  EXPECT_EQ(calls.load(), 1);
+  EXPECT_EQ(cache.CacheSize(), 8);
+
+  // Step wall clock backward: block must stay fresh for both Lookup and Prune.
+  env.SetNowSeconds(995);
+  TF_EXPECT_OK(ReadCache(&cache, "clock", 0, 8, &out));
+  EXPECT_EQ(calls.load(), 1);
+  Env::Default()->SleepForMicroseconds(1200000);
+  EXPECT_EQ(cache.CacheSize(), 8);
+  TF_EXPECT_OK(ReadCache(&cache, "clock", 0, 8, &out));
+  EXPECT_EQ(calls.load(), 1);
+
+  // Advancing past timestamp + max_staleness expires the block normally.
+  env.SetNowSeconds(1006);
+  TF_EXPECT_OK(ReadCache(&cache, "clock", 0, 8, &out));
+  EXPECT_EQ(calls.load(), 2);
+}
+
+TEST(RamFileBlockCacheTest, FetcherOverrunAndInconsistentPartialBlockTrim) {
+  RecordingCacheStats stats;
+  auto overrun_fetcher = [](const std::string& filename, size_t offset,
+                            size_t n, char* buffer, size_t* bytes_transferred) {
+    *bytes_transferred = n + 3;
+    return absl::OkStatus();
+  };
+  RamFileBlockCache cached(16, 32, 0, overrun_fetcher);
+  cached.SetStats(&stats);
+  char buf[32] = {};
+  size_t transferred = 99;
+  EXPECT_EQ(cached.Read("bad", 0, 8, buf, &transferred).code(),
+            absl::StatusCode::kInternal);
+  EXPECT_EQ(transferred, 0);
+  EXPECT_EQ(cached.CacheSize(), 0);
+  EXPECT_EQ(stats.misses.load(), 0);
+
+  RamFileBlockCache passthrough(16, 0, 0, overrun_fetcher);
+  transferred = 99;
+  EXPECT_EQ(passthrough.Read("bad", 0, 8, buf, &transferred).code(),
+            absl::StatusCode::kInternal);
+  EXPECT_EQ(transferred, 0);
+
+  // Inconsistent partial block still trims cache_size_ back within max_bytes_.
+  auto partial_first = [](const std::string& filename, size_t offset, size_t n,
+                          char* buffer, size_t* bytes_transferred) {
+    size_t len = offset == 0 ? n / 2 : n;
+    memset(buffer, 'p', len);
+    *bytes_transferred = len;
+    return absl::OkStatus();
+  };
+  RamFileBlockCache incons(16, 16, 0, partial_first);
+  std::vector<char> out;
+  TF_EXPECT_OK(ReadCache(&incons, "inc", 16, 16, &out));
+  EXPECT_EQ(incons.CacheSize(), 16);
+  EXPECT_EQ(ReadCache(&incons, "inc", 0, 16, &out).code(),
+            absl::StatusCode::kInternal);
+  EXPECT_LE(incons.CacheSize(), incons.max_bytes());
+}
+
+TEST(RamFileBlockCacheTest, ReadNearSizeMaxAndInvalidArguments) {
+  constexpr size_t kMax = std::numeric_limits<size_t>::max();
+  constexpr size_t kBlockSize = 16;
+  constexpr size_t kLastBlock = kBlockSize * (kMax / kBlockSize);
+  int calls = 0;
+  auto fetcher = [&](const std::string& filename, size_t offset, size_t n,
+                     char* buffer, size_t* bytes_transferred) {
+    ++calls;
+    EXPECT_EQ(offset, kLastBlock);
+    EXPECT_EQ(n, kBlockSize);
+    constexpr size_t kAvail = 12;
+    for (size_t i = 0; i < kAvail; ++i) {
+      buffer[i] = static_cast<char>('A' + i);
+    }
+    *bytes_transferred = kAvail;
+    return absl::OkStatus();
+  };
+
+  RamFileBlockCache cache(kBlockSize, 2 * kBlockSize, 0, fetcher);
+  char buf[16] = {};
+  size_t transferred = 7;
+
+  EXPECT_EQ(cache.Read("f", 0, 4, buf, nullptr).code(),
+            absl::StatusCode::kInvalidArgument);
+  TF_EXPECT_OK(cache.Read("f", kMax, 0, nullptr, &transferred));
+  EXPECT_EQ(transferred, 0);
+  EXPECT_EQ(cache.Read("f", 0, 4, nullptr, &transferred).code(),
+            absl::StatusCode::kInvalidArgument);
+  EXPECT_EQ(transferred, 0);
+  EXPECT_EQ(cache.Read("f", kMax - 2, 8, buf, &transferred).code(),
+            absl::StatusCode::kInvalidArgument);
+  EXPECT_EQ(transferred, 0);
+
+  RamFileBlockCache empty_fetcher(kBlockSize, 2 * kBlockSize, 0,
+                                  RamFileBlockCache::BlockFetcher{});
+  TF_EXPECT_OK(empty_fetcher.Read("f", 0, 0, nullptr, &transferred));
+  EXPECT_EQ(empty_fetcher.Read("f", 0, 4, buf, &transferred).code(),
+            absl::StatusCode::kInvalidArgument);
+
+  // Read [kLastBlock + 5, kLastBlock + 9) near SIZE_MAX without wrapping.
+  std::vector<char> out;
+  TF_EXPECT_OK(ReadCache(&cache, "f", kLastBlock + 5, 4, &out));
+  EXPECT_EQ(out, (std::vector<char>{'F', 'G', 'H', 'I'}));
+  EXPECT_EQ(calls, 1);
+  // Second read hits cache; partial tail and past-EOF reads stay exact.
+  TF_EXPECT_OK(ReadCache(&cache, "f", kLastBlock + 10, 5, &out));
+  EXPECT_EQ(out, (std::vector<char>{'K', 'L'}));
+  EXPECT_EQ(calls, 1);
+  EXPECT_EQ(ReadCache(&cache, "f", kLastBlock + 13, 2, &out).code(),
+            absl::StatusCode::kOutOfRange);
+  EXPECT_EQ(calls, 1);
 }
 
 }  // namespace

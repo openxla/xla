@@ -15,8 +15,16 @@ limitations under the License.
 
 #include "xla/tsl/platform/cloud/ram_file_block_cache.h"
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <iterator>
+#include <limits>
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
@@ -36,7 +44,8 @@ bool RamFileBlockCache::BlockNotStale(const std::shared_ptr<Block>& block) {
   if (max_staleness_ == 0) {
     return true;  // Not enforcing staleness.
   }
-  return env_->NowSeconds() - block->timestamp <= max_staleness_;
+  uint64_t now = env_->NowSeconds();
+  return now <= block->timestamp || now - block->timestamp <= max_staleness_;
 }
 
 std::shared_ptr<RamFileBlockCache::Block> RamFileBlockCache::Lookup(
@@ -46,7 +55,10 @@ std::shared_ptr<RamFileBlockCache::Block> RamFileBlockCache::Lookup(
   if (entry != block_map_.end()) {
     if (BlockNotStale(entry->second)) {
       if (cache_stats_ != nullptr) {
-        cache_stats_->RecordCacheHitBlockSize(entry->second->data.size());
+        absl::MutexLock block_lock(entry->second->mu);
+        if (entry->second->state == FetchState::FINISHED) {
+          cache_stats_->RecordCacheHitBlockSize(entry->second->data.size());
+        }
       }
       return entry->second;
     }
@@ -77,7 +89,7 @@ void RamFileBlockCache::Trim() {
 absl::Status RamFileBlockCache::UpdateLRU(const Key& key,
                                           const std::shared_ptr<Block>& block) {
   absl::MutexLock lock(mu_);
-  if (block->timestamp == 0) {
+  if (block->evicted) {
     // The block was evicted from another thread. Allow it to remain evicted.
     return absl::OkStatus();
   }
@@ -95,6 +107,7 @@ absl::Status RamFileBlockCache::UpdateLRU(const Key& key,
     Key fmax = std::make_pair(key.first, std::numeric_limits<size_t>::max());
     auto fcmp = block_map_.upper_bound(fmax);
     if (fcmp != block_map_.begin() && key < (--fcmp)->first) {
+      Trim();
       return absl::InternalError("Block cache contents are inconsistent.");
     }
   }
@@ -107,17 +120,19 @@ absl::Status RamFileBlockCache::UpdateLRU(const Key& key,
 absl::Status RamFileBlockCache::MaybeFetch(
     const Key& key, const std::shared_ptr<Block>& block) {
   bool downloaded_block = false;
-  auto reconcile_state =
-      absl::MakeCleanup([this, &downloaded_block, &key, &block] {
+  size_t fetched_capacity = 0;
+  auto reconcile_state = absl::MakeCleanup(
+      [this, &downloaded_block, &fetched_capacity, &key, &block] {
         // Perform this action in a cleanup callback to avoid locking mu_ after
         // locking block->mu.
         if (downloaded_block) {
           absl::MutexLock l(mu_);
-          // Do not update state if the block is already to be evicted.
-          if (block->timestamp != 0) {
-            // Use capacity() instead of size() to account for all  memory
+          // Do not update state if the block is already evicted.
+          if (!block->evicted) {
+            // Use capacity() instead of size() to account for all memory
             // used by the cache.
-            cache_size_ += block->data.capacity();
+            block->charged_bytes = fetched_capacity;
+            cache_size_ += fetched_capacity;
             // Put to beginning of LRA list.
             lra_list_.erase(block->lra_iterator);
             lra_list_.push_front(key);
@@ -134,23 +149,33 @@ absl::Status RamFileBlockCache::MaybeFetch(
     switch (block->state) {
       case FetchState::ERROR:
         TF_FALLTHROUGH_INTENDED;
-      case FetchState::CREATED:
+      case FetchState::CREATED: {
         block->state = FetchState::FETCHING;
         block->mu.unlock();  // Release the lock while making the API call.
-        block->data.clear();
-        block->data.resize(block_size_, 0);
-        size_t bytes_transferred;
-        status.Update(block_fetcher_(key.first, key.second, block_size_,
-                                     block->data.data(), &bytes_transferred));
-        if (cache_stats_ != nullptr) {
-          cache_stats_->RecordCacheMissBlockSize(bytes_transferred);
+        std::vector<char> fetch_buf(block_size_, 0);
+        size_t bytes_transferred = 0;
+        status = block_fetcher_(key.first, key.second, block_size_,
+                                fetch_buf.data(), &bytes_transferred);
+        if (status.ok() && bytes_transferred > block_size_) {
+          status = absl::InternalError(
+              absl::StrCat("Block fetcher returned ", bytes_transferred,
+                           " bytes exceeding block size ", block_size_));
         }
-        block->mu.lock();  // Reacquire the lock immediately afterwards
         if (status.ok()) {
-          block->data.resize(bytes_transferred, 0);
-          // Shrink the data capacity to the actual size used.
-          // NOLINTNEXTLINE: shrink_to_fit() may not shrink the capacity.
-          std::vector<char>(block->data).swap(block->data);
+          if (cache_stats_ != nullptr) {
+            cache_stats_->RecordCacheMissBlockSize(bytes_transferred);
+          }
+          if (bytes_transferred < block_size_) {
+            // Shrink the data capacity to the actual size used.
+            std::vector<char> shrunk(fetch_buf.begin(),
+                                     fetch_buf.begin() + bytes_transferred);
+            fetch_buf.swap(shrunk);
+          }
+        }
+        block->mu.lock();  // Reacquire the lock immediately afterwards.
+        if (status.ok()) {
+          block->data.swap(fetch_buf);
+          fetched_capacity = block->data.capacity();
           downloaded_block = true;
           block->state = FetchState::FINISHED;
         } else {
@@ -158,6 +183,7 @@ absl::Status RamFileBlockCache::MaybeFetch(
         }
         block->cond_var.SignalAll();
         return status;
+      }
       case FetchState::FETCHING:
         block->cond_var.WaitWithTimeout(&block->mu, absl::Seconds(60));
         if (block->state == FetchState::FINISHED) {
@@ -176,24 +202,34 @@ absl::Status RamFileBlockCache::MaybeFetch(
 absl::Status RamFileBlockCache::Read(const std::string& filename, size_t offset,
                                      size_t n, char* buffer,
                                      size_t* bytes_transferred) {
+  if (bytes_transferred == nullptr) {
+    return absl::InvalidArgumentError("bytes_transferred must not be null.");
+  }
   *bytes_transferred = 0;
   if (n == 0) {
     return absl::OkStatus();
   }
+  if (buffer == nullptr || offset > std::numeric_limits<size_t>::max() - n ||
+      !block_fetcher_) {
+    return absl::InvalidArgumentError("Invalid RamFileBlockCache::Read args.");
+  }
   if (!IsCacheEnabled() || (n > max_bytes_)) {
     // The cache is effectively disabled, so we pass the read through to the
     // fetcher without breaking it up into blocks.
-    return block_fetcher_(filename, offset, n, buffer, bytes_transferred);
+    absl::Status status =
+        block_fetcher_(filename, offset, n, buffer, bytes_transferred);
+    if (status.ok() && *bytes_transferred > n) {
+      *bytes_transferred = 0;
+      return absl::InternalError("Block fetcher exceeded requested read size.");
+    }
+    return status;
   }
-  // Calculate the block-aligned start and end of the read.
+  // Calculate the block-aligned start and end of the read without overflow.
   size_t start = block_size_ * (offset / block_size_);
-  size_t finish = block_size_ * ((offset + n) / block_size_);
-  if (finish < offset + n) {
-    finish += block_size_;
-  }
+  size_t read_end = offset + n;
   size_t total_bytes_transferred = 0;
   // Now iterate through the blocks, reading them one at a time.
-  for (size_t pos = start; pos < finish; pos += block_size_) {
+  for (size_t pos = start;; pos += block_size_) {
     Key key = std::make_pair(filename, pos);
     // Look up the block, fetching and inserting it if necessary, and update the
     // LRU iterator for the key and block.
@@ -203,32 +239,25 @@ absl::Status RamFileBlockCache::Read(const std::string& filename, size_t offset,
     ABSL_RETURN_IF_ERROR(UpdateLRU(key, block));
     // Copy the relevant portion of the block into the result buffer.
     const auto& data = block->data;
-    if (offset >= pos + data.size()) {
+    if (offset >= pos && data.size() <= offset - pos) {
       // The requested offset is at or beyond the end of the file. This can
       // happen if `offset` is not block-aligned, and the read returns the last
       // block in the file, which does not extend all the way out to `offset`.
       *bytes_transferred = total_bytes_transferred;
       return absl::OutOfRangeError(
           absl::StrCat("EOF at offset ", offset, " in file ", filename,
-                       " at position ", pos, "with data size ", data.size()));
+                       " at position ", pos, " with data size ", data.size()));
     }
-    auto begin = data.begin();
-    if (offset > pos) {
-      // The block begins before the slice we're reading.
-      begin += offset - pos;
-    }
-    auto end = data.end();
-    if (pos + data.size() > offset + n) {
-      // The block extends past the end of the slice we're reading.
-      end -= (pos + data.size()) - (offset + n);
-    }
-    if (begin < end) {
-      size_t bytes_to_copy = end - begin;
-      memcpy(&buffer[total_bytes_transferred], &*begin, bytes_to_copy);
+    size_t begin_idx = offset > pos ? offset - pos : 0;
+    size_t end_idx = std::min(data.size(), read_end - pos);
+    if (begin_idx < end_idx) {
+      size_t bytes_to_copy = end_idx - begin_idx;
+      memcpy(&buffer[total_bytes_transferred], data.data() + begin_idx,
+             bytes_to_copy);
       total_bytes_transferred += bytes_to_copy;
     }
-    if (data.size() < block_size_) {
-      // The block was a partial block and thus signals EOF at its upper bound.
+    if (data.size() < block_size_ || read_end - pos <= block_size_) {
+      // Partial block signals EOF, or the full requested range was covered.
       break;
     }
   }
@@ -265,19 +294,25 @@ void RamFileBlockCache::Prune() {
     uint64_t now = env_->NowSeconds();
     while (!lra_list_.empty()) {
       auto it = block_map_.find(lra_list_.back());
-      if (now - it->second->timestamp <= max_staleness_) {
+      if (now <= it->second->timestamp ||
+          now - it->second->timestamp <= max_staleness_) {
         // The oldest block is not yet expired. Come back later.
         break;
       }
       // We need to make a copy of the filename here, since it could otherwise
       // be used within RemoveFile_Locked after `it` is deleted.
-      RemoveFile_Locked(it->first.first);
+      std::string filename = it->first.first;
+      RemoveFile_Locked(filename);
     }
   }
 }
 
 void RamFileBlockCache::Flush() {
   absl::MutexLock lock(mu_);
+  for (auto& entry : block_map_) {
+    entry.second->evicted = true;
+    entry.second->charged_bytes = 0;
+  }
   block_map_.clear();
   lru_list_.clear();
   lra_list_.clear();
@@ -292,7 +327,7 @@ void RamFileBlockCache::RemoveFile(const std::string& filename) {
 void RamFileBlockCache::RemoveFile_Locked(const std::string& filename) {
   Key begin = std::make_pair(filename, 0);
   auto it = block_map_.lower_bound(begin);
-  while (it != block_map_.end() && it->first.first == filename) {
+  while (it != block_map_.end() && it->first.first == begin.first) {
     auto next = std::next(it);
     RemoveBlock(it);
     it = next;
@@ -302,10 +337,11 @@ void RamFileBlockCache::RemoveFile_Locked(const std::string& filename) {
 void RamFileBlockCache::RemoveBlock(BlockMap::iterator entry) {
   // This signals that the block is removed, and should not be inadvertently
   // reinserted into the cache in UpdateLRU.
-  entry->second->timestamp = 0;
+  entry->second->evicted = true;
+  cache_size_ -= entry->second->charged_bytes;
+  entry->second->charged_bytes = 0;
   lru_list_.erase(entry->second->lru_iterator);
   lra_list_.erase(entry->second->lra_iterator);
-  cache_size_ -= entry->second->data.capacity();
   block_map_.erase(entry);
 }
 
