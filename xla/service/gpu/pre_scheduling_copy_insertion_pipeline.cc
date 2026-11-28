@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/pre_scheduling_copy_insertion_pipeline.h"
 
-#include <cstdint>
 #include <memory>
 #include <utility>
 
