@@ -83,6 +83,11 @@ CUptiResult CuptiErrorManager::ActivityEnable(CUpti_ActivityKind kind) {
     auto f = std::bind(&CuptiErrorManager::ActivityDisable, this, kind);
     RegisterUndoFunction(f);
   } else {
+    if (kind == CUPTI_ACTIVITY_KIND_ENVIRONMENT) {
+      // Optional auxiliary telemetry; do not disable CUPTI process-wide if the
+      // GPU, driver, MIG/vGPU configuration, or CUDA version rejects it.
+      return error;
+    }
     LOG(ERROR) << "ActivityEnable() error on activity kind: " << kind;
   }
   LOG_AND_DISABLE_IF_ERROR(error);
@@ -175,6 +180,11 @@ CUptiResult CuptiErrorManager::ActivityEnableV2(
                        kind, nullptr);
     RegisterUndoFunction(f);
   } else {
+    if (kind == CUPTI_ACTIVITY_KIND_ENVIRONMENT) {
+      // Optional auxiliary telemetry; do not disable CUPTI process-wide if the
+      // GPU, driver, MIG/vGPU configuration, or CUDA version rejects it.
+      return error;
+    }
     LOG(ERROR) << "ActivityEnableV2() error on activity kind: " << kind;
   }
   LOG_AND_DISABLE_IF_ERROR(error);
