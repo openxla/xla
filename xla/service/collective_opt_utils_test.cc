@@ -880,10 +880,9 @@ TEST_F(MatchPermutedSliceAndPartitionOffsetTest,
           /*allow_multiple_users=*/false);
 
   ASSERT_TRUE(spec.has_value());
-  EXPECT_THAT(
-      spec->permutation_pairs,
-      UnorderedElementsAre(Pair(0, 7), Pair(1, 6), Pair(2, 5), Pair(3, 4),
-                           Pair(4, 3), Pair(5, 2), Pair(6, 1), Pair(7, 0)));
+  EXPECT_THAT(spec->permutation_pairs,
+              ElementsAre(Pair(0, 7), Pair(1, 6), Pair(2, 5), Pair(3, 4),
+                          Pair(4, 3), Pair(5, 2), Pair(6, 1), Pair(7, 0)));
 }
 
 TEST_F(MatchPermutedSliceAndPartitionOffsetTest,
@@ -916,11 +915,80 @@ TEST_F(MatchPermutedSliceAndPartitionOffsetTest,
           /*allow_multiple_users=*/false);
 
   ASSERT_TRUE(spec.has_value());
-  EXPECT_THAT(
-      spec->permutation_pairs,
-      UnorderedElementsAre(Pair(0, 3), Pair(1, 2), Pair(2, 1), Pair(3, 0),
-                           Pair(4, 7), Pair(5, 5), Pair(6, 4), Pair(7, 6)));
+  EXPECT_THAT(spec->permutation_pairs,
+              ElementsAre(Pair(0, 3), Pair(1, 2), Pair(2, 1), Pair(3, 0),
+                          Pair(4, 7), Pair(5, 5), Pair(6, 4), Pair(7, 6)));
 }
+
+TEST_F(MatchPermutedSliceAndPartitionOffsetTest,
+       NonAscendingReplicaGroupsEmitSortedPairs) {
+  constexpr absl::string_view kHloString = R"hlo(
+    HloModule module
+    ENTRY entry {
+      p = f32[1,4,32] parameter(0)
+      ag = f32[1,16,32] all-gather(p), replica_groups={{6,4,7,5},{2,0,3,1}},
+        dimensions={1}, channel_id=1, use_global_device_ids=true
+      pid = u32[] partition-id()
+      permuted_idx_list = s32[8]{0} constant({8,0,12,4,0,8,4,12})
+      offset = s32[1] dynamic-slice(permuted_idx_list, pid),
+        dynamic_slice_sizes={1}
+      offset_reshape = s32[] reshape(offset)
+      zero = s32[] constant(0)
+      ROOT ds = f32[1,4,32] dynamic-slice(ag, zero, offset_reshape, zero),
+        dynamic_slice_sizes={1,4,32}
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kHloString));
+  const HloInstruction* ag =
+      module->entry_computation()->GetInstructionWithName("ag");
+  ASSERT_NE(ag, nullptr);
+  const HloAllGatherInstruction* ag_instr = Cast<HloAllGatherInstruction>(ag);
+
+  std::optional<AllGatherDynamicSliceMatchSpec> spec =
+      MatchPermutedSliceAndPartitionOffset(
+          ag_instr, /*num_partitions=*/8, /*num_replicas=*/1,
+          HloPredicateIsOp<HloOpcode::kPartitionId>,
+          /*allow_multiple_users=*/false);
+
+  ASSERT_TRUE(spec.has_value());
+  EXPECT_THAT(spec->permutation_pairs,
+              ElementsAre(Pair(0, 3), Pair(1, 2), Pair(2, 1), Pair(3, 0),
+                          Pair(4, 6), Pair(5, 7), Pair(6, 4), Pair(7, 5)));
+}
+
+TEST_F(MatchPermutedSliceAndPartitionOffsetTest,
+       ReturnsNulloptWhenDsOffsetNotInAgOffsets) {
+  constexpr absl::string_view kHloString = R"hlo(
+    HloModule module
+    ENTRY entry {
+      p = f32[4,8] parameter(0)
+      ag = f32[16,8] all-gather(p), replica_groups={{0,1,2,3}},
+        dimensions={0}, channel_id=1, use_global_device_ids=true
+      pid = u32[] partition-id()
+      permuted_idx_list = s32[4]{0} constant({0,4,8,6})
+      offset = s32[1] dynamic-slice(permuted_idx_list, pid),
+        dynamic_slice_sizes={1}
+      offset_reshape = s32[] reshape(offset)
+      zero = s32[] constant(0)
+      ROOT ds = f32[4,8] dynamic-slice(ag, offset_reshape, zero),
+        dynamic_slice_sizes={4,8}
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kHloString));
+  const HloInstruction* ag =
+      module->entry_computation()->GetInstructionWithName("ag");
+  ASSERT_NE(ag, nullptr);
+  const HloAllGatherInstruction* ag_instr = Cast<HloAllGatherInstruction>(ag);
+
+  EXPECT_FALSE(MatchPermutedSliceAndPartitionOffset(
+                   ag_instr, /*num_partitions=*/4, /*num_replicas=*/1,
+                   HloPredicateIsOp<HloOpcode::kPartitionId>,
+                   /*allow_multiple_users=*/false)
+                   .has_value());
+}
+
 using MatchDsPadAllGatherTest = HloHardwareIndependentTestBase;
 
 TEST_F(MatchDsPadAllGatherTest, MatchDsPadAllGather) {
