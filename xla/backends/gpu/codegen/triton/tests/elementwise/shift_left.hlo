@@ -1,0 +1,26 @@
+// RUN: fusion_to_triton %s | FileCheck %s
+// RUN: triton_test_correctness %s
+
+fusion {
+  lhs = s32[8]{0} parameter(0)
+  rhs = s32[8]{0} parameter(1)
+  ROOT result = s32[8]{0} shift-left(lhs, rhs)
+}
+// CHECK-DAG: arith.cmpi ult, %{{.*}}, %{{.*}} : tensor<8xi32>
+// CHECK-DAG: arith.shli %{{.*}}, %{{.*}} : tensor<8xi32>
+// CHECK: arith.select %{{.*}}, %{{.*}}, %{{.*}} : tensor<8xi1>, tensor<8xi32>
+
+ENTRY main {
+  lhs = s32[8]{0} constant({305419896, -16, 1, -1, 305419896, -16, 305419896, -16})
+  rhs = s32[8]{0} constant({0, 2, 31, 31, 32, 32, 33, -1})
+  ROOT fusion = s32[8]{0} fusion(lhs, rhs), kind=kCustom, calls=fusion,
+    backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["8"]}],
+          "num_warps":"1",
+          "num_ctas":"1",
+          "num_stages":"1",
+          "is_tma_allowed":false}}}
+}

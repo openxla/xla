@@ -846,6 +846,14 @@ absl::StatusOr<Value> EmitElementwise(mlir::ImplicitLocOpBuilder& b,
       return mlir::stablehlo::OrOp::create(b, inputs[0], inputs[1]);
     case HloOpcode::kXor:
       return mlir::stablehlo::XorOp::create(b, inputs[0], inputs[1]);
+    case HloOpcode::kShiftLeft:
+      return mlir::stablehlo::ShiftLeftOp::create(b, inputs[0], inputs[1]);
+    case HloOpcode::kShiftRightLogical:
+      return mlir::stablehlo::ShiftRightLogicalOp::create(b, inputs[0],
+                                                          inputs[1]);
+    case HloOpcode::kShiftRightArithmetic:
+      return mlir::stablehlo::ShiftRightArithmeticOp::create(b, inputs[0],
+                                                             inputs[1]);
     case HloOpcode::kDivide:
       return mlir::stablehlo::DivOp::create(b, inputs[0], inputs[1]);
     case HloOpcode::kCompare:

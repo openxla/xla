@@ -755,4 +755,93 @@ func.func @lower_sign_complex_unchanged(%arg0: tensor<2x4xcomplex<f32>>) -> tens
   return %0 : tensor<2x4xcomplex<f32>>
 }
 
+// -----
+
+func.func @lower_shift_left_signless(%arg0: tensor<2x4xi32>, %arg1: tensor<2x4xi32>) -> tensor<2x4xi32> {
+  // CHECK-DAG: %[[BW:.*]] = arith.constant dense<32> : tensor<2x4xi32>
+  // CHECK-DAG: %[[ZERO:.*]] = arith.constant dense<0> : tensor<2x4xi32>
+  // CHECK: %[[CMP:.*]] = arith.cmpi ult, %arg1, %[[BW]] : tensor<2x4xi32>
+  // CHECK: %[[SHL:.*]] = arith.shli %arg0, %arg1 : tensor<2x4xi32>
+  // CHECK: %[[RES:.*]] = arith.select %[[CMP]], %[[SHL]], %[[ZERO]] : tensor<2x4xi1>, tensor<2x4xi32>
+  // CHECK: return %[[RES]] : tensor<2x4xi32>
+  %0 = stablehlo.shift_left %arg0, %arg1 : tensor<2x4xi32>
+  return %0 : tensor<2x4xi32>
+}
+
+// -----
+
+func.func @lower_shift_left_unsigned(%arg0: tensor<2x4xui32>, %arg1: tensor<2x4xui32>) -> tensor<2x4xui32> {
+  // CHECK-DAG: %[[BW:.*]] = arith.constant dense<32> : tensor<2x4xi32>
+  // CHECK-DAG: %[[ZERO:.*]] = arith.constant dense<0> : tensor<2x4xi32>
+  // CHECK: %[[LHS:.*]] = builtin.unrealized_conversion_cast %arg0 : tensor<2x4xui32> to tensor<2x4xi32>
+  // CHECK: %[[RHS:.*]] = builtin.unrealized_conversion_cast %arg1 : tensor<2x4xui32> to tensor<2x4xi32>
+  // CHECK: %[[CMP:.*]] = arith.cmpi ult, %[[RHS]], %[[BW]] : tensor<2x4xi32>
+  // CHECK: %[[SHL:.*]] = arith.shli %[[LHS]], %[[RHS]] : tensor<2x4xi32>
+  // CHECK: %[[SEL:.*]] = arith.select %[[CMP]], %[[SHL]], %[[ZERO]] : tensor<2x4xi1>, tensor<2x4xi32>
+  // CHECK: %[[RES:.*]] = builtin.unrealized_conversion_cast %[[SEL]] : tensor<2x4xi32> to tensor<2x4xui32>
+  // CHECK: return %[[RES]] : tensor<2x4xui32>
+  %0 = stablehlo.shift_left %arg0, %arg1 : tensor<2x4xui32>
+  return %0 : tensor<2x4xui32>
+}
+
+// -----
+
+func.func @lower_shift_right_logical_signless(%arg0: tensor<2x4xi8>, %arg1: tensor<2x4xi8>) -> tensor<2x4xi8> {
+  // CHECK-DAG: %[[BW:.*]] = arith.constant dense<8> : tensor<2x4xi8>
+  // CHECK-DAG: %[[ZERO:.*]] = arith.constant dense<0> : tensor<2x4xi8>
+  // CHECK: %[[CMP:.*]] = arith.cmpi ult, %arg1, %[[BW]] : tensor<2x4xi8>
+  // CHECK: %[[SHR:.*]] = arith.shrui %arg0, %arg1 : tensor<2x4xi8>
+  // CHECK: %[[RES:.*]] = arith.select %[[CMP]], %[[SHR]], %[[ZERO]] : tensor<2x4xi1>, tensor<2x4xi8>
+  // CHECK: return %[[RES]] : tensor<2x4xi8>
+  %0 = stablehlo.shift_right_logical %arg0, %arg1 : tensor<2x4xi8>
+  return %0 : tensor<2x4xi8>
+}
+
+// -----
+
+func.func @lower_shift_right_logical_unsigned(%arg0: tensor<2x4xui64>, %arg1: tensor<2x4xui64>) -> tensor<2x4xui64> {
+  // CHECK-DAG: %[[BW:.*]] = arith.constant dense<64> : tensor<2x4xi64>
+  // CHECK-DAG: %[[ZERO:.*]] = arith.constant dense<0> : tensor<2x4xi64>
+  // CHECK: %[[LHS:.*]] = builtin.unrealized_conversion_cast %arg0 : tensor<2x4xui64> to tensor<2x4xi64>
+  // CHECK: %[[RHS:.*]] = builtin.unrealized_conversion_cast %arg1 : tensor<2x4xui64> to tensor<2x4xi64>
+  // CHECK: %[[CMP:.*]] = arith.cmpi ult, %[[RHS]], %[[BW]] : tensor<2x4xi64>
+  // CHECK: %[[SHR:.*]] = arith.shrui %[[LHS]], %[[RHS]] : tensor<2x4xi64>
+  // CHECK: %[[SEL:.*]] = arith.select %[[CMP]], %[[SHR]], %[[ZERO]] : tensor<2x4xi1>, tensor<2x4xi64>
+  // CHECK: %[[RES:.*]] = builtin.unrealized_conversion_cast %[[SEL]] : tensor<2x4xi64> to tensor<2x4xui64>
+  // CHECK: return %[[RES]] : tensor<2x4xui64>
+  %0 = stablehlo.shift_right_logical %arg0, %arg1 : tensor<2x4xui64>
+  return %0 : tensor<2x4xui64>
+}
+
+// -----
+
+func.func @lower_shift_right_arithmetic_signless(%arg0: tensor<2x4xi32>, %arg1: tensor<2x4xi32>) -> tensor<2x4xi32> {
+  // CHECK-DAG: %[[BW:.*]] = arith.constant dense<32> : tensor<2x4xi32>
+  // CHECK-DAG: %[[MAX_SHIFT:.*]] = arith.constant dense<31> : tensor<2x4xi32>
+  // CHECK: %[[CMP:.*]] = arith.cmpi ult, %arg1, %[[BW]] : tensor<2x4xi32>
+  // CHECK: %[[SHR:.*]] = arith.shrsi %arg0, %arg1 : tensor<2x4xi32>
+  // CHECK: %[[SAT:.*]] = arith.shrsi %arg0, %[[MAX_SHIFT]] : tensor<2x4xi32>
+  // CHECK: %[[RES:.*]] = arith.select %[[CMP]], %[[SHR]], %[[SAT]] : tensor<2x4xi1>, tensor<2x4xi32>
+  // CHECK: return %[[RES]] : tensor<2x4xi32>
+  %0 = stablehlo.shift_right_arithmetic %arg0, %arg1 : tensor<2x4xi32>
+  return %0 : tensor<2x4xi32>
+}
+
+// -----
+
+func.func @lower_shift_right_arithmetic_unsigned(%arg0: tensor<2x4xui32>, %arg1: tensor<2x4xui32>) -> tensor<2x4xui32> {
+  // CHECK-DAG: %[[BW:.*]] = arith.constant dense<32> : tensor<2x4xi32>
+  // CHECK-DAG: %[[MAX_SHIFT:.*]] = arith.constant dense<31> : tensor<2x4xi32>
+  // CHECK: %[[LHS:.*]] = builtin.unrealized_conversion_cast %arg0 : tensor<2x4xui32> to tensor<2x4xi32>
+  // CHECK: %[[RHS:.*]] = builtin.unrealized_conversion_cast %arg1 : tensor<2x4xui32> to tensor<2x4xi32>
+  // CHECK: %[[CMP:.*]] = arith.cmpi ult, %[[RHS]], %[[BW]] : tensor<2x4xi32>
+  // CHECK: %[[SHR:.*]] = arith.shrsi %[[LHS]], %[[RHS]] : tensor<2x4xi32>
+  // CHECK: %[[SAT:.*]] = arith.shrsi %[[LHS]], %[[MAX_SHIFT]] : tensor<2x4xi32>
+  // CHECK: %[[SEL:.*]] = arith.select %[[CMP]], %[[SHR]], %[[SAT]] : tensor<2x4xi1>, tensor<2x4xi32>
+  // CHECK: %[[RES:.*]] = builtin.unrealized_conversion_cast %[[SEL]] : tensor<2x4xi32> to tensor<2x4xui32>
+  // CHECK: return %[[RES]] : tensor<2x4xui32>
+  %0 = stablehlo.shift_right_arithmetic %arg0, %arg1 : tensor<2x4xui32>
+  return %0 : tensor<2x4xui32>
+}
+
 

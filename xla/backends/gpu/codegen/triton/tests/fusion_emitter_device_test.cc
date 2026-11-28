@@ -3241,6 +3241,139 @@ ENTRY main {
   EXPECT_EQ(result,
             LiteralUtil::CreateR1<float>(std::vector<float>(16, -1.0f)));
 }
+
+TEST_F(TritonEmitterTest, ShiftOperationsOutOfBoundsSemantics) {
+  constexpr absl::string_view kHloTemplate = R"hlo(
+HloModule m
+
+triton_computation {
+  p0 = $0[8]{0} parameter(0)
+  p1 = $0[8]{0} parameter(1)
+  ROOT res = $0[8]{0} $1(p0, p1)
+}
+
+ENTRY main {
+  p0 = $0[8]{0} parameter(0)
+  p1 = $0[8]{0} parameter(1)
+  ROOT triton_fusion = $0[8]{0} fusion(p0, p1), kind=kCustom,
+    calls=triton_computation, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["8"]}],
+          "num_warps":"1",
+          "num_ctas":"1",
+          "num_stages":"1"}}}
+})hlo";
+
+  // S32: covers 0, in-bounds, bitwidth-1, bitwidth, >bitwidth, and negative
+  // shift amounts, with both positive and negative lhs values.
+  {
+    Literal lhs = LiteralUtil::CreateR1<int32_t>(
+        {0x12345678, -16, 1, -1, 0x12345678, -16, 0x12345678, -16});
+    Literal rhs =
+        LiteralUtil::CreateR1<int32_t>({0, 2, 31, 31, 32, 32, 33, -1});
+
+    for (absl::string_view op :
+         {"shift-left", "shift-right-logical", "shift-right-arithmetic"}) {
+      ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                           ParseAndReturnVerifiedModule(
+                               absl::Substitute(kHloTemplate, "s32", op)));
+      EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), {&lhs, &rhs},
+                                           ErrorSpec{0, 0}));
+    }
+  }
+
+  // U32: covers MSB-set values and shift amounts >= 32 (including UINT32_MAX).
+  {
+    Literal lhs = LiteralUtil::CreateR1<uint32_t>(
+        {0x80000001u, 0x7FFFFFFFu, 0x80000000u, 1u, 0x80000001u, 0x7FFFFFFFu,
+         0x80000001u, 0xFFFFFFFFu});
+    Literal rhs = LiteralUtil::CreateR1<uint32_t>(
+        {0u, 1u, 31u, 31u, 32u, 32u, 64u, 0xFFFFFFFFu});
+
+    for (absl::string_view op :
+         {"shift-left", "shift-right-logical", "shift-right-arithmetic"}) {
+      ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                           ParseAndReturnVerifiedModule(
+                               absl::Substitute(kHloTemplate, "u32", op)));
+      EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), {&lhs, &rhs},
+                                           ErrorSpec{0, 0}));
+    }
+  }
+
+  // U8: covers narrow 8-bit shifts at and above bitwidth 8.
+  {
+    Literal lhs = LiteralUtil::CreateR1<uint8_t>(
+        {0x81u, 0x7Fu, 0x80u, 1u, 0x81u, 0x7Fu, 0xFFu, 0x0Fu});
+    Literal rhs =
+        LiteralUtil::CreateR1<uint8_t>({0u, 1u, 7u, 7u, 8u, 8u, 9u, 255u});
+
+    for (absl::string_view op :
+         {"shift-left", "shift-right-logical", "shift-right-arithmetic"}) {
+      ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                           ParseAndReturnVerifiedModule(
+                               absl::Substitute(kHloTemplate, "u8", op)));
+      EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), {&lhs, &rhs},
+                                           ErrorSpec{0, 0}));
+    }
+  }
+
+  // U64: covers 64-bit shifts at and above bitwidth 64.
+  {
+    Literal lhs = LiteralUtil::CreateR1<uint64_t>(
+        {0x8000000000000001ull, 0x7FFFFFFFFFFFFFFFull, 0x8000000000000000ull,
+         1ull, 0x8000000000000001ull, 0x7FFFFFFFFFFFFFFFull,
+         0x8000000000000001ull, 0xFFFFFFFFFFFFFFFFull});
+    Literal rhs =
+        LiteralUtil::CreateR1<uint64_t>({0ull, 1ull, 63ull, 63ull, 64ull, 64ull,
+                                         128ull, 0xFFFFFFFFFFFFFFFFull});
+
+    for (absl::string_view op :
+         {"shift-left", "shift-right-logical", "shift-right-arithmetic"}) {
+      ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                           ParseAndReturnVerifiedModule(
+                               absl::Substitute(kHloTemplate, "u64", op)));
+      EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), {&lhs, &rhs},
+                                           ErrorSpec{0, 0}));
+    }
+  }
+}
+
+TEST_F(TritonEmitterTest, ShiftRightLogicalFusedWithRowReduction) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule m
+
+add_u32 {
+  lhs = u32[] parameter(0)
+  rhs = u32[] parameter(1)
+  ROOT add = u32[] add(lhs, rhs)
+}
+
+triton_computation {
+  a = u32[64,256]{1,0} parameter(0)
+  bits = u32[64,256]{1,0} parameter(1)
+  shifted = u32[64,256]{1,0} shift-right-logical(a, bits)
+  zero = u32[] constant(0)
+  ROOT row_sum = u32[64]{0} reduce(shifted, zero), dimensions={1}, to_apply=add_u32
+}
+
+ENTRY main {
+  a = u32[64,256]{1,0} parameter(0)
+  bits = u32[64,256]{1,0} parameter(1)
+  ROOT triton_fusion = u32[64]{0} fusion(a, bits), kind=kCustom,
+    calls=triton_computation, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["1"]}],
+          "num_warps":"4",
+          "num_ctas":"1",
+          "num_stages":"1"}}}
+})hlo";
+
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, ErrorSpec{0, 0}));
+}
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
