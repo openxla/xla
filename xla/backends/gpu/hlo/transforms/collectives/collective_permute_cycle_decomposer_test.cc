@@ -18,10 +18,8 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include <cstdint>
 #include <memory>
 #include <string>
-#include <utility>
 
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
