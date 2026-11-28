@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -994,6 +995,16 @@ class ConstValueInferenceTest : public ValueInferenceTest {
     return literal;
   }
 };
+
+TEST_F(ConstValueInferenceTest, TanOfConstant) {
+  XlaBuilder b(TestName());
+  XlaOp tan = Tan(ConstantR0<float>(&b, 1.0f));
+
+  ASSERT_OK_AND_ASSIGN(OptionalLiteral value,
+                       ComputeConstantValueLiteral(tan, &b));
+  EXPECT_THAT(value.Get<float>({}),
+              ::testing::Optional(::testing::FloatEq(1.5574077f)));
+}
 
 TEST_F(ConstValueInferenceTest, ConstValuePassThroughSetBound) {
   XlaBuilder b(TestName());
