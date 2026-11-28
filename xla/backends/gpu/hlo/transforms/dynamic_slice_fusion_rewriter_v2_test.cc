@@ -290,6 +290,40 @@ TEST_F(DynamicSliceFusionRewriterV2Test, NonNoOpInSliceChainNotFused) {
   RunAndFilecheckHloRewrite(hlo, MakePipeline(), std::nullopt);
 }
 
+TEST_F(DynamicSliceFusionRewriterV2Test, TokenOperandNotFused) {
+  const char* hlo = R"(
+    HloModule test
+
+    ENTRY main {
+      %p0 = f32[2,8,8]{2,1,0} parameter(0)
+      %token0 = token[] after-all()
+      %slice0 = f32[1,8,8]{2,1,0} slice(%p0), slice={[1:2], [0:8], [0:8]}
+      %bitcast0 = f32[8,8]{1,0} bitcast(%slice0)
+      ROOT %hero = f32[8,8]{1,0} custom-call(%bitcast0, %token0),
+        custom_call_target="fake_target", custom_call_has_side_effect=true
+    }
+  )";
+
+  RunAndFilecheckHloRewrite(hlo, MakePipeline(), std::nullopt);
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test, TokenTupleResultNotFused) {
+  const char* hlo = R"(
+    HloModule test
+
+    ENTRY main {
+      %p0 = f32[2,8,8]{2,1,0} parameter(0)
+      %slice0 = f32[1,8,8]{2,1,0} slice(%p0), slice={[1:2], [0:8], [0:8]}
+      %bitcast0 = f32[8,8]{1,0} bitcast(%slice0)
+      %hero = (f32[8,8]{1,0}, token[]) custom-call(%bitcast0),
+        custom_call_target="fake_target", custom_call_has_side_effect=true
+      ROOT %gte0 = f32[8,8]{1,0} get-tuple-element(%hero), index=0
+    }
+  )";
+
+  RunAndFilecheckHloRewrite(hlo, MakePipeline(), std::nullopt);
+}
+
 TEST_F(DynamicSliceFusionRewriterV2Test, DSWithConstantOffset) {
   const char* hlo = R"(
     HloModule test
