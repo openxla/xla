@@ -3655,6 +3655,8 @@ PartitionConvOnBatchOrFeatureGroupedDims(
   if (original_hlo->feature_group_count() > 1 ||
       original_hlo->batch_group_count() > 1) {
     const auto& dnums = original_hlo->convolution_dimension_numbers();
+    const int64_t output_feature_shards =
+        ShardCountAtDim(output_sharding, dnums.output_feature_dimension());
     std::optional<DotConvolutionDimsInfo> new_dims_mapping;
     if (original_hlo->feature_group_count() > 1) {
       const int64_t input_feature_dim = dnums.input_feature_dimension();
@@ -3666,12 +3668,15 @@ PartitionConvOnBatchOrFeatureGroupedDims(
       // TODO(xla): Use halo exchange to solve this problem. Can be a
       // preprocessing that uses padding/slicing to make the shape evenly
       // shardable.
-      if (lhs.base_shape().dimensions(input_feature_dim) ==
-              rhs.base_shape().dimensions(kernel_output_feature_dim) ||
+      if ((lhs.base_shape().dimensions(input_feature_dim) ==
+               rhs.base_shape().dimensions(kernel_output_feature_dim) &&
+           original_hlo->feature_group_count() ==
+               lhs.base_shape().dimensions(input_feature_dim)) ||
           (lhs.sharding().IsTiled() &&
            original_hlo->feature_group_count() %
                    ShardCountAtDim(lhs.sharding(), input_feature_dim) ==
-               0)) {
+               0 &&
+           original_hlo->feature_group_count() % output_feature_shards == 0)) {
         new_dims_mapping =
             ConvertDimNumsWithFeatureGroupCount(dims_mapping, original_hlo);
       }
@@ -3681,12 +3686,15 @@ PartitionConvOnBatchOrFeatureGroupedDims(
       const int64_t input_batch_dim = dnums.input_batch_dimension();
       const int64_t kernel_output_feature_dim =
           dnums.kernel_output_feature_dimension();
-      if (lhs.base_shape().dimensions(input_batch_dim) ==
-              rhs.base_shape().dimensions(kernel_output_feature_dim) ||
+      if ((lhs.base_shape().dimensions(input_batch_dim) ==
+               rhs.base_shape().dimensions(kernel_output_feature_dim) &&
+           original_hlo->batch_group_count() ==
+               lhs.base_shape().dimensions(input_batch_dim)) ||
           (lhs.sharding().IsTiled() &&
            original_hlo->batch_group_count() %
                    ShardCountAtDim(lhs.sharding(), input_batch_dim) ==
-               0)) {
+               0 &&
+           original_hlo->batch_group_count() % output_feature_shards == 0)) {
         new_dims_mapping =
             ConvertDimNumsWithBatchGroupCount(dims_mapping, original_hlo);
       }
@@ -3869,7 +3877,7 @@ absl::StatusOr<std::optional<HloInstruction*>> PartitionConv(
     // 1 is not supported.
     const auto& dnums = original_hlo->convolution_dimension_numbers();
     if (original_hlo->feature_group_count() > 1 &&
-        rhs.hlo()->shape().dimensions(dnums.kernel_input_feature_dimension()) >
+        rhs.base_shape().dimensions(dnums.kernel_input_feature_dimension()) >
             1) {
       return nullptr;
     }
@@ -4312,7 +4320,14 @@ absl::StatusOr<HloInstruction*> PartitionDot(
     }
   }
 
-  if (dims_mapping.conv_spatial_dims.empty()) {
+  // ParseConvolutionDimsInfo does not model feature or batch groups, so
+  // ReshardLHSRHSToMatchOutputSharding cannot partition grouped convolutions.
+  const bool is_grouped_conv =
+      original_hlo != nullptr &&
+      original_hlo->opcode() == HloOpcode::kConvolution &&
+      (original_hlo->feature_group_count() > 1 ||
+       original_hlo->batch_group_count() > 1);
+  if (dims_mapping.conv_spatial_dims.empty() && !is_grouped_conv) {
     return ReshardLHSRHSToMatchOutputSharding(lhs, rhs, output_sharding,
                                               dims_mapping, create_sharded_dot,
                                               conv_window, b);
