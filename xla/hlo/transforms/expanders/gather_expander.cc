@@ -18,7 +18,9 @@ limitations under the License.
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/no_destructor.h"
@@ -34,15 +36,36 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/hlo/pass/hlo_pass_options.h"
 #include "xla/hlo/pass/hlo_pass_registry.h"
-#include "xla/literal_util.h"
+#include "xla/layout_util.h"
+#include "xla/overflow_util.h"
 #include "xla/service/gather_scatter_utils.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/while_util.h"
+#include "xla/shape_util.h"
 #include "xla/util.h"
 
 namespace xla {
 
 namespace {
+
+void CopyAttrs(const Shape& src, Shape* dst) {
+  if (!LayoutUtil::HasLayout(src) || !LayoutUtil::HasLayout(*dst)) return;
+  auto* l = dst->mutable_layout();
+  l->set_element_size_in_bits(src.layout().element_size_in_bits());
+  l->set_memory_space(src.layout().memory_space());
+}
+void CopyAttrs(const Shape& src, HloInstruction* dst) {
+  CopyAttrs(src, dst->mutable_shape());
+}
+absl::StatusOr<HloInstruction*> Finish(HloInstruction* src, HloInstruction* in,
+                                       HloInstruction* root) {
+  for (HloInstruction* pred : src->control_predecessors()) {
+    if (in != root) ABSL_RETURN_IF_ERROR(pred->AddControlDependencyTo(in));
+  }
+  ABSL_RETURN_IF_ERROR(root->CopyAllControlDepsFrom(src));
+  ABSL_RETURN_IF_ERROR(src->DropAllControlDeps());
+  return root;
+}
 
 bool IsIota(absl::Span<const int64_t> range) {
   for (int64_t i = 0; i < range.size(); ++i) {
@@ -98,15 +121,16 @@ absl::StatusOr<HloInstruction*> CanonicalizeGatherIndices(
   // uniformity.  Otherwise create a "collapsed" leading dimension that subsumes
   // all of the non-index-vector dimensions.
   const Shape& shape = transposed_start_indices->shape();
-  if (shape.dimensions().size() == index_dims_in_start_indices) {
-    return PrependDegenerateDims(transposed_start_indices, 1);
-  } else {
-    // Collapse all but the dimensions (0 or 1) in start_indices containing the
-    // index vectors.
-    return CollapseFirstNDims(
-        transposed_start_indices,
-        shape.dimensions().size() - index_dims_in_start_indices);
-  }
+  CopyAttrs(start_indices->shape(), transposed_start_indices);
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * canonical,
+      shape.dimensions().size() == index_dims_in_start_indices
+          ? PrependDegenerateDims(transposed_start_indices, 1)
+          : CollapseFirstNDims(
+                transposed_start_indices,
+                shape.dimensions().size() - index_dims_in_start_indices));
+  CopyAttrs(start_indices->shape(), canonical);
+  return canonical;
 }
 
 // Expands out or contracts away the gather dimensions in the accumulator
@@ -190,10 +214,12 @@ absl::StatusOr<std::vector<HloInstruction*>> GatherLoopBody(
         HloInstruction * index_vector_2d,
         MakeDynamicSliceHlo(start_indices, index_into_start_indices,
                             {1, index_vector_size}));
+    CopyAttrs(start_indices->shape(), index_vector_2d);
 
     ABSL_ASSIGN_OR_RETURN(index_vector,
                           ElideDegenerateDims(index_vector_2d, {0}));
   }
+  CopyAttrs(start_indices->shape(), index_vector);
 
   ABSL_ASSIGN_OR_RETURN(
       HloInstruction * gathered_slice_start,
@@ -206,15 +232,18 @@ absl::StatusOr<std::vector<HloInstruction*>> GatherLoopBody(
   ABSL_ASSIGN_OR_RETURN(HloInstruction * gathered_slice,
                         MakeDynamicSliceHlo(operand, gathered_slice_start,
                                             gather.gather_slice_sizes()));
+  CopyAttrs(operand->shape(), gathered_slice);
 
   ABSL_ASSIGN_OR_RETURN(
       HloInstruction* const gathered_slice_with_dims_collapsed,
       ElideDegenerateDims(gathered_slice,
                           GetDegeneratedSliceDims(dim_numbers)));
+  CopyAttrs(output_accumulator->shape(), gathered_slice_with_dims_collapsed);
 
   ABSL_ASSIGN_OR_RETURN(
       HloInstruction* const gathered_slice_for_update,
       PrependDegenerateDims(gathered_slice_with_dims_collapsed, 1));
+  CopyAttrs(output_accumulator->shape(), gathered_slice_for_update);
 
   ABSL_ASSIGN_OR_RETURN(
       HloInstruction* const index_vector_into_accumulator,
@@ -227,6 +256,7 @@ absl::StatusOr<std::vector<HloInstruction*>> GatherLoopBody(
       HloInstruction* const updated_accumulator,
       MakeDynamicUpdateSliceHlo(output_accumulator, gathered_slice_for_update,
                                 index_vector_into_accumulator));
+  CopyAttrs(output_accumulator->shape(), updated_accumulator);
 
   // New loop state -- only the accumulator has changed.  The
   // WhileUtil::MakeCountedLoop functions takes care of the induction variable
@@ -236,7 +266,7 @@ absl::StatusOr<std::vector<HloInstruction*>> GatherLoopBody(
 }
 
 HloInstruction* CreateGatherLoopAccumulatorInitValue(
-    HloComputation* computation, PrimitiveType element_type,
+    HloComputation* computation, const Shape& output_shape,
     absl::Span<const int64_t> slice_sizes, int64_t gather_loop_trip_count,
     const GatherDimensionNumbers& dim_numbers) {
   std::vector<int64_t> accumulator_state_shape_dims;
@@ -248,8 +278,10 @@ HloInstruction* CreateGatherLoopAccumulatorInitValue(
       accumulator_state_shape_dims.push_back(slice_sizes[i]);
     }
   }
-  return BroadcastZeros(computation, element_type,
-                        accumulator_state_shape_dims);
+  Shape acc_shape = ShapeUtil::MakeShape(output_shape.element_type(),
+                                         accumulator_state_shape_dims);
+  CopyAttrs(output_shape, &acc_shape);
+  return BroadcastZeros(computation, acc_shape);
 }
 
 // `accumulator` is almost the tensor the gather operation would have produced,
@@ -277,25 +309,43 @@ absl::StatusOr<HloInstruction*> PermuteBatchAndOffsetDims(
                              : MakeTransposeHlo(accumulator, permutation);
 }
 
-// Computes how many trips a loop implementing this gather op would take.
-int64_t GatherLoopTripCount(HloInstruction* gather_instr) {
-  HloInstruction* start_indices = gather_instr->mutable_operand(1);
-  const Shape& start_indices_shape = start_indices->shape();
-  const GatherDimensionNumbers& dim_numbers =
-      gather_instr->gather_dimension_numbers();
-
+std::optional<int64_t> GatherLoopTripCount(const HloInstruction* g) {
+  const Shape& idx = g->operand(1)->shape();
+  int64_t iv_dim = g->gather_dimension_numbers().index_vector_dim();
   int64_t trip_count = 1;
-  for (int64_t i = 0, e = start_indices_shape.dimensions().size(); i < e; i++) {
-    if (i != dim_numbers.index_vector_dim()) {
-      trip_count *= start_indices_shape.dimensions(i);
-    }
+  for (int64_t i = 0, e = idx.dimensions().size(); i < e; ++i) {
+    if (i == iv_dim) continue;
+    auto [prod, bad] = OverflowSafeMultiply(trip_count, idx.dimensions(i));
+    if (bad) return std::nullopt;
+    trip_count = prod;
   }
   return trip_count;
 }
 
-bool GatherIsBroadcast(HloInstruction* gather_instr) {
+bool HasAnyDynamicShape(const HloInstruction* inst) {
+  return !inst->shape().is_static() || !inst->operand(0)->shape().is_static() ||
+         !inst->operand(1)->shape().is_static();
+}
+
+bool GatherIsBroadcast(const HloInstruction* gather_instr) {
   return absl::c_equal(gather_instr->gather_slice_sizes(),
                        gather_instr->operand(0)->shape().dimensions());
+}
+
+bool CanExpandGatherAsBroadcast(const HloInstruction* g) {
+  const Shape& op = g->operand(0)->shape();
+  const Shape& idx = g->operand(1)->shape();
+  if (!GatherIsBroadcast(g) || op.is_unbounded_dynamic() ||
+      idx.is_unbounded_dynamic() || g->shape().is_unbounded_dynamic()) {
+    return false;
+  }
+  if (ShapeUtil::IsZeroElementArray(op)) return g->shape().is_static();
+  const auto& d = g->gather_dimension_numbers();
+  for (int64_t i = 0, e = idx.dimensions().size(); i < e; ++i) {
+    if (i != d.index_vector_dim() && idx.is_dynamic_dimension(i)) return false;
+  }
+  return absl::c_none_of(GetDegeneratedSliceDims(d),
+                         [&](int64_t c) { return op.is_dynamic_dimension(c); });
 }
 }  // namespace
 // High Level Algorithm
@@ -338,12 +388,20 @@ absl::StatusOr<HloInstruction*> GatherExpander::ExpandInstruction(
   CHECK(!ShapeUtil::IsZeroElementArray(gather_instr->shape()));
 
   if (GatherIsBroadcast(gather_instr)) {
+    if (!CanExpandGatherAsBroadcast(gather_instr)) {
+      return Unimplemented("Dynamic gather broadcast is not supported: %s.",
+                           gather_instr->ToString());
+    }
     if (ShapeUtil::IsZeroElementArray(gather_instr->operand(0)->shape())) {
-      return MakeScalarLike(gather_instr, 0);
+      HloInstruction* bcast =
+          BroadcastZeros(gather_instr->parent(), gather_instr->shape());
+      gather_instr->SetupDerivedInstruction(bcast);
+      return Finish(gather_instr, bcast->mutable_operand(0), bcast);
     }
     Shape broadcast_operand_shape = ShapeUtil::DeleteDimensions(
         GetDegeneratedSliceDims(gather_instr->gather_dimension_numbers()),
         gather_instr->operand(0)->shape());
+    CopyAttrs(gather_instr->operand(0)->shape(), &broadcast_operand_shape);
     ABSL_ASSIGN_OR_RETURN(HloInstruction * broadcast_operand,
                           MakeReshapeHlo(broadcast_operand_shape,
                                          gather_instr->mutable_operand(0)));
@@ -353,7 +411,11 @@ absl::StatusOr<HloInstruction*> GatherExpander::ExpandInstruction(
                          gather_instr->gather_dimension_numbers().offset_dims(),
                          gather_instr->shape());
     gather_instr->SetupDerivedInstruction(broadcast);
-    return broadcast;
+    return Finish(gather_instr, broadcast_operand, broadcast);
+  }
+  if (HasAnyDynamicShape(gather_instr)) {
+    return Unimplemented("Dynamic gather expansion is not supported: %s.",
+                         gather_instr->ToString());
   }
 
   HloComputation* computation = gather_instr->parent();
@@ -365,13 +427,14 @@ absl::StatusOr<HloInstruction*> GatherExpander::ExpandInstruction(
   const GatherDimensionNumbers& dim_numbers =
       gather_instr->gather_dimension_numbers();
 
-  int64_t gather_loop_trip_count = GatherLoopTripCount(gather_instr);
-  if (!IsInt32(gather_loop_trip_count)) {
+  std::optional<int64_t> trip_count = GatherLoopTripCount(gather_instr);
+  if (!trip_count.has_value() || !IsInt32(*trip_count)) {
     return Unimplemented(
         "Gather operations with more than 2147483647 gather indices are not "
         "supported. This error occurred for %s.",
         gather_instr->ToString());
   }
+  int64_t gather_loop_trip_count = *trip_count;
 
   ABSL_ASSIGN_OR_RETURN(
       HloInstruction * canonical_start_indices,
@@ -381,9 +444,8 @@ absl::StatusOr<HloInstruction*> GatherExpander::ExpandInstruction(
            canonical_start_indices->shape().dimensions(0));
 
   HloInstruction* accumulator_init = CreateGatherLoopAccumulatorInitValue(
-      computation, output_shape.element_type(),
-      gather_instr->gather_slice_sizes(), gather_loop_trip_count,
-      gather_instr->gather_dimension_numbers());
+      computation, output_shape, gather_instr->gather_slice_sizes(),
+      gather_loop_trip_count, gather_instr->gather_dimension_numbers());
 
   absl::StatusOr<std::vector<HloInstruction*>> gather_loop_result_or_error =
       WhileUtil::MakeCountedLoop(
@@ -404,21 +466,27 @@ absl::StatusOr<HloInstruction*> GatherExpander::ExpandInstruction(
       HloInstruction* const accumulator_with_batch_dims_decanonicalized,
       AdjustBatchDimsInAccumulator(start_indices->shape(), accumulator_result,
                                    dim_numbers.index_vector_dim()));
+  CopyAttrs(output_shape, accumulator_with_batch_dims_decanonicalized);
 
-  return PermuteBatchAndOffsetDims(accumulator_with_batch_dims_decanonicalized,
-                                   dim_numbers.offset_dims(), output_rank);
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * result,
+      PermuteBatchAndOffsetDims(accumulator_with_batch_dims_decanonicalized,
+                                dim_numbers.offset_dims(), output_rank));
+  CopyAttrs(output_shape, result);
+  return Finish(gather_instr, accumulator_result->mutable_operand(0), result);
 }
 
 bool GatherExpander::InstructionMatchesPattern(HloInstruction* inst) {
-  return inst->opcode() == HloOpcode::kGather &&
-         // Avoid expanding gather ops that produce zero sized tensors,
-         // instead punt these to ZeroSizedHloElimination.
-         !ShapeUtil::IsZeroElementArray(inst->shape()) &&
-         // In kEliminateSimpleGathers mode, we only simplify instructions
-         // which can be represented without a loop -- i.e. we only simplify
-         // gathers which have a trip count of 1.
-         (mode_ == kEliminateAllGathers || GatherLoopTripCount(inst) == 1 ||
-          GatherIsBroadcast(inst));
+  if (inst->opcode() != HloOpcode::kGather ||
+      ShapeUtil::IsZeroElementArray(inst->shape())) {
+    return false;
+  }
+  if (GatherIsBroadcast(inst)) {
+    return CanExpandGatherAsBroadcast(inst);
+  }
+  return !HasAnyDynamicShape(inst) &&
+         (mode_ == kEliminateAllGathers ||
+          GatherLoopTripCount(inst) == std::optional<int64_t>{1});
 }
 
 namespace {

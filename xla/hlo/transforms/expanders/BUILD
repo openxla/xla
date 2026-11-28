@@ -829,7 +829,7 @@ cc_library(
     hdrs = ["gather_expander.h"],
     deps = [
         ":op_expander_pass",
-        "//xla:literal_util",
+        "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
@@ -856,12 +856,18 @@ xla_cc_test(
     srcs = ["gather_expander_test.cc"],
     deps = [
         ":gather_expander",
+        ":scatter_expander",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:types",
+        "//xla/hlo/evaluator:hlo_evaluator",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test",
         "//xla/hlo/utils:hlo_query",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
     ],
