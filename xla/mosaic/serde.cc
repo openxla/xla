@@ -15,13 +15,19 @@ limitations under the License.
 
 #include "xla/mosaic/serde.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Dialect.h"
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Visitors.h"
@@ -59,6 +65,10 @@ mlir::LogicalResult RunSerde(
     SerdeOptions options, bool keep_version_attr) {
   int version = options.highest_version;
   int serialize_version = options.serialize_version;
+  if (version < 1) {
+    module.emitError("Invalid highest supported version ") << version;
+    return mlir::failure();
+  }
   if (!serialize && serialize_version != -1) {
     module.emitError("Cannot deserialize to a specific version");
     return mlir::failure();
@@ -66,6 +76,13 @@ mlir::LogicalResult RunSerde(
   if (serialize && serialize_version > version) {
     module.emitError("The highest supported version is ")
         << version << " but requested serialization at version "
+        << serialize_version;
+    return mlir::failure();
+  }
+  if (serialize && serialize_version < 1) {
+    module.emitError(
+        "The lowest supported version is 1 but requested "
+        "serialization at version ")
         << serialize_version;
     return mlir::failure();
   }
@@ -82,16 +99,25 @@ mlir::LogicalResult RunSerde(
   } else {
     mlir::IntegerAttr version_attr =
         module->getAttrOfType<mlir::IntegerAttr>(options.version_attr_name);
-    if (!version_attr) {
+    if (!version_attr || !version_attr.getType().isSignlessInteger() ||
+        version_attr.getValue().getBitWidth() == 0) {
       module->emitError("Missing or invalid version attribute");
       return mlir::failure();
     }
-    if (version_attr.getInt() > version) {
-      module->emitError("Unsupported version: expected <= ")
-          << version << " but got " << version_attr.getInt();
+    const llvm::APInt& raw_version = version_attr.getValue();
+    if (raw_version.isNegative() || raw_version.isZero()) {
+      module->emitError("Missing or invalid version attribute");
       return mlir::failure();
     }
-    version = version_attr.getInt();
+    const std::optional<int64_t> parsed_version = raw_version.trySExtValue();
+    if (!parsed_version.has_value() || *parsed_version > version) {
+      llvm::SmallString<32> version_str;
+      raw_version.toStringSigned(version_str);
+      module->emitError("Unsupported version: expected <= ")
+          << version << " but got " << version_str;
+      return mlir::failure();
+    }
+    version = static_cast<int>(*parsed_version);
     if (!keep_version_attr) {
       module->removeAttr(options.version_attr_name);
     }
@@ -112,11 +138,17 @@ mlir::LogicalResult RunSerde(
                                      options.dialect_prefix, &storage);
           new_name = mlir::OperationName(new_name_str, op->getContext());
         } else {
-          if (auto demangled = demangle(op->getName().getStringRef(),
-                                        options.dialect_prefix)) {
-            auto new_name_str = *demangled;
-            if (auto registered = mlir::RegisteredOperationName::lookup(
-                    new_name_str, op->getContext())) {
+          if (std::optional<llvm::StringRef> demangled = demangle(
+                  op->getName().getStringRef(), options.dialect_prefix)) {
+            llvm::StringRef new_name_str = *demangled;
+            const auto [dialect_name, op_suffix] = new_name_str.split('.');
+            if (dialect_name.empty() || op_suffix.empty()) {
+              op->emitError("Operation not in a serialized form");
+              return mlir::WalkResult::interrupt();
+            }
+            if (std::optional<mlir::RegisteredOperationName> registered =
+                    mlir::RegisteredOperationName::lookup(new_name_str,
+                                                          op->getContext())) {
               new_name = *registered;
             } else {
               new_name = mlir::OperationName(new_name_str, op->getContext());
@@ -138,6 +170,24 @@ mlir::LogicalResult RunSerde(
         // further.
         if (was_erased) {
           return mlir::WalkResult::advance();
+        }
+
+        if (!serialize) {
+          mlir::Dialect* dialect = new_name->getDialect();
+          if (!new_name->isRegistered() &&
+              !op->getContext()->allowsUnregisteredDialects() &&
+              (dialect == nullptr || !dialect->allowsUnknownOperations())) {
+            op->emitError("Cannot deserialize unregistered operation '")
+                << new_name->getStringRef()
+                << "' in a context that does not allow unregistered dialects";
+            return mlir::WalkResult::interrupt();
+          }
+          if (op->getNumSuccessors() != 0 &&
+              !new_name->mightHaveTrait<mlir::OpTrait::IsTerminator>()) {
+            op->emitError("Cannot deserialize non-terminator operation '")
+                << new_name->getStringRef() << "' with successors";
+            return mlir::WalkResult::interrupt();
+          }
         }
 
         auto new_op = mlir::Operation::create(

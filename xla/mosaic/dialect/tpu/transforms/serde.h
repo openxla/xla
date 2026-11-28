@@ -30,8 +30,8 @@ limitations under the License.
 namespace mlir::tpu {
 
 struct MosaicSerdePassOptions {
-  bool serialize;
-  int target_version;
+  bool serialize = false;
+  int target_version = -1;
 };
 
 struct MosaicSerdePass : public jaxlib::mlir::Pass<MosaicSerdePass, ModuleOp> {
@@ -48,17 +48,20 @@ struct MosaicSerdePass : public jaxlib::mlir::Pass<MosaicSerdePass, ModuleOp> {
 
   explicit MosaicSerdePass(MosaicSerdePassOptions options) {
     serialize = options.serialize;
-    target_version = options.target_version;
+    if (options.target_version != -1) {
+      target_version = options.target_version;
+    }
   }
 
-  MosaicSerdePass(const MosaicSerdePass& other) {
-    serialize = other.serialize;
-    target_version = other.target_version;
+  MosaicSerdePass(const MosaicSerdePass& other)
+      : jaxlib::mlir::Pass<MosaicSerdePass, ModuleOp>(other) {
+    copyOptionValuesFrom(&other);
   }
 
   MosaicSerdePass& operator=(const MosaicSerdePass& other) {
-    serialize = other.serialize;
-    target_version = other.target_version;
+    if (this != &other) {
+      copyOptionValuesFrom(&other);
+    }
     return *this;
   }
 

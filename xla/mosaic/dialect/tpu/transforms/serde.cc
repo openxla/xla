@@ -15,11 +15,13 @@ limitations under the License.
 
 #include "xla/mosaic/dialect/tpu/transforms/serde.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <vector>
 
 #include "llvm/ADT/StringMap.h"
+#include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Attributes.h"
@@ -27,6 +29,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Value.h"
@@ -45,6 +48,70 @@ constexpr StringRef kVersionAttrName = "stable_mosaic.version";
 
 using UpgradeRuleType = jaxlib::mosaic::UpgradeRuleType;
 using DowngradeRuleType = jaxlib::mosaic::DowngradeRuleType;
+
+std::optional<int64_t> getSignedIntAttr(Attribute attr) {
+  auto int_attr = dyn_cast_if_present<IntegerAttr>(attr);
+  if (!int_attr || !int_attr.getType().isSignlessInteger() ||
+      int_attr.getValue().getBitWidth() == 0) {
+    return std::nullopt;
+  }
+  return int_attr.getValue().trySExtValue();
+}
+
+FailureOr<ArrayRef<int32_t>> getValidatedSegmentSizes(
+    Operation* op, size_t expected_size, ArrayRef<size_t> optional_segs = {}) {
+  auto segment_attr =
+      op->getAttrOfType<DenseI32ArrayAttr>("operandSegmentSizes");
+  if (!segment_attr) {
+    return op->emitError("Missing or invalid AttrSizedOperandSegments");
+  }
+  ArrayRef<int32_t> sizes = segment_attr.asArrayRef();
+  if (sizes.size() != expected_size) {
+    return op->emitError("Unexpected size of AttrSizedOperandSegments");
+  }
+  int64_t total = 0;
+  for (int32_t size : sizes) {
+    if (size < 0) {
+      return op->emitError("Negative entry in AttrSizedOperandSegments");
+    }
+    total += size;
+  }
+  if (total != static_cast<int64_t>(op->getNumOperands())) {
+    return op->emitError(
+        "AttrSizedOperandSegments sum does not match operand count");
+  }
+  for (size_t seg : optional_segs) {
+    if (sizes[seg] > 1) {
+      return op->emitError(
+          "Invalid optional segment count in AttrSizedOperandSegments");
+    }
+  }
+  return sizes;
+}
+
+unsigned getSegmentOffset(ArrayRef<int32_t> sizes, size_t seg) {
+  unsigned offset = 0;
+  for (size_t i = 0; i < seg; ++i) {
+    offset += static_cast<unsigned>(sizes[i]);
+  }
+  return offset;
+}
+
+CoreType getTargetCoreType(Operation* op, ArrayRef<int32_t> sizes,
+                           size_t target_sem_seg) {
+  if (sizes[target_sem_seg] == 1) {
+    Value target_sem = op->getOperand(getSegmentOffset(sizes, target_sem_seg));
+    if (auto memref_type = dyn_cast<MemRefType>(target_sem.getType())) {
+      if (auto space = dyn_cast_if_present<MemorySpaceAttr>(
+              memref_type.getMemorySpace())) {
+        if (std::optional<CoreType> core = space.getCoreType()) {
+          return *core;
+        }
+      }
+    }
+  }
+  return GetCoreTypeOfParentOp(*op);
+}
 
 LogicalResult store_upgrade(Operation* op, int version, bool&) {
   if (version < 11) {
@@ -71,13 +138,15 @@ LogicalResult store_downgrade(Operation* op, int version) {
 LogicalResult dynamic_gather_upgrade(Operation* op, int version, bool&) {
   if (version < 5) {
     auto dimension_attr = op->getAttrOfType<IntegerAttr>("dimension");
-    if (!dimension_attr || dimension_attr.getValue().getBitWidth() != 32) {
+    const std::optional<int64_t> dimension = getSignedIntAttr(dimension_attr);
+    if (!dimension_attr || !dimension_attr.getType().isSignlessInteger(32) ||
+        !dimension.has_value()) {
       return op->emitError("Missing or invalid dimension attribute");
     }
-    const int32_t dimension = dimension_attr.getInt();
     op->removeAttr("dimension");
     op->setAttr("dimensions",
-                DenseI32ArrayAttr::get(op->getContext(), {dimension}));
+                DenseI32ArrayAttr::get(op->getContext(),
+                                       {static_cast<int32_t>(*dimension)}));
   }
   return success();
 }
@@ -176,7 +245,7 @@ LogicalResult scan_upgrade(Operation* op, int version, bool&) {
       return op->emitError("Missing input operand for scan operation");
     }
     const auto input_type = dyn_cast<VectorType>(op->getOperand(0).getType());
-    if (!input_type) {
+    if (!input_type || input_type.getRank() <= 0) {
       return op->emitError("Invalid input type for scan operation");
     }
     const Attribute dimension_attr = IntegerAttr::get(
@@ -204,15 +273,15 @@ LogicalResult scan_downgrade(Operation* op, int version) {
       return op->emitError("Missing input operand for scan operation");
     }
     const auto input_type = dyn_cast<VectorType>(op->getOperand(0).getType());
-    if (!input_type) {
+    if (!input_type || input_type.getRank() <= 0) {
       return op->emitError("Invalid input type for scan operation");
     }
-    auto dimension_attr = op->getAttrOfType<IntegerAttr>("dimension");
-    if (!dimension_attr) {
+    const std::optional<int64_t> dimension =
+        getSignedIntAttr(op->getAttr("dimension"));
+    if (!dimension.has_value()) {
       return op->emitError("Missing or invalid dimensions attribute");
     }
-    const int64_t dimension = dimension_attr.getInt();
-    if (dimension != input_type.getRank() - 1) {
+    if (*dimension != input_type.getRank() - 1) {
       return op->emitError(
           "Can only downgrade below version 16 when dimension is the last "
           "dimension");
@@ -269,19 +338,24 @@ LogicalResult reduce_index_upgrade(Operation* op, int version, bool&) {
     }
     const auto input_type = dyn_cast<VectorType>(op->getOperand(0).getType());
     const auto result_type = dyn_cast<VectorType>(op->getResult(0).getType());
-    if (input_type == nullptr || result_type == nullptr) {
+    if (!input_type || !result_type || input_type.isScalable() ||
+        result_type.isScalable() || input_type.getRank() < 2) {
       return op->emitError("Invalid operand/result type in tpu.reduce_index");
     }
-    auto axis_attr = op->getAttrOfType<IntegerAttr>("axis");
-    if (axis_attr == nullptr) {
+    const std::optional<int64_t> axis = getSignedIntAttr(op->getAttr("axis"));
+    if (!axis.has_value()) {
       return op->emitError("Missing or invalid axis attribute");
     }
-    const int64_t axis = axis_attr.getInt();
-    if (axis < 0 || axis >= input_type.getRank()) {
+    if (*axis < 0 || *axis >= input_type.getRank()) {
       return op->emitError("Invalid axis in tpu.reduce_index");
     }
+    SmallVector<int64_t> dropped_shape(input_type.getShape());
+    dropped_shape.erase(dropped_shape.begin() + *axis);
+    if (result_type.getShape() != ArrayRef<int64_t>(dropped_shape)) {
+      return op->emitError("Invalid result shape in tpu.reduce_index");
+    }
     SmallVector<int64_t> shape(input_type.getShape());
-    shape[axis] = 1;
+    shape[*axis] = 1;
     retype_result_through_reshape(
         op, VectorType::get(shape, result_type.getElementType()),
         /*mangle_reshape=*/false);
@@ -297,19 +371,37 @@ LogicalResult reduce_index_downgrade(Operation* op, int version) {
     }
     const auto input_type = dyn_cast<VectorType>(op->getOperand(0).getType());
     const auto result_type = dyn_cast<VectorType>(op->getResult(0).getType());
-    if (input_type == nullptr || result_type == nullptr) {
+    if (!input_type || !result_type || input_type.isScalable() ||
+        result_type.isScalable() || input_type.getRank() < 1) {
       return op->emitError("Invalid operand/result type in tpu.reduce_index");
     }
-    auto axis_attr = op->getAttrOfType<IntegerAttr>("axis");
-    if (axis_attr == nullptr) {
+    const std::optional<int64_t> axis = getSignedIntAttr(op->getAttr("axis"));
+    if (!axis.has_value()) {
       return op->emitError("Missing or invalid axis attribute");
     }
-    const int64_t axis = axis_attr.getInt();
-    if (axis < 0 || axis >= input_type.getRank()) {
+    if (*axis < 0 || *axis >= input_type.getRank()) {
       return op->emitError("Invalid axis in tpu.reduce_index");
     }
+    SmallVector<int64_t> expected_result(input_type.getShape());
+    expected_result[*axis] = 1;
+    if (result_type.getShape() != ArrayRef<int64_t>(expected_result)) {
+      return op->emitError("Invalid result shape in tpu.reduce_index");
+    }
+    if (input_type.getRank() == 1) {
+      OpBuilder builder(op);
+      OperationState state(
+          op->getLoc(),
+          (kMangledDialect + ReshapeOp::getOperationName()).str());
+      state.addTypes(VectorType::get({1, input_type.getDimSize(0)},
+                                     input_type.getElementType()));
+      state.addOperands(op->getOperand(0));
+      Operation* reshape = builder.create(state);
+      op->setOperand(0, reshape->getResult(0));
+      op->setAttr("axis", builder.getI32IntegerAttr(1));
+      return success();
+    }
     SmallVector<int64_t> shape(input_type.getShape());
-    shape.erase(shape.begin() + axis);
+    shape.erase(shape.begin() + *axis);
     retype_result_through_reshape(
         op, VectorType::get(shape, result_type.getElementType()),
         /*mangle_reshape=*/true);
@@ -322,55 +414,39 @@ LogicalResult reduce_index_downgrade(Operation* op, int version) {
 // This runs during deserialization (`serialize = false`), where operations have
 // already been demangled from `stable_mosaic.<op>` back to regular MLIR ops.
 // Therefore, we emit standard unmangled constant and arithmetic operations.
-LogicalResult delinearize_subcore(Operation* op, int core_id_seg,
-                                  int subcore_id_seg) {
-  CoreType core_type = GetCoreTypeOfParentOp(*op);
-  if (core_type != CoreType::kScVectorSubcore) {
-    return success();
+LogicalResult delinearize_subcore(Operation* op, size_t target_sem_seg,
+                                  size_t core_id_seg, size_t subcore_id_seg) {
+  FailureOr<ArrayRef<int32_t>> sizes = getValidatedSegmentSizes(
+      op, subcore_id_seg, {target_sem_seg, core_id_seg});
+  if (failed(sizes)) {
+    return failure();
   }
-  auto segment_attr =
-      op->getAttrOfType<DenseI32ArrayAttr>("operandSegmentSizes");
-  if (!segment_attr) {
-    return op->emitError("Missing operandSegmentSizes attribute");
+  SmallVector<int32_t> new_sizes(*sizes);
+  new_sizes.push_back(0);
+  const CoreType target_core = getTargetCoreType(op, *sizes, target_sem_seg);
+  if (target_core == CoreType::kScVectorSubcore && (*sizes)[core_id_seg] != 0) {
+    const unsigned core_id_op_idx = getSegmentOffset(*sizes, core_id_seg);
+    const unsigned subcore_id_op_idx = getSegmentOffset(*sizes, subcore_id_seg);
+    Value core_id_val = op->getOperand(core_id_op_idx);
+    if (!core_id_val.getType().isSignlessInteger(32)) {
+      return op->emitError("Expected i32 core_id operand");
+    }
+    // For version < 14, supported SparseCore vector subcores use 16 subcores
+    // per core.
+    constexpr int32_t kNumSubcores = 16;
+    OpBuilder builder(op);
+    Location loc = op->getLoc();
+    Value c16 = arith::ConstantOp::create(
+        builder, loc, builder.getI32IntegerAttr(kNumSubcores));
+    Value new_core_id = arith::DivUIOp::create(builder, loc, core_id_val, c16);
+    Value new_subcore_id =
+        arith::RemUIOp::create(builder, loc, core_id_val, c16);
+    op->setOperand(core_id_op_idx, new_core_id);
+    op->insertOperands(subcore_id_op_idx, {new_subcore_id});
+    new_sizes[subcore_id_seg] = 1;
   }
-  SmallVector<int32_t> sizes(segment_attr.asArrayRef());
-  if (sizes.size() <= core_id_seg || sizes.size() <= subcore_id_seg) {
-    return op->emitError("Unexpected size of operandSegmentSizes");
-  }
-  if (sizes[core_id_seg] == 0) {
-    return success();
-  }
-  int core_id_op_idx = 0;
-  for (int i = 0; i < core_id_seg; ++i) {
-    core_id_op_idx += sizes[i];
-  }
-  int subcore_id_op_idx = 0;
-  for (int i = 0; i < subcore_id_seg; ++i) {
-    subcore_id_op_idx += sizes[i];
-  }
-  Value core_id_val = op->getOperand(core_id_op_idx);
-
-  // For version < 14, the only supported TPUs with SC vector subcores
-  // have 16 subcores per core.
-  const int64_t num_subcores = 16;
-
-  OpBuilder builder(op);
-  auto loc = op->getLoc();
-
-  auto create_constant_op = [&](Location loc, int64_t val) -> Value {
-    TypedAttr val_attr = builder.getI32IntegerAttr(val);
-    return builder.create<arith::ConstantOp>(loc, val_attr);
-  };
-
-  Value c16 = create_constant_op(loc, num_subcores);
-  Value new_core_id = builder.create<arith::DivUIOp>(loc, core_id_val, c16);
-  Value new_subcore_id = builder.create<arith::RemUIOp>(loc, core_id_val, c16);
-
-  op->setOperand(core_id_op_idx, new_core_id);
-  op->insertOperands(subcore_id_op_idx, {new_subcore_id});
-  sizes[subcore_id_seg] = 1;
   op->setAttr("operandSegmentSizes",
-              DenseI32ArrayAttr::get(op->getContext(), sizes));
+              DenseI32ArrayAttr::get(op->getContext(), new_sizes));
   return success();
 }
 
@@ -382,66 +458,59 @@ LogicalResult delinearize_subcore(Operation* op, int core_id_seg,
 // constants before downgrade rules execute, `RunSerde` will not visit or
 // auto-mangle them. We therefore explicitly create pre-mangled
 // `stable_mosaic.arith.*` operations.
-LogicalResult linearize_subcore(Operation* op, int core_id_seg,
-                                int subcore_id_seg) {
-  CoreType core_type = GetCoreTypeOfParentOp(*op);
-  if (core_type != CoreType::kScVectorSubcore) {
+LogicalResult linearize_subcore(Operation* op, size_t target_sem_seg,
+                                size_t core_id_seg, size_t subcore_id_seg) {
+  FailureOr<ArrayRef<int32_t>> sizes = getValidatedSegmentSizes(
+      op, subcore_id_seg + 1, {target_sem_seg, core_id_seg, subcore_id_seg});
+  if (failed(sizes)) {
+    return failure();
+  }
+  const CoreType target_core = getTargetCoreType(op, *sizes, target_sem_seg);
+  if ((*sizes)[subcore_id_seg] != 0) {
+    if (target_core != CoreType::kScVectorSubcore) {
+      return op->emitError(
+          "subcore_id linearization requested for non-SC vector subcore type");
+    }
+    if ((*sizes)[core_id_seg] == 0) {
+      return op->emitError(
+          "Expected both core_id and subcore_id to be present for "
+          "linearization");
+    }
+    const unsigned core_id_op_idx = getSegmentOffset(*sizes, core_id_seg);
+    const unsigned subcore_id_op_idx = getSegmentOffset(*sizes, subcore_id_seg);
+    Value core_id_val = op->getOperand(core_id_op_idx);
+    Value subcore_id_val = op->getOperand(subcore_id_op_idx);
+    if (!core_id_val.getType().isSignlessInteger(32) ||
+        !subcore_id_val.getType().isSignlessInteger(32)) {
+      return op->emitError("Expected i32 core_id and subcore_id operands");
+    }
+    OpBuilder builder(op);
+    Location loc = op->getLoc();
+    constexpr int32_t kNumSubcores = 16;
+    OperationState const_state(
+        loc, (kMangledDialect + arith::ConstantOp::getOperationName()).str());
+    const_state.addTypes(builder.getI32Type());
+    const_state.addAttribute("value", builder.getI32IntegerAttr(kNumSubcores));
+    Value c16 = builder.create(const_state)->getResult(0);
+    OperationState mul_state(
+        loc, (kMangledDialect + arith::MulIOp::getOperationName()).str());
+    mul_state.addTypes(builder.getI32Type());
+    mul_state.addOperands({core_id_val, c16});
+    Value mul_val = builder.create(mul_state)->getResult(0);
+    OperationState add_state(
+        loc, (kMangledDialect + arith::AddIOp::getOperationName()).str());
+    add_state.addTypes(builder.getI32Type());
+    add_state.addOperands({mul_val, subcore_id_val});
+    op->setOperand(core_id_op_idx, builder.create(add_state)->getResult(0));
+    op->eraseOperand(subcore_id_op_idx);
+  } else if (target_core == CoreType::kScVectorSubcore &&
+             (*sizes)[core_id_seg] != 0) {
     return op->emitError(
-        "subcore_id linearization requested for non-SC vector subcore type");
+        "Cannot downgrade SC vector subcore operation with core_id and no "
+        "subcore_id below version 14");
   }
-  auto segment_attr =
-      op->getAttrOfType<DenseI32ArrayAttr>("operandSegmentSizes");
-  if (!segment_attr) {
-    return op->emitError("Missing operandSegmentSizes attribute");
-  }
-  SmallVector<int32_t> sizes(segment_attr.asArrayRef());
-  if (sizes.size() <= core_id_seg || sizes.size() <= subcore_id_seg) {
-    return op->emitError("Unexpected size of operandSegmentSizes");
-  }
-  // This function should only be called if subcore_id is specified, in which
-  // case core_id must be specified too.
-  if (sizes[core_id_seg] == 0 || sizes[subcore_id_seg] == 0) {
-    return op->emitError(
-        "Expected both core_id and subcore_id to be present for linearization");
-  }
-  int core_id_op_idx = 0;
-  for (int i = 0; i < core_id_seg; ++i) {
-    core_id_op_idx += sizes[i];
-  }
-  int subcore_id_op_idx = 0;
-  for (int i = 0; i < subcore_id_seg; ++i) {
-    subcore_id_op_idx += sizes[i];
-  }
-  Value core_id_val = op->getOperand(core_id_op_idx);
-  Value subcore_id_val = op->getOperand(subcore_id_op_idx);
-
-  OpBuilder builder(op);
-  auto loc = op->getLoc();
-  const int64_t num_subcores = 16;
-
-  auto create_constant_op = [&](Location loc, int64_t val) -> Value {
-    TypedAttr val_attr = builder.getI32IntegerAttr(val);
-    OperationState state(loc, "stable_mosaic.arith.constant");
-    state.addTypes(builder.getI32Type());
-    state.addAttribute("value", val_attr);
-    Operation* const_op = builder.create(state);
-    return const_op->getResult(0);
-  };
-
-  Value c16 = create_constant_op(loc, num_subcores);
-  OperationState mul_state(loc, "stable_mosaic.arith.muli");
-  mul_state.addTypes(builder.getI32Type());
-  mul_state.addOperands({core_id_val, c16});
-  Operation* mul_op = builder.create(mul_state);
-  OperationState add_state(loc, "stable_mosaic.arith.addi");
-  add_state.addTypes(builder.getI32Type());
-  add_state.addOperands({mul_op->getResult(0), subcore_id_val});
-  Operation* add_op = builder.create(add_state);
-  Value new_core_id = add_op->getResult(0);
-
-  op->setOperand(core_id_op_idx, new_core_id);
-  op->eraseOperand(subcore_id_op_idx);
-  // The caller will update operandSegmentSizes to sizes.drop_back().
+  op->setAttr("operandSegmentSizes",
+              DenseI32ArrayAttr::get(op->getContext(), sizes->drop_back()));
   return success();
 }
 
@@ -469,62 +538,26 @@ LogicalResult enqueue_dma_upgrade(Operation* op, int version, bool&) {
                     mlir::IntegerType::get(op->getContext(), 32), 0));
   }
   if (version < 14) {
-    auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
-        OpTrait::AttrSizedOperandSegments<
-            EnqueueDMAOp>::getOperandSegmentSizeAttr());
-    if (!segment_attr) {
-      return op->emitError("Missing or invalid AttrSizedOperandSegments");
-    }
-    SmallVector<int32_t> new_sizes(segment_attr.asArrayRef());
-    if (new_sizes.size() != 6) {
-      return op->emitError(
-          "Unexpected size of AttrSizedOperandSegments for enqueue_dma");
-    }
-    new_sizes.push_back(0);
-    op->setAttr(OpTrait::AttrSizedOperandSegments<
-                    EnqueueDMAOp>::getOperandSegmentSizeAttr(),
-                DenseI32ArrayAttr::get(op->getContext(), new_sizes));
-    return delinearize_subcore(op, 5, 6);
+    return delinearize_subcore(op, /*target_sem_seg=*/3, /*core_id_seg=*/5,
+                               /*subcore_id_seg=*/6);
   }
   return success();
 }
 
 LogicalResult enqueue_dma_downgrade(Operation* op, int version) {
   if (version < 14) {
-    auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
-        OpTrait::AttrSizedOperandSegments<
-            EnqueueDMAOp>::getOperandSegmentSizeAttr());
-    if (!segment_attr) {
-      return op->emitError("Missing or invalid AttrSizedOperandSegments");
+    if (failed(linearize_subcore(op, /*target_sem_seg=*/3, /*core_id_seg=*/5,
+                                 /*subcore_id_seg=*/6))) {
+      return failure();
     }
-    const ArrayRef<int32_t> sizes = segment_attr.asArrayRef();
-    if (sizes.size() != 7) {
-      return op->emitError(
-          "Unexpected size of AttrSizedOperandSegments for enqueue_dma");
-    }
-    if (sizes[6] != 0) {
-      LogicalResult linearize = linearize_subcore(op, 5, 6);
-      if (linearize.failed()) {
-        return linearize;
-      }
-    }
-    op->setAttr(OpTrait::AttrSizedOperandSegments<
-                    EnqueueDMAOp>::getOperandSegmentSizeAttr(),
-                DenseI32ArrayAttr::get(op->getContext(), sizes.drop_back()));
   }
   if (version < 12) {
-    auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
-        OpTrait::AttrSizedOperandSegments<
-            EnqueueDMAOp>::getOperandSegmentSizeAttr());
-    if (!segment_attr) {
-      return op->emitError("Missing or invalid AttrSizedOperandSegments");
+    FailureOr<ArrayRef<int32_t>> sizes =
+        getValidatedSegmentSizes(op, /*expected_size=*/6, {3});
+    if (failed(sizes)) {
+      return failure();
     }
-    const ArrayRef<int32_t> sizes = segment_attr.asArrayRef();
-    if (sizes.size() != 6) {
-      return op->emitError(
-          "Unexpected size of AttrSizedOperandSegments for enqueue_dma");
-    }
-    if (sizes[3] == 0) {
+    if ((*sizes)[3] == 0) {
       return op->emitError(
           "Cannot downgrade enqueue_dma without target_semaphore to version "
           "< 12");
@@ -542,7 +575,14 @@ LogicalResult enqueue_dma_downgrade(Operation* op, int version) {
     }
   }
   if (version < 4) {
-    op->removeAttr("priority");
+    if (Attribute priority_attr = op->getAttr("priority")) {
+      const std::optional<int64_t> priority = getSignedIntAttr(priority_attr);
+      if (!priority.has_value() || *priority != 0) {
+        return op->emitError(
+            "Can only downgrade below version 4 when priority is 0");
+      }
+      op->removeAttr("priority");
+    }
   }
   if (version < 2) {
     return op->emitError("Downgrade to version ") << version << " unsupported";
@@ -553,13 +593,15 @@ LogicalResult enqueue_dma_downgrade(Operation* op, int version) {
 LogicalResult iota_upgrade(Operation* op, int version, bool&) {
   if (version < 6) {
     auto dimension_attr = op->getAttrOfType<IntegerAttr>("dimension");
-    if (!dimension_attr || dimension_attr.getValue().getBitWidth() != 32) {
+    const std::optional<int64_t> dimension = getSignedIntAttr(dimension_attr);
+    if (!dimension_attr || !dimension_attr.getType().isSignlessInteger(32) ||
+        !dimension.has_value()) {
       return op->emitError("Missing or invalid dimension attribute");
     }
-    const int32_t dimension = dimension_attr.getInt();
     op->removeAttr("dimension");
     op->setAttr("dimensions",
-                DenseI32ArrayAttr::get(op->getContext(), {dimension}));
+                DenseI32ArrayAttr::get(op->getContext(),
+                                       {static_cast<int32_t>(*dimension)}));
   }
   return success();
 }
@@ -622,48 +664,16 @@ LogicalResult wait_dma2_downgrade(Operation* op, int version) {
 
 LogicalResult wait_dma_upgrade(Operation* op, int version, bool&) {
   if (version < 14) {
-    auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
-        OpTrait::AttrSizedOperandSegments<
-            EnqueueDMAOp>::getOperandSegmentSizeAttr());
-    if (!segment_attr) {
-      return op->emitError("Missing or invalid AttrSizedOperandSegments");
-    }
-    SmallVector<int32_t> new_sizes(segment_attr.asArrayRef());
-    if (new_sizes.size() != 6) {
-      return op->emitError(
-          "Unexpected size of AttrSizedOperandSegments for wait_dma");
-    }
-    new_sizes.push_back(0);
-    op->setAttr(OpTrait::AttrSizedOperandSegments<
-                    EnqueueDMAOp>::getOperandSegmentSizeAttr(),
-                DenseI32ArrayAttr::get(op->getContext(), new_sizes));
-    return delinearize_subcore(op, 5, 6);
+    return delinearize_subcore(op, /*target_sem_seg=*/3, /*core_id_seg=*/5,
+                               /*subcore_id_seg=*/6);
   }
   return success();
 }
 
 LogicalResult wait_dma_downgrade(Operation* op, int version) {
   if (version < 14) {
-    auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
-        OpTrait::AttrSizedOperandSegments<
-            EnqueueDMAOp>::getOperandSegmentSizeAttr());
-    if (!segment_attr) {
-      return op->emitError("Missing or invalid AttrSizedOperandSegments");
-    }
-    const ArrayRef<int32_t> sizes = segment_attr.asArrayRef();
-    if (sizes.size() != 7) {
-      return op->emitError(
-          "Unexpected size of AttrSizedOperandSegments for wait_dma");
-    }
-    if (sizes[6] != 0) {
-      LogicalResult linearize = linearize_subcore(op, 5, 6);
-      if (linearize.failed()) {
-        return linearize;
-      }
-    }
-    op->setAttr(OpTrait::AttrSizedOperandSegments<
-                    EnqueueDMAOp>::getOperandSegmentSizeAttr(),
-                DenseI32ArrayAttr::get(op->getContext(), sizes.drop_back()));
+    return linearize_subcore(op, /*target_sem_seg=*/3, /*core_id_seg=*/5,
+                             /*subcore_id_seg=*/6);
   }
   return success();
 }
@@ -684,48 +694,18 @@ LogicalResult semaphore_signal_upgrade(Operation* op, int version, bool&) {
     }
   }
   if (version < 14) {
-    auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
-        OpTrait::AttrSizedOperandSegments<
-            EnqueueDMAOp>::getOperandSegmentSizeAttr());
-    if (!segment_attr) {
-      return op->emitError("Missing or invalid AttrSizedOperandSegments");
-    }
-    SmallVector<int32_t> new_sizes(segment_attr.asArrayRef());
-    if (new_sizes.size() != 4) {
-      return op->emitError(
-          "Unexpected size of AttrSizedOperandSegments for semaphore_signal.");
-    }
-    new_sizes.push_back(0);
-    op->setAttr(OpTrait::AttrSizedOperandSegments<
-                    EnqueueDMAOp>::getOperandSegmentSizeAttr(),
-                DenseI32ArrayAttr::get(op->getContext(), new_sizes));
-    return delinearize_subcore(op, 3, 4);
+    return delinearize_subcore(op, /*target_sem_seg=*/0, /*core_id_seg=*/3,
+                               /*subcore_id_seg=*/4);
   }
   return success();
 }
 
 LogicalResult semaphore_signal_downgrade(Operation* op, int version) {
   if (version < 14) {
-    auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
-        OpTrait::AttrSizedOperandSegments<
-            EnqueueDMAOp>::getOperandSegmentSizeAttr());
-    if (!segment_attr) {
-      return op->emitError("Missing or invalid AttrSizedOperandSegments");
+    if (failed(linearize_subcore(op, /*target_sem_seg=*/0, /*core_id_seg=*/3,
+                                 /*subcore_id_seg=*/4))) {
+      return failure();
     }
-    const ArrayRef<int32_t> sizes = segment_attr.asArrayRef();
-    if (sizes.size() != 5) {
-      return op->emitError(
-          "Unexpected size of AttrSizedOperandSegments for semaphore_signal");
-    }
-    if (sizes[4] != 0) {
-      LogicalResult linearize = linearize_subcore(op, 3, 4);
-      if (linearize.failed()) {
-        return linearize;
-      }
-    }
-    op->setAttr(OpTrait::AttrSizedOperandSegments<
-                    EnqueueDMAOp>::getOperandSegmentSizeAttr(),
-                DenseI32ArrayAttr::get(op->getContext(), sizes.drop_back()));
   }
   if (version < 2) {
     auto operands = op->getAttrOfType<mlir::DenseI32ArrayAttr>(
@@ -760,12 +740,12 @@ LogicalResult vector_multi_dim_reduce_upgrade(Operation* op, int version,
     std::vector<int64_t> reduction_dims;
     reduction_dims.reserve(reduction_dims_array.size());
     for (Attribute reduction_dim : reduction_dims_array) {
-      IntegerAttr reduction_dim_attr = dyn_cast<IntegerAttr>(reduction_dim);
-      if (!reduction_dim_attr) {
+      const std::optional<int64_t> dim = getSignedIntAttr(reduction_dim);
+      if (!dim.has_value()) {
         return op->emitOpError(
             "reduction_dims attribute contains a non-IntegerAttr");
       }
-      reduction_dims.push_back(reduction_dim_attr.getInt());
+      reduction_dims.push_back(*dim);
     }
     op->setAttr("reduction_dims",
                 DenseI64ArrayAttr::get(op->getContext(), reduction_dims));
@@ -811,15 +791,25 @@ LogicalResult arith_constant_downgrade(Operation* op, int version) {
 }
 LogicalResult reinterpret_cast_upgrade(Operation* op, int version, bool&) {
   if (version < 15) {
-    bool dynamic_offset = op->getNumOperands() > 1;
+    const unsigned num_operands = op->getNumOperands();
+    if (num_operands != 1 && num_operands != 2) {
+      return op->emitError("Unexpected operand count in tpu.reinterpret_cast");
+    }
     op->setAttr("operandSegmentSizes",
-                mlir::DenseI32ArrayAttr::get(op->getContext(),
-                                             {1, dynamic_offset ? 1 : 0, 0}));
+                mlir::DenseI32ArrayAttr::get(
+                    op->getContext(), {1, num_operands == 2 ? 1 : 0, 0}));
   }
   if (version < 16) {
-    auto operand_segment_sizes =
-        op->getAttrOfType<DenseI32ArrayAttr>("operandSegmentSizes");
-    llvm::SmallVector<int32_t> new_sizes(operand_segment_sizes.asArrayRef());
+    FailureOr<ArrayRef<int32_t>> sizes =
+        getValidatedSegmentSizes(op, /*expected_size=*/3, {1});
+    if (failed(sizes)) {
+      return failure();
+    }
+    if ((*sizes)[0] != 1) {
+      return op->emitError(
+          "Unexpected source segment size in tpu.reinterpret_cast");
+    }
+    llvm::SmallVector<int32_t> new_sizes(*sizes);
     new_sizes.push_back(0);
     op->setAttr("operandSegmentSizes",
                 mlir::DenseI32ArrayAttr::get(op->getContext(), new_sizes));
@@ -829,35 +819,44 @@ LogicalResult reinterpret_cast_upgrade(Operation* op, int version, bool&) {
 
 LogicalResult reinterpret_cast_downgrade(Operation* op, int version) {
   if (version < 16) {
-    auto operand_segment_sizes =
-        op->getAttrOfType<DenseI32ArrayAttr>("operandSegmentSizes");
-    if (operand_segment_sizes[3] > 0) {
+    FailureOr<ArrayRef<int32_t>> sizes =
+        getValidatedSegmentSizes(op, /*expected_size=*/4, {1});
+    if (failed(sizes)) {
+      return failure();
+    }
+    if ((*sizes)[0] != 1) {
+      return op->emitError(
+          "Unexpected source segment size in tpu.reinterpret_cast");
+    }
+    if ((*sizes)[3] != 0) {
       return op->emitOpError(
           "Can only downgrade below version 16 when dynamic_strides is "
           "empty");
     }
-
     op->setAttr(
         "operandSegmentSizes",
-        mlir::DenseI32ArrayAttr::get(
-            op->getContext(), operand_segment_sizes.asArrayRef().drop_back()));
+        mlir::DenseI32ArrayAttr::get(op->getContext(), sizes->drop_back()));
   }
 
   if (version < 15) {
-    auto operand_segment_sizes =
-        op->getAttrOfType<DenseI32ArrayAttr>("operandSegmentSizes");
-    if (operand_segment_sizes) {
-      auto array_ref = operand_segment_sizes.asArrayRef();
-      if (array_ref.size() >= 3 && array_ref[2] > 0) {
-        return op->emitOpError(
-            "Can only downgrade below version 15 when dynamic_sizes is empty");
-      }
+    FailureOr<ArrayRef<int32_t>> sizes =
+        getValidatedSegmentSizes(op, /*expected_size=*/3, {1});
+    if (failed(sizes)) {
+      return failure();
+    }
+    if ((*sizes)[0] != 1) {
+      return op->emitError(
+          "Unexpected source segment size in tpu.reinterpret_cast");
+    }
+    if ((*sizes)[2] != 0) {
+      return op->emitOpError(
+          "Can only downgrade below version 15 when dynamic_sizes is empty");
     }
     op->removeAttr("operandSegmentSizes");
   }
 
   if (version < 12) {
-    if (op->getNumOperands() == 2) {
+    if (op->getNumOperands() != 1) {
       return op->emitOpError(
           "Can only downgrade below version 12 when dynamic_offset is not set");
     }
@@ -891,24 +890,52 @@ LogicalResult matmul_downgrade(Operation* op, int version) {
 }
 
 LogicalResult repeat_upgrade(Operation* op, int version, bool& erased) {
+  (void)version;
   if (op->getNumOperands() != 1 || op->getNumResults() != 1) {
     return op->emitError("Unexpected operand/result count in tpu.repeat");
   }
-  auto dimension_attr = op->getAttrOfType<IntegerAttr>("dimension");
-  auto times_attr = op->getAttrOfType<IntegerAttr>("times");
-  if (!dimension_attr || !times_attr) {
+  const auto source_type = dyn_cast<VectorType>(op->getOperand(0).getType());
+  const auto result_type = dyn_cast<VectorType>(op->getResult(0).getType());
+  if (!source_type || !result_type || source_type.isScalable() ||
+      result_type.isScalable() || source_type.getRank() < 1 ||
+      result_type.getRank() != source_type.getRank() ||
+      result_type.getElementType() != source_type.getElementType()) {
+    return op->emitError("Invalid operand/result type in tpu.repeat");
+  }
+  const std::optional<int64_t> dimension =
+      getSignedIntAttr(op->getAttr("dimension"));
+  const std::optional<int64_t> times = getSignedIntAttr(op->getAttr("times"));
+  if (!dimension.has_value() || !times.has_value()) {
     return op->emitError("Missing dimension or times attribute in tpu.repeat");
   }
+  if (*dimension < 0 || *dimension >= source_type.getRank() ||
+      !llvm::isUInt<32>(*dimension)) {
+    return op->emitError("Invalid dimension attribute in tpu.repeat");
+  }
+  if (*times < 1 || !llvm::isInt<32>(*times)) {
+    return op->emitError("Invalid times attribute in tpu.repeat");
+  }
+  for (int64_t d = 0; d < source_type.getRank(); ++d) {
+    const int64_t src_dim = source_type.getDimSize(d);
+    const int64_t dst_dim = result_type.getDimSize(d);
+    if (d == *dimension) {
+      if (src_dim <= 0 || dst_dim <= 0 || dst_dim % src_dim != 0 ||
+          dst_dim / src_dim != *times) {
+        return op->emitError("Result shape mismatch in tpu.repeat");
+      }
+    } else if (src_dim != dst_dim) {
+      return op->emitError("Result shape mismatch in tpu.repeat");
+    }
+  }
   Value source = op->getOperand(0);
-  int32_t times = times_attr.getInt();
-  if (times == 1) {
+  if (*times == 1) {
     op->replaceAllUsesWith(ValueRange{source});
   } else {
     OpBuilder builder(op);
-    SmallVector<Value> operands(times, source);
+    SmallVector<Value> operands(static_cast<size_t>(*times), source);
     Value concat =
-        ConcatenateOp::create(builder, op->getLoc(), op->getResult(0).getType(),
-                              operands, dimension_attr.getInt());
+        ConcatenateOp::create(builder, op->getLoc(), result_type, operands,
+                              static_cast<uint32_t>(*dimension));
     op->replaceAllUsesWith(ValueRange{concat});
   }
   op->erase();
