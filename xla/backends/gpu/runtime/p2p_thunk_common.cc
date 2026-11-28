@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/runtime/device_id.h"
+#include "xla/service/collective_ops_utils.h"
 #include "xla/service/device_assignment.h"
 #include "xla/service/source_target_pairs.h"
 #include "xla/shape.h"
@@ -100,6 +101,10 @@ P2PConfig GetP2PConfigForSendRecv(const HloSendRecvInstruction* instr,
   config.group_mode = GetCollectiveOpGroupMode(
                           instr->channel_id().value_or(0) > 0, std::nullopt)
                           .value();
+  config.use_symmetric_buffer =
+      instr->GetModule() &&
+      IsNcclSymmetricBuffersEnabledForCollective(
+          instr, instr->GetModule()->config().debug_options());
 
   // All execution instances of a Send/Recv together form a replica group.
   const int64_t num_participants =

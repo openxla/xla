@@ -170,6 +170,12 @@ class GpuCollectives : public Collectives {
   // Returns true if GPU collectives are implemented.
   virtual bool IsImplemented() const = 0;
 
+  // Version of the collectives library that is loaded, 0 if not known.
+  virtual int LinkedVersion() const { return 0; }
+
+  // Version of the collectives library headers of the build, 0 if not known.
+  virtual int CompilerVersion() const { return 0; }
+
   // Executes a group of collective launches. All communicators used by the
   // `group` must be listed in `comms`, otherwise behavior is undefined.
   virtual absl::Status GroupLaunch(

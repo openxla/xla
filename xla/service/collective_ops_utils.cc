@@ -38,6 +38,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "json/json.h"
 #include "xla/core/collectives/reduction_kind.h"
+#include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -1063,6 +1064,10 @@ std::optional<DebugOptions::CollectiveOpType> GetCollectiveOpType(
       return DebugOptions::ALLREDUCE;
     case HloOpcode::kRaggedAllToAll:
       return DebugOptions::RAGGEDALLTOALL;
+    // A device send or recv is one half of a decomposed collective permute.
+    case HloOpcode::kSend:
+    case HloOpcode::kRecv:
+      return DebugOptions::COLLECTIVEPERMUTE;
     default:
       return std::nullopt;
   }
@@ -1070,8 +1075,7 @@ std::optional<DebugOptions::CollectiveOpType> GetCollectiveOpType(
 
 NcclSymmetricBuffersSpec::NcclSymmetricBuffersSpec(
     const DebugOptions& debug_options) {
-  for (const auto& filter_proto :
-       debug_options.xla_enable_nccl_symmetric_buffers_for_collectives()) {
+  for (const auto& filter_proto : SymmetricMemoryFilters(debug_options)) {
     Filter filter;
     filter.collective = filter_proto.collective();
     if (filter_proto.has_max_size_bytes()) {
@@ -1103,11 +1107,18 @@ bool NcclSymmetricBuffersSpec::IsEnabled(const HloInstruction& inst) const {
   }
   DebugOptions::CollectiveOpType op_type = *op_type_opt;
 
+  // The first result of a send or a recv has the shape of the data.
+  const bool is_transfer = collective->opcode() == HloOpcode::kSend ||
+                           collective->opcode() == HloOpcode::kRecv;
+  const Shape& data_shape =
+      is_transfer ? collective->shape().tuple_shapes(0) : collective->shape();
   const size_t size_in_bytes =
-      ShapeUtil::ByteSizeOfElementsRecursive(collective->shape());
+      ShapeUtil::ByteSizeOfElementsRecursive(data_shape);
 
   std::optional<PrimitiveType> operand_type;
-  if (collective->operand_count() > 0) {
+  if (is_transfer) {
+    operand_type = data_shape.element_type();
+  } else if (collective->operand_count() > 0) {
     operand_type = collective->operand(0)->shape().element_type();
   }
 
@@ -1143,9 +1154,6 @@ bool IsNcclSymmetricBuffersEnabledForCollective(
     const HloInstruction* instruction, const DebugOptions& opts) {
   if (opts.xla_gpu_experimental_enable_nccl_symmetric_buffers()) {
     return true;
-  }
-  if (opts.xla_enable_nccl_symmetric_buffers_for_collectives().empty()) {
-    return false;
   }
   if (instruction == nullptr) {
     return false;

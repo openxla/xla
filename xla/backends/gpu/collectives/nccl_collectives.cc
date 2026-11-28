@@ -264,6 +264,12 @@ static ncclComm_t Cast(const Communicator* comm) {
   return comm_state->comm;
 }
 
+int NcclCollectives::LinkedVersion() const {
+  return GetLinkedNcclVersion().value_or(0);
+}
+
+int NcclCollectives::CompilerVersion() const { return NCCL_VERSION_CODE; }
+
 absl::StatusOr<CliqueId> NcclCollectives::CreateUniqueCliqueId() const {
   ncclUniqueId id;
   XLA_NCCL_RETURN_IF_ERROR(ncclGetUniqueId(&id));
@@ -310,7 +316,7 @@ static absl::StatusOr<ncclConfig_t> AsNcclConfig(
   const DebugOptions& opts = xla::GetDebugOptionsFromFlags();
   bool symmetric_buffers_enabled =
       opts.xla_gpu_experimental_enable_nccl_symmetric_buffers() ||
-      absl::c_any_of(opts.xla_enable_nccl_symmetric_buffers_for_collectives(),
+      absl::c_any_of(SymmetricMemoryFilters(opts),
                      [](const DebugOptions::CollectiveFilter& filter) {
                        return filter.collective() ==
                               DebugOptions::ALLCOLLECTIVES;

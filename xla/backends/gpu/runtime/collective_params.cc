@@ -64,7 +64,8 @@ absl::StatusOr<CollectiveParams> CollectiveParams::Create(
     const ServiceExecutableRunOptions& run_options,
     absl::Span<se::Stream* const> async_streams, LocalDeviceId local_device_id,
     int64_t collective_max_nchannels, int64_t p2p_max_nchannels,
-    bool collective_use_minimal_resource, bool nccl_window_symmetric) {
+    bool collective_use_minimal_resource, bool nccl_window_symmetric,
+    bool uses_symmetric_memory) {
   const GpuExecutableRunOptions* gpu_options =
       run_options.run_options().gpu_executable_run_options();
 
@@ -76,6 +77,10 @@ absl::StatusOr<CollectiveParams> CollectiveParams::Create(
   if (collectives == nullptr) {
     collectives = GpuCollectives::Resolve(platform_name);
   }
+  // NCCL has known issues related to symmetric memory below 2.32.
+  nccl_window_symmetric |= uses_symmetric_memory &&
+                           collectives->LinkedVersion() >= 23200 &&
+                           collectives->CompilerVersion() >= 23200;
 
   auto* device_id_map = gpu_options && gpu_options->gpu_global_device_ids()
                             ? &*gpu_options->gpu_global_device_ids()

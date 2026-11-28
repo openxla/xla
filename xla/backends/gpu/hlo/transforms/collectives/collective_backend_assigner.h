@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -39,6 +40,9 @@ class CollectiveBackendAssigner : public HloModulePass {
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 };
+
+// Turns each symmetric mode option into the private mode and a list entry.
+void ConsolidateSymmetricMemoryOptions(DebugOptions& opts);
 
 }  // namespace gpu
 }  // namespace xla

@@ -96,6 +96,7 @@ constexpr int kRuntimeFields[] = {
     DebugOptions::kXlaGpuDeviceExecutionWarnStuckTimeoutFieldNumber,      // 586
     DebugOptions::                                                        //
     kXlaGpuExperimentalCacheNcclWindowInCommunicatorFieldNumber,          // 590
+    DebugOptions::kXlaGpuUseSymmetricMemoryForCollectivesFieldNumber,     // 592
 };
 
 static_assert(

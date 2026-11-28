@@ -1358,6 +1358,7 @@ xla_test(
     deps = [
         ":collective_ops_e2e_test_base",
         "//xla:array",
+        "//xla:debug_options_flags",
         "//xla:error_spec",
         "//xla:literal",
         "//xla:literal_util",
@@ -1382,6 +1383,7 @@ xla_test(
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:test",
+        "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",

@@ -151,6 +151,11 @@ static bool RequiresTritonSymmetricOutput(const HloInstruction* inst) {
 }
 
 bool IsCollectiveMemoryInstruction(const HloInstruction* inst) {
+  // A device send or recv is one half of a decomposed collective permute.
+  if (inst->opcode() == HloOpcode::kSend ||
+      inst->opcode() == HloOpcode::kRecv) {
+    return !Cast<HloSendRecvInstruction>(inst)->is_host_transfer();
+  }
   return kSupportedCollectiveOpcodes->contains(inst->opcode()) ||
          // opcode or async wrapped opcode is in kSupportedCollectiveOpcodes.
          ((inst->opcode() == HloOpcode::kAsyncStart ||

@@ -891,8 +891,8 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       };
 
   // Custom "sub-parser" lambda for
-  // xla_enable_nccl_symmetric_buffers_for_collectives.
-  auto setter_for_xla_enable_nccl_symmetric_buffers_for_collectives =
+  // xla_gpu_use_symmetric_memory_for_collectives.
+  auto setter_for_xla_gpu_use_symmetric_memory_for_collectives =
       [debug_options](std::string comma_separated_values) {
         for (const absl::string_view& token :
              absl::StrSplit(comma_separated_values, ',')) {
@@ -920,8 +920,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           }
 
           auto* filter =
-              debug_options
-                  ->add_xla_enable_nccl_symmetric_buffers_for_collectives();
+              debug_options->add_xla_gpu_use_symmetric_memory_for_collectives();
           filter->set_collective(op_type);
 
           // If max_size_bytes is specified, only collectives with size <=
@@ -2507,7 +2506,8 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
             &DebugOptions::
                 set_xla_gpu_experimental_enable_nccl_symmetric_buffers),
         debug_options->xla_gpu_experimental_enable_nccl_symmetric_buffers(),
-        "Enables NCCL symmetric buffer registration."));
+        "Deprecated, same as "
+        "--xla_gpu_use_symmetric_memory_for_collectives=all."));
     flag_list->push_back(tsl::Flag(
         "xla_gpu_experimental_nccl_window_symmetric",
         bool_setter_for(
@@ -2536,10 +2536,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         "rolled out."));
     flag_list->push_back(tsl::Flag(
         "xla_enable_nccl_symmetric_buffers_for_collectives",
-        setter_for_xla_enable_nccl_symmetric_buffers_for_collectives,
+        setter_for_xla_gpu_use_symmetric_memory_for_collectives,
         absl::StrJoin(
-            debug_options->xla_enable_nccl_symmetric_buffers_for_collectives(),
-            ",",
+            debug_options->xla_gpu_use_symmetric_memory_for_collectives(), ",",
             [](std::string* out, const DebugOptions::CollectiveFilter& filter) {
               absl::StrAppend(out, DebugOptions::CollectiveOpType_Name(
                                        filter.collective()));
@@ -2550,9 +2549,17 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 absl::StrAppend(out, ":", PrimitiveType_Name(filter.op_type()));
               }
             }),
-        "Enables NCCL symmetric buffer registration for specific collectives "
-        "and sizes. Format: op:size:op_type or op. E.g. "
-        "AllReduce:1024:F32,AllGather:2048,ReduceScatter,all."));
+        "Deprecated, use --xla_gpu_use_symmetric_memory_for_collectives, the "
+        "same list."));
+    flag_list->push_back(tsl::Flag(
+        "xla_gpu_use_symmetric_memory_for_collectives",
+        setter_for_xla_gpu_use_symmetric_memory_for_collectives, "",
+        "Collectives that run on NCCL symmetric memory, as "
+        "Kind[:max_result_bytes[:operand_type]] or all. Their buffers are "
+        "placed in collective memory, registered as NCCL windows and passed to "
+        "NCCL. With NCCL 2.32 or later the windows have the symmetric type, "
+        "which lets NCCL select its symmetric kernels. An older NCCL needs "
+        "--xla_gpu_experimental_nccl_window_symmetric for that."));
 
     flag_list->push_back(tsl::Flag(
         "xla_gpu_temp_buffer_use_separate_color",
@@ -3238,14 +3245,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         collectives_mode_setter_for(
             &DebugOptions::set_xla_gpu_collective_permute_mode),
         absl::StrCat(debug_options->xla_gpu_collective_permute_mode()),
-        "Memory mode for collective-permute: private, symmetric, "
-        "peer. See CollectivesMode for details."));
+        "Memory mode for collective-permute: private, symmetric, peer. "
+        "symmetric is deprecated, same as --xla_gpu_use_symmetric_"
+        "memory_for_collectives=collectivepermute."));
     flag_list->push_back(tsl::Flag(
         "xla_gpu_all_gather_mode",
         collectives_mode_setter_for(&DebugOptions::set_xla_gpu_all_gather_mode),
         absl::StrCat(debug_options->xla_gpu_all_gather_mode()),
-        "Memory mode for all-gather: private, symmetric, peer. "
-        "See CollectivesMode for details."));
+        "Deprecated, symmetric is the same as "
+        "--xla_gpu_use_symmetric_memory_for_collectives=allgather."));
     flag_list->push_back(tsl::Flag(
         "xla_gpu_dump_autotune_logs_to",
         string_setter_for(&DebugOptions::set_xla_dump_autotune_logs_to),
@@ -4015,9 +4023,8 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                   collectives_mode_setter_for(
                       &DebugOptions::set_xla_gpu_ragged_all_to_all_mode),
                   absl::StrCat(debug_options->xla_gpu_ragged_all_to_all_mode()),
-                  "Memory mode for ragged-all-to-all: private, symmetric, "
-                  "peer. In symmetric mode, the put/signal path is used. See "
-                  "CollectivesMode for details."));
+                  "Deprecated, symmetric is the same as --xla_gpu_use_"
+                  "symmetric_memory_for_collectives=raggedalltoall."));
     flag_list->push_back(
         tsl::Flag("xla_gpu_enable_gxl_ragged_all_to_all",
                   bool_setter_for(
@@ -4478,6 +4485,19 @@ bool ParseFlagsFromDebugOptionsFile(absl::string_view filename) {
                                            overwritten_fields);
   return true;
 };
+
+std::vector<DebugOptions::CollectiveFilter> SymmetricMemoryFilters(
+    const DebugOptions& opts) {
+  std::vector<DebugOptions::CollectiveFilter> filters(
+      opts.xla_gpu_use_symmetric_memory_for_collectives().begin(),
+      opts.xla_gpu_use_symmetric_memory_for_collectives().end());
+  for (const auto& filter :
+       // NOLINTNEXTLINE(clang-diagnostic-deprecated-declarations)
+       opts.xla_enable_nccl_symmetric_buffers_for_collectives()) {
+    filters.push_back(filter);
+  }
+  return filters;
+}
 
 void ResetFlagValues() {
   if (flag_values != nullptr) {

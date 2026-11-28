@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -26,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include "absl/base/nullability.h"
 #include "absl/log/check.h"
 #include "absl/log/globals.h"
@@ -43,6 +42,7 @@ limitations under the License.
 #include "xla/array.h"
 #include "xla/backends/gpu/hlo/transforms/collectives/collective_domain.h"
 #include "xla/backends/gpu/tests/collective_ops_e2e_test_base.h"
+#include "xla/debug_options_flags.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -69,6 +69,7 @@ limitations under the License.
 #include "xla/tests/test_utils.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/tsl/util/command_line_flags.h"
 #include "xla/types.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -3912,6 +3913,89 @@ ENTRY main {
         LiteralUtil::CreateR1<float>(std::vector<float>(128, 2.0f)), literal,
         ErrorSpec(1e-4)));
   }
+}
+
+TEST_F(SymmetricBufferCollectiveOpsTest, FlagSelectsEachCollectiveKind) {
+  absl::string_view hlo_string = R"hlo(
+HloModule test
+add {
+  x = u32[] parameter(0)
+  y = u32[] parameter(1)
+  ROOT add = u32[] add(x, y)
+}
+ENTRY main {
+  id = u32[] replica-id()
+  ten = u32[] constant(10)
+  id10 = u32[] add(id, ten)
+  data = u32[2] broadcast(id), dimensions={}
+  data10 = u32[2] broadcast(id10), dimensions={}
+  ar = u32[2] all-reduce(data), replica_groups={{0,1}}, to_apply=add
+  ag = u32[4] all-gather(data), replica_groups={{0,1}}, dimensions={0}
+  rs = u32[1] reduce-scatter(data), replica_groups={}, dimensions={0}, to_apply=add
+  a2a = u32[2] all-to-all(data), dimensions={0}
+  permute = (u32[2], u32[2]) collective-permute(data, data10), source_target_pairs={{1,0},{0,1}}
+  permute0 = u32[2] get-tuple-element(permute), index=0
+  permute1 = u32[2] get-tuple-element(permute), index=1
+  ROOT out = u32[13] concatenate(ar, ag, rs, a2a, permute0, permute1), dimensions={0}
+}
+)hlo";
+
+  const int64_t kNumReplicas = 2;
+  if (device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires " << kNumReplicas << " devices ("
+                 << device_count() << " available)";
+  }
+
+  DebugOptions options = CollectiveOpsTestE2E::GetDebugOptionsForTest();
+  std::vector<tsl::Flag> flags;
+  MakeDebugOptionsFlags(&flags, &options);
+  std::vector<std::string> args = {
+      "--xla_gpu_use_symmetric_memory_for_collectives=all",
+      "--xla_gpu_temp_buffer_use_collective_color=false"};
+  ASSERT_TRUE(tsl::Flags::Parse(args, flags));
+  HloModuleConfig config = GetModuleConfigForTest(kNumReplicas);
+  config.set_debug_options(options);
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(hlo_string, config));
+  ASSERT_OK_AND_ASSIGN(ExecutionResult result,
+                       ExecuteReplicated(std::move(module)));
+
+  LiteralTestUtil::ExpectR1Equal<uint32_t>(
+      {1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 11, 11}, result.results[0]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>(
+      {1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 10, 10}, result.results[1]);
+
+  int collectives = 0;
+  for (const HloComputation* computation :
+       result.optimized_module->computations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      switch (instruction->opcode()) {
+        case HloOpcode::kAllReduce:
+        case HloOpcode::kAllReduceStart:
+        case HloOpcode::kAllGather:
+        case HloOpcode::kAllGatherStart:
+        case HloOpcode::kReduceScatter:
+        case HloOpcode::kAllToAll:
+        case HloOpcode::kCollectivePermute:
+        case HloOpcode::kCollectivePermuteStart:
+          ++collectives;
+          ShapeUtil::ForEachSubshape(
+              instruction->shape(),
+              [&](const Shape& subshape, const ShapeIndex&) {
+                if (subshape.IsArray()) {
+                  EXPECT_EQ(subshape.layout().memory_space(),
+                            Layout::kCollectiveMemorySpace)
+                      << instruction->ToString();
+                }
+              });
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  EXPECT_EQ(collectives, 5);
 }
 
 class CommandBufferRecordCounter : public absl::LogSink {

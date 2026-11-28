@@ -3338,6 +3338,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/runtime:device_id",
+        "//xla/service:collective_ops_utils",
         "//xla/service:device_assignment",
         "//xla/service:source_target_pairs",
         "//xla/tsl/util:sorted_range",

@@ -1537,6 +1537,46 @@ TEST_F(IsNcclSymmetricBuffersEnabledForCollectiveTest,
   EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(ar_f32_2048_, opts));
 }
 
+TEST_F(IsNcclSymmetricBuffersEnabledForCollectiveTest,
+       DeviceSendAndRecvMatchCollectivePermuteFilter) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(R"hlo(
+    HloModule test_module
+
+    ENTRY main {
+      data = f32[1024] parameter(0)
+      tok = token[] after-all()
+      send = (f32[1024], u32[], token[]) send(data, tok), channel_id=1
+      recv = (f32[1024], u32[], token[]) recv(tok), channel_id=1
+      host_send = (f32[1024], u32[], token[]) send(data, tok), channel_id=2, is_host_transfer=true
+      ROOT root = tuple(send, recv, host_send)
+    }
+  )hlo"));
+  HloComputation* entry = module->entry_computation();
+  const HloInstruction* send = entry->GetInstructionWithName("send");
+  const HloInstruction* recv = entry->GetInstructionWithName("recv");
+  const HloInstruction* host_send = entry->GetInstructionWithName("host_send");
+
+  DebugOptions opts;
+  auto* filter = opts.add_xla_gpu_use_symmetric_memory_for_collectives();
+  filter->set_collective(DebugOptions::COLLECTIVEPERMUTE);
+  // The limit is the size of the data, without the context value.
+  filter->set_max_size_bytes(4096);
+  filter->set_op_type(F32);
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(send, opts));
+  EXPECT_TRUE(IsNcclSymmetricBuffersEnabledForCollective(recv, opts));
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(host_send, opts));
+
+  filter->set_max_size_bytes(4095);
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(send, opts));
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(recv, opts));
+
+  filter->set_collective(DebugOptions::ALLGATHER);
+  filter->set_max_size_bytes(4096);
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(send, opts));
+  EXPECT_FALSE(IsNcclSymmetricBuffersEnabledForCollective(recv, opts));
+}
+
 TEST(CollectiveOpsUtilsTest, ParseAndSerializeAsyncCollectiveConfig) {
   // Test case 1: Full config
   std::string json_str1 = R"({

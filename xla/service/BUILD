@@ -3551,6 +3551,7 @@ cc_library(
         ":hlo_module_config",
         ":pattern_matcher",
         ":source_target_pairs",
+        "//xla:debug_options_flags",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",

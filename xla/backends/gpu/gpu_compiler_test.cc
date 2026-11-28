@@ -4285,6 +4285,65 @@ TEST_F(GpuCompilerTest, SymmetricBuffersOverlappingFilters) {
               absl_testing::IsOkAndHolds(true));
 }
 
+TEST_F(GpuCompilerTest, SymmetricBuffersDecomposedCollectivePermute) {
+  constexpr absl::string_view kHloText = R"hlo(
+    HloModule test
+
+    while_condition {
+      params = (s32[], f32[16], f32[16]) parameter(0)
+      i = s32[] get-tuple-element(params), index=0
+      limit = s32[] constant(3)
+      ROOT lt = pred[] compare(i, limit), direction=LT
+    }
+
+    while_body {
+      params = (s32[], f32[16], f32[16]) parameter(0)
+      i = s32[] get-tuple-element(params), index=0
+      a = f32[16] get-tuple-element(params), index=1
+      forward = f32[16] collective-permute(a), source_target_pairs={{0,1},{1,2},{2,3}}, channel_id=1
+      back = f32[16] collective-permute(a), source_target_pairs={{3,0}}, channel_id=2
+      one = s32[] constant(1)
+      next = s32[] add(i, one)
+      ROOT result = (s32[], f32[16], f32[16]) tuple(next, back, forward)
+    }
+
+    ENTRY main {
+      zero = s32[] constant(0)
+      p = f32[16] parameter(0)
+      init = (s32[], f32[16], f32[16]) tuple(zero, p, p)
+      loop = (s32[], f32[16], f32[16]) while(init), condition=while_condition, body=while_body
+      ROOT out = f32[16] get-tuple-element(loop), index=2
+    }
+  )hlo";
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  DebugOptions& debug_options = config.mutable_debug_options();
+  debug_options.set_xla_gpu_experimental_pipeline_parallelism_opt_level(
+      DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE);
+  debug_options.set_xla_gpu_collective_permute_decomposer_threshold(0);
+  debug_options.set_xla_gpu_enable_latency_hiding_scheduler(true);
+  debug_options.add_xla_gpu_use_symmetric_memory_for_collectives()
+      ->set_collective(DebugOptions::COLLECTIVEPERMUTE);
+
+  std::pair<const HloModule*, std::unique_ptr<OpaqueExecutable>>
+      optimized_module_and_executable;
+  ASSERT_OK_AND_ASSIGN(optimized_module_and_executable,
+                       GetOptimizedModuleForExecutable(kHloText, config));
+  const HloModule* optimized_module = optimized_module_and_executable.first;
+
+  constexpr absl::string_view expected_check = R"(
+    // CHECK-DAG: (f32[16]{0:S(7)}, {{.*}} send(
+    // CHECK-DAG: (f32[16]{0:S(7)}, {{.*}} recv(
+  )";
+
+  std::string optimized_text = optimized_module->ToString(
+      HloPrintOptions{}.set_print_operand_shape(false).set_print_metadata(
+          false));
+  EXPECT_THAT(RunFileCheck(optimized_text, expected_check),
+              absl_testing::IsOkAndHolds(true))
+      << optimized_text;
+}
+
 TEST_F(GpuCompilerTest, TritonGemmDisabledDotNormalizationToCublas) {
   const char* hlo_text = R"(
 HloModule source_dots
