@@ -27,6 +27,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -34,6 +35,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
@@ -99,7 +101,9 @@ class SchedulingContext {
   const AliasInfo* GetAliasInfo() const { return alias_info_; }
 
  private:
-  mutable std::shared_ptr<const HloAliasAnalysis> alias_analysis_;
+  mutable absl::Mutex alias_analysis_mu_;
+  mutable std::shared_ptr<const HloAliasAnalysis> alias_analysis_
+      ABSL_GUARDED_BY(alias_analysis_mu_);
   std::shared_ptr<const LatencyEstimator> latency_estimator_;
   std::shared_ptr<AsyncTracker> async_tracker_;
   const AliasInfo* alias_info_;

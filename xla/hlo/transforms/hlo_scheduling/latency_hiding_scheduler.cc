@@ -54,9 +54,12 @@ limitations under the License.
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instruction_utils.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/transforms/hlo_scheduling/async_tracker.h"
+#include "xla/hlo/transforms/hlo_scheduling/hlo_schedule_graph.h"
 #include "xla/layout.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/collective_ops_utils.h"
@@ -198,54 +201,171 @@ bool HasForceDelayAttribute(const HloInstruction* instr) {
   return attr.has_value() && attr.value() == "force_delay";
 }
 
+// Verifies that `start` feeds `done` directly within one computation iteration
+// without wrapping through a while-loop parameter or body root.
+bool IsSameIterationAsyncPair(const HloInstruction* start,
+                              const HloInstruction* done) {
+  if (start == nullptr || done == nullptr ||
+      start->parent() != done->parent()) {
+    return false;
+  }
+  absl::flat_hash_set<const HloInstruction*> visited_consumers;
+  const HloInstruction* consumer = done;
+  while (consumer != start) {
+    if (!visited_consumers.insert(consumer).second ||
+        consumer->operand_count() == 0) {
+      return false;
+    }
+    const HloInstruction* operand = consumer->operand(0);
+    if (operand == start) {
+      return true;
+    }
+    if (!done->IsAsyncDone() && consumer->opcode() != HloOpcode::kAsyncUpdate) {
+      return false;
+    }
+    if (operand->opcode() == HloOpcode::kAsyncUpdate) {
+      consumer = operand;
+      continue;
+    }
+    std::vector<
+        hlo_instruction_utils::async::AsyncTraceStepT<const HloInstruction>>
+        steps;
+    const HloInstruction* producer =
+        hlo_instruction_utils::async::TraceAsyncDataflow(
+            operand,
+            [start](const HloInstruction* candidate) {
+              return candidate == start ||
+                     candidate->opcode() == HloOpcode::kAsyncUpdate;
+            },
+            &steps);
+    if (producer == nullptr || producer->parent() != done->parent() ||
+        steps.empty()) {
+      return false;
+    }
+    for (int64_t i = 0, n = static_cast<int64_t>(steps.size()); i < n; ++i) {
+      const HloInstruction* cur = steps[i].instruction;
+      const HloInstruction* expected_operand =
+          (i + 1 < n) ? steps[i + 1].instruction : producer;
+      if (cur->parent() != done->parent() || steps[i].operand_index < 0 ||
+          steps[i].operand_index >= cur->operand_count() ||
+          cur->operand(steps[i].operand_index) != expected_operand) {
+        return false;
+      }
+    }
+    consumer = producer;
+  }
+  return true;
+}
+
+const HloInstruction* FindInComputationStart(
+    const HloInstruction* done, const AsyncTracker& async_tracker,
+    const HloScheduleGraph& sched_graph) {
+  const HloInstruction* start = FindStart(done);
+  if (start == nullptr || !async_tracker.IsSupportedAsyncStart(*start) ||
+      !IsSameIterationAsyncPair(start, done) ||
+      !sched_graph.reachability().IsReachable(start, done)) {
+    return nullptr;
+  }
+  return start;
+}
+
+const HloInstruction* FindInComputationDone(
+    const HloInstruction* start, const AsyncTracker& async_tracker,
+    const HloScheduleGraph& sched_graph) {
+  const HloInstruction* done = FindDone(start);
+  if (done == nullptr || !async_tracker.IsSupportedAsyncDone(*done) ||
+      !IsSameIterationAsyncPair(start, done) ||
+      !sched_graph.reachability().IsReachable(start, done)) {
+    return nullptr;
+  }
+  return done;
+}
+
+absl::btree_map<int64_t, int64_t> SortedResourcesPerInstruction(
+    const AsyncTracker& async_tracker, const HloInstruction& instr) {
+  const absl::flat_hash_map<int64_t, int64_t> raw =
+      async_tracker.GetNumResourcesPerInstruction(instr);
+  return absl::btree_map<int64_t, int64_t>(raw.begin(), raw.end());
+}
+
 absl::flat_hash_map<int64_t, int64_t>
 GetNumResourcesNeededForAnnotationWithKeepOriginalOrderAttrs(
     const DefaultSchedulerCore::SchedulingState& sched_state,
     std::vector<const HloInstruction*> instrs, bool top_down_scheduling) {
-  // For groups with forced sequence order, we need to obtain the accurate
-  // resource usage info by traversing the instructions in order and keeping a
-  // running record of the resource usage.
+  // For groups with forced sequence order, traverse instructions in the
+  // scheduling direction and track the peak additional resource demand.
   std::sort(instrs.begin(), instrs.end(),
-            [&sched_state](const HloInstruction* a, const HloInstruction* b) {
-              auto& a_node = sched_state.sched_graph->GetNode(a);
-              auto& b_node = sched_state.sched_graph->GetNode(b);
-              return a_node.GetOriginalPosition() >
-                     b_node.GetOriginalPosition();
+            [&sched_state, top_down_scheduling](const HloInstruction* a,
+                                                const HloInstruction* b) {
+              const int64_t a_pos =
+                  sched_state.sched_graph->GetNode(a).GetOriginalPosition();
+              const int64_t b_pos =
+                  sched_state.sched_graph->GetNode(b).GetOriginalPosition();
+              return top_down_scheduling ? a_pos < b_pos : a_pos > b_pos;
             });
+  const AsyncTracker& async_tracker = *sched_state.async_tracker;
+  const HloScheduleGraph& sched_graph = *sched_state.sched_graph;
   absl::flat_hash_map<int64_t, int64_t> max_resources_needed;
   absl::flat_hash_map<int64_t, int64_t> current_resources_needed;
   for (const HloInstruction* instr : instrs) {
     // If "keep_original_sequence_order_in_group" attribute is set, we require
     // all instructions in the scheduling group to have this attribute set.
     CHECK(HasKeepOriginalSequenceOrderInGroupAttribute(instr));
-    // Scheduling an async-start op will decrease the number of resources in
-    // use.
-    if (sched_state.async_tracker->IsSupportedAsyncStart(*instr)) {
-      const HloInstruction* async_done = FindDone(instr);
-      CHECK_NE(async_done, nullptr);
-      CHECK(sched_state.async_tracker->IsSupportedAsyncDone(*async_done));
-      auto num_resources_needed_per_instr =
-          sched_state.async_tracker->GetNumResourcesPerInstruction(*async_done);
-      for (const auto& [resource, usage] : num_resources_needed_per_instr) {
-        if (top_down_scheduling) {
-          current_resources_needed[resource] += usage;
-        } else {
+    const bool is_start = async_tracker.IsSupportedAsyncStart(*instr);
+    const bool is_done = async_tracker.IsSupportedAsyncDone(*instr);
+    if (top_down_scheduling ? is_start : is_done) {
+      for (const auto& [resource, usage] :
+           SortedResourcesPerInstruction(async_tracker, *instr)) {
+        int64_t& current = current_resources_needed[resource];
+        current += usage;
+        if (current > 0) {
+          int64_t& max_needed = max_resources_needed[resource];
+          max_needed = std::max(max_needed, current);
+        }
+      }
+    } else if (top_down_scheduling ? is_done : is_start) {
+      const HloInstruction* partner =
+          top_down_scheduling
+              ? FindInComputationStart(instr, async_tracker, sched_graph)
+              : FindInComputationDone(instr, async_tracker, sched_graph);
+      if (partner != nullptr) {
+        for (const auto& [resource, usage] :
+             SortedResourcesPerInstruction(async_tracker, *partner)) {
           current_resources_needed[resource] -= usage;
+        }
+      } else {
+        for (const auto& [resource, usage_type] :
+             async_tracker.GetResourcesFromInstruction(*instr)) {
+          if (usage_type == ResourceUsageType::kResourceRelease) {
+            --current_resources_needed[resource];
+          }
         }
       }
     } else {
-      auto num_resources_needed_per_instr =
-          sched_state.async_tracker->GetNumResourcesPerInstruction(*instr);
-      for (const auto& [resource, usage] : num_resources_needed_per_instr) {
-        if (top_down_scheduling) {
-          current_resources_needed[resource] -= usage;
-        } else {
-          current_resources_needed[resource] += usage;
+      // Synchronous ops and nested computations occupy resources transiently
+      // during execution; kWhile also applies any unmatched boundary delta.
+      for (const auto& [resource, usage] :
+           SortedResourcesPerInstruction(async_tracker, *instr)) {
+        const int64_t peak = current_resources_needed[resource] + usage;
+        if (peak > 0) {
+          int64_t& max_needed = max_resources_needed[resource];
+          max_needed = std::max(max_needed, peak);
         }
       }
-      for (const auto& [resource, usage] : current_resources_needed) {
-        max_resources_needed[resource] =
-            std::max(max_resources_needed[resource], usage);
+      if (instr->opcode() == HloOpcode::kWhile) {
+        for (const auto& [resource, usage_type] :
+             sched_graph.GetNode(instr).GetNetResources()) {
+          if (usage_type == ResourceUsageType::kResourceOccupy) {
+            int64_t& current = current_resources_needed[resource];
+            ++current;
+            if (current > 0) {
+              int64_t& max_needed = max_resources_needed[resource];
+              max_needed = std::max(max_needed, current);
+            }
+          } else if (usage_type == ResourceUsageType::kResourceRelease) {
+            --current_resources_needed[resource];
+          }
+        }
       }
     }
   }
@@ -1621,7 +1741,11 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
           GetNumResourcesNeededForAnnotation(
               sched_state, sched_state.ready_annotations.front());
       for (const auto& [resource, num_needed] : num_resources_needed) {
-        int64_t limit = sched_state.max_concurrent_resource.at(resource);
+        auto it = sched_state.max_concurrent_resource.find(resource);
+        if (it == sched_state.max_concurrent_resource.end()) {
+          continue;
+        }
+        int64_t limit = it->second;
         if (num_needed > limit) {
           absl::StrAppend(&error_message, "It needs ", num_needed, " ",
                           sched_state.async_tracker->GetResourceName(resource),
@@ -1793,7 +1917,8 @@ bool DefaultSchedulerCore::AddOccupierToResource(
 //  2. Among other nodes, async start nodes are scheduled after other nodes.
 class AnnotationReadySetLt {
  public:
-  explicit AnnotationReadySetLt() = default;
+  explicit AnnotationReadySetLt(bool top_down_scheduling = false)
+      : top_down_scheduling_(top_down_scheduling) {}
   // Implements the priority for the nodes in the annotated ready set.
   DefaultSchedulerCore::CandidateResult operator()(
       DefaultSchedulerCore::ScheduleCandidate& a,
@@ -1805,10 +1930,11 @@ class AnnotationReadySetLt {
         "keep_original_sequence_order_in_group");
     if (a_attr.has_value() && b_attr.has_value()) {
       if (a_attr.value() == "true" && b_attr.value() == "true") {
-        return {a.node->GetOriginalPosition() > b.node->GetOriginalPosition()
-                    ? a
-                    : b,
-                "kOriginalSequenceOrder"};
+        const bool prefer_a =
+            top_down_scheduling_
+                ? a.node->GetOriginalPosition() < b.node->GetOriginalPosition()
+                : a.node->GetOriginalPosition() > b.node->GetOriginalPosition();
+        return {prefer_a ? a : b, "kOriginalSequenceOrder"};
       }
     }
 
@@ -1826,6 +1952,9 @@ class AnnotationReadySetLt {
     }
     return {a, "kAnnotatedNoReason"};
   }
+
+ private:
+  bool top_down_scheduling_ = false;
 };
 absl::StatusOr<HloGraphNode*> FindAndExtractBestAnnotatedNode(
     DefaultSchedulerCore::SchedulingState& sched_state,
@@ -1835,7 +1964,7 @@ absl::StatusOr<HloGraphNode*> FindAndExtractBestAnnotatedNode(
     bool is_default_scheduling_instruction_crosses_overlap_limit) {
   using ScheduleCandidate = DefaultSchedulerCore::ScheduleCandidate;
   using CandidateResult = DefaultSchedulerCore::CandidateResult;
-  AnnotationReadySetLt ready_lt;
+  AnnotationReadySetLt ready_lt(sched_state.config.top_down_scheduling);
   // Construct a schedule candidate for caching.
   ScheduleCandidate ready_chosen;
   auto& annotation_ready = sched_state.annotation_ready;
@@ -2109,10 +2238,15 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
   // If this node is an instruction that occupies/releases resource(s), then
   // handle the increase/decrease.
   for (auto& resource : n->GetNetResources()) {
+    auto max_it = sched_state->max_concurrent_resource.find(resource.first);
     if (resource.second == ResourceUsageType::kResourceRelease) {
-      ++(sched_state->max_concurrent_resource[resource.first]);
+      if (max_it != sched_state->max_concurrent_resource.end()) {
+        ++max_it->second;
+      }
     } else if (resource.second == ResourceUsageType::kResourceOccupy) {
-      --(sched_state->max_concurrent_resource[resource.first]);
+      if (max_it != sched_state->max_concurrent_resource.end()) {
+        --max_it->second;
+      }
       --(sched_state->resource_users_in_queue[resource.first]);
     }
   }
@@ -2311,29 +2445,32 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
     }
   }
   ++sched_state->scheduled_count;
-  for (auto& resource : n->GetResources()) {
-    if (resource.second == ResourceUsageType::kResourceRelease) {
-      // Some recv-dones exist without a corresponding recv op in the same
-      // computation. In this case, we cannot find the corresponding start op
-      // and thus cannot erase the start op from the map.
-      if (sched_state->resource_occupiers_in_flight.contains(resource.first)) {
-        sched_state->resource_occupiers_in_flight.at(resource.first)
-            .erase(&n->GetInstr());
-      }
-    } else if (resource.second == ResourceUsageType::kResourceOccupy) {
-      // For supported async collective done ops, save their corresponding
-      // start ops in the map
-      const HloInstruction* occupier = &n->GetInstr();
-      if (n->IsSupportedAsyncDone()) {
-        const HloInstruction* start = FindStart(&n->GetInstr());
-        if (start != nullptr &&
-            scheduling_context_->GetAsyncTracker()->IsSupportedAsyncStart(
-                *start)) {
-          occupier = start;
+  const std::shared_ptr<AsyncTracker> async_tracker =
+      scheduling_context_->GetAsyncTracker();
+  const HloInstruction* occupier = &n->GetInstr();
+  if (n->IsSupportedAsyncDone()) {
+    if (const HloInstruction* start = FindInComputationStart(
+            &n->GetInstr(), *async_tracker, *sched_state->sched_graph);
+        start != nullptr) {
+      occupier = start;
+    }
+  }
+  // Record all occupations before releases so self-contained while/sync nodes
+  // clear themselves and top-down async-done ops release their matching starts.
+  for (const auto& [resource, usage] : n->GetResources()) {
+    if (usage == ResourceUsageType::kResourceOccupy) {
+      sched_state->resource_occupiers_in_flight[resource].insert(occupier);
+    }
+  }
+  for (const auto& [resource, usage] : n->GetResources()) {
+    if (usage == ResourceUsageType::kResourceRelease) {
+      if (auto it = sched_state->resource_occupiers_in_flight.find(resource);
+          it != sched_state->resource_occupiers_in_flight.end()) {
+        it->second.erase(occupier);
+        if (it->second.empty()) {
+          sched_state->resource_occupiers_in_flight.erase(it);
         }
       }
-      sched_state->resource_occupiers_in_flight[resource.first].insert(
-          occupier);
     }
   }
   VLOG(10) << "Memory pressure before schedule: "
@@ -2425,11 +2562,14 @@ absl::Status DefaultSchedulerCore::InitializeScheduler(
       for (HloInstruction* instr : comp->instructions()) {
         auto annotation = GetSchedulingAnnotation(instr);
         CHECK_OK(annotation);
-        if (!(*annotation).has_value()) {
+        if (!(*annotation).has_value() ||
+            !(*annotation)->group_id.has_value()) {
           continue;
         }
         annotation_to_ops[**annotation].push_back(instr);
       }
+      const std::shared_ptr<AsyncTracker> async_tracker =
+          scheduling_context_->GetAsyncTracker();
       for (auto& [annotation, ops] : annotation_to_ops) {
         if (absl::c_all_of(ops, [](const HloInstruction* instr) {
               return instr->opcode() == HloOpcode::kAsyncStart ||
@@ -2447,7 +2587,11 @@ absl::Status DefaultSchedulerCore::InitializeScheduler(
         for (HloInstruction* instr : ops) {
           if (instr->opcode() == HloOpcode::kAsyncDone) {
             HloInstruction* start = FindStart(instr);
-            CHECK_NE(start, nullptr);
+            if (start == nullptr ||
+                !async_tracker->IsSupportedAsyncStart(*start) ||
+                !IsSameIterationAsyncPair(start, instr)) {
+              continue;
+            }
             auto start_annotation = GetSchedulingAnnotation(start);
             CHECK_OK(start_annotation);
             if (!(*start_annotation).has_value()) {
@@ -2503,31 +2647,37 @@ DefaultSchedulerCore::GetNumResourcesNeededForAnnotation(
     return GetNumResourcesNeededForAnnotationWithKeepOriginalOrderAttrs(
         sched_state, instrs, top_down_scheduling_);
   }
+  absl::flat_hash_map<int64_t, int64_t> accumulated_resources;
+  const AsyncTracker& async_tracker = *sched_state.async_tracker;
+  const HloScheduleGraph& sched_graph = *sched_state.sched_graph;
   for (const HloInstruction* instr : instrs) {
-    auto num_resources_needed_per_instr =
-        sched_state.async_tracker->GetNumResourcesPerInstruction(*instr);
-    for (const auto& [resource, usage] : num_resources_needed_per_instr) {
-      if (instr->opcode() == HloOpcode::kAsyncDone) {
-        // There are two cases where the resources used by the async-done op
-        // need to be accumulated:
-        // 1. if a async-done op's matching start op is not in the
-        // same annotation group, then the live range of the resources used
-        // by this async-done op extends beyond this annotation group.
-        // 2. if get_max_resources is true, then we compute the resource usage
-        // assuming maximum overlapping, where the resources used by the
-        // async-done ops need to be accumulated.
-        const HloInstruction* start = FindStart(instr);
-        CHECK_NE(start, nullptr);
-        if (absl::c_find(instrs, start) == instrs.end() || get_max_resources) {
-          num_resources_needed[resource] += usage;
-          continue;
-        }
+    const bool is_start = async_tracker.IsSupportedAsyncStart(*instr);
+    const bool is_done = async_tracker.IsSupportedAsyncDone(*instr);
+    if (top_down_scheduling_ ? is_done : is_start) {
+      continue;
+    }
+    const bool is_occupying_async = top_down_scheduling_ ? is_start : is_done;
+    const HloInstruction* partner =
+        !is_occupying_async
+            ? nullptr
+            : (top_down_scheduling_
+                   ? FindInComputationDone(instr, async_tracker, sched_graph)
+                   : FindInComputationStart(instr, async_tracker, sched_graph));
+    // Accumulate occupying async ops whose matching release lies outside the
+    // group or when computing worst-case full-overlap resource demand.
+    const bool accumulate =
+        is_occupying_async && (get_max_resources || partner == nullptr ||
+                               absl::c_find(instrs, partner) == instrs.end());
+    for (const auto& [resource, usage] :
+         SortedResourcesPerInstruction(async_tracker, *instr)) {
+      int64_t& needed = num_resources_needed[resource];
+      if (accumulate) {
+        int64_t& accumulated = accumulated_resources[resource];
+        accumulated += usage;
+        needed = std::max(needed, accumulated);
+      } else {
+        needed = std::max(needed, usage);
       }
-      // The minimum number of resources needed for the annotation group is
-      // the maximum number of resources needed for any instruction in the
-      // group.
-      num_resources_needed[resource] =
-          std::max(num_resources_needed[resource], usage);
     }
   }
   return num_resources_needed;
@@ -2584,8 +2734,9 @@ bool DefaultSchedulerCore::SchedulingAnnotationCrossesOverlapLimit(
       GetNumResourcesNeededForAnnotation(sched_state, annotation,
                                          use_max_resources);
   for (const auto& [resource, num_needed] : num_resources_needed) {
-    int64_t limit = sched_state.max_concurrent_resource.at(resource);
-    if (num_needed > limit) {
+    auto it = sched_state.max_concurrent_resource.find(resource);
+    if (it != sched_state.max_concurrent_resource.end() &&
+        num_needed > it->second) {
       return true;
     }
   }

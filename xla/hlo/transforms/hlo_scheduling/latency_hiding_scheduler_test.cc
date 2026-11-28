@@ -41,22 +41,33 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/barrier.h"
 #include "absl/types/span.h"
 #include "xla/debug_options_flags.h"
 #include "xla/frontend_attributes.h"
 #include "xla/hlo/analysis/alias_info.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/transforms/collectives/async_collective_creator.h"
+#include "xla/hlo/transforms/hlo_scheduling/approximate_latency_estimator.h"
+#include "xla/hlo/transforms/hlo_scheduling/async_tracker.h"
+#include "xla/hlo/transforms/hlo_scheduling/hlo_schedule_graph.h"
+#include "xla/hlo/transforms/hlo_scheduling/latency_estimator.h"
+#include "xla/hlo/transforms/hlo_scheduling/scheduler_config.h"
+#include "xla/hlo/transforms/hlo_scheduling/scheduler_core.h"
 #include "xla/hlo/transforms/legalize_scheduling_annotations.h"
 #include "xla/service/device_assignment.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/side_effect_util.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/util.h"
@@ -4964,8 +4975,34 @@ TEST_F(LatencyHidingSchedulerTest, AnnotationGroupExhaustsResourceLimit) {
   auto sched_config = GetDefaultSchedConfig();
   sched_config.schedule_send_recvs = true;
   sched_config.send_recv_overlap_limit = 2;
+  EXPECT_THAT(RunScheduler(hlo_module.get(), sched_config),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("exceeds the overlap limits")));
+
+  // Also cover mid-group overlap rejection via a custom OverlapLimitRule so
+  // FindAndExtractBestAnnotatedNode's empty-selection error path stays tested.
+  ASSERT_OK_AND_ASSIGN(auto custom_rule_module, ParseHloText(hlo_string));
+  sched_config.send_recv_overlap_limit = 3;
+  AliasInfo alias_info;
+  auto ctx = std::make_shared<const SchedulingContext>(
+      custom_rule_module.get(), std::make_unique<ApproximateLatencyEstimator>(),
+      std::make_unique<AsyncTracker>(sched_config), &alias_info);
+  int scheduled_dones = 0;
+  auto overlap_rule = [&scheduled_dones](
+                          const DefaultSchedulerCore::SchedulingState&,
+                          const HloGraphNode* node) {
+    if (node->GetOpcode() == HloOpcode::kSendDone) {
+      return scheduled_dones++ >= 2;
+    }
+    return false;
+  };
+  auto core = std::make_unique<DefaultSchedulerCore>(
+      ctx, sched_config, /*target_scheduling_rule=*/nullptr,
+      /*early_target_scheduling_rule=*/nullptr, /*post_processing_fn=*/nullptr,
+      overlap_rule);
   EXPECT_THAT(
-      RunScheduler(hlo_module.get(), sched_config),
+      LatencyHidingScheduler(ctx, std::move(core))
+          .Run(custom_rule_module.get()),
       StatusIs(absl::StatusCode::kInternal,
                HasSubstr("Couldn't find an annotated node to schedule")));
 }
@@ -5245,6 +5282,593 @@ ENTRY entry {
             GetIndex(new_instruction_sequence, "cp1d"));
   EXPECT_LT(GetIndex(new_instruction_sequence, "cp1d"),
             GetIndex(new_instruction_sequence, "cp2d"));
+}
+
+class CustomSerialResourceAsyncTracker : public AsyncTracker {
+ public:
+  static constexpr int64_t kCustomSerialResource = 1024;
+  static constexpr int64_t kUnboundedCustomResource = 1025;
+
+  explicit CustomSerialResourceAsyncTracker(const SchedulerConfig& config,
+                                            bool add_unbounded = false)
+      : AsyncTracker(config), add_unbounded_(add_unbounded) {}
+
+  ResourcesVector GetResourcesFromInstructionImpl(
+      const HloInstruction& hlo) const override {
+    ResourcesVector res = AsyncTracker::GetResourcesFromInstructionImpl(hlo);
+    if (hlo.opcode() == HloOpcode::kAllGatherStart ||
+        hlo.opcode() == HloOpcode::kAllGatherDone) {
+      const ResourceUsageType usage =
+          res.empty() ? ResourceUsageType::kResourceOccupy : res.front().second;
+      res.push_back({kCustomSerialResource, usage});
+      if (add_unbounded_) {
+        res.push_back({kUnboundedCustomResource, usage});
+      }
+    }
+    return res;
+  }
+
+  int64_t GetNumTargetDefinedResources() const override { return 1; }
+  int64_t GetNumAvailableResources(int64_t resource_type) const override {
+    if (resource_type == kCustomSerialResource) {
+      return 2;
+    }
+    return AsyncTracker::GetNumAvailableResources(resource_type);
+  }
+  absl::string_view GetResourceName(int64_t resource_type) const override {
+    if (resource_type == kCustomSerialResource) {
+      return "kCustomSerial";
+    }
+    if (resource_type == kUnboundedCustomResource) {
+      return "kUnboundedCustom";
+    }
+    return AsyncTracker::GetResourceName(resource_type);
+  }
+  ResourceHazardType GetResourceHazardType(
+      int64_t resource_type) const override {
+    if (resource_type == kCustomSerialResource) {
+      return ResourceHazardType::kSerial;
+    }
+    return AsyncTracker::GetResourceHazardType(resource_type);
+  }
+
+ private:
+  bool add_unbounded_ = false;
+};
+
+TEST_F(LatencyHidingSchedulerTest,
+       ConcurrentGetAliasAnalysisIsRaceFreeAndSingleInstance) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule m, is_scheduled=true
+    ENTRY main {
+      p0 = f32[64] parameter(0)
+      p1 = f32[64] parameter(1)
+      a = f32[64] add(p0, p1)
+      m0 = f32[64] multiply(a, p0)
+      ROOT t = (f32[64], f32[64]) tuple(a, m0)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kHlo));
+  SchedulerConfig cfg = GetDefaultSchedConfig();
+  AliasInfo alias_info;
+  const SchedulingContext ctx(module.get(),
+                              std::make_unique<ApproximateLatencyEstimator>(),
+                              std::make_unique<AsyncTracker>(cfg), &alias_info);
+
+  constexpr int kNumThreads = 8;
+  absl::Barrier barrier(kNumThreads);
+  std::vector<std::shared_ptr<const HloAliasAnalysis>> results(kNumThreads);
+  std::vector<std::unique_ptr<tsl::Thread>> threads;
+  threads.reserve(kNumThreads);
+  for (int i = 0; i < kNumThreads; ++i) {
+    threads.emplace_back(tsl::Env::Default()->StartThread(
+        tsl::ThreadOptions(), absl::StrCat("alias_reader_", i),
+        [&ctx, &barrier, &results, i]() {
+          barrier.Block();
+          results[i] = ctx.GetAliasAnalysis();
+        }));
+  }
+  threads.clear();
+  ASSERT_NE(results[0], nullptr);
+  for (int i = 1; i < kNumThreads; ++i) {
+    EXPECT_EQ(results[i].get(), results[0].get());
+  }
+}
+
+TEST_F(LatencyHidingSchedulerTest,
+       ResourceOccupiersInFlightClearedForWhileTopDownAndPipelinedBody) {
+  // 1. Bottom-up scheduling clears occupiers after a collective-bearing kWhile.
+  constexpr absl::string_view kWhileHlo = R"(
+    HloModule m, is_scheduled=true
+    cond {
+      p = (f32[8], pred[]) parameter(0)
+      ROOT c = pred[] get-tuple-element(p), index=1
+    }
+    body {
+      p = (f32[8], pred[]) parameter(0)
+      x = f32[8] get-tuple-element(p), index=0
+      c = pred[] get-tuple-element(p), index=1
+      ags = (f32[8], f32[16]) all-gather-start(x), replica_groups={{0,1}},
+        dimensions={0}
+      agd = f32[16] all-gather-done(ags)
+      s = f32[8] slice(agd), slice={[0:8]}
+      ROOT t = (f32[8], pred[]) tuple(s, c)
+    }
+    ENTRY main {
+      p0 = f32[8] parameter(0)
+      p1 = pred[] parameter(1)
+      ags0 = (f32[8], f32[16]) all-gather-start(p0), replica_groups={{0,1}},
+        dimensions={0}
+      agd0 = f32[16] all-gather-done(ags0)
+      s0 = f32[8] slice(agd0), slice={[0:8]}
+      init = (f32[8], pred[]) tuple(s0, p1)
+      ROOT w = (f32[8], pred[]) while(init), condition=cond, body=body
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto while_mod, ParseHloText(kWhileHlo));
+  SchedulerConfig bu_cfg = GetDefaultSchedConfig();
+  bu_cfg.resource_serializing = true;
+  AliasInfo alias_info;
+  auto bu_ctx = std::make_shared<const SchedulingContext>(
+      while_mod.get(), std::make_unique<ApproximateLatencyEstimator>(),
+      std::make_unique<CustomSerialResourceAsyncTracker>(bu_cfg), &alias_info);
+  DefaultSchedulerCore bu_core(bu_ctx, bu_cfg);
+  ASSERT_OK(bu_core.InitializeScheduler(while_mod.get()));
+  ASSERT_OK(
+      bu_core.ScheduleComputation(while_mod->GetComputationWithName("body")));
+  ASSERT_OK_AND_ASSIGN(
+      std::shared_ptr<SchedulerCore::SchedulingState> bu_state_base,
+      bu_core.MakeSchedulingState(while_mod->entry_computation()));
+  ASSERT_OK(bu_core.ScheduleComputation(while_mod->entry_computation(),
+                                        bu_state_base));
+  auto* bu_state =
+      static_cast<DefaultSchedulerCore::SchedulingState*>(bu_state_base.get());
+  EXPECT_TRUE(bu_state->resource_occupiers_in_flight.empty());
+
+  // 2. Top-down scheduling clears occupiers after each async-start/done pair,
+  // and a loop-carried async-done in a pipelined while_body does not erase the
+  // next iteration's in-flight async-start.
+  constexpr absl::string_view kPipelinedHlo = R"(
+    HloModule m, is_scheduled=true
+    cond {
+      p = (f32[8], (f32[8], f32[16]), pred[]) parameter(0)
+      ROOT c = pred[] get-tuple-element(p), index=2
+    }
+    body {
+      p = (f32[8], (f32[8], f32[16]), pred[]) parameter(0)
+      x = f32[8] get-tuple-element(p), index=0
+      prev_ags = (f32[8], f32[16]) get-tuple-element(p), index=1
+      c = pred[] get-tuple-element(p), index=2
+      next_ags = (f32[8], f32[16]) all-gather-start(x), replica_groups={{0,1}},
+        dimensions={0}
+      prev_agd = f32[16] all-gather-done(prev_ags)
+      s = f32[8] slice(prev_agd), slice={[0:8]}
+      ROOT t = (f32[8], (f32[8], f32[16]), pred[]) tuple(s, next_ags, c)
+    }
+    ENTRY main {
+      p0 = f32[8] parameter(0)
+      p1 = pred[] parameter(1)
+      ags0 = (f32[8], f32[16]) all-gather-start(p0), replica_groups={{0,1}},
+        dimensions={0}
+      agd0 = f32[16] all-gather-done(ags0)
+      s0 = f32[8] slice(agd0), slice={[0:8]}
+      prol = (f32[8], f32[16]) all-gather-start(s0), replica_groups={{0,1}},
+        dimensions={0}
+      init = (f32[8], (f32[8], f32[16]), pred[]) tuple(s0, prol, p1)
+      w = (f32[8], (f32[8], f32[16]), pred[]) while(init), condition=cond,
+        body=body
+      epil_ctx = (f32[8], f32[16]) get-tuple-element(w), index=1
+      ROOT epil = f32[16] all-gather-done(epil_ctx)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto td_mod, ParseHloText(kPipelinedHlo));
+  SchedulerConfig td_cfg = GetDefaultSchedConfig();
+  td_cfg.top_down_scheduling = true;
+  auto td_ctx = std::make_shared<const SchedulingContext>(
+      td_mod.get(), std::make_unique<ApproximateLatencyEstimator>(),
+      std::make_unique<AsyncTracker>(td_cfg), &alias_info);
+  DefaultSchedulerCore td_core(td_ctx, td_cfg);
+  ASSERT_OK(td_core.InitializeScheduler(td_mod.get()));
+
+  HloComputation* body = td_mod->GetComputationWithName("body");
+  // Force next_ags before prev_agd so prev_agd runs while next_ags is live.
+  HloInstruction* next_ags = body->GetInstructionWithName("next_ags");
+  HloInstruction* prev_agd = body->GetInstructionWithName("prev_agd");
+  ASSERT_OK(next_ags->AddControlDependencyTo(prev_agd));
+  // Keep body's initial sequence consistent with the control edge.
+  td_mod->schedule().set_sequence(body, body->MakeInstructionPostOrder());
+  ASSERT_OK_AND_ASSIGN(
+      std::shared_ptr<SchedulerCore::SchedulingState> body_base,
+      td_core.MakeSchedulingState(body));
+  ASSERT_OK(td_core.ScheduleComputation(body, body_base));
+  auto* body_state =
+      static_cast<DefaultSchedulerCore::SchedulingState*>(body_base.get());
+  const int64_t ag_res = ResourceTypeToIndex(ResourceType::kAllGather);
+  ASSERT_TRUE(body_state->resource_occupiers_in_flight.contains(ag_res));
+  EXPECT_TRUE(
+      body_state->resource_occupiers_in_flight.at(ag_res).contains(next_ags));
+
+  // Verify a self-contained top-down async pair leaves zero occupiers in
+  // flight.
+  constexpr absl::string_view kTopDownPair = R"(
+    HloModule m, is_scheduled=true
+    ENTRY main {
+      p0 = f32[8] parameter(0)
+      ags0 = (f32[8], f32[16]) all-gather-start(p0), replica_groups={{0,1}},
+        dimensions={0}
+      agd0 = f32[16] all-gather-done(ags0)
+      ags1 = (f32[16], f32[32]) all-gather-start(agd0), replica_groups={{0,1}},
+        dimensions={0}
+      ROOT agd1 = f32[32] all-gather-done(ags1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto pair_mod, ParseHloText(kTopDownPair));
+  auto pair_ctx = std::make_shared<const SchedulingContext>(
+      pair_mod.get(), std::make_unique<ApproximateLatencyEstimator>(),
+      std::make_unique<AsyncTracker>(td_cfg), &alias_info);
+  DefaultSchedulerCore pair_core(pair_ctx, td_cfg);
+  ASSERT_OK(pair_core.InitializeScheduler(pair_mod.get()));
+  ASSERT_OK_AND_ASSIGN(
+      std::shared_ptr<SchedulerCore::SchedulingState> pair_base,
+      pair_core.MakeSchedulingState(pair_mod->entry_computation()));
+  ASSERT_OK(
+      pair_core.ScheduleComputation(pair_mod->entry_computation(), pair_base));
+  auto* pair_state =
+      static_cast<DefaultSchedulerCore::SchedulingState*>(pair_base.get());
+  EXPECT_TRUE(pair_state->resource_occupiers_in_flight.empty());
+}
+
+TEST_F(LatencyHidingSchedulerTest,
+       AnnotationTrackerHandlesNoOpCompositeInt64AndMalformedIds) {
+  constexpr absl::string_view kAnnotatedHlo = R"(
+    HloModule m, is_scheduled=true
+    ENTRY main {
+      p = f32[8] parameter(0)
+      n0 = f32[8] negate(p), frontend_attributes={_scheduling_group_id="noop"}
+      n1 = f32[8] negate(n0), frontend_attributes={_scheduling_group_id=""}
+      n2 = f32[8] negate(n1), frontend_attributes={_scheduling_group_id=":-1"}
+      n3 = f32[8] negate(n2),
+        frontend_attributes={_scheduling_group_id="4294967296"}
+      n4 = f32[8] negate(n3),
+        frontend_attributes={_scheduling_group_id="4294967296:-1"}
+      n5 = f32[8] negate(n4), frontend_attributes={_scheduling_group_id="-1"}
+      n6 = f32[8] negate(n5),
+        frontend_attributes={_scheduling_group_id="123:abc"}
+      n7 = f32[8] negate(n6),
+        frontend_attributes={_scheduling_group_id="123:1:2"}
+      ROOT n8 = f32[8] negate(n7),
+        frontend_attributes={_scheduling_group_id="0:5"}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kAnnotatedHlo));
+  HloComputation* entry = module->entry_computation();
+  EXPECT_EQ(entry->GetInstructionWithName("n0")->get_frontend_attribute(
+                kXlaSchedulingGroupIdAttr),
+            kXlaNoOpSchedulingGroup);
+  AnnotationTracker tracker(module.get());
+  EXPECT_EQ(tracker.GetAnnotation(entry->GetInstructionWithName("n0")),
+            std::nullopt);
+  EXPECT_EQ(tracker.GetAnnotation(entry->GetInstructionWithName("n1")),
+            std::nullopt);
+  EXPECT_EQ(tracker.GetAnnotation(entry->GetInstructionWithName("n2")),
+            std::nullopt);
+  EXPECT_EQ(tracker.GetAnnotation(entry->GetInstructionWithName("n3")),
+            4294967296LL);
+  EXPECT_EQ(tracker.GetAnnotation(entry->GetInstructionWithName("n4")),
+            4294967296LL);
+  EXPECT_EQ(tracker.GetAnnotation(entry->GetInstructionWithName("n5")),
+            std::nullopt);
+  EXPECT_EQ(tracker.GetAnnotation(entry->GetInstructionWithName("n6")),
+            std::nullopt);
+  EXPECT_EQ(tracker.GetAnnotation(entry->GetInstructionWithName("n7")),
+            std::nullopt);
+  EXPECT_EQ(tracker.GetAnnotation(entry->GetInstructionWithName("n8")), 0);
+  EXPECT_EQ(tracker.GetInstructions(entry, 4294967296LL).size(), 2);
+
+  // Schedule a module containing valid "noop", "", ":-1", and 64-bit group IDs
+  // directly in both bottom-up and top-down modes.
+  constexpr absl::string_view kValidMixed = R"(
+    HloModule m, is_scheduled=true
+    ENTRY main {
+      p = f32[8] parameter(0)
+      n0 = f32[8] negate(p), frontend_attributes={_scheduling_group_id="noop"}
+      n1 = f32[8] negate(n0), frontend_attributes={_scheduling_group_id=""}
+      n2 = f32[8] negate(n1), frontend_attributes={_scheduling_group_id=":-1"}
+      n3 = f32[8] negate(n2),
+        frontend_attributes={_scheduling_group_id="4294967296:-1"}
+      ROOT n4 = f32[8] negate(n3),
+        frontend_attributes={_scheduling_group_id="4294967296:-1"}
+    }
+  )";
+  for (bool top_down : {false, true}) {
+    ASSERT_OK_AND_ASSIGN(auto valid_mod, ParseHloText(kValidMixed));
+    SchedulerConfig cfg = GetDefaultSchedConfig();
+    cfg.top_down_scheduling = top_down;
+    AliasInfo alias_info;
+    auto ctx = std::make_shared<const SchedulingContext>(
+        valid_mod.get(), std::make_unique<ApproximateLatencyEstimator>(),
+        std::make_unique<AsyncTracker>(cfg), &alias_info);
+    auto core = std::make_unique<DefaultSchedulerCore>(ctx, cfg);
+    EXPECT_OK(
+        LatencyHidingScheduler(ctx, std::move(core)).Run(valid_mod.get()));
+  }
+}
+
+TEST_F(LatencyHidingSchedulerTest,
+       KeepOriginalSequenceOrderTopDownSyncBoundaryAndLoopCrossing) {
+  // 1. OverlappingCPs under top-down scheduling fails at limit=1 and preserves
+  // ascending original sequence order at limit=2.
+  constexpr absl::string_view kOverlappingCps = R"(
+    HloModule module, is_scheduled=true
+    ENTRY entry {
+      p0 = f32[16,64,256]{2,1,0} parameter(0)
+      p1 = f32[128,2048,2048]{2,1,0} parameter(1)
+      p2 = f32[512,2048,2048]{2,1,0} parameter(2)
+      cp1s = (f32[512,2048,2048]{2,1,0}, f32[512,2048,2048]{2,1,0}, u32[], u32[])
+        collective-permute-start(p2), source_target_pairs={{1,0},{0,3},{3,2}},
+        frontend_attributes={_scheduling_group_id="0",
+          keep_original_sequence_order_in_group="true"}
+      cp2s = (f32[128,2048,2048]{2,1,0}, f32[128,2048,2048]{2,1,0}, u32[], u32[])
+        collective-permute-start(p1), source_target_pairs={{1,0},{0,3},{3,2}},
+        frontend_attributes={_scheduling_group_id="0",
+          keep_original_sequence_order_in_group="true"}
+      c0 = f32[16,256,256]{2,1,0} convolution(p0, p0),
+        window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb,
+        frontend_attributes={_scheduling_group_id="0",
+          keep_original_sequence_order_in_group="true"}
+      cp1d = f32[512,2048,2048]{2,1,0} collective-permute-done(cp1s),
+        frontend_attributes={_scheduling_group_id="0",
+          keep_original_sequence_order_in_group="true"}
+      cp2d = f32[128,2048,2048]{2,1,0} collective-permute-done(cp2s),
+        frontend_attributes={_scheduling_group_id="0",
+          keep_original_sequence_order_in_group="true"}
+      ROOT t = (f32[128,2048,2048]{2,1,0}, f32[512,2048,2048]{2,1,0})
+        tuple(cp2d, cp1d)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto td_cp, ParseHloText(kOverlappingCps));
+  SchedulerConfig td_cfg = GetDefaultSchedConfig();
+  td_cfg.top_down_scheduling = true;
+  td_cfg.aggressive_scheduling_policies = true;
+  td_cfg.collective_permute_overlap_limit = 1;
+  EXPECT_THAT(RunScheduler(
+                  td_cp.get(), td_cfg, std::make_unique<TestLatencyEstimator>(),
+                  /*async_tracker=*/nullptr, /*legalizer_config=*/nullptr,
+                  /*skip_async_collective_creator=*/true),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("exceeds the overlap limits")));
+  td_cfg.collective_permute_overlap_limit = 2;
+  ASSERT_OK(RunScheduler(td_cp.get(), td_cfg,
+                         std::make_unique<TestLatencyEstimator>(),
+                         /*async_tracker=*/nullptr,
+                         /*legalizer_config=*/nullptr,
+                         /*skip_async_collective_creator=*/true));
+  const auto& td_seq =
+      td_cp->schedule().sequence(td_cp->entry_computation()).instructions();
+  EXPECT_LT(GetIndex(td_seq, "cp1s"), GetIndex(td_seq, "cp2s"));
+  EXPECT_LT(GetIndex(td_seq, "cp2s"), GetIndex(td_seq, "c0"));
+  EXPECT_LT(GetIndex(td_seq, "c0"), GetIndex(td_seq, "cp1d"));
+  EXPECT_LT(GetIndex(td_seq, "cp1d"), GetIndex(td_seq, "cp2d"));
+
+  // 2. Two sequential synchronous all-gathers require 1 resource, not 2, and
+  // boundary release-then-sync-then-occupy fits at limit=1 in both directions.
+  constexpr absl::string_view kSequentialSync = R"(
+    HloModule m, is_scheduled=true
+    ENTRY entry {
+      p0 = f32[8] parameter(0)
+      p1 = f32[8] parameter(1)
+      ag0 = f32[16] all-gather(p0), replica_groups={{0,1}}, dimensions={0},
+        frontend_attributes={_scheduling_group_id="0",
+          keep_original_sequence_order_in_group="true"}
+      ag1 = f32[16] all-gather(p1), replica_groups={{0,1}}, dimensions={0},
+        frontend_attributes={_scheduling_group_id="0",
+          keep_original_sequence_order_in_group="true"}
+      ROOT t = (f32[16], f32[16]) tuple(ag0, ag1)
+    }
+  )";
+  constexpr absl::string_view kBoundarySpan = R"(
+    HloModule m, is_scheduled=true
+    ENTRY entry {
+      p0 = f32[8] parameter(0)
+      p1 = f32[8] parameter(1)
+      p2 = f32[8] parameter(2)
+      cp0s = (f32[8], f32[8], u32[], u32[]) collective-permute-start(p0),
+        source_target_pairs={{0,1},{1,0}}
+      cp0d = f32[8] collective-permute-done(cp0s),
+        frontend_attributes={_scheduling_group_id="0",
+          keep_original_sequence_order_in_group="true"}
+      sync_cp = f32[8] collective-permute(p1),
+        source_target_pairs={{0,1},{1,0}},
+        frontend_attributes={_scheduling_group_id="0",
+          keep_original_sequence_order_in_group="true"}
+      cp1s = (f32[8], f32[8], u32[], u32[]) collective-permute-start(p2),
+        source_target_pairs={{0,1},{1,0}},
+        frontend_attributes={_scheduling_group_id="0",
+          keep_original_sequence_order_in_group="true"}
+      cp1d = f32[8] collective-permute-done(cp1s)
+      ROOT t = (f32[8], f32[8], f32[8]) tuple(cp0d, sync_cp, cp1d)
+    }
+  )";
+  // 3. Loop-crossing async-start with no in-module done does not CHECK-abort.
+  constexpr absl::string_view kDanglingStart = R"(
+    HloModule m, is_scheduled=true
+    ENTRY entry {
+      p0 = f32[8] parameter(0)
+      ags = (f32[8], f32[16]) all-gather-start(p0), replica_groups={{0,1}},
+        dimensions={0},
+        frontend_attributes={_scheduling_group_id="0",
+          keep_original_sequence_order_in_group="true"}
+      neg = f32[8] negate(p0),
+        frontend_attributes={_scheduling_group_id="0",
+          keep_original_sequence_order_in_group="true"}
+      ROOT t = ((f32[8], f32[16]), f32[8]) tuple(ags, neg)
+    }
+  )";
+  for (bool top_down : {false, true}) {
+    ASSERT_OK_AND_ASSIGN(auto sync_mod, ParseHloText(kSequentialSync));
+    SchedulerConfig cfg = GetDefaultSchedConfig();
+    cfg.top_down_scheduling = top_down;
+    cfg.track_sync_op_resource_usage = true;
+    cfg.all_gather_overlap_limit = 1;
+    cfg.collective_permute_overlap_limit = 1;
+    EXPECT_OK(RunScheduler(sync_mod.get(), cfg,
+                           std::make_unique<ApproximateLatencyEstimator>(),
+                           /*async_tracker=*/nullptr,
+                           /*legalizer_config=*/nullptr,
+                           /*skip_async_collective_creator=*/true));
+
+    ASSERT_OK_AND_ASSIGN(auto span_mod, ParseHloText(kBoundarySpan));
+    AliasInfo alias_info;
+    auto span_ctx = std::make_shared<const SchedulingContext>(
+        span_mod.get(), std::make_unique<ApproximateLatencyEstimator>(),
+        std::make_unique<AsyncTracker>(cfg), &alias_info);
+    auto span_core = std::make_unique<DefaultSchedulerCore>(span_ctx, cfg);
+    EXPECT_OK(LatencyHidingScheduler(span_ctx, std::move(span_core))
+                  .Run(span_mod.get()));
+
+    ASSERT_OK_AND_ASSIGN(auto dangling_mod, ParseHloText(kDanglingStart));
+    auto ctx = std::make_shared<const SchedulingContext>(
+        dangling_mod.get(), std::make_unique<ApproximateLatencyEstimator>(),
+        std::make_unique<AsyncTracker>(cfg), &alias_info);
+    auto core = std::make_unique<DefaultSchedulerCore>(ctx, cfg);
+    EXPECT_OK(
+        LatencyHidingScheduler(ctx, std::move(core)).Run(dangling_mod.get()));
+  }
+}
+
+TEST_F(
+    LatencyHidingSchedulerTest,
+    AnnotationResourceAccountingCoversLegacyTopDownLoopCrossingAndUnbounded) {
+  auto run_direct = [](HloModule* module, const SchedulerConfig& cfg,
+                       std::unique_ptr<AsyncTracker> tracker = nullptr) {
+    AliasInfo alias_info;
+    if (tracker == nullptr) {
+      tracker = std::make_unique<AsyncTracker>(cfg);
+    }
+    auto ctx = std::make_shared<const SchedulingContext>(
+        module, std::make_unique<ApproximateLatencyEstimator>(),
+        std::move(tracker), &alias_info);
+    auto core = std::make_unique<DefaultSchedulerCore>(ctx, cfg);
+    return LatencyHidingScheduler(ctx, std::move(core)).Run(module);
+  };
+
+  // 1. Two annotated legacy all-gather-dones with external starts need 2
+  // resources in bottom-up mode and deannotate cleanly when enabled.
+  constexpr absl::string_view kLegacyDones = R"(
+    HloModule m, is_scheduled=true
+    ENTRY entry {
+      p0 = f32[8] parameter(0)
+      ags0 = (f32[8], f32[16]) all-gather-start(p0), replica_groups={{0,1}},
+        dimensions={0}
+      ags1 = (f32[8], f32[16]) all-gather-start(p0), replica_groups={{0,1}},
+        dimensions={0}
+      agd0 = f32[16] all-gather-done(ags0),
+        frontend_attributes={_scheduling_group_id="0"}
+      agd1 = f32[16] all-gather-done(ags1),
+        frontend_attributes={_scheduling_group_id="0"}
+      ROOT t = (f32[16], f32[16]) tuple(agd0, agd1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto bu_mod, ParseHloText(kLegacyDones));
+  SchedulerConfig bu_cfg = GetDefaultSchedConfig();
+  bu_cfg.all_gather_overlap_limit = 1;
+  EXPECT_THAT(run_direct(bu_mod.get(), bu_cfg),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("exceeds the overlap limits")));
+  ASSERT_OK_AND_ASSIGN(auto bu_deann, ParseHloText(kLegacyDones));
+  bu_cfg.deannotate_group_if_blocked = true;
+  EXPECT_OK(run_direct(bu_deann.get(), bu_cfg));
+
+  // 2. Two annotated async-starts with external dones need 2 resources in
+  // top-down mode, and custom resources absent from max_concurrent_resource do
+  // not abort.
+  constexpr absl::string_view kTopDownStarts = R"(
+    HloModule m, is_scheduled=true
+    ENTRY entry {
+      p0 = f32[8] parameter(0)
+      n0 = f32[8] negate(p0), frontend_attributes={_scheduling_group_id="0"}
+      ags0 = (f32[8], f32[16]) all-gather-start(p0), replica_groups={{0,1}},
+        dimensions={0}, frontend_attributes={_scheduling_group_id="0"}
+      ags1 = (f32[8], f32[16]) all-gather-start(p0), replica_groups={{0,1}},
+        dimensions={0}, frontend_attributes={_scheduling_group_id="0"}
+      agd0 = f32[16] all-gather-done(ags0)
+      agd1 = f32[16] all-gather-done(ags1)
+      ROOT t = (f32[8], f32[16], f32[16]) tuple(n0, agd0, agd1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto td_mod, ParseHloText(kTopDownStarts));
+  SchedulerConfig td_cfg = GetDefaultSchedConfig();
+  td_cfg.top_down_scheduling = true;
+  td_cfg.all_gather_overlap_limit = 1;
+  EXPECT_THAT(run_direct(td_mod.get(), td_cfg,
+                         std::make_unique<CustomSerialResourceAsyncTracker>(
+                             td_cfg, /*add_unbounded=*/true)),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("exceeds the overlap limits")));
+  td_cfg.all_gather_overlap_limit = 2;
+  ASSERT_OK_AND_ASSIGN(auto td_ok, ParseHloText(kTopDownStarts));
+  EXPECT_OK(run_direct(td_ok.get(), td_cfg,
+                       std::make_unique<CustomSerialResourceAsyncTracker>(
+                           td_cfg, /*add_unbounded=*/true)));
+
+  // 3. Loop-crossing kAsyncDone whose start lives outside while_body schedules
+  // cleanly in both directions and does not move its group annotation onto the
+  // non-async pipelined get-tuple-element operand in top-down mode.
+  constexpr absl::string_view kLoopCrossingDone = R"(
+    HloModule m, is_scheduled=true
+    async_comp {
+      p = f32[8] parameter(0)
+      ROOT r = f32[16] all-gather(p), replica_groups={{0,1}}, dimensions={0}
+    }
+    while_cond {
+      state = (s32[], ((f32[8]), f32[16], s32[])) parameter(0)
+      iter = s32[] get-tuple-element(state), index=0
+      limit = s32[] constant(4)
+      ROOT cmp = pred[] compare(iter, limit), direction=LT
+    }
+    while_body {
+      state = (s32[], ((f32[8]), f32[16], s32[])) parameter(0)
+      iter = s32[] get-tuple-element(state), index=0
+      c1 = s32[] constant(1)
+      next_iter = s32[] add(iter, c1),
+        frontend_attributes={_scheduling_group_id="0"}
+      pipelined_ctx = ((f32[8]), f32[16], s32[]) get-tuple-element(state),
+        index=1
+      done = f32[16] async-done(pipelined_ctx), calls=async_comp,
+        frontend_attributes={_scheduling_group_id="0"}
+      sl = f32[8] slice(done), slice={[0:8]}
+      next_start = ((f32[8]), f32[16], s32[]) async-start(sl), calls=async_comp
+      ROOT next_state = (s32[], ((f32[8]), f32[16], s32[])) tuple(next_iter,
+        next_start)
+    }
+    ENTRY entry {
+      p0 = f32[8] parameter(0)
+      c0 = s32[] constant(0)
+      prologue_start = ((f32[8]), f32[16], s32[]) async-start(p0),
+        calls=async_comp
+      init_state = (s32[], ((f32[8]), f32[16], s32[])) tuple(c0, prologue_start)
+      loop = (s32[], ((f32[8]), f32[16], s32[])) while(init_state),
+        condition=while_cond, body=while_body
+      epilogue_ctx = ((f32[8]), f32[16], s32[]) get-tuple-element(loop), index=1
+      ROOT epilogue_done = f32[16] async-done(epilogue_ctx), calls=async_comp
+    }
+  )";
+  for (bool top_down : {false, true}) {
+    ASSERT_OK_AND_ASSIGN(auto cross_mod, ParseHloText(kLoopCrossingDone));
+    SchedulerConfig cfg = GetDefaultSchedConfig();
+    cfg.top_down_scheduling = top_down;
+    cfg.all_gather_overlap_limit = 2;
+    EXPECT_OK(run_direct(cross_mod.get(), cfg));
+    HloComputation* while_body =
+        cross_mod->GetComputationWithName("while_body");
+    EXPECT_EQ(while_body->GetInstructionWithName("pipelined_ctx")
+                  ->get_frontend_attribute(kXlaSchedulingGroupIdAttr),
+              std::nullopt);
+    EXPECT_EQ(
+        while_body->GetInstructionWithName("done")->get_frontend_attribute(
+            kXlaSchedulingGroupIdAttr),
+        "0");
+  }
 }
 
 // Check that we precisely calculate the resource usage for the
