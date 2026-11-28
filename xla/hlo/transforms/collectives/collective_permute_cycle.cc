@@ -17,10 +17,12 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <utility>
 #include <vector>
 
-#include "absl/container/flat_hash_set.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
 #include "xla/service/source_target_pairs.h"
 
 namespace xla {
@@ -28,7 +30,7 @@ namespace collective_permute_cycle {
 
 bool IsForwardCycle(const SourceTargetPairs& backedge,
                     const SourceTargetPairs& others) {
-  if (backedge.size() != 1) {
+  if (backedge.size() != 1 || others.size() == 0) {
     return false;
   }
   const size_t num_pairs = others.size() + 1;
@@ -46,7 +48,7 @@ bool IsForwardCycle(const SourceTargetPairs& backedge,
 
 bool IsBackwardCycle(const SourceTargetPairs& backedge,
                      const SourceTargetPairs& others) {
-  if (backedge.size() != 1) {
+  if (backedge.size() != 1 || others.size() == 0) {
     return false;
   }
   const size_t num_pairs = others.size() + 1;
@@ -65,6 +67,9 @@ bool IsBackwardCycle(const SourceTargetPairs& backedge,
 std::pair<SourceTargetPairs, SourceTargetPairs> SplitEdges(
     const SourceTargetPairs& pairs, CycleType cycle_type) {
   SourceTargetPairs back, fwd;
+  if (pairs.size() == 0 || cycle_type == CycleType::kNone) {
+    return {back, fwd};
+  }
   size_t back_pair_index =
       cycle_type == CycleType::kBackward ? 0 : pairs.size() - 1;
   for (size_t i = 0; i < pairs.size(); ++i) {
@@ -80,11 +85,14 @@ std::pair<SourceTargetPairs, SourceTargetPairs> SplitEdges(
 // cannonical forward: {{0,1},{1,2},{2,3},{3,0}}
 bool IsForwardCycle(const SourceTargetPairs& pairs) {
   size_t size = pairs.size();
-  if (size <= 1) return false;
-  if (pairs[size - 1].target != pairs[0].source) {
+  if (size <= 1 || pairs[0].source < 0 ||
+      pairs[size - 1].target != pairs[0].source) {
     return false;
   }
   for (size_t i = 0; i < size - 1; ++i) {
+    if (pairs[i].source == std::numeric_limits<int64_t>::max()) {
+      return false;
+    }
     int64_t expected_next = pairs[i].source + 1;
     if (pairs[i].target != expected_next ||
         pairs[i + 1].source != expected_next) {
@@ -97,11 +105,13 @@ bool IsForwardCycle(const SourceTargetPairs& pairs) {
 // cannonical backward: {{0,3},{1,0},{2,1},{3,2}}
 bool IsBackwardCycle(const SourceTargetPairs& pairs) {
   size_t size = pairs.size();
-  if (size <= 1) return false;
-  if (pairs[0].target != pairs[size - 1].source) {
+  if (size <= 1 || pairs[0].target != pairs[size - 1].source) {
     return false;
   }
   for (size_t i = size - 1; i > 0; --i) {
+    if (pairs[i].source <= 0) {
+      return false;
+    }
     int64_t expected_next = pairs[i].source - 1;
     if (pairs[i].target != expected_next ||
         pairs[i - 1].source != expected_next) {
@@ -126,32 +136,40 @@ CycleType GetCycleType(const SourceTargetPairs& pairs) {
 }
 
 bool HasCycles(const SourceTargetPairs& pairs) {
-  // Build source-target map for quick lookup.
-  std::vector<int64_t> source_target_map(pairs.size(), -1);
+  absl::flat_hash_map<int64_t, absl::InlinedVector<int64_t, 1>> adj;
+  adj.reserve(pairs.size());
   for (int64_t i = 0; i < pairs.size(); ++i) {
-    int64_t source = pairs[i].source;
-    int64_t target = pairs[i].target;
-    while (source_target_map.size() <= source) source_target_map.push_back(-1);
-    source_target_map[source] = target;
-  }
-
-  // Cache indices known to be acyclic.
-  absl::flat_hash_set<int64_t> acyclic;
-
-  // Search for cycles.
-  int64_t n = source_target_map.size();
-  for (int64_t i = 0; i < n; ++i) {
-    absl::flat_hash_set<int64_t> path;
-    int64_t current = i;
-    while (current != -1 && !acyclic.contains(current)) {
-      if (path.contains(current)) return true;
-      path.insert(current);
-      current = current < n ? source_target_map[current] : -1;
+    const auto [source, target] = pairs[i];
+    if (source == target && source >= 0) {
+      return true;
     }
-    acyclic.insert(path.begin(), path.end());
+    if (source >= 0 && target >= 0) {
+      adj[source].push_back(target);
+    }
   }
-
-  // No cycles found.
+  absl::flat_hash_map<int64_t, uint8_t> color;
+  color.reserve(adj.size());
+  std::vector<std::pair<int64_t, size_t>> stack;
+  for (int64_t p = 0; p < pairs.size(); ++p) {
+    const int64_t start = pairs[p].source;
+    if (start < 0 || pairs[p].target < 0 ||
+        !color.try_emplace(start, uint8_t{1}).second) {
+      continue;
+    }
+    for (stack.push_back({start, 0}); !stack.empty();) {
+      auto& [u, idx] = stack.back();
+      auto it = adj.find(u);
+      if (it == adj.end() || idx == it->second.size()) {
+        color[u] = 2;
+        stack.pop_back();
+      } else if (uint8_t& vc = color[it->second[idx++]]; vc == 1) {
+        return true;
+      } else if (vc == 0) {
+        vc = 1;
+        stack.push_back({it->second[idx - 1], 0});
+      }
+    }
+  }
   return false;
 }
 

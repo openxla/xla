@@ -768,7 +768,8 @@ cc_library(
     hdrs = ["collective_permute_cycle.h"],
     deps = [
         "//xla/service:source_target_pairs",
-        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:inlined_vector",
     ],
 )
 
@@ -792,7 +793,9 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/hlo/analysis:hlo_reachability",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:named_sharding",
         "//xla/hlo/pass:hlo_pass",
         "//xla/service:call_graph",
         "//xla/service:collective_conflict_analysis",
@@ -807,6 +810,7 @@ cc_library(
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -818,10 +822,16 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:mesh_and_axis",
+        "//xla/hlo/ir:named_sharding",
+        "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:collective_conflict_analysis",
         "//xla/service:collective_ops_utils",
+        "//xla/service:hlo_verifier",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",

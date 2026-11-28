@@ -31,11 +31,15 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/transforms/collectives/collective_permute_cycle.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/collective_conflict_analysis.h"
@@ -62,8 +66,9 @@ static bool ShouldDecompose(
   const Shape& result_shape = collective_permute.shape();
 
   // Skip the transformation if result is not an array, such as containing
-  // context data.
-  if (!result_shape.IsArray()) {
+  // context data, or if the permute is unbounded-dynamic or in-place.
+  if (!result_shape.IsArray() || result_shape.is_unbounded_dynamic() ||
+      collective_permute.operand_count() != 1 || collective_permute.inplace()) {
     return false;
   }
 
@@ -89,7 +94,9 @@ static bool ShouldDecompose(
     }
   }
   auto callers = call_graph.GetComputationCallers(collective_permute.parent());
-  if (callers.size() != 1 || callers.front()->opcode() != HloOpcode::kWhile) {
+  if (callers.size() != 1 || callers.front()->opcode() != HloOpcode::kWhile ||
+      callers.front()->while_body() != collective_permute.parent() ||
+      callers.front()->while_condition() == collective_permute.parent()) {
     return false;
   }
 
@@ -114,8 +121,19 @@ struct DecomposedCp {
   HloInstruction* recv;
   HloInstruction* send_done;
   HloInstruction* recv_done;
-  std::vector<std::pair<int64_t, int64_t>> source_target_pairs;
 };
+
+HloSharding MakeTokenSharding(const HloSharding& s) {
+  absl::Span<const OpMetadata> md = s.UseNamedShardingLeaf()
+                                        ? s.named_sharding().metadata()
+                                        : absl::MakeConstSpan(s.metadata());
+  return s.IsManual() ? HloSharding::Manual(md)
+         : s.IsSingleDevice()
+             ? HloSharding::SingleDevice(s.GetUniqueDevice(), md)
+         : s.IsUnknown()   ? HloSharding::Unknown(md)
+         : s.IsUnreduced() ? HloSharding::Unreduced(md)
+                           : HloSharding::Replicate(md);
+}
 
 }  // namespace
 
@@ -143,25 +161,23 @@ static absl::StatusOr<DecomposedCp> DecomposeCollectivePermute(
   absl::string_view cp_name = cp->name();
   std::optional<int64_t> channel_id = cp->channel_id();
   HloInstruction* data = cp->mutable_operand(0);
-  const Shape& shape = data->shape();
-  const OpMetadata& metadata = cp->metadata();
+  const Shape recv_shape = cp->shape();
+  const OpMetadata metadata = cp->metadata();
   const xla::FrontendAttributes attributes = ExtractFrontendAttributes(*cp);
 
   HloInstruction* after_all = computation->AddInstruction(
       HloInstruction::CreateToken(), absl::StrCat(cp_name, "-after-all"));
   HloInstruction* recv = computation->AddInstruction(
-      HloInstruction::CreateRecv(shape, after_all, channel_id,
+      HloInstruction::CreateRecv(recv_shape, after_all, channel_id,
                                  /*is_host_transfer=*/false),
       absl::StrCat(cp_name, "-recv"));
   recv->set_frontend_attributes(attributes);
-  recv->set_metadata(metadata);
 
   HloInstruction* send = computation->AddInstruction(
       HloInstruction::CreateSend(data, after_all, channel_id,
                                  /*is_host_transfer=*/false),
       absl::StrCat(cp_name, "-send"));
   send->set_frontend_attributes(attributes);
-  send->set_metadata(metadata);
 
   HloInstruction* recv_done = computation->AddInstruction(
       HloInstruction::CreateRecvDone(recv, channel_id,
@@ -175,7 +191,33 @@ static absl::StatusOr<DecomposedCp> DecomposeCollectivePermute(
   HloInstruction* recv_data = computation->AddInstruction(
       HloInstruction::CreateGetTupleElement(recv_done, 0),
       absl::StrCat(cp_name, "-recv-data"));
-
+  for (HloInstruction* h :
+       {after_all, recv, send, recv_done, send_done, recv_data}) {
+    h->set_metadata(metadata);
+  }
+  if (cp->has_sharding()) {
+    const HloSharding& sh = cp->sharding();
+    HloSharding tok = MakeTokenSharding(sh);
+    after_all->set_sharding(tok);
+    send_done->set_sharding(tok);
+    recv_data->set_sharding(sh);
+    recv_done->set_sharding(HloSharding::Tuple(recv_done->shape(), {sh, tok}));
+    recv->set_sharding(HloSharding::Tuple(recv->shape(), {sh, tok, tok}));
+    send->set_sharding(HloSharding::Tuple(
+        send->shape(),
+        {data->has_sharding() ? data->sharding() : sh, tok, tok}));
+  }
+  for (HloInstruction* pred :
+       std::vector<HloInstruction*>(cp->control_predecessors().begin(),
+                                    cp->control_predecessors().end())) {
+    ABSL_RETURN_IF_ERROR(pred->AddControlDependencyTo(recv));
+  }
+  for (HloInstruction* succ : std::vector<HloInstruction*>(
+           cp->control_successors().begin(), cp->control_successors().end())) {
+    ABSL_RETURN_IF_ERROR(recv_done->AddControlDependencyTo(succ));
+    ABSL_RETURN_IF_ERROR(send_done->AddControlDependencyTo(succ));
+  }
+  ABSL_RETURN_IF_ERROR(cp->DropAllControlDeps());
   ABSL_RETURN_IF_ERROR(cp->ReplaceAllUsesWith(recv_data));
   ABSL_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(cp));
 
@@ -203,8 +245,7 @@ static absl::StatusOr<DecomposedCp> DecomposeCollectivePermute(
     recv->set_frontend_attribute(kSendRecvPipelineAttr, pipeline_decision);
     recv_done->set_frontend_attribute(kSendRecvPipelineAttr, pipeline_decision);
   }
-  return DecomposedCp{send, recv, send_done, recv_done,
-                      cp->source_target_pairs()};
+  return DecomposedCp{send, recv, send_done, recv_done};
 }
 
 // Checks whether the two collective-permutes for a forward cycle or a backward
@@ -277,18 +318,69 @@ static absl::Status EnforceOrderOfSendRecvChain(
   return absl::OkStatus();
 }
 
-static absl::Status EnforceOrderOfSendRecvChainRelativeToConflictingCollectives(
-    std::vector<DecomposedCp>& deco_post_order,
-    std::vector<HloInstruction*> conflicting_collectives) {
-  // Find last collective in send/recv chain.
-  if (deco_post_order.empty()) return absl::OkStatus();
-  HloInstruction* last_in_chain = deco_post_order.back().send_done;
-
-  // Add control dependencies from chain to all conflicting collectives.
-  for (HloInstruction* instr : conflicting_collectives) {
-    ABSL_RETURN_IF_ERROR(last_in_chain->AddControlDependencyTo(instr));
+static HloInstruction* GetCollectiveCompletion(HloInstruction* instr) {
+  if (auto* async = DynCast<HloAsyncInstruction>(instr)) {
+    while (async->async_chain_next() != nullptr &&
+           async->async_chain_next()->parent() == instr->parent()) {
+      async = async->async_chain_next();
+    }
+    return async;
   }
+  const HloOpcode op = instr->opcode();
+  const HloOpcode done_op =
+      op == HloOpcode::kAllReduceStart   ? HloOpcode::kAllReduceDone
+      : op == HloOpcode::kAllGatherStart ? HloOpcode::kAllGatherDone
+      : op == HloOpcode::kCollectivePermuteStart
+          ? HloOpcode::kCollectivePermuteDone
+      : op == HloOpcode::kSend ? HloOpcode::kSendDone
+      : op == HloOpcode::kRecv ? HloOpcode::kRecvDone
+                               : HloOpcode::kParameter;
+  HloInstruction* done = nullptr;
+  for (HloInstruction* u : instr->users()) {
+    if (done_op != HloOpcode::kParameter && u->opcode() == done_op &&
+        u->parent() == instr->parent()) {
+      if (done != nullptr && done != u) {
+        return instr;
+      }
+      done = u;
+    }
+  }
+  return done != nullptr ? done : instr;
+}
 
+static absl::Status EnforceOrderOfSendRecvChainRelativeToConflictingCollectives(
+    HloComputation* computation, const std::vector<DecomposedCp>& deco,
+    const std::vector<HloInstruction*>& conflicting_collectives) {
+  if (deco.empty() || conflicting_collectives.empty()) {
+    return absl::OkStatus();
+  }
+  auto reach = HloReachabilityMap::Build(computation);
+  auto add_edge = [&](HloInstruction* s, HloInstruction* d) -> absl::Status {
+    if (reach != nullptr && s != d && !reach->IsReachable(d, s)) {
+      ABSL_RETURN_IF_ERROR(s->AddControlDependencyTo(d));
+      reach->UpdateReachabilityThroughInstruction(d);
+    }
+    return absl::OkStatus();
+  };
+  for (HloInstruction* instr : conflicting_collectives) {
+    size_t k = 0;
+    while (reach != nullptr && k < deco.size() &&
+           !reach->IsReachable(instr, deco[k].send_done) &&
+           !reach->IsReachable(instr, deco[k].recv_done)) {
+      ++k;
+    }
+    if (k == deco.size() || reach == nullptr) {
+      ABSL_RETURN_IF_ERROR(add_edge(deco.back().send_done, instr));
+    } else {
+      HloInstruction* end = GetCollectiveCompletion(instr);
+      ABSL_RETURN_IF_ERROR(add_edge(
+          reach->IsReachable(deco[k].recv, end) ? instr : end, deco[k].recv));
+      for (size_t j = 0; j < k; ++j) {
+        ABSL_RETURN_IF_ERROR(add_edge(deco[j].send_done, instr));
+        ABSL_RETURN_IF_ERROR(add_edge(deco[j].recv_done, instr));
+      }
+    }
+  }
   return absl::OkStatus();
 }
 
@@ -441,7 +533,7 @@ absl::StatusOr<bool> CollectivePermuteDecomposer::RunImpl(
     ABSL_RETURN_IF_ERROR(EnforceOrderOfSendRecvChain(deco_post_order));
     ABSL_RETURN_IF_ERROR(
         EnforceOrderOfSendRecvChainRelativeToConflictingCollectives(
-            deco_post_order, conflicing_collectives));
+            computation, deco_post_order, conflicing_collectives));
 
     if (!cps_to_decompose.empty()) {
       changed = true;

@@ -177,10 +177,14 @@ cc_library(
     hdrs = ["collective_conflict_analysis.h"],
     deps = [
         ":collective_ops_utils",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:collective_op_group_mode",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
     ],
 )
 

@@ -18,12 +18,15 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
@@ -31,8 +34,14 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/mesh_and_axis.h"
+#include "xla/hlo/ir/named_sharding.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/service/collective_conflict_analysis.h"
 #include "xla/service/collective_ops_utils.h"
+#include "xla/service/hlo_verifier.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
@@ -1191,6 +1200,522 @@ TEST_F(DecomposerTest, OneSendRecvWithIndirectlyConflictingCollectives) {
   EXPECT_EQ(
       cp_cycle2->frontend_attributes().map().at(kCollectiveStreamAttrName),
       kCollectiveStreamP2P);
+}
+
+TEST_F(DecomposerTest,
+       OrdersUpstreamAndSandwichedConflictingCollectivesWithoutCycles) {
+  // Upstream conflicting all-reduce feeding cp (DISABLE) and sandwiched
+  // cp0 -> ar -> cp1: no HLO cycle, exact topological ordering.
+  constexpr absl::string_view kSandwiched = R"(
+  HloModule m
+  add {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT s = f32[] add(a, b)
+  }
+  cond {
+    p = (u32[], f32[64]) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    c = u32[] constant(2)
+    ROOT cmp = pred[] compare(i, c), direction=LT
+  }
+  body {
+    p = (u32[], f32[64]) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    x = f32[64] get-tuple-element(p), index=1
+    cp0 = f32[64] collective-permute(x), channel_id=1,
+      source_target_pairs={{0,1},{1,2}}
+    ar = f32[64] all-reduce(cp0), channel_id=2, use_global_device_ids=true,
+      replica_groups={{0,1,2,3}}, to_apply=add
+    cp1 = f32[64] collective-permute(ar), channel_id=3,
+      source_target_pairs={{1,2},{2,3}}
+    i1 = u32[] add(i, u32[] constant(1))
+    ROOT r = (u32[], f32[64]) tuple(i1, cp1)
+  }
+  ENTRY e {
+    z = f32[64] broadcast(f32[] constant(0)), dimensions={}
+    init = (u32[], f32[64]) tuple(u32[] constant(0), z)
+    ROOT w = (u32[], f32[64]) while(init), body=body, condition=cond
+  })";
+  ASSERT_OK_AND_ASSIGN(
+      auto m, RunAndCheckHloRewrite(
+                  kSandwiched,
+                  Pass(/*threshold_in_bytes=*/0,
+                       DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_DISABLE),
+                  true));
+  Decomposed d0 = FindComponents(m.get(), "cp0");
+  Decomposed d1 = FindComponents(m.get(), "cp1");
+  HloInstruction* ar = FindInstruction(m.get(), "ar");
+  ASSERT_NE(ar, nullptr);
+  EXPECT_THAT(ar->control_predecessors(),
+              ElementsAre(d0.send_done, d0.recv_done));
+  EXPECT_THAT(d1.recv->control_predecessors(), ElementsAre(d0.send, ar));
+
+  // Upstream conflicting all-reduce with control edge into cp under ENABLE.
+  constexpr absl::string_view kCtrlEnable = R"(
+  HloModule m
+  add {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT s = f32[] add(a, b)
+  }
+  cond {
+    p = (u32[], f32[64], f32[64]) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    ROOT cmp = pred[] compare(i, u32[] constant(2)), direction=LT
+  }
+  body {
+    p = (u32[], f32[64], f32[64]) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    x = f32[64] get-tuple-element(p), index=1
+    y = f32[64] get-tuple-element(p), index=2
+    ar = f32[64] all-reduce(y), channel_id=2, use_global_device_ids=true,
+      replica_groups={{0,1,2,3}}, to_apply=add
+    cp = f32[64] collective-permute(x), channel_id=1,
+      source_target_pairs={{0,1},{1,2}}, control-predecessors={ar}
+    ROOT r = (u32[], f32[64], f32[64]) tuple(
+      u32[] add(i, u32[] constant(1)), cp, ar)
+  }
+  ENTRY e {
+    z = f32[64] broadcast(f32[] constant(0)), dimensions={}
+    ROOT w = (u32[], f32[64], f32[64]) while(
+      (u32[], f32[64], f32[64]) tuple(u32[] constant(0), z, z)),
+      body=body, condition=cond
+  })";
+  ASSERT_OK_AND_ASSIGN(
+      auto me, RunAndCheckHloRewrite(
+                   kCtrlEnable,
+                   Pass(/*threshold_in_bytes=*/0,
+                        DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE),
+                   true));
+  HloInstruction* are = FindInstruction(me.get(), "ar");
+  Decomposed de = FindComponents(me.get(), "cp");
+  ASSERT_NE(are, nullptr);
+  EXPECT_TRUE(are->control_predecessors().empty());
+  EXPECT_THAT(de.recv->control_predecessors(), ElementsAre(are));
+  EXPECT_EQ(are->frontend_attributes().map().at(kCollectiveStreamAttrName),
+            kCollectiveStreamP2P);
+}
+
+TEST_F(DecomposerTest, RelaysControlPredecessorsAndSuccessorsAcrossDecompose) {
+  constexpr absl::string_view kHlo = R"(
+  HloModule m
+  cond {
+    p = (u32[], f32[64], f32[64]) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    ROOT cmp = pred[] compare(i, u32[] constant(2)), direction=LT
+  }
+  body {
+    p = (u32[], f32[64], f32[64]) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    x = f32[64] get-tuple-element(p), index=1
+    y = f32[64] get-tuple-element(p), index=2
+    t0 = token[] after-all()
+    cp0 = f32[64] collective-permute(x), channel_id=1,
+      source_target_pairs={{0,1}}, control-predecessors={t0}
+    cp1 = f32[64] collective-permute(y), channel_id=2,
+      source_target_pairs={{1,2}}, control-predecessors={cp0}
+    sink = f32[64] negate(y), control-predecessors={cp1}
+    ROOT r = (u32[], f32[64], f32[64]) tuple(
+      u32[] add(i, u32[] constant(1)), cp0, f32[64] add(cp1, sink))
+  }
+  ENTRY e {
+    z = f32[64] broadcast(f32[] constant(0)), dimensions={}
+    ROOT w = (u32[], f32[64], f32[64]) while(
+      (u32[], f32[64], f32[64]) tuple(u32[] constant(0), z, z)),
+      body=body, condition=cond
+  })";
+  ASSERT_OK_AND_ASSIGN(
+      auto m, RunAndCheckHloRewrite(
+                  kHlo,
+                  Pass(/*threshold_in_bytes=*/0,
+                       DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_DISABLE),
+                  true));
+  Decomposed d0 = FindComponents(m.get(), "cp0");
+  Decomposed d1 = FindComponents(m.get(), "cp1");
+  HloInstruction* t0 = FindInstruction(m.get(), "t0");
+  HloInstruction* sink = FindInstruction(m.get(), "sink");
+  EXPECT_THAT(d0.recv->control_predecessors(), ElementsAre(t0));
+  EXPECT_THAT(d1.recv->control_predecessors(),
+              ElementsAre(d0.recv_done, d0.send_done, d0.send));
+  EXPECT_THAT(sink->control_predecessors(),
+              ElementsAre(d1.recv_done, d1.send_done));
+}
+
+TEST_F(DecomposerTest, SkipsInPlaceAndWhileConditionCollectivePermutes) {
+  constexpr absl::string_view kInPlace = R"(
+  HloModule inplace_cp
+  cond {
+    p = (u32[], f32[8], f32[16]) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    ROOT cmp = pred[] compare(i, u32[] constant(2)), direction=LT
+  }
+  body {
+    p = (u32[], f32[8], f32[16]) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    src = f32[8] get-tuple-element(p), index=1
+    dst = f32[16] get-tuple-element(p), index=2
+    off = (s32[]) tuple(s32[] constant(0))
+    cp = f32[16] collective-permute(src, dst, off, off), channel_id=1,
+      source_target_pairs={{0,1}}, slice_sizes={{8}}
+    ROOT r = (u32[], f32[8], f32[16]) tuple(
+      u32[] add(i, u32[] constant(1)), src, cp)
+  }
+  ENTRY e {
+    s = f32[8] broadcast(f32[] constant(1)), dimensions={}
+    d = f32[16] broadcast(f32[] constant(0)), dimensions={}
+    ROOT w = (u32[], f32[8], f32[16]) while(
+      (u32[], f32[8], f32[16]) tuple(u32[] constant(0), s, d)),
+      body=body, condition=cond
+  })";
+  ASSERT_OK_AND_ASSIGN(
+      auto m_ip, RunAndCheckHloRewrite(
+                     kInPlace,
+                     Pass(/*threshold_in_bytes=*/0,
+                          DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE),
+                     false));
+
+  constexpr absl::string_view kWhileCond = R"(
+  HloModule cond_cp
+  cond {
+    p = (u32[], f32[4]) parameter(0)
+    x = f32[4] get-tuple-element(p), index=1
+    cp = f32[4] collective-permute(x), channel_id=1,
+      source_target_pairs={{0,1}}
+    c0 = f32[4] broadcast(f32[] constant(0)), dimensions={}
+    eq = pred[4] compare(cp, c0), direction=LT
+    i = u32[] get-tuple-element(p), index=0
+    ROOT cmp = pred[] compare(i, u32[] constant(2)), direction=LT
+  }
+  body {
+    p = (u32[], f32[4]) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    x = f32[4] get-tuple-element(p), index=1
+    ROOT r = (u32[], f32[4]) tuple(u32[] add(i, u32[] constant(1)), x)
+  }
+  ENTRY e {
+    z = f32[4] broadcast(f32[] constant(0)), dimensions={}
+    ROOT w = (u32[], f32[4]) while(
+      (u32[], f32[4]) tuple(u32[] constant(0), z)),
+      body=body, condition=cond
+  })";
+  ASSERT_OK_AND_ASSIGN(
+      auto m_wc, RunAndCheckHloRewrite(
+                     kWhileCond,
+                     Pass(/*threshold_in_bytes=*/0,
+                          DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE),
+                     false));
+
+  ASSERT_OK_AND_ASSIGN(auto m_dyn, ParseAndReturnUnverifiedModule(R"(
+  HloModule unbounded_cp
+  cond {
+    p = (u32[], f32[?]) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    ROOT cmp = pred[] compare(i, u32[] constant(2)), direction=LT
+  }
+  body {
+    p = (u32[], f32[?]) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    x = f32[?] get-tuple-element(p), index=1
+    cp = f32[?] collective-permute(x), channel_id=1,
+      source_target_pairs={{0,1}}
+    ROOT r = (u32[], f32[?]) tuple(u32[] add(i, u32[] constant(1)), cp)
+  }
+  ENTRY e {
+    x0 = f32[?] parameter(0)
+    ROOT w = (u32[], f32[?]) while(
+      (u32[], f32[?]) tuple(u32[] constant(0), x0)),
+      body=body, condition=cond
+  })"));
+  ASSERT_THAT(Pass(/*threshold_in_bytes=*/0,
+                   DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE)
+                  .Run(m_dyn.get()),
+              absl_testing::IsOkAndHolds(false));
+}
+
+TEST_F(DecomposerTest,
+       PreservesResultLayoutMetadataAndV2V3ShardingsOnAllDecomposedOps) {
+  constexpr absl::string_view kHlo = R"(
+  HloModule layout_meta_sharding
+  cond {
+    p = (u32[], f32[4,8]{1,0}) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    ROOT cmp = pred[] compare(i, u32[] constant(2)), direction=LT
+  }
+  body {
+    p = (u32[], f32[4,8]{1,0}) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    x = f32[4,8]{1,0} get-tuple-element(p), index=1,
+      sharding={devices=[2,1]0,1}
+    cp = f32[4,8]{0,1:S(1)} collective-permute(x), channel_id=1,
+      source_target_pairs={{0,1}}, sharding={devices=[2,1]0,1},
+      metadata={op_name="layer/cp" source_line=42}
+    out = f32[4,8]{1,0} copy(cp), sharding={devices=[2,1]0,1}
+    ROOT r = (u32[], f32[4,8]{1,0}) tuple(
+      u32[] add(i, u32[] constant(1)), out)
+  }
+  ENTRY e {
+    z = f32[4,8]{1,0} broadcast(f32[] constant(0)), dimensions={}
+    ROOT w = (u32[], f32[4,8]{1,0}) while(
+      (u32[], f32[4,8]{1,0}) tuple(u32[] constant(0), z)),
+      body=body, condition=cond
+  })";
+  auto check_sharding = [&](const HloSharding& sh) {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnUnverifiedModule(kHlo));
+    HloInstruction* cp = FindInstruction(m.get(), "cp");
+    ASSERT_NE(cp, nullptr);
+    cp->set_sharding(sh);
+    ASSERT_THAT(HloVerifier(/*layout_sensitive=*/true,
+                            /*allow_mixed_precision=*/false)
+                    .Run(m.get()),
+                absl_testing::IsOk());
+    ASSERT_THAT(Pass(/*threshold_in_bytes=*/0,
+                     DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE)
+                    .Run(m.get()),
+                absl_testing::IsOkAndHolds(true));
+    ASSERT_THAT(HloVerifier(/*layout_sensitive=*/true,
+                            /*allow_mixed_precision=*/false)
+                    .Run(m.get()),
+                absl_testing::IsOk());
+    Decomposed d = FindComponents(m.get(), "cp");
+    HloInstruction* data = FindInstruction(m.get(), "cp-recv-data");
+    ASSERT_NE(data, nullptr);
+    EXPECT_EQ(data->shape().layout().memory_space(), 1);
+    EXPECT_EQ(data->shape().layout().minor_to_major(0), 0);
+    EXPECT_EQ(data->sharding(), sh);
+    for (HloInstruction* h :
+         {d.after_all, d.recv, d.send, d.recv_done, d.send_done, data}) {
+      EXPECT_EQ(h->metadata().op_name(), "layer/cp");
+      EXPECT_TRUE(h->has_sharding());
+    }
+  };
+  OpMetadata md;
+  md.set_op_name("sh_md");
+  check_sharding(HloSharding::Manual({md}));
+  check_sharding(HloSharding::SingleDevice(0, {md}));
+  Mesh mesh({2}, {"x"});
+  check_sharding(HloSharding(NamedSharding::Replicate({md})));
+  check_sharding(HloSharding(NamedSharding(
+      mesh,
+      {NamedSharding::DimensionSharding({AxisRef(0)}, /*is_closed=*/true),
+       NamedSharding::DimensionSharding({}, /*is_closed=*/true)},
+      {}, {}, {}, {md})));
+}
+
+TEST_F(DecomposerTest,
+       HandlesAsyncStartDoneCollectivesWithCompletionAnchorsAndNoCrash) {
+  constexpr absl::string_view kHlo = R"(
+  HloModule async_collectives
+  add {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT s = f32[] add(a, b)
+  }
+  async_cp_comp {
+    p = f32[64] parameter(0)
+    ROOT r = f32[64] collective-permute(p), channel_id=4,
+      source_target_pairs={{1,2}}
+  }
+  cond {
+    p = (u32[], f32[64], f32[64]) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    ROOT cmp = pred[] compare(i, u32[] constant(2)), direction=LT
+  }
+  body {
+    p = (u32[], f32[64], f32[64]) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    x = f32[64] get-tuple-element(p), index=1
+    y = f32[64] get-tuple-element(p), index=2
+    ars = f32[64] all-reduce-start(y), channel_id=2,
+      use_global_device_ids=true, replica_groups={{0,1}}, to_apply=add
+    ard = f32[64] all-reduce-done(ars)
+    cp = f32[64] collective-permute(x), channel_id=1,
+      source_target_pairs={{0,1},{1,2}}, control-predecessors={ard}
+    cps = (f32[64], f32[64]) collective-permute-start(y), channel_id=3,
+      source_target_pairs={{1,2}}
+    cpd = f32[64] collective-permute-done(cps)
+    as = ((f32[64]), f32[64]) async-start(y), calls=async_cp_comp
+    au = ((f32[64]), f32[64]) async-update(as)
+    ad = f32[64] async-done(au)
+    sum = f32[64] add(ard, f32[64] add(cpd, ad))
+    ROOT r = (u32[], f32[64], f32[64]) tuple(
+      u32[] add(i, u32[] constant(1)), cp, sum)
+  }
+  ENTRY e {
+    z = f32[64] broadcast(f32[] constant(0)), dimensions={}
+    ROOT w = (u32[], f32[64], f32[64]) while(
+      (u32[], f32[64], f32[64]) tuple(u32[] constant(0), z, z)),
+      body=body, condition=cond
+  })";
+  ASSERT_OK_AND_ASSIGN(
+      auto m, RunAndCheckHloRewrite(
+                  kHlo,
+                  Pass(/*threshold_in_bytes=*/0,
+                       DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE),
+                  true));
+  Decomposed d = FindComponents(m.get(), "cp");
+  HloInstruction* ars = FindInstruction(m.get(), "ars");
+  HloInstruction* ard = FindInstruction(m.get(), "ard");
+  HloInstruction* cps = FindInstruction(m.get(), "cps");
+  HloInstruction* cpd = FindInstruction(m.get(), "cpd");
+  HloInstruction* as = FindInstruction(m.get(), "as");
+  HloInstruction* au = FindInstruction(m.get(), "au");
+  HloInstruction* ad = FindInstruction(m.get(), "ad");
+  EXPECT_THAT(d.recv->control_predecessors(), ElementsAre(ard));
+  EXPECT_THAT(cps->control_predecessors(), ElementsAre(d.send_done));
+  EXPECT_THAT(as->control_predecessors(), ElementsAre(d.send_done));
+  EXPECT_TRUE(
+      ars->frontend_attributes().map().contains(kCollectiveStreamAttrName));
+  EXPECT_FALSE(
+      ard->frontend_attributes().map().contains(kCollectiveStreamAttrName));
+  EXPECT_FALSE(
+      cpd->frontend_attributes().map().contains(kCollectiveStreamAttrName));
+  EXPECT_FALSE(
+      au->frontend_attributes().map().contains(kCollectiveStreamAttrName));
+  EXPECT_FALSE(
+      ad->frontend_attributes().map().contains(kCollectiveStreamAttrName));
+}
+
+TEST_F(DecomposerTest,
+       DetectsEmptyReplicaGroupCrossMode2DAndGuardsNegativeReplicaIds) {
+  // Negative IDs and self-merges do not OOM or corrupt AbstractReplicaGroups.
+  AbstractReplicaGroups g1, g2;
+  g1.merge_groups(-1, 0);
+  g1.merge_groups(0, -5);
+  g1.merge_groups(0, 0);
+  EXPECT_TRUE(g1.groups.empty());
+  g1.merge_groups(0, 1);
+  g2.groups.push_back({-3, 0, 999999});
+  const size_t before = g1.index_map.size();
+  EXPECT_FALSE(IsConflictingAbstractReplicaGroups(g1, g2));
+  EXPECT_EQ(g1.index_map.size(), before);
+
+  // Empty replica_groups={} on R=1,P=1 (wildcard), R=4,P=1, and R=1,P=4.
+  for (auto [r, p] : {std::pair<int64_t, int64_t>{1, 1}, {4, 1}, {1, 4}}) {
+    ASSERT_OK_AND_ASSIGN(auto m,
+                         ParseAndReturnVerifiedModule(R"(
+  HloModule empty_rg
+  add {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT s = f32[] add(a, b)
+  }
+  cond {
+    p = (u32[], f32[64], f32[64]) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    ROOT cmp = pred[] compare(i, u32[] constant(2)), direction=LT
+  }
+  body {
+    p = (u32[], f32[64], f32[64]) parameter(0)
+    i = u32[] get-tuple-element(p), index=0
+    x = f32[64] get-tuple-element(p), index=1
+    y = f32[64] get-tuple-element(p), index=2
+    cp = f32[64] collective-permute(x), channel_id=1,
+      source_target_pairs={{0,1}}
+    ar = f32[64] all-reduce(y), channel_id=2, replica_groups={}, to_apply=add
+    ROOT r = (u32[], f32[64], f32[64]) tuple(
+      u32[] add(i, u32[] constant(1)), cp, ar)
+  }
+  ENTRY e {
+    z = f32[64] broadcast(f32[] constant(0)), dimensions={}
+    ROOT w = (u32[], f32[64], f32[64]) while(
+      (u32[], f32[64], f32[64]) tuple(u32[] constant(0), z, z)),
+      body=body, condition=cond
+  })",
+                                                      /*replica_count=*/r,
+                                                      /*num_partitions=*/p));
+    ASSERT_THAT(Pass(/*threshold_in_bytes=*/0,
+                     DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE)
+                    .Run(m.get()),
+                absl_testing::IsOkAndHolds(true));
+    EXPECT_THAT(FindInstruction(m.get(), "ar")->control_predecessors(),
+                ElementsAre(FindInstruction(m.get(), "cp-send-done")));
+  }
+
+  // R=2, P=2 cross-mode: kCrossPartition cp {{0,1}} (and annotated device
+  // send/recv) conflicts with kFlattenedID ar {{2,3}} and
+  // kCrossReplicaAndPartition ar {{0},{1}}, but NOT with orthogonal
+  // kCrossReplica ar {{0,1}} or {}. Also checks R=1,P=4 singleton {{0}}.
+  ASSERT_OK_AND_ASSIGN(
+      auto m2d,
+      ParseAndReturnVerifiedModule(R"(
+  HloModule r2p2, replica_count=2, num_partitions=2
+  add {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT s = f32[] add(a, b)
+  }
+  ENTRY e {
+    x = f32[16] parameter(0)
+    cp = f32[16] collective-permute(x), channel_id=1,
+      source_target_pairs={{0,1}}
+    tok = token[] after-all()
+    snd = (f32[16], u32[], token[]) send(x, tok), channel_id=2,
+      frontend_attributes={_xla_send_recv_source_target_pairs="{{0,1}}"}
+    sd = token[] send-done(snd), channel_id=2
+    ar_flat = f32[16] all-reduce(x), channel_id=3, use_global_device_ids=true,
+      replica_groups={{0},{1},{2,3}}, to_apply=add
+    ar_crp = f32[16] all-reduce(x), channel_id=4, replica_groups={{0},{1}},
+      to_apply=add
+    ar_cr = f32[16] all-reduce(x), replica_groups={{0,1}}, to_apply=add
+    ar_cr_empty = f32[16] all-reduce(x), replica_groups={}, to_apply=add
+    cp_empty = f32[16] collective-permute(x), channel_id=5,
+      source_target_pairs={}
+    ROOT t = (f32[16], token[], f32[16], f32[16], f32[16], f32[16], f32[16])
+      tuple(cp, sd, ar_flat, ar_crp, ar_cr, ar_cr_empty, cp_empty)
+  })",
+                                   /*replica_count=*/2, /*num_partitions=*/2));
+  EXPECT_TRUE(
+      FindAllConflictingCollectives(FindInstruction(m2d.get(), "cp_empty"))
+          .empty());
+  auto conf = FindAllConflictingCollectives(FindInstruction(m2d.get(), "cp"));
+  EXPECT_THAT(conf, ElementsAre(FindInstruction(m2d.get(), "snd"),
+                                FindInstruction(m2d.get(), "ar_flat"),
+                                FindInstruction(m2d.get(), "ar_crp")));
+
+  ASSERT_OK_AND_ASSIGN(auto m_crp1,
+                       ParseAndReturnVerifiedModule(R"(
+  HloModule r1p4_single, num_partitions=4
+  add {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT s = f32[] add(a, b)
+  }
+  ENTRY e {
+    x = f32[16] parameter(0)
+    cp = f32[16] collective-permute(x), channel_id=1,
+      source_target_pairs={{2,3}}
+    ar_s = f32[16] all-reduce(x), channel_id=2, replica_groups={{0}},
+      to_apply=add
+    ROOT t = (f32[16], f32[16]) tuple(cp, ar_s)
+  })",
+                                                    /*replica_count=*/1,
+                                                    /*num_partitions=*/4));
+  EXPECT_THAT(
+      FindAllConflictingCollectives(FindInstruction(m_crp1.get(), "cp")),
+      ElementsAre(FindInstruction(m_crp1.get(), "ar_s")));
+
+  // Over-65536 device grid uses bounded wildcard fallback without OOM.
+  ASSERT_OK_AND_ASSIGN(auto m_huge,
+                       ParseAndReturnVerifiedModule(R"(
+  HloModule huge_grid
+  add {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT s = f32[] add(a, b)
+  }
+  ENTRY e {
+    x = f32[16] parameter(0)
+    cp = f32[16] collective-permute(x), channel_id=1,
+      source_target_pairs={{0,1}}
+    ar = f32[16] all-reduce(x), channel_id=2, replica_groups={}, to_apply=add
+    ROOT t = (f32[16], f32[16]) tuple(cp, ar)
+  })",
+                                                    /*replica_count=*/1000,
+                                                    /*num_partitions=*/1000));
+  EXPECT_THAT(
+      FindAllConflictingCollectives(FindInstruction(m_huge.get(), "cp")),
+      ElementsAre(FindInstruction(m_huge.get(), "ar")));
 }
 
 }  // namespace
