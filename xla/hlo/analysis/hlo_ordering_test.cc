@@ -21,6 +21,7 @@ limitations under the License.
 #include <optional>
 
 #include "absl/strings/string_view.h"
+#include "third_party/gloop/util/task/status_matchers.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"

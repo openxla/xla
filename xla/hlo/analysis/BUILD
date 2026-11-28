@@ -129,6 +129,7 @@ xla_cc_test(
         ":alias_info",
         ":hlo_dataflow_analysis",
         ":hlo_ordering",
+        "//third_party/gloop/util/task:status_matchers",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
