@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <vector>
 
 #include "absl/strings/str_format.h"
@@ -95,6 +96,23 @@ TEST(SlinkyThreadPoolTest, NestedLoops) {
 
   for (size_t i = 0; i < size; ++i) {
     EXPECT_EQ(data[i], size);
+  }
+}
+
+// A task completed by its caller must be released even if no worker runs.
+TEST(SlinkyThreadPoolTest, ReleasesTasksCompletedByCaller) {
+  tsl::thread::ThreadPool one_thread(tsl::Env::Default(), "test", 1);
+  SlinkyThreadPool inline_pool(
+      static_cast<Eigen::ThreadPoolInterface*>(nullptr));
+  SlinkyThreadPool one_thread_pool(one_thread.AsEigenThreadPool());
+
+  for (SlinkyThreadPool* thread_pool : {&inline_pool, &one_thread_pool}) {
+    auto token = std::make_shared<int>(0);
+    thread_pool->parallel_for(10, [token](size_t) {});
+    for (int i = 0; i < 3; ++i) {
+      thread_pool->parallel_for(10, [](size_t) {});
+    }
+    EXPECT_EQ(token.use_count(), 1);
   }
 }
 
