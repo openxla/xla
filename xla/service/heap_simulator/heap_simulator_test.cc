@@ -28,6 +28,8 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
@@ -44,6 +46,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/heap_simulator/allocation_block.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_value.h"
 #include "xla/shape.h"
@@ -57,8 +60,12 @@ namespace xla {
 namespace {
 
 using ::testing::ContainerEq;
+using ::testing::Contains;
 using ::testing::ElementsAreArray;
 using ::testing::HasSubstr;
+using ::testing::Key;
+using ::testing::Not;
+using ::testing::Pair;
 using ::testing::StrEq;
 
 class MinimumMemoryForSequenceTest : public HloHardwareIndependentTestBase {
@@ -245,6 +252,45 @@ TEST_F(MinimumMemoryForSequenceTest, SubcomputationAccounting) {
                     .value());
 }
 
+TEST_F(MinimumMemoryForSequenceTest,
+       DoesNotPreFreeOperandReadOnlyThroughViewPosition) {
+  const char* const hlo_text = R"(
+HloModule DoesNotPreFreeOperandReadOnlyThroughViewPosition
+
+ENTRY main {
+  param = f32[4] parameter(0)
+  mul = f32[4] negate(param)
+  bc = f32[4] bitcast(mul)
+  ROOT out = f32[4] exponential(bc)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  HloComputation* entry = module->entry_computation();
+  HloInstruction* param = FindInstruction(module.get(), "param");
+  HloInstruction* mul = FindInstruction(module.get(), "mul");
+  HloInstruction* bc = FindInstruction(module.get(), "bc");
+  HloInstruction* out = FindInstruction(module.get(), "out");
+
+  HloSchedule schedule(module.get());
+  schedule.set_sequence(entry, {param, mul, bc, out});
+  ASSERT_OK(schedule.Verify());
+
+  BufferValue::SizeFunction size_fn = [](const BufferValue& buffer) {
+    return ShapeUtil::ByteSizeOf(buffer.shape());
+  };
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info_));
+
+  // MinimumMemoryForModule() only pre-frees direct operands, so param (16B),
+  // mul (16B), and out (16B) are counted at out's definition step before mul
+  // is freed at the end of the step (48B total).
+  ASSERT_OK_AND_ASSIGN(int64_t min_memory,
+                       HeapSimulator::MinimumMemoryForModule(
+                           schedule, *alias_analysis, &alias_info_, &size_fn));
+  EXPECT_EQ(48, min_memory);
+}
+
 const char kAlloc[] = "Alloc";
 const char kFree[] = "Free";
 const char kShare[] = "Share";
@@ -302,12 +348,13 @@ class HeapSimulatorTracker {
       std::unique_ptr<HloModule> module,
       const std::vector<HloInstruction*>& instruction_sequence,
       const std::vector<HloInstruction*>& must_alias_set = {},
-      const AliasInfo* alias_info = nullptr) {
+      const AliasInfo* alias_info = nullptr,
+      const HeapSimulator::Options& options = HeapSimulator::Options()) {
     module_ = std::move(module);
     if (alias_info == nullptr) {
       alias_info = &alias_info_;
     }
-    Init(instruction_sequence, alias_info);
+    Init(instruction_sequence, alias_info, options);
   }
 
   // Constructor for testing a single entry computation.
@@ -323,7 +370,7 @@ class HeapSimulatorTracker {
     if (alias_info == nullptr) {
       alias_info = &alias_info_;
     }
-    Init(instruction_sequence, alias_info);
+    Init(instruction_sequence, alias_info, HeapSimulator::Options());
   }
 
   explicit HeapSimulatorTracker(const std::string& name) {
@@ -377,6 +424,12 @@ class HeapSimulatorTracker {
     return result_.heap_results.at(0).chunk_map.at(buffer).offset;
   }
 
+  // Returns the number of buffers that reuse the buffer of an operand value
+  // which their instruction only reads through other positions.
+  int64_t num_buffers_reused_through_other_positions() const {
+    return result_.num_buffers_reused_through_other_positions;
+  }
+
   // Ensures the expected sequence of Alloc/Free/Finish calls was performed.
   void ExpectCallSequence(const CallSequence& expected) const {
     auto to_string = [](const CallSequence& sequence) {
@@ -412,7 +465,8 @@ class HeapSimulatorTracker {
 
  private:
   void Init(const std::vector<HloInstruction*>& instruction_sequence,
-            const AliasInfo* alias_info) {
+            const AliasInfo* alias_info,
+            const HeapSimulator::Options& options) {
     // Since we're only tracking the sequence of Alloc/Free calls, the actual
     // size of the buffers doesn't matter, so we always return 0.  We rely on
     // the secondary sorting criteria of DecreasingSizeRunsHeap to sort calls
@@ -423,8 +477,6 @@ class HeapSimulatorTracker {
     auto algorithm = std::make_unique<HeapCallRecorder>(&actual_calls_);
 
     alias_analysis_ = HloAliasAnalysis::Run(module_.get(), alias_info).value();
-
-    HeapSimulator::Options options;
 
     result_ =
         HeapSimulator::Run(std::move(algorithm), *module_->entry_computation(),
@@ -473,6 +525,400 @@ TEST_F(HeapSimulatorTest, OneParam) {
       {kFree, tracker.BufferAt(param0, {})},
       {kFinish, nullptr},
   });
+}
+
+TEST_F(HeapSimulatorTest, CanShareOperandThroughSingleBitcastPosition) {
+  const char* const hlo_text = R"(
+HloModule CanShareOperandThroughSingleBitcastPosition
+
+ENTRY main {
+  param = f32[4] parameter(0)
+  mul = f32[4] negate(param)
+  bc = f32[4] bitcast(mul)
+  ROOT out = f32[4] exponential(bc)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  HloInstruction* param = FindInstruction(module.get(), "param");
+  HloInstruction* mul = FindInstruction(module.get(), "mul");
+  HloInstruction* bc = FindInstruction(module.get(), "bc");
+  HloInstruction* out = FindInstruction(module.get(), "out");
+
+  HeapSimulator::Options options;
+  options.may_reuse_operand_buffers_through_other_positions = true;
+  HeapSimulatorTracker tracker(std::move(module), {param, mul, bc, out},
+                               /*must_alias_set=*/{}, /*alias_info=*/nullptr,
+                               options);
+  tracker.ExpectCallSequence({
+      {kAlloc, tracker.BufferAt(param, {})},
+      {kAlloc, tracker.BufferAt(mul, {})},
+      {kFree, tracker.BufferAt(mul, {})},
+      {kShare, tracker.BufferAt(out, {})},
+      {kFree, tracker.BufferAt(param, {})},
+      {kFree, tracker.BufferAt(out, {})},
+      {kFinish, nullptr},
+  });
+  tracker.ExpectSharedBuffers(out, {}, mul, {});
+  EXPECT_EQ(tracker.num_buffers_reused_through_other_positions(), 1);
+}
+
+TEST_F(HeapSimulatorTest, DoesNotShareOperandThroughBitcastPositionByDefault) {
+  const char* const hlo_text = R"(
+HloModule DoesNotShareOperandThroughBitcastPositionByDefault
+
+ENTRY main {
+  param = f32[4] parameter(0)
+  mul = f32[4] negate(param)
+  bc = f32[4] bitcast(mul)
+  exp = f32[4] exponential(bc)
+  ROOT out = f32[4] negate(exp)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  HloInstruction* param = FindInstruction(module.get(), "param");
+  HloInstruction* mul = FindInstruction(module.get(), "mul");
+  HloInstruction* bc = FindInstruction(module.get(), "bc");
+  HloInstruction* exp = FindInstruction(module.get(), "exp");
+  HloInstruction* out = FindInstruction(module.get(), "out");
+
+  HeapSimulatorTracker tracker(std::move(module), {param, mul, bc, exp, out});
+
+  // `exp` only reads `mul` through `bc`, so it gets its own buffer.
+  EXPECT_NE(tracker.OffsetAt(exp, {}), tracker.OffsetAt(mul, {}));
+  // `out` reads `exp` directly, so it still shares its buffer.
+  tracker.ExpectSharedBuffers(out, {}, exp, {});
+  EXPECT_EQ(tracker.num_buffers_reused_through_other_positions(), 0);
+}
+
+TEST_F(HeapSimulatorTest, CanShareOperandReadElementwiseTwiceThroughTuple) {
+  const char* const hlo_text = R"(
+HloModule CanShareOperandReadElementwiseTwiceThroughTuple
+
+ENTRY main {
+  param = f32[4] parameter(0)
+  mul = f32[4] negate(param)
+  tup = (f32[4], f32[4]) tuple(mul, mul)
+  gte0 = f32[4] get-tuple-element(tup), index=0
+  gte1 = f32[4] get-tuple-element(tup), index=1
+  ROOT out = f32[4] add(gte0, gte1)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  HloInstruction* param = FindInstruction(module.get(), "param");
+  HloInstruction* mul = FindInstruction(module.get(), "mul");
+  HloInstruction* tup = FindInstruction(module.get(), "tup");
+  HloInstruction* gte0 = FindInstruction(module.get(), "gte0");
+  HloInstruction* gte1 = FindInstruction(module.get(), "gte1");
+  HloInstruction* out = FindInstruction(module.get(), "out");
+
+  HeapSimulator::Options options;
+  options.may_reuse_operand_buffers_through_other_positions = true;
+  HeapSimulatorTracker tracker(
+      std::move(module), {param, mul, tup, gte0, gte1, out},
+      /*must_alias_set=*/{}, /*alias_info=*/nullptr, options);
+  tracker.ExpectSharedBuffers(out, {}, mul, {});
+}
+
+// Tests which instructions reuse an operand buffer through other positions when
+// the heap simulation runs on the whole module.
+class ReuseThroughOtherPositionsTest : public HloHardwareIndependentTestBase {
+ protected:
+  // `cn` reads `x` through the parameter `cp`, and `n` reads `cr` through the
+  // call `c`.
+  static constexpr char kCall[] = R"hlo(
+HloModule call, is_scheduled=true
+
+callee {
+  cp = f32[4] parameter(0)
+  cn = f32[4] negate(cp)
+  ROOT cr = f32[4] exponential(cn)
+}
+
+ENTRY main {
+  a = f32[4] parameter(0)
+  x = f32[4] negate(a)
+  c = f32[4] call(x), to_apply=callee
+  n = f32[4] negate(c)
+  ROOT out = f32[4] exponential(n)
+}
+)hlo";
+
+  // Runs the heap simulator on the whole module `hlo_text` with operand reuse
+  // through other positions. Returns a pair (user, operand) of instruction
+  // names for each buffer of `user` that shares the buffer of `operand`.
+  absl::StatusOr<std::vector<std::pair<std::string, std::string>>>
+  SharedBuffers(const char* hlo_text) {
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_text));
+    AliasInfo alias_info;
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                          HloAliasAnalysis::Run(module.get(), &alias_info));
+    BufferValue::SizeFunction size_fn = [](const BufferValue& buffer) {
+      return ShapeUtil::ByteSizeOf(buffer.shape(), /*pointer_size=*/8);
+    };
+    HeapSimulator::Options options;
+    options.may_reuse_operand_buffers_through_other_positions = true;
+    ABSL_ASSIGN_OR_RETURN(
+        HeapSimulator::Result<HloValue> result,
+        HeapSimulator::Run(
+            std::make_unique<GlobalDecreasingSizeBestFitHeap<HloValue>>(
+                /*alignment=*/1),
+            *module, module->schedule(), *alias_analysis, &alias_info, &size_fn,
+            options));
+    const HloDataflowAnalysis& dataflow = alias_analysis->dataflow_analysis();
+    std::vector<std::pair<std::string, std::string>> shared_buffers;
+    for (const HeapSimulatorTrace::Event& event : result.debug_trace.events()) {
+      if (event.kind() == HeapSimulatorTrace::Event::SHARE_WITH) {
+        shared_buffers.emplace_back(
+            event.instruction_name(),
+            dataflow.GetValue(event.share_with_canonical_id())
+                .instruction()
+                ->name());
+      }
+    }
+    return shared_buffers;
+  }
+};
+
+TEST_F(ReuseThroughOtherPositionsTest,
+       CalleeReusesCallerBufferThroughParameter) {
+  ASSERT_OK_AND_ASSIGN(const auto shared_buffers, SharedBuffers(kCall));
+
+  EXPECT_THAT(shared_buffers, Contains(Pair("cn", "x")));
+}
+
+TEST_F(ReuseThroughOtherPositionsTest, CallerReusesCalleeBufferThroughCall) {
+  ASSERT_OK_AND_ASSIGN(const auto shared_buffers, SharedBuffers(kCall));
+
+  EXPECT_THAT(shared_buffers, Contains(Pair("n", "cr")));
+}
+
+TEST_F(ReuseThroughOtherPositionsTest, ReusesBufferThroughOptimizationBarrier) {
+  // `n` reads `x` through `ob`.
+  ASSERT_OK_AND_ASSIGN(const auto shared_buffers, SharedBuffers(R"hlo(
+HloModule opt_barrier, is_scheduled=true
+
+ENTRY main {
+  a = f32[4] parameter(0)
+  x = f32[4] negate(a)
+  ob = f32[4] opt-barrier(x)
+  n = f32[4] negate(ob)
+  ROOT out = f32[4] exponential(n)
+}
+)hlo"));
+
+  EXPECT_THAT(shared_buffers, Contains(Pair("n", "x")));
+}
+
+TEST_F(ReuseThroughOtherPositionsTest, DoesNotReuseLoopStateInsideWhileBody) {
+  // `bu` reads the loop state through `bv`. The buffer of the loop state holds
+  // several aliased values, so `bu` must not reuse it.
+  ASSERT_OK_AND_ASSIGN(const auto shared_buffers, SharedBuffers(R"hlo(
+HloModule while, is_scheduled=true
+
+cond {
+  cp = (f32[4], s32[]) parameter(0)
+  ci = s32[] get-tuple-element(cp), index=1
+  cl = s32[] constant(10)
+  ROOT lt = pred[] compare(ci, cl), direction=LT
+}
+
+body {
+  bp = (f32[4], s32[]) parameter(0)
+  bv = f32[4] get-tuple-element(bp), index=0
+  bi = s32[] get-tuple-element(bp), index=1
+  bu = f32[4] negate(bv)
+  bw = f32[4] exponential(bu)
+  one = s32[] constant(1)
+  bi2 = s32[] add(bi, one)
+  ROOT bt = (f32[4], s32[]) tuple(bw, bi2)
+}
+
+ENTRY main {
+  a = f32[4] parameter(0)
+  x = f32[4] negate(a)
+  zero = s32[] constant(0)
+  init = (f32[4], s32[]) tuple(x, zero)
+  w = (f32[4], s32[]) while(init), condition=cond, body=body
+  wv = f32[4] get-tuple-element(w), index=0
+  n = f32[4] negate(wv)
+  ROOT out = f32[4] exponential(n)
+}
+)hlo"));
+
+  EXPECT_THAT(shared_buffers, Not(Contains(Key("bu"))));
+}
+
+// A heap algorithm that does not assign offsets. Its heap has
+// `kBaseHeapSize` bytes, plus `heap_size_delta_per_share` bytes for each buffer
+// that shares its memory with another buffer.
+class SharingSensitiveHeap : public HeapAlgorithm<HloValue> {
+ public:
+  static constexpr int64_t kBaseHeapSize = 1024;
+
+  SharingSensitiveHeap(bool has_fast_finish, int64_t heap_size_delta_per_share,
+                       int* num_finish_calls)
+      : has_fast_finish_(has_fast_finish),
+        heap_size_delta_per_share_(heap_size_delta_per_share),
+        num_finish_calls_(num_finish_calls) {}
+
+  void Alloc(const HloValue* buffer, int64_t size) override {}
+  void ShareWith(const HloValue* buffer, const HloValue* shared,
+                 int64_t size) override {
+    ++num_shares_;
+  }
+  void Free(const HloValue* buffer, int64_t size) override {}
+  absl::StatusOr<Result> Finish() override {
+    ++*num_finish_calls_;
+    Result result;
+    result.heap_size = kBaseHeapSize + num_shares_ * heap_size_delta_per_share_;
+    return result;
+  }
+  bool HasFastFinish() const override { return has_fast_finish_; }
+
+ private:
+  const bool has_fast_finish_;
+  const int64_t heap_size_delta_per_share_;
+  int* const num_finish_calls_;
+  int64_t num_shares_ = 0;
+};
+
+class BeneficialOperandReuseTest : public HloHardwareIndependentTestBase {
+ protected:
+  // `out` can reuse the buffer of `mul`, which it reads through `bc`. Without
+  // this reuse, `param`, `mul` and `out` are live at the same time (48 bytes).
+  // With it, only two of the three buffers are (32 bytes).
+  static constexpr char kReuseLowersPeakMemory[] = R"hlo(
+HloModule reuse_lowers_peak_memory
+
+ENTRY main {
+  param = f32[4] parameter(0)
+  mul = f32[4] negate(param)
+  bc = f32[4] bitcast(mul)
+  ROOT out = f32[4] exponential(bc)
+}
+)hlo";
+
+  // Like above, but the peak memory is reached while `big` is live (288 bytes
+  // for `param`, `big` and `small`), with and without the reuse.
+  static constexpr char kReuseKeepsPeakMemory[] = R"hlo(
+HloModule reuse_keeps_peak_memory
+
+ENTRY main {
+  param = f32[4] parameter(0)
+  big = f32[16,4] broadcast(param), dimensions={1}
+  small = f32[1,4] slice(big), slice={[0:1], [0:4]}
+  mul = f32[1,4] negate(small)
+  bc = f32[4] bitcast(mul)
+  ROOT out = f32[4] exponential(bc)
+}
+)hlo";
+
+  struct Outcome {
+    // Whether the result reuses an operand buffer through another position.
+    bool keeps_reuse;
+    int num_finish_calls;
+  };
+
+  // Runs HeapSimulator::RunWithBeneficialOperandReuse() on the entry
+  // computation of `hlo_text` with SharingSensitiveHeap.
+  absl::StatusOr<Outcome> Run(const char* hlo_text, bool has_fast_finish,
+                              int64_t heap_size_delta_per_share) {
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_text));
+    HloComputation* entry = module->entry_computation();
+    AliasInfo alias_info;
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                          HloAliasAnalysis::Run(module.get(), &alias_info));
+    BufferValue::SizeFunction size_fn = [](const BufferValue& buffer) {
+      return ShapeUtil::ByteSizeOf(buffer.shape());
+    };
+    int num_finish_calls = 0;
+    ABSL_ASSIGN_OR_RETURN(
+        HeapSimulator::Result<HloValue> result,
+        HeapSimulator::RunWithBeneficialOperandReuse(
+            [&]() -> std::unique_ptr<HeapAlgorithm<HloValue>> {
+              return std::make_unique<SharingSensitiveHeap>(
+                  has_fast_finish, heap_size_delta_per_share,
+                  &num_finish_calls);
+            },
+            *entry, HloInstructionSequence(entry->MakeInstructionPostOrder()),
+            *alias_analysis, alias_info, size_fn));
+    return Outcome{result.num_buffers_reused_through_other_positions > 0,
+                   num_finish_calls};
+  }
+};
+
+TEST_F(BeneficialOperandReuseTest, KeepsReuseIfHeapIsSmaller) {
+  ASSERT_OK_AND_ASSIGN(const Outcome outcome,
+                       Run(kReuseLowersPeakMemory, /*has_fast_finish=*/false,
+                           /*heap_size_delta_per_share=*/-8));
+
+  EXPECT_TRUE(outcome.keeps_reuse);
+  EXPECT_EQ(outcome.num_finish_calls, 2);
+}
+
+TEST_F(BeneficialOperandReuseTest, DropsReuseIfHeapIsLarger) {
+  ASSERT_OK_AND_ASSIGN(const Outcome outcome,
+                       Run(kReuseLowersPeakMemory, /*has_fast_finish=*/false,
+                           /*heap_size_delta_per_share=*/8));
+
+  EXPECT_FALSE(outcome.keeps_reuse);
+  EXPECT_EQ(outcome.num_finish_calls, 2);
+}
+
+TEST_F(BeneficialOperandReuseTest, DropsReuseIfHeapHasSameSize) {
+  ASSERT_OK_AND_ASSIGN(const Outcome outcome,
+                       Run(kReuseLowersPeakMemory, /*has_fast_finish=*/false,
+                           /*heap_size_delta_per_share=*/0));
+
+  EXPECT_FALSE(outcome.keeps_reuse);
+  EXPECT_EQ(outcome.num_finish_calls, 2);
+}
+
+TEST_F(BeneficialOperandReuseTest,
+       DropsReuseWithoutComparingHeapsIfFinishIsSlowAndPeakMemoryIsNotLower) {
+  // The heap would be smaller with the reuse, but finding that out needs a
+  // second call of the slow Finish().
+  ASSERT_OK_AND_ASSIGN(const Outcome outcome,
+                       Run(kReuseKeepsPeakMemory, /*has_fast_finish=*/false,
+                           /*heap_size_delta_per_share=*/-8));
+
+  EXPECT_FALSE(outcome.keeps_reuse);
+  EXPECT_EQ(outcome.num_finish_calls, 1);
+}
+
+TEST_F(BeneficialOperandReuseTest,
+       ComparesHeapsIfFinishIsFastAndPeakMemoryIsNotLower) {
+  ASSERT_OK_AND_ASSIGN(const Outcome outcome,
+                       Run(kReuseKeepsPeakMemory, /*has_fast_finish=*/true,
+                           /*heap_size_delta_per_share=*/-8));
+
+  EXPECT_TRUE(outcome.keeps_reuse);
+  EXPECT_EQ(outcome.num_finish_calls, 2);
+}
+
+TEST_F(BeneficialOperandReuseTest, FinishesOnceIfNoBufferIsReusedThatWay) {
+  // `out` reads `mul` directly, so there is nothing to decide.
+  const char* const hlo_text = R"hlo(
+HloModule no_reuse_through_other_positions
+
+ENTRY main {
+  param = f32[4] parameter(0)
+  mul = f32[4] negate(param)
+  ROOT out = f32[4] exponential(mul)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(const Outcome outcome,
+                       Run(hlo_text, /*has_fast_finish=*/true,
+                           /*heap_size_delta_per_share=*/-8));
+
+  EXPECT_FALSE(outcome.keeps_reuse);
+  EXPECT_EQ(outcome.num_finish_calls, 1);
 }
 
 TEST_F(HeapSimulatorTest, Multiply) {
@@ -1783,6 +2229,36 @@ TEST_F(FindGlobalDecreasingSizeBestFitTest, FindChunkCandidates) {
 
 class ConstrainedGlobalDecreasingSizeBestFitHeapTest
     : public HeapAlgorithmTestBase {};
+
+TEST_F(ConstrainedGlobalDecreasingSizeBestFitHeapTest,
+       OnlyFastPackingStrategiesHaveFastFinish) {
+  using Heap = ConstrainedGlobalDecreasingSizeBestFitHeap;
+  constexpr uint64_t kSizeLimit = 50;
+  constexpr int64_t kAlignment = 1;
+
+  EXPECT_TRUE(Heap(kSizeLimit, kAlignment, Heap::kFastMerge).HasFastFinish());
+  EXPECT_TRUE(Heap(kSizeLimit, kAlignment, Heap::kFastSplit).HasFastFinish());
+  EXPECT_FALSE(Heap(kSizeLimit, kAlignment, Heap::kSpatial).HasFastFinish());
+  EXPECT_FALSE(Heap(kSizeLimit, kAlignment, Heap::kTemporal).HasFastFinish());
+}
+
+TEST_F(ConstrainedGlobalDecreasingSizeBestFitHeapTest,
+       ChooseBestHeapAlgorithmHasFastFinishIfAllAlgorithmsHaveIt) {
+  using Heap = ConstrainedGlobalDecreasingSizeBestFitHeap;
+  auto make_choose_best = [](Heap::PackingStrategy first,
+                             Heap::PackingStrategy second) {
+    auto algorithms = std::make_unique<
+        std::vector<std::unique_ptr<HeapAlgorithm<HloValue>>>>();
+    algorithms->push_back(std::make_unique<Heap>(50, 1, first));
+    algorithms->push_back(std::make_unique<Heap>(50, 1, second));
+    return ChooseBestHeapAlgorithm<HloValue>(std::move(algorithms));
+  };
+
+  EXPECT_TRUE(
+      make_choose_best(Heap::kFastMerge, Heap::kFastSplit).HasFastFinish());
+  EXPECT_FALSE(
+      make_choose_best(Heap::kFastMerge, Heap::kSpatial).HasFastFinish());
+}
 
 TEST_F(ConstrainedGlobalDecreasingSizeBestFitHeapTest, DecreasingSize) {
   // space

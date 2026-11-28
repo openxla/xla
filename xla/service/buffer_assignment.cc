@@ -3766,10 +3766,11 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
       options.buffers_to_assign = &color_map[color];
       HeapSimulator::Result<HloValue> result;
       ABSL_ASSIGN_OR_RETURN(
-          result, HeapSimulator::Run(get_heap_algorithm(alignment, color),
-                                     assignment->module(), schedule,
-                                     assignment->alias_analysis(), alias_info_,
-                                     &assignment->buffer_size_, options));
+          result,
+          HeapSimulator::RunWithBeneficialOperandReuse(
+              [&] { return get_heap_algorithm(alignment, color); },
+              assignment->module(), schedule, assignment->alias_analysis(),
+              *alias_info_, assignment->buffer_size_, options));
       ABSL_RETURN_IF_ERROR(AssignBuffersFromHeapSimulator(
           result, assignment, color, isolation_options));
     }
@@ -3795,10 +3796,11 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
         options.view_color = opts_.dus_view_color;
         HeapSimulator::Result<HloValue> result;
         ABSL_ASSIGN_OR_RETURN(
-            result, HeapSimulator::Run(
-                        get_heap_algorithm(alignment, color), *computation,
-                        *instruction_sequence, assignment->alias_analysis(),
-                        alias_info_, &assignment->buffer_size_, options));
+            result, HeapSimulator::RunWithBeneficialOperandReuse(
+                        [&] { return get_heap_algorithm(alignment, color); },
+                        *computation, *instruction_sequence,
+                        assignment->alias_analysis(), *alias_info_,
+                        assignment->buffer_size_, options));
         ABSL_RETURN_IF_ERROR(AssignBuffersFromHeapSimulator(
             result, assignment, color, isolation_options));
       }
