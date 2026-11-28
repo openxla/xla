@@ -217,7 +217,7 @@ HWY_INLINE hn::Vec<D> ExtractCrumb(D d, const hn::Vec<D>& v) {
                      /*kBitsPerGroup=*/2>(d, v);
 }
 
-template <int64_t kTpuLaneCount>
+template <int64_t kTpuLaneCount, int kSrcCrumb = 0>
 HWY_INLINE HWY_FLATTEN void RepackToHardwareLayoutSublaneHighwayPackingFactor16(
     const uint32_t* HWY_RESTRICT source_buffer,
     uint32_t* HWY_RESTRICT target_buffer) {
@@ -230,17 +230,17 @@ HWY_INLINE HWY_FLATTEN void RepackToHardwareLayoutSublaneHighwayPackingFactor16(
   using V8 = hn::Vec<decltype(d8)>;
   for (int i = 0; i < kStride; i += kCpuVectorLanes) {
     auto make_byte = [&](int load_index) {
-      V8 result0 = ExtractCrumb<0, 0>(
+      V8 result0 = ExtractCrumb<kSrcCrumb, 0>(
           d8, hn::BitCast(d8, hn::LoadU(d32, source_buffer + i +
                                                  (load_index + 0) * kStride)));
-      V8 result1 = ExtractCrumb<0, 1>(
+      V8 result1 = ExtractCrumb<kSrcCrumb, 1>(
           d8, hn::BitCast(d8, hn::LoadU(d32, source_buffer + i +
                                                  (load_index + 1) * kStride)));
       V8 result_low = hn::Or(result0, result1);
-      V8 result2 = ExtractCrumb<0, 2>(
+      V8 result2 = ExtractCrumb<kSrcCrumb, 2>(
           d8, hn::BitCast(d8, hn::LoadU(d32, source_buffer + i +
                                                  (load_index + 2) * kStride)));
-      V8 result3 = ExtractCrumb<0, 3>(
+      V8 result3 = ExtractCrumb<kSrcCrumb, 3>(
           d8, hn::BitCast(d8, hn::LoadU(d32, source_buffer + i +
                                                  (load_index + 3) * kStride)));
       V8 result_high = hn::Or(result2, result3);
@@ -256,6 +256,24 @@ HWY_INLINE HWY_FLATTEN void RepackToHardwareLayoutSublaneHighwayPackingFactor16(
                           tsl::safe_reinterpret_cast<uint8_t*>(
                               target_buffer + i * kNumInterleavedStores));
   }
+}
+
+// Packs one 6-bit (16, kTpuLaneCount) strip from 1-byte host containers into 3
+// interleaved 32-bit hardware sublanes: low 4-bit nibbles of rows 0..7 in
+// sublane 0, low 4-bit nibbles of rows 8..15 in sublane 1, and upper 2-bit
+// crumbs (bits [5:4]) of rows 0..15 in sublane 2. Both buffers must have space
+// for 4 * kTpuLaneCount and 3 * kTpuLaneCount uint32_t words respectively.
+template <int64_t kTpuLaneCount>
+HWY_INLINE HWY_FLATTEN void Repack6BitStripToHardwareLayoutSublaneHighway(
+    const uint32_t* HWY_RESTRICT source_buffer,
+    uint32_t* HWY_RESTRICT target_buffer) {
+  RepackToHardwareLayoutSublaneHighwayPackingFactor8<kTpuLaneCount>(
+      source_buffer, target_buffer);
+  RepackToHardwareLayoutSublaneHighwayPackingFactor8<kTpuLaneCount>(
+      source_buffer + 2 * kTpuLaneCount, target_buffer + kTpuLaneCount);
+  RepackToHardwareLayoutSublaneHighwayPackingFactor16<kTpuLaneCount,
+                                                      /*kSrcCrumb=*/2>(
+      source_buffer, target_buffer + 2 * kTpuLaneCount);
 }
 
 template <int kSrcBit, int kDstBit, typename D>
@@ -456,6 +474,78 @@ HWY_INLINE HWY_FLATTEN void RepackToHostLayoutSublaneHighwayPackingFactor16(
   }
 }
 
+// Extracts the 2-bit crumb at `kSrcCrumb` from each byte of `v`, shifts it to
+// `kDstCrumb`, and bitwise-ORs it into the existing host bytes at `dst_ptr`.
+template <int kSrcCrumb, int kDstCrumb, typename D>
+HWY_INLINE void OrCrumbToHostSublane(D d8, const hn::Vec<D>& v,
+                                     uint8_t* dst_ptr) {
+  const hn::Vec<D> existing = hn::LoadU(d8, dst_ptr);
+  const hn::Vec<D> crumb = ExtractCrumb<kSrcCrumb, kDstCrumb>(d8, v);
+  hn::StoreU(hn::Or(existing, crumb), d8, dst_ptr);
+}
+
+// Unpacks one 2-bit-packed hardware sublane (`kTpuLaneCount` uint32_t words
+// holding 16 rows) and ORs each 2-bit crumb into `kDstCrumb` of the 16 host
+// byte rows in `target_buffer`.
+template <int64_t kTpuLaneCount, int kDstCrumb>
+HWY_INLINE HWY_FLATTEN void OrCrumbToHostLayoutSublaneHighwayPackingFactor16(
+    const uint32_t* HWY_RESTRICT source_buffer,
+    uint32_t* HWY_RESTRICT target_buffer) {
+  constexpr int kNumInterleavedLoads = sizeof(uint32_t);
+  constexpr int kStride = kTpuLaneCount / kNumInterleavedLoads;
+  const hn::CappedTag<uint32_t, kStride> d32;
+  const hn::RepartitionToNarrow<decltype(d32)> d16;
+  hn::RepartitionToNarrow<decltype(d16)> d8;
+  const size_t cpu_vector_lanes = hn::Lanes(d32);
+  using V8 = hn::Vec<decltype(d8)>;
+  for (int i = 0; i < kStride; i += cpu_vector_lanes) {
+    V8 x0, x1, x2, x3;
+    FastLoadInterleaved4(d8,
+                         tsl::safe_reinterpret_cast<const uint8_t*>(
+                             source_buffer + i * kNumInterleavedLoads),
+                         x0, x1, x2, x3);
+    auto or_results = [&](const V8& v, size_t store_index) {
+      OrCrumbToHostSublane<0, kDstCrumb>(
+          d8, v,
+          tsl::safe_reinterpret_cast<uint8_t*>(target_buffer + i +
+                                               (store_index + 0) * kStride));
+      OrCrumbToHostSublane<1, kDstCrumb>(
+          d8, v,
+          tsl::safe_reinterpret_cast<uint8_t*>(target_buffer + i +
+                                               (store_index + 1) * kStride));
+      OrCrumbToHostSublane<2, kDstCrumb>(
+          d8, v,
+          tsl::safe_reinterpret_cast<uint8_t*>(target_buffer + i +
+                                               (store_index + 2) * kStride));
+      OrCrumbToHostSublane<3, kDstCrumb>(
+          d8, v,
+          tsl::safe_reinterpret_cast<uint8_t*>(target_buffer + i +
+                                               (store_index + 3) * kStride));
+    };
+    or_results(x0, 0);
+    or_results(x1, 4);
+    or_results(x2, 8);
+    or_results(x3, 12);
+  }
+}
+
+// Reconstructs one 6-bit (16, kTpuLaneCount) host strip (4 * kTpuLaneCount
+// uint32_t words, 1 byte per element) from 3 interleaved hardware sublanes
+// (sublanes 0..1 holding low 4-bit nibbles and sublane 2 holding upper 2-bit
+// crumbs).
+template <int64_t kTpuLaneCount>
+HWY_INLINE HWY_FLATTEN void Repack6BitStripToHostLayoutSublaneHighway(
+    const uint32_t* HWY_RESTRICT source_buffer,
+    uint32_t* HWY_RESTRICT target_buffer) {
+  RepackToHostLayoutSublaneHighwayPackingFactor8<kTpuLaneCount>(source_buffer,
+                                                                target_buffer);
+  RepackToHostLayoutSublaneHighwayPackingFactor8<kTpuLaneCount>(
+      source_buffer + kTpuLaneCount, target_buffer + 2 * kTpuLaneCount);
+  OrCrumbToHostLayoutSublaneHighwayPackingFactor16<kTpuLaneCount,
+                                                   /*kDstCrumb=*/2>(
+      source_buffer + 2 * kTpuLaneCount, target_buffer);
+}
+
 template <int64_t kTpuLaneCount>
 HWY_INLINE HWY_FLATTEN void RepackToHostLayoutSublaneHighwayPackingFactor32(
     const uint32_t* HWY_RESTRICT source_buffer,
@@ -609,6 +699,27 @@ HWY_INLINE void RepackToHostLayoutSublaneHighway(
   } else {
     static_assert(false, "Unsupported packing factor");
   }
+}
+
+template <int64_t kTpuLaneCount>
+HWY_INLINE void Repack6BitStripToHardwareLayoutHighway(
+    const uint32_t* HWY_RESTRICT source_buffer,
+    uint32_t* HWY_RESTRICT target_buffer) {
+  static_assert(HWY_IS_LITTLE_ENDIAN, "Must be little endian");
+  static_assert(kTpuLaneCount % 16 == 0, "kTpuLaneCount not a multiple of 16");
+  HWY_STATIC_DISPATCH(
+      Repack6BitStripToHardwareLayoutSublaneHighway<kTpuLaneCount>)
+  (source_buffer, target_buffer);
+}
+
+template <int64_t kTpuLaneCount>
+HWY_INLINE void Repack6BitStripToHostLayoutHighway(
+    const uint32_t* HWY_RESTRICT source_buffer,
+    uint32_t* HWY_RESTRICT target_buffer) {
+  static_assert(HWY_IS_LITTLE_ENDIAN, "Must be little endian");
+  static_assert(kTpuLaneCount % 16 == 0, "kTpuLaneCount not a multiple of 16");
+  HWY_STATIC_DISPATCH(Repack6BitStripToHostLayoutSublaneHighway<kTpuLaneCount>)
+  (source_buffer, target_buffer);
 }
 
 }  // namespace xla
