@@ -211,9 +211,11 @@ def VirtualizeSubKernelPass
          more arguments than `expected_num_tensor_args`.
       2. Appends `%rel_bid_i32 : i32` to the entry function signature.
       3. Replaces `nvvm.read.ptx.sreg.ctaid.{x,y,z}` and `nctaid.{x,y,z}` ops
-         using `%rel_bid_i32` (delinearizing for 2D/3D grids).
+         (`rocdl.workgroup.id.{x,y,z}` when `is_amd_gpu`) using `%rel_bid_i32`
+         (delinearizing for 2D/3D grids).
       4. Replaces `nvvm.read.ptx.sreg.tid.{x,y,z}` and `ntid.{x,y,z}` ops
-         (delinearizing from 1D `tid.x` for 2D/3D thread blocks).
+         (`rocdl.workitem.id.{x,y,z}` when `is_amd_gpu`), delinearizing from
+         1D `tid.x` for 2D/3D thread blocks.
       5. Rewrites 0-operand `nvvm.barrier` ops to partial-CTA
          `nvvm.barrier id = 0 number_of_threads = %sub_threads` when the
          sub-kernel uses fewer threads than `max_threads`.
@@ -225,6 +227,7 @@ def VirtualizeSubKernelPass
   let dependentDialects = [
     "mlir::LLVM::LLVMDialect",
     "mlir::NVVM::NVVMDialect",
+    "mlir::ROCDL::ROCDLDialect",
   ];
 
   let options = [
@@ -249,6 +252,9 @@ def VirtualizeSubKernelPass
            "Outer horizontal kernel thread count per block.">,
     Option<"warp_size_", "warp_size", "int64_t", /*default=*/"32",
            "Hardware warp size.">,
+    Option<"is_amd_gpu_", "is_amd_gpu", "bool", /*default=*/"false",
+           "Whether the sub-kernel is lowered for an AMD GPU (ROCDL) rather "
+           "than an NVIDIA GPU (NVVM).">,
   ];
 }
 

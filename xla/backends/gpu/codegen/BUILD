@@ -17,6 +17,7 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load(
     "//xla/tests:build_defs.bzl",
+    "AMD_GPU_DEFAULT_BACKENDS",
     "GPU_DEFAULT_BACKENDS",
     "NVIDIA_GPU_DEFAULT_BACKENDS",
     "xla_test",
@@ -366,8 +367,7 @@ cc_library(
 xla_test(
     name = "thread_block_specialized_test",
     srcs = ["thread_block_specialized_test.cc"],
-    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
-    tags = ["cuda-only"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS + AMD_GPU_DEFAULT_BACKENDS,
     deps = [
         ":thread_block_specialized",
         "//xla:error_spec",

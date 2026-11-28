@@ -63,9 +63,23 @@ class ThreadBlockSpecializedFusionTest
     return cuda_cc != nullptr && cuda_cc->IsAtLeastHopper();
   }
 
-  bool IsAtLeastAmpere() const {
-    const auto* cuda_cc =
-        device_description().gpu_compute_capability().cuda_compute_capability();
+  // Phases that each fit in a single thread block need no cluster at all, so
+  // such fusions also run on GPUs without thread-block clusters. Pre-Hopper
+  // NVIDIA GPUs still cannot run them: the emitter picks a narrower block
+  // there, so even small phases spill into a 2-block cluster.
+  bool HasSingleBlockPhasedFusionSupport() const {
+    return device_description().gpu_compute_capability().IsRocm() ||
+           HasHopperClusterSupport();
+  }
+
+  // Triton is supported on AMD GPUs and on Ampere and newer NVIDIA GPUs.
+  bool HasTritonSupport() const {
+    const se::GpuComputeCapability& cc =
+        device_description().gpu_compute_capability();
+    if (cc.IsRocm()) {
+      return true;
+    }
+    const auto* cuda_cc = cc.cuda_compute_capability();
     return cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere();
   }
 
@@ -1080,8 +1094,9 @@ ENTRY main {
 
 TEST_F(ThreadBlockSpecializedFusionTest,
        DoesNotOverwriteSharedOuterOperandAcrossPhases) {
-  if (!HasHopperClusterSupport()) {
-    GTEST_SKIP() << "Requires Hopper (SM90+) thread-block clusters.";
+  if (!HasSingleBlockPhasedFusionSupport()) {
+    GTEST_SKIP() << "Requires single-block phases or Hopper (SM90+) "
+                    "thread-block clusters.";
   }
   constexpr absl::string_view kHlo = R"hlo(
 phase_0 { ROOT neg = f32[256] negate(f32[256] parameter(0)) }
@@ -1767,9 +1782,8 @@ ENTRY main {
 }
 
 TEST_F(ThreadBlockSpecializedFusionTest, TritonPlusLoop) {
-  if (!IsAtLeastAmpere()) {
-    GTEST_SKIP() << "Triton is not supported on non-NVIDIA and "
-                    "pre-Ampere NVIDIA GPUs.";
+  if (!HasTritonSupport()) {
+    GTEST_SKIP() << "Triton is not supported on pre-Ampere NVIDIA GPUs.";
   }
 
   absl::string_view kHlo = R"hlo(
@@ -1856,9 +1870,8 @@ ENTRY main {
 
 TEST_F(ThreadBlockSpecializedFusionTest,
        TritonDotPlusTransposeSharedMemoryAndThreadGuard) {
-  if (!IsAtLeastAmpere()) {
-    GTEST_SKIP() << "Triton is not supported on non-NVIDIA and "
-                    "pre-Ampere NVIDIA GPUs.";
+  if (!HasTritonSupport()) {
+    GTEST_SKIP() << "Triton is not supported on pre-Ampere NVIDIA GPUs.";
   }
 
   constexpr absl::string_view kHlo = R"hlo(

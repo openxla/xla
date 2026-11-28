@@ -137,7 +137,7 @@ std::vector<const NestedKernelSpec*> CollectLeafSpecs(
 void EmitNode(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
               mlir::Value rel_bid, mlir::Value tid,
               absl::Span<const mlir::Value> arg_ptrs,
-              const LeafDecls& leaf_decls);
+              const LeafDecls& leaf_decls, bool is_amd_gpu);
 
 // Emits `if (value < bound)` and moves the insertion point of `b` into its
 // `then` region. `value` is an `index` with a known range, so
@@ -172,13 +172,31 @@ void EmitLeaf(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
   }
   call_args.push_back(
       mlir::arith::IndexCastUIOp::create(b, b.getI32Type(), rel_bid));
-  mlir::LLVM::CallOp::create(b, leaf_decls.at(spec.fusion), call_args);
+
+  // Triton sub-kernels on AMD GPUs take their buffer arguments in the global
+  // address space, while the launcher holds generic pointers. Insert the
+  // casts the callee's signature asks for; without them the spliced module
+  // fails verification.
+  mlir::LLVM::LLVMFuncOp callee = leaf_decls.at(spec.fusion);
+  mlir::LLVM::LLVMFunctionType callee_type = callee.getFunctionType();
+  CHECK_EQ(callee_type.getNumParams(), call_args.size());
+  for (size_t idx = 0; idx < call_args.size(); ++idx) {
+    auto want = mlir::dyn_cast<mlir::LLVM::LLVMPointerType>(
+        callee_type.getParamType(idx));
+    auto have =
+        mlir::dyn_cast<mlir::LLVM::LLVMPointerType>(call_args[idx].getType());
+    if (want && have && want.getAddressSpace() != have.getAddressSpace()) {
+      call_args[idx] =
+          mlir::LLVM::AddrSpaceCastOp::create(b, want, call_args[idx]);
+    }
+  }
+  mlir::LLVM::CallOp::create(b, callee, call_args);
 }
 
 void EmitHorizontal(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
                     mlir::Value rel_bid, mlir::Value tid,
                     absl::Span<const mlir::Value> arg_ptrs,
-                    const LeafDecls& leaf_decls) {
+                    const LeafDecls& leaf_decls, bool is_amd_gpu) {
   int64_t cluster_x =
       spec.launch_dims.cluster_dims().has_value()
           ? static_cast<int64_t>(spec.launch_dims.cluster_dims()->x)
@@ -218,7 +236,7 @@ void EmitHorizontal(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
             .getResult(0);
     block_offset = upper_bound;
 
-    EmitNode(b, child, child_rel_bid, tid, arg_ptrs, leaf_decls);
+    EmitNode(b, child, child_rel_bid, tid, arg_ptrs, leaf_decls, is_amd_gpu);
 
     if (has_else) {
       b.setInsertionPointToStart(&if_op.getElseRegion().front());
@@ -229,7 +247,7 @@ void EmitHorizontal(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
 void EmitPhased(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
                 mlir::Value rel_bid, mlir::Value tid,
                 absl::Span<const mlir::Value> arg_ptrs,
-                const LeafDecls& leaf_decls) {
+                const LeafDecls& leaf_decls, bool is_amd_gpu) {
   mlir::OpBuilder::InsertPoint caller_ip = b.saveInsertionPoint();
   auto is_single_block = [](const NestedKernelSpec& child) {
     return child.launch_dims.num_blocks() == 1 &&
@@ -256,11 +274,11 @@ void EmitPhased(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
             mlir::scf::IfOp::create(b, in_block0, /*withElseRegion=*/false);
       }
       b.setInsertionPoint(single_block_if->thenYield());
-      EmitNode(b, child, c0, tid, arg_ptrs, leaf_decls);
+      EmitNode(b, child, c0, tid, arg_ptrs, leaf_decls, is_amd_gpu);
     } else {
       single_block_if.reset();
       b.restoreInsertionPoint(caller_ip);
-      EmitNode(b, child, rel_bid, tid, arg_ptrs, leaf_decls);
+      EmitNode(b, child, rel_bid, tid, arg_ptrs, leaf_decls, is_amd_gpu);
     }
     if (idx + 1 < spec.children.size()) {
       if (child_single_block && is_single_block(spec.children[idx + 1])) {
@@ -275,9 +293,16 @@ void EmitPhased(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
         // This is safe as long as sub-kernels use default barrier ID 0 only.
         // TODO(tjoerg): Revisit when adding support for Triton-generated
         // sub-kernels.
-        mlir::Value barrier_id = mlir::arith::ConstantIntOp::create(b, 1, 32);
-        mlir::NVVM::BarrierOp::create(b, /*barrierId=*/barrier_id,
-                                      /*numberOfThreads=*/mlir::Value{});
+        // AMD GPUs have no portable named barriers, so emit a plain workgroup
+        // barrier there. Every thread of block 0 reaches it because it is
+        // emitted outside the child `tid` guards.
+        if (is_amd_gpu) {
+          mlir::gpu::BarrierOp::create(b);
+        } else {
+          mlir::Value barrier_id = mlir::arith::ConstantIntOp::create(b, 1, 32);
+          mlir::NVVM::BarrierOp::create(b, /*barrierId=*/barrier_id,
+                                        /*numberOfThreads=*/mlir::Value{});
+        }
       } else {
         // Emit a cluster barrier at `caller_ip` level outside all child block
         // and thread `if` guards so every thread of every block in the cluster
@@ -295,7 +320,7 @@ void EmitPhased(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
 void EmitNode(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
               mlir::Value rel_bid, mlir::Value tid,
               absl::Span<const mlir::Value> arg_ptrs,
-              const LeafDecls& leaf_decls) {
+              const LeafDecls& leaf_decls, bool is_amd_gpu) {
   mlir::OpBuilder::InsertionGuard guard(b);
 
   switch (spec.kind) {
@@ -303,10 +328,10 @@ void EmitNode(mlir::ImplicitLocOpBuilder& b, const NestedKernelSpec& spec,
       EmitLeaf(b, spec, rel_bid, tid, arg_ptrs, leaf_decls);
       break;
     case NestedKernelSpec::Kind::kHorizontal:
-      EmitHorizontal(b, spec, rel_bid, tid, arg_ptrs, leaf_decls);
+      EmitHorizontal(b, spec, rel_bid, tid, arg_ptrs, leaf_decls, is_amd_gpu);
       break;
     case NestedKernelSpec::Kind::kPhased:
-      EmitPhased(b, spec, rel_bid, tid, arg_ptrs, leaf_decls);
+      EmitPhased(b, spec, rel_bid, tid, arg_ptrs, leaf_decls, is_amd_gpu);
       break;
   }
 }
@@ -620,7 +645,8 @@ absl::Status ThreadBlockSpecializedFusion::EmitLauncherBody(
   auto tid = mlir::gpu::ThreadIdOp::create(b, mlir::gpu::Dimension::x);
   tid->setAttr("xla.range", b.getIndexArrayAttr({0, num_threads - 1}));
 
-  EmitNode(b, root_spec_, bid, tid, arg_ptrs, leaf_decls);
+  EmitNode(b, root_spec_, bid, tid, arg_ptrs, leaf_decls,
+           device_info_.gpu_compute_capability().IsRocm());
 
   b.setInsertionPointToEnd(entry_block);
   mlir::func::ReturnOp::create(
@@ -706,6 +732,8 @@ ThreadBlockSpecializedFusion::CreateAndLowerMLIRModule(
     virtualize_options.max_threads_ =
         launch_dimensions().num_threads_per_block();
     virtualize_options.warp_size_ = warp_size;
+    virtualize_options.is_amd_gpu_ =
+        device_info_.gpu_compute_capability().IsRocm();
     const se::BlockDim& block_counts = leaf_spec.launch_dims.block_counts();
     virtualize_options.block_dim_x_ = block_counts.x;
     virtualize_options.block_dim_y_ = block_counts.y;
@@ -805,8 +833,13 @@ ThreadBlockSpecializedFusion::CreateLLVMModule(
           .getInt();
 
   auto llvm_context = std::make_unique<llvm::LLVMContext>();
+  // Capture the MLIR diagnostics so a translation failure reports what in the
+  // module could not be translated, rather than a bare null-module check.
+  tsl::StatusScopedDiagnosticHandler diagnostic_handler(&mlir_context);
   std::unique_ptr<llvm::Module> llvm_module =
       mlir::translateModuleToLLVMIR(*module, *llvm_context);
+  ABSL_RETURN_IF_ERROR(
+      diagnostic_handler.consumeStatus(mlir::success(llvm_module != nullptr)));
   TF_RET_CHECK(llvm_module != nullptr)
       << "Failed to translate thread-block-specialized fusion MLIR module to "
          "LLVM IR.";
