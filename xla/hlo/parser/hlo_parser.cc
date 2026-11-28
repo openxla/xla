@@ -6155,8 +6155,10 @@ bool HloParserImpl::ParseAttributeHelper(
         if (!ParseDouble(&result)) {
           return false;
         }
-        if (result > std::numeric_limits<float>::max() ||
-            result < std::numeric_limits<float>::lowest()) {
+        // Infinities are valid floats; finite values must fit.
+        if (std::isfinite(result) &&
+            (result > std::numeric_limits<float>::max() ||
+             result < std::numeric_limits<float>::lowest())) {
           return Error(attr_loc, "value out of range for float");
         }
         static_cast<optional<float>*>(attr_out_ptr)
@@ -8289,6 +8291,8 @@ bool HloParserImpl::ParseMetadata(OpMetadata& metadata) {
   optional<std::string> deduplicated_name;
   optional<std::string> scheduling_name;
   optional<std::string> metadata_payload;
+  optional<float> scheduler_cost_us;
+  optional<std::string> scheduler_cost_source;
   attrs["op_type"] = {/*required=*/false, AttrTy::kString, &op_type};
   attrs["op_name"] = {/*required=*/false, AttrTy::kString, &op_name};
   attrs["source_file"] = {/*required=*/false, AttrTy::kString, &source_file};
@@ -8308,6 +8312,10 @@ bool HloParserImpl::ParseMetadata(OpMetadata& metadata) {
                              &stack_frame_id};
   attrs["metadata_payload"] = {/*required=*/false, AttrTy::kString,
                                &metadata_payload};
+  attrs["scheduler_cost_us"] = {/*required=*/false, AttrTy::kFloat,
+                                &scheduler_cost_us};
+  attrs["scheduler_cost_source"] = {/*required=*/false, AttrTy::kString,
+                                    &scheduler_cost_source};
   if (!ParseSubAttributes(attrs)) {
     return false;
   }
@@ -8348,6 +8356,12 @@ bool HloParserImpl::ParseMetadata(OpMetadata& metadata) {
   }
   if (stack_frame_id) {
     metadata.set_stack_frame_id(*stack_frame_id);
+  }
+  if (scheduler_cost_us) {
+    metadata.set_scheduler_cost_us(*scheduler_cost_us);
+  }
+  if (scheduler_cost_source) {
+    metadata.set_scheduler_cost_source(*scheduler_cost_source);
   }
   if (metadata_payload) {
     metadata.mutable_metadata_payload()->set_value(*metadata_payload);
