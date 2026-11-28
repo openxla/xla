@@ -67,6 +67,12 @@ TEST_F(MultithreadedCompilation, EightModuleCompilation) {
                                                   /*num_partitions=*/1);
   DebugOptions debug_options = config.debug_options();
   debug_options.set_xla_dump_hlo_pass_re("layout-assignment");
+  // This test checks for races and compares the compiled protos across
+  // threads. Timing-based autotuning (e.g. cuDNN fusion plan selection with
+  // --xla_gpu_cudnn_non_gemm_fusion_level=1) can legitimately choose
+  // different but equivalent plans under concurrent load, which would make
+  // the comparison flaky.
+  debug_options.set_xla_gpu_autotune_level(0);
   config.set_debug_options(debug_options);
 
   std::array<std::unique_ptr<HloModule>, kNumThreads> modules;
