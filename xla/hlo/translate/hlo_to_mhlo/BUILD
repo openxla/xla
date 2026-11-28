@@ -51,6 +51,22 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "attribute_importer_test",
+    srcs = ["attribute_importer_test.cc"],
+    deps = [
+        ":attribute_importer",
+        "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:IR",
+        "@stablehlo//:base",
+        "@stablehlo//:stablehlo_ops",
+        "@tsl//tsl/platform:protobuf",
+    ],
+)
+
 cc_library(
     name = "async_importer",
     srcs = ["async_importer.cc"],

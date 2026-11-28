@@ -54,8 +54,10 @@ mlir::stablehlo::GatherDimensionNumbersAttr ConvertGatherDimensionNumbers(
 mlir::stablehlo::ScatterDimensionNumbersAttr ConvertScatterDimensionNumbers(
     const xla::ScatterDimensionNumbers& dnums, mlir::Builder* builder);
 
-// Converts the dot algorithm to attributes.
-mlir::stablehlo::DotAlgorithmAttr ConvertDotAlgorithm(
+// Converts the dot algorithm to attributes. Returns an empty
+// `DotAlgorithmAttr` for `PrecisionConfig::ALG_UNSET`, and `InvalidArgument`
+// for unknown enum values.
+absl::StatusOr<mlir::stablehlo::DotAlgorithmAttr> ConvertDotAlgorithm(
     PrecisionConfig::Algorithm algorithm, mlir::Builder* builder);
 
 // Converts the conv dimensions to attributes.

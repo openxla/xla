@@ -164,13 +164,16 @@ ConvertCustomCallApiVersion(xla::CustomCallApiVersion api_version) {
   }
 }
 
-mlir::stablehlo::DotAlgorithmAttr ConvertDotAlgorithm(
+absl::StatusOr<mlir::stablehlo::DotAlgorithmAttr> ConvertDotAlgorithm(
     const PrecisionConfig::Algorithm algorithm, mlir::Builder* builder) {
   mlir::Type lhs, rhs, accum;
   int64_t lhsComponentCount = 1, rhsComponentCount = 1,
           numPrimitiveOperations = 1;
   bool allowImpreciseAccumulation = false;
   switch (algorithm) {
+    case PrecisionConfig::ALG_UNSET: {
+      return mlir::stablehlo::DotAlgorithmAttr{};
+    }
     case PrecisionConfig::ALG_DOT_ANY_F8_ANY_F8_F32: {
       lhs = rhs = builder->getType<mlir::Float8E5M2Type>();
       accum = builder->getF32Type();
@@ -250,8 +253,9 @@ mlir::stablehlo::DotAlgorithmAttr ConvertDotAlgorithm(
       break;
     }
     default:
-      // Unset, sentinels
-      return mlir::stablehlo::DotAlgorithmAttr{};
+      return InvalidArgument("Unknown dot algorithm enum value #%d (%s)",
+                             algorithm,
+                             PrecisionConfig::Algorithm_Name(algorithm));
   }
   return mlir::stablehlo::DotAlgorithmAttr::get(
       builder->getContext(), lhs, rhs, accum, lhsComponentCount,

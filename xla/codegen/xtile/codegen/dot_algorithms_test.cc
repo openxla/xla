@@ -19,6 +19,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <optional>
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
@@ -159,6 +160,52 @@ TEST_F(DotAlgorithmsTest, EmitSingleTileDotHighestPrecision) {
   EXPECT_TRUE(mlir::cast<mlir::ShapedType>(dot_op.getRhs().getType())
                   .getElementType()
                   .isF32());
+}
+
+TEST_F(DotAlgorithmsTest, EmitSingleTileDotPreservesBF16X9Algorithm) {
+  constexpr char kHloText[] = R"hlo(
+    HloModule test
+    ENTRY test {
+      p0 = f32[32,32] parameter(0)
+      p1 = f32[32,32] parameter(1)
+      ROOT dot = f32[32,32] dot(p0, p1),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0},
+        algorithm=dot_bf16_bf16_f32_x9
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  auto* dot_instr = xla::Cast<HloDotInstruction>(
+      module->entry_computation()->root_instruction());
+
+  auto type = mlir::RankedTensorType::get({32, 32}, b_.getF32Type());
+  DotOperands operands;
+  operands.lhs = mlir::stablehlo::ConstantOp::create(
+      b_, mlir::DenseElementsAttr::get(type, 1.0f));
+  operands.rhs = mlir::stablehlo::ConstantOp::create(
+      b_, mlir::DenseElementsAttr::get(type, 1.0f));
+  operands.accumulator = mlir::stablehlo::ConstantOp::create(
+      b_, mlir::DenseElementsAttr::get(type, 0.0f));
+
+  ASSERT_OK_AND_ASSIGN(mlir::Value result,
+                       EmitSingleTileDot(b_, *dot_instr, operands));
+
+  auto add_op = mlir::dyn_cast<mlir::arith::AddFOp>(result.getDefiningOp());
+  ASSERT_TRUE(add_op);
+  auto dot_op = mlir::dyn_cast<mlir::stablehlo::DotGeneralOp>(
+      add_op.getRhs().getDefiningOp());
+  ASSERT_TRUE(dot_op);
+
+  std::optional<mlir::stablehlo::DotAlgorithmAttr> algorithm =
+      dot_op.getAlgorithm();
+  ASSERT_TRUE(algorithm.has_value());
+  EXPECT_TRUE(algorithm->getLhsPrecisionType().isBF16());
+  EXPECT_TRUE(algorithm->getRhsPrecisionType().isBF16());
+  EXPECT_TRUE(algorithm->getAccumulationType().isF32());
+  EXPECT_EQ(algorithm->getLhsComponentCount(), 1);
+  EXPECT_EQ(algorithm->getRhsComponentCount(), 1);
+  EXPECT_EQ(algorithm->getNumPrimitiveOperations(), 9);
+  EXPECT_FALSE(algorithm->getAllowImpreciseAccumulation());
 }
 
 TEST_F(DotAlgorithmsTest, SignedIntegerAccumulatorTypeDependsOnIsCpu) {
