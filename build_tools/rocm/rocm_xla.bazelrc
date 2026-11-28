@@ -10,7 +10,9 @@ build:rocm_rbe_base --spawn_strategy=remote,local
 build:rocm_rbe_base --grpc_keepalive_time=30s
 build:rocm_rbe_base --remote_cache_compression
 build:rocm_rbe_base --execution_log_compact_file=execution_log.binpb.zst
-build:rocm_rbe_base --cache_test_results=yes
+# TEMP: rerun all tests instead of reusing cached results; restore
+# --cache_test_results=yes before merging.
+build:rocm_rbe_base --nocache_test_results
 build:rocm_rbe_base --incompatible_strict_action_env
 build:rocm_rbe_base --experimental_strict_repo_env
 build:rocm_rbe_base --jobs=50
