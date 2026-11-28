@@ -15,8 +15,10 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 
+#include "absl/log/check.h"
 #include "absl/strings/str_format.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
@@ -49,7 +51,7 @@ std::optional<CoreType> getRefCoreType(TypedValue<MemRefType> value) {
     return std::nullopt;
   }
   auto space = dyn_cast_if_present<tpu::MemorySpaceAttr>(
-      value.getType().getMemorySpace());
+      getMemRefType(value).getMemorySpace());
   if (!space) {
     return std::nullopt;
   }
@@ -116,6 +118,17 @@ CoreType getSemaphoreSignalTargetCoreType(SemaphoreSignalOp op) {
   return getRefCoreType(op.getSemaphore()).value_or(GetCoreTypeOfParentOp(*op));
 }
 
+LogicalResult verifyCrossCoreSubcoreId(Operation* op, CoreType issuing_core,
+                                       CoreType target_core, Value subcore_id) {
+  if (target_core == CoreType::kScVectorSubcore && subcore_id == nullptr) {
+    return op->emitOpError(
+        absl::StrFormat("Subcore id must be specified when target core type "
+                        "(%v) is different from source core type (%v)",
+                        target_core, issuing_core));
+  }
+  return success();
+}
+
 }  // namespace
 
 void SemaphoreSignalOp::build(OpBuilder& builder, OperationState& state,
@@ -139,6 +152,9 @@ LogicalResult SemaphoreSignalOp::verify() {
                           stringifyCoreType(target_core_type),
                           stringifyCoreType(issuing_core_type)));
     }
+  } else if (target_core_type != issuing_core_type) {
+    RETURN_IF_FAILED(verifyCrossCoreSubcoreId(
+        getOperation(), issuing_core_type, target_core_type, getSubcoreId()));
   }
   // Subcore ID applies only to SC vector subcore semaphore ops.
   if (target_core_type != CoreType::kScVectorSubcore &&
@@ -204,11 +220,15 @@ LogicalResult verifyCommonDmaCoreParams(Operation* op, MemRefType source_ty,
   // If the target core_type is different from the issuing core_type,
   // the specific core_id must be provided. The device_id is irrelevant here.
   CoreType target_core = getRefCoreType(target_sem).value_or(issuing_core);
-  if (target_core != issuing_core && core_id == nullptr) {
-    return op->emitOpError(
-        absl::StrFormat("Core id must be specified when target core type (%v) "
-                        "is different from source core type (%v)",
-                        target_core, issuing_core));
+  if (target_core != issuing_core) {
+    if (core_id == nullptr) {
+      return op->emitOpError(absl::StrFormat(
+          "Core id must be specified when target core type (%v) "
+          "is different from source core type (%v)",
+          target_core, issuing_core));
+    }
+    RETURN_IF_FAILED(
+        verifyCrossCoreSubcoreId(op, issuing_core, target_core, subcore_id));
   }
   if (strict_ordering && !is_sc) {
     return op->emitOpError(
@@ -306,7 +326,29 @@ void WaitDMA2Op::build(OpBuilder& builder, OperationState& state,
 LogicalResult WaitDMA2Op::verify() {
   RETURN_IF_FAILED(TpuOpVerifiers::verifyWaitDMA2Op(*this));
 
+  MemRefType source_ty = getMemRefType(getSrc());
+  MemRefType target_ty = getMemRefType(getDst());
+  if (source_ty.getElementType() != target_ty.getElementType()) {
+    return emitOpError("DMA source and target element type mismatch");
+  }
   CoreType issuing_core = GetCoreTypeOfParentOp(**this);
+  bool is_sc = issuing_core == CoreType::kScVectorSubcore ||
+               issuing_core == CoreType::kScScalarSubcore;
+  if (getStrictOrdering() && !is_sc) {
+    return emitOpError(
+        "Strict ordering is only supported on the SC scalar and vector "
+        "subcores");
+  }
+  if (is_sc) {
+    if (source_ty.getMemorySpace() == nullptr) {
+      return emitOpError(
+          "Source memory space must be provided for SparseCore DMA");
+    }
+    if (target_ty.getMemorySpace() == nullptr) {
+      return emitOpError(
+          "Target memory space must be provided for SparseCore DMA");
+    }
+  }
   if (getRefCoreType(getSemaphore()).value_or(issuing_core) != issuing_core) {
     return emitOpError("Can only await semaphores attached to the local core");
   }
@@ -348,6 +390,8 @@ LogicalResult WaitDMAOp::verify() {
               "from a non-local memory to local memory on SparseCore");
         }
       }
+    } else if (sem == nullptr) {
+      return emitOpError("The awaited semaphore must be provided");
     }
   } else {
     if (wait_destination) {
@@ -412,8 +456,9 @@ void PackMaskOp::build(OpBuilder& builder, OperationState& state,
   SmallVector<int32_t> positions;
   for (size_t i = 0; i < padded_sources.size(); ++i) {
     if (padded_sources[i] != nullptr) {
+      CHECK_LE(i, static_cast<size_t>(std::numeric_limits<int32_t>::max()));
       sources.push_back(padded_sources[i]);
-      positions.push_back(i);
+      positions.push_back(static_cast<int32_t>(i));
     }
   }
   build(builder, state, output_type, sources, positions);
@@ -452,6 +497,9 @@ LogicalResult FetchAndAddSyncOp::verify() {
       return emitOpError("Only SC vector subcore is supported, got ")
              << target_core;
   }
+  if (issuing_core == CoreType::kTc) {
+    return emitOpError("Unsupported issuing core type: ") << issuing_core;
+  }
   return TpuOpVerifiers::verifyFetchAndAddSyncOp(*this);
 }
 
@@ -466,9 +514,9 @@ LogicalResult CoreIdOp::verify() {
   }
   // Querying Core ID is not supported under dimension semantics.
   if (auto func_op = getOperation()->getParentOfType<func::FuncOp>();
-      func_op != nullptr &&
-      func_op->getAttrOfType<ArrayAttr>("dimension_semantics") != nullptr) {
-    return failure();
+      func_op != nullptr && func_op->hasAttr("dimension_semantics")) {
+    return emitOpError(
+        "Core id is not supported when dimension_semantics is specified");
   }
   return success();
 }
@@ -484,9 +532,9 @@ LogicalResult SubcoreIdOp::verify() {
   }
   // Subcore ID is not supported under dimension semantics.
   if (auto func_op = getOperation()->getParentOfType<func::FuncOp>();
-      func_op != nullptr &&
-      func_op->getAttrOfType<ArrayAttr>("dimension_semantics") != nullptr) {
-    return failure();
+      func_op != nullptr && func_op->hasAttr("dimension_semantics")) {
+    return emitOpError(
+        "Subcore id is not supported when dimension_semantics is specified");
   }
   return success();
 }

@@ -38,16 +38,30 @@ namespace mlir::tpu {
 // things that should never happen. We prefer returning failure over a CHECK
 // because it's easier to debug from Python (particularly from OSS where symbols
 // are removed)
-#define TPU_ASSERT_IMPL(stream, cond)                    \
-  if (LLVM_UNLIKELY(!(cond))) {                          \
-    (stream) << "Internal error: assert failed: " #cond; \
-  }
-#define TPU_ASSERT_CMP_IMPL(stream, lhs, rhs, cmp)                            \
-  if (LLVM_UNLIKELY(!((lhs)cmp(rhs)))) {                                      \
-    (stream) << "Internal error: assert failed: " #lhs " " #cmp " " #rhs " (" \
-             << (lhs) << " vs. " << (rhs) << ")";                             \
-    return failure();                                                         \
-  }
+#define TPU_ASSERT_IMPL(stream, cond)                      \
+  do {                                                     \
+    if (LLVM_UNLIKELY(!(cond))) {                          \
+      (stream) << "Internal error: assert failed: " #cond; \
+      return ::mlir::failure();                            \
+    }                                                      \
+  } while (false)
+#define TPU_ASSERT_CMP_IMPL(stream, lhs, rhs, cmp)                          \
+  do {                                                                      \
+    if (LLVM_UNLIKELY(::mlir::failed(                                       \
+            [&](const auto& tpu_assert_lhs,                                 \
+                const auto& tpu_assert_rhs) -> ::mlir::LogicalResult {      \
+              if (LLVM_UNLIKELY(!(tpu_assert_lhs cmp tpu_assert_rhs))) {    \
+                (stream) << "Internal error: assert failed: " #lhs " " #cmp \
+                            " " #rhs " ("                                   \
+                         << tpu_assert_lhs << " vs. " << tpu_assert_rhs     \
+                         << ")";                                            \
+                return ::mlir::failure();                                   \
+              }                                                             \
+              return ::mlir::success();                                     \
+            }((lhs), (rhs))))) {                                            \
+      return ::mlir::failure();                                             \
+    }                                                                       \
+  } while (false)
 #define TPU_ASSERT_OP(cond) TPU_ASSERT_IMPL(op.emitOpError(), cond)
 #define TPU_ASSERT_CMP_OP_IMPL(lhs, rhs, cmp) \
   TPU_ASSERT_CMP_IMPL(op.emitOpError(), lhs, rhs, cmp)
