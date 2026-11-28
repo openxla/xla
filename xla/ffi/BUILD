@@ -271,6 +271,7 @@ cc_library(
         "//xla:util",
         "//xla/ffi/api:c_api",
         "//xla/ffi/api:c_api_internal",
+        "//xla/service:device_assignment",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:stream",

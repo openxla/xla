@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/ffi/ffi_structs.h"
 #include "xla/ffi/invoke.h"
 #include "xla/ffi/type_registry.h"
+#include "xla/service/device_assignment.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/stream.h"
@@ -356,6 +357,33 @@ static XLA_FFI_Error* XLA_FFI_DeviceOrdinal_Get(
       "XLA_FFI_DeviceOrdinal_Get", XLA_FFI_DeviceOrdinal_Get_Args_STRUCT_SIZE,
       args->struct_size));
   args->device_ordinal = args->ctx->device_ordinal;
+  return nullptr;
+}
+
+static XLA_FFI_Error* XLA_FFI_LogicalDeviceInfo_Get(
+    XLA_FFI_LogicalDeviceInfo_Get_Args* args) {
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_LogicalDeviceInfo_Get_Args",
+      XLA_FFI_LogicalDeviceInfo_Get_Args_STRUCT_SIZE, args->struct_size));
+
+  if (args->ctx == nullptr) {
+    return new XLA_FFI_Error{
+        InvalidArgument("XLA FFI invocation context is null")};
+  }
+
+  const DevicePlacement* placement = args->ctx->device_placement;
+  if (placement == nullptr) {
+    return new XLA_FFI_Error{FailedPrecondition(
+        "Logical device information requires an execution device assignment")};
+  }
+  auto coordinates = placement->GetCoordinates();
+  if (!coordinates.ok()) {
+    return new XLA_FFI_Error{std::move(coordinates).status()};
+  }
+  args->replica_id = coordinates->replica_id;
+  args->partition_id = coordinates->partition_id;
+  args->replica_count = coordinates->replica_count;
+  args->partition_count = coordinates->partition_count;
   return nullptr;
 }
 
@@ -724,6 +752,7 @@ const XLA_FFI_Api* GetXlaFfiApi() {
       XLA_FFI_DeviceOrdinal_Get,
       XLA_FFI_InvokeContext_FindExtension,
       XLA_FFI_CustomOptions_Get,
+      XLA_FFI_LogicalDeviceInfo_Get,
   };
 
   return &api;

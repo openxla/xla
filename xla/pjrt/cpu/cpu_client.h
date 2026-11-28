@@ -321,6 +321,7 @@ std::unique_ptr<CommonPjRtClient> CreatePjRtCpuClient(
 
 class PjRtCpuLoadedExecutable;
 class PjRtCpuExecutable;
+class CpuExecutableLoadState;
 
 class CpuPjRtRawLoadedExecutable : public PjRtRawLoadedExecutable {
  public:
@@ -340,7 +341,9 @@ class CpuPjRtRawLoadedExecutable : public PjRtRawLoadedExecutable {
   friend class CpuExecutableLoadState;
 
   const PjRtCpuExecutable* executable_;
+  tsl::RCReference<CpuExecutableLoadState> load_state_;
   std::shared_ptr<const DeviceAssignment> device_assignment_;
+  DeviceAssignment::LogicalID logical_device_id_;
   size_t num_addressable_devices_;
   LocalDeviceId local_device_id_;
   GlobalDeviceId global_device_id_;
@@ -368,12 +371,23 @@ class CpuExecutableLoadState : public PjRtExecutableLoadState {
       int attempt) override;
 
  private:
+  friend class CpuPjRtRawLoadedExecutable;
+  friend class CpuExecutableLoadStateTestPeer;
+
+  DeviceAssignment::Placement GetOverridePlacement(
+      const DeviceAssignment& assignment, GlobalDeviceId loaded_device_id,
+      GlobalDeviceId effective_device_id);
+
   PjRtCpuRawClient* raw_client_;
   std::atomic<bool> is_deleted_{false};
 
   absl::Mutex mu_;
   std::optional<std::shared_ptr<const DeviceAssignment>> device_assignment_
       ABSL_GUARDED_BY(mu_);
+  // Portable loads synthesize a singleton assignment for each loaded device.
+  using OverrideKey = std::pair<GlobalDeviceId, std::optional<GlobalDeviceId>>;
+  absl::flat_hash_map<OverrideKey, DeviceAssignment::Placement>
+      override_placements_ ABSL_GUARDED_BY(mu_);
 };
 
 class PjRtCpuExecutable final : public PjRtExecutable {

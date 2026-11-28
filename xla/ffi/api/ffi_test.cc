@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/ffi/api/ffi.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -30,6 +27,8 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/functional/overload.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -49,6 +48,8 @@ limitations under the License.
 #include "xla/ffi/invoke.h"
 #include "xla/ffi/type_registry.h"
 #include "xla/primitive_util.h"
+#include "xla/runtime/device_id.h"
+#include "xla/service/device_assignment.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
@@ -599,6 +600,139 @@ TEST(FfiTest, DeviceOrdinal) {
 
   TF_ASSERT_OK(status);
 }
+
+namespace {
+
+static_assert(!internal::IsStageCompatibleCtx<
+              LogicalDeviceInfo, ExecutionStage::kInstantiate>::value);
+static_assert(internal::IsStageCompatibleCtx<LogicalDeviceInfo,
+                                             ExecutionStage::kPrepare>::value);
+static_assert(internal::IsStageCompatibleCtx<
+              LogicalDeviceInfo, ExecutionStage::kInitialize>::value);
+static_assert(internal::IsStageCompatibleCtx<LogicalDeviceInfo,
+                                             ExecutionStage::kExecute>::value);
+static_assert(internal::IsStageCompatibleCtx<LogicalDeviceInfo,
+                                             ExecutionStage::kRecord>::value);
+
+TEST(FfiTest, LogicalDeviceInfo) {
+  auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
+  int handler_calls = 0;
+  auto handler = Ffi::Bind().Ctx<LogicalDeviceInfo>().Ctx().To(
+      [&](LogicalDeviceInfo info, Context ctx) {
+        ++handler_calls;
+        EXPECT_EQ(info.replica_id, 1);
+        EXPECT_EQ(info.partition_id, 2);
+        EXPECT_EQ(info.replica_count, 2);
+        EXPECT_EQ(info.partition_count, 3);
+        auto from_context = ctx.get<LogicalDeviceInfo>();
+        EXPECT_TRUE(from_context.has_value());
+        if (from_context.has_value()) {
+          EXPECT_EQ(from_context->replica_id, info.replica_id);
+          EXPECT_EQ(from_context->partition_id, info.partition_id);
+          EXPECT_EQ(from_context->replica_count, info.replica_count);
+          EXPECT_EQ(from_context->partition_count, info.partition_count);
+        }
+        return Error::Success();
+      });
+
+  // Leave the mapping empty to exercise the caller-supplied logical ID.
+  DeviceAssignment assignment(/*replica_count=*/2, /*computation_count=*/3);
+  const auto placement = DevicePlacement::ForExecution(
+      &assignment, GlobalDeviceId(7), DeviceAssignment::LogicalID{1, 2});
+  InvokeContext context;
+  context.device_placement = &placement;
+  ASSERT_OK(Invoke(Api(), *handler, call_frame, context));
+  EXPECT_EQ(handler_calls, 1);
+}
+
+TEST(FfiTest, LogicalDeviceInfoUnavailableAtInstantiate) {
+  auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
+  auto handler = Ffi::BindInstantiate().Ctx().To([](Context ctx) {
+    auto info = ctx.get<LogicalDeviceInfo>();
+    return info.has_value() ? Error::Success() : info.error();
+  });
+  EXPECT_THAT(
+      Invoke(Api(), *handler, call_frame, {}, ExecutionStage::kInstantiate),
+      StatusIs(absl::StatusCode::kInternal,
+               HasSubstr("requires an execution device assignment")));
+}
+
+TEST(FfiTest, LogicalDeviceInfoNullContext) {
+  XLA_FFI_LogicalDeviceInfo_Get_Args args = {};
+  args.struct_size = XLA_FFI_LogicalDeviceInfo_Get_Args_STRUCT_SIZE;
+  XLA_FFI_Error* error = Api()->XLA_FFI_LogicalDeviceInfo_Get(&args);
+  ASSERT_NE(error, nullptr);
+  Error status = internal::ErrorPolicy::TakeError(Api(), error);
+  EXPECT_EQ(status.errc(), ErrorCode::kInvalidArgument);
+  EXPECT_THAT(status.message(), HasSubstr("invocation context is null"));
+}
+
+TEST(FfiTest, LogicalDeviceInfoMissingAssignment) {
+  auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
+  auto handler = [](XLA_FFI_CallFrame* frame) {
+    XLA_FFI_LogicalDeviceInfo_Get_Args args = {};
+    args.struct_size = XLA_FFI_LogicalDeviceInfo_Get_Args_STRUCT_SIZE;
+    args.ctx = frame->ctx;
+    return frame->api->XLA_FFI_LogicalDeviceInfo_Get(&args);
+  };
+  const auto placement =
+      DevicePlacement::ForExecution(/*assignment=*/nullptr, GlobalDeviceId(0));
+  InvokeContext context;
+  context.device_placement = &placement;
+  EXPECT_THAT(Invoke(Api(), handler, call_frame, context),
+              StatusIs(absl::StatusCode::kFailedPrecondition,
+                       HasSubstr("requires an execution device assignment")));
+}
+
+TEST(FfiTest, LogicalDeviceInfoReportsAssignmentErrors) {
+  auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
+  auto handler = Ffi::Bind().Ctx<LogicalDeviceInfo>().To(
+      [](LogicalDeviceInfo) { return Error::Success(); });
+  DeviceAssignment assignment(/*replica_count=*/2, /*computation_count=*/1);
+  assignment.Fill(4);
+  const auto missing =
+      DevicePlacement::ForExecution(&assignment, GlobalDeviceId(7));
+  const auto duplicate =
+      DevicePlacement::ForExecution(&assignment, GlobalDeviceId(4));
+  const DevicePlacement missing_copy(missing);
+  auto query = [&](const DevicePlacement& placement) {
+    InvokeContext context;
+    context.device_placement = &placement;
+    return Invoke(Api(), *handler, call_frame, context);
+  };
+  absl::Status missing_status = query(missing);
+  absl::Status duplicate_status = query(duplicate);
+  EXPECT_THAT(missing_status, StatusIs(absl::StatusCode::kInvalidArgument,
+                                       HasSubstr("Device 7 doesn't appear")));
+  EXPECT_THAT(duplicate_status, StatusIs(absl::StatusCode::kInvalidArgument,
+                                         HasSubstr("Device 4 not unique")));
+
+  // A fresh lookup would now succeed for both devices.
+  assignment(0, 0) = 7;
+  EXPECT_EQ(query(missing_copy), missing_status);
+  EXPECT_EQ(query(duplicate), duplicate_status);
+}
+
+TEST(FfiTest, LogicalDeviceInfoUnsupportedApi) {
+  auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
+  auto handler = Ffi::Bind().Ctx<LogicalDeviceInfo>().To(
+      [](LogicalDeviceInfo) { return Error::Success(); });
+  for (bool truncated : {false, true}) {
+    SCOPED_TRACE(truncated);
+    XLA_FFI_Api api = *Api();
+    if (truncated) {
+      api.struct_size =
+          XLA_FFI_STRUCT_SIZE(XLA_FFI_Api, XLA_FFI_CustomOptions_Get);
+    } else {
+      api.XLA_FFI_LogicalDeviceInfo_Get = nullptr;
+    }
+    EXPECT_THAT(Invoke(&api, *handler, call_frame),
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("not supported by this FFI API")));
+  }
+}
+
+}  // namespace
 
 TEST(FfiTest, AnyBufferArgument) {
   std::vector<float> storage(4, 0.0f);

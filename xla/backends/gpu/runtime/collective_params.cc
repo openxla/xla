@@ -24,14 +24,13 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/gpu_executable_run_options.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
 #include "xla/executable_run_options.h"
 #include "xla/runtime/device_id.h"
-#include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/statusor.h"
@@ -98,7 +97,8 @@ absl::StatusOr<CollectiveParams> CollectiveParams::Create(
       global_device_id, run_options.run_options().device_assignment(),
       device_id_map, clique_id_callback, incarnations, collective_max_nchannels,
       p2p_max_nchannels, run_options.run_options().local_device_count(),
-      collective_use_minimal_resource, nccl_window_symmetric);
+      collective_use_minimal_resource, nccl_window_symmetric,
+      run_options.run_options().logical_device_id());
 }
 
 CollectiveParams::CollectiveParams(
@@ -110,7 +110,8 @@ CollectiveParams::CollectiveParams(
     const absl::flat_hash_map<GlobalDeviceId, IncarnationId>* incarnations,
     int64_t collective_max_nchannels, int64_t p2p_max_nchannels,
     int local_device_count, bool collective_use_minimal_resource,
-    bool nccl_window_symmetric)
+    bool nccl_window_symmetric,
+    std::optional<DeviceAssignment::LogicalID> logical_id)
     : collectives(collectives),
       executor(executor),
       run_id(run_id),
@@ -125,6 +126,8 @@ CollectiveParams::CollectiveParams(
       p2p_max_nchannels(p2p_max_nchannels),
       local_device_count(local_device_count),
       collective_use_minimal_resource(collective_use_minimal_resource),
-      nccl_window_symmetric(nccl_window_symmetric) {}
+      nccl_window_symmetric(nccl_window_symmetric),
+      device_placement(DevicePlacement::ForExecution(
+          device_assn, global_device_id, logical_id)) {}
 
 }  // namespace xla::gpu

@@ -218,6 +218,11 @@ cc_library(
 )
 
 cc_library(
+    name = "logical_device_id",
+    hdrs = ["logical_device_id.h"],
+)
+
+cc_library(
     name = "chip_id",
     hdrs = ["chip_id.h"],
     deps = [

@@ -33,7 +33,6 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "tsl/platform/platform.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/function_library.h"
@@ -43,10 +42,12 @@ limitations under the License.
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/device_id.h"
 #include "xla/runtime/resource_use.h"
+#include "xla/service/device_assignment.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
+#include "tsl/platform/platform.h"
 
 struct ynn_threadpool;
 
@@ -220,7 +221,8 @@ class Thunk {
   // of XLA executables (multiple partitions and replicas).
   struct CollectiveExecuteParams {
     static absl::StatusOr<CollectiveExecuteParams> Create(
-        const ExecutableRunOptions* run_options);
+        const ExecutableRunOptions* run_options,
+        std::optional<DeviceAssignment::Placement> placement = std::nullopt);
 
     RunId run_id;
 
@@ -229,11 +231,13 @@ class Thunk {
 
     const DeviceAssignment* device_assignment = nullptr;
     CpuCollectives* collectives = nullptr;
+    DeviceAssignment::Placement device_placement;
 
-    CollectiveExecuteParams(RunId run_id, int64_t local_device_ordinal,
-                            GlobalDeviceId global_device_id,
-                            const DeviceAssignment* device_assignment,
-                            CpuCollectives* collectives);
+    CollectiveExecuteParams(
+        RunId run_id, int64_t local_device_ordinal,
+        GlobalDeviceId global_device_id,
+        const DeviceAssignment* device_assignment, CpuCollectives* collectives,
+        std::optional<DeviceAssignment::Placement> placement = std::nullopt);
   };
 
   //===--------------------------------------------------------------------===//

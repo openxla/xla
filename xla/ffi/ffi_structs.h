@@ -36,6 +36,10 @@ limitations under the License.
 // Forward declare backend-specific types.
 //===----------------------------------------------------------------------===//
 
+namespace xla {
+class DevicePlacement;
+}  // namespace xla
+
 namespace Eigen {
 struct ThreadPoolDevice;
 }  // namespace Eigen
@@ -118,6 +122,7 @@ struct XLA_FFI_InvokeContext {
   std::unique_ptr<const xla::ffi::AttributesStorage> encoded_custom_options;
 
   const XLA_FFI_Extension* extension_start = nullptr;
+  const xla::DevicePlacement* device_placement = nullptr;
 };
 
 #endif  // XLA_FFI_FFI_STRUCTS_H_

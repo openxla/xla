@@ -40,6 +40,7 @@ limitations under the License.
 
 namespace xla {
 class CustomOptions;
+class DevicePlacement;
 class HloComputation;
 }  // namespace xla
 
@@ -120,6 +121,8 @@ struct InvokeContext {
   const xla::CustomOptions* custom_options = nullptr;
 
   const XLA_FFI_Extension* extension_start = nullptr;
+  // Borrowed until the host handler returns, including for asynchronous calls.
+  const DevicePlacement* device_placement = nullptr;
 };
 
 // Invokes an XLA FFI handler with the given call frame and context. This is a

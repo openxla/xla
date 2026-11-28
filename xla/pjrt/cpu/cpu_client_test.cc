@@ -20,9 +20,6 @@ limitations under the License.
 #include <unistd.h>
 #endif
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -34,18 +31,23 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
 #include "mlir/Dialect/Func/IR/FuncDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
-#include "tsl/platform/path.h"
+#include "xla/backends/cpu/collectives/in_process_collectives.h"
 #include "xla/ffi/ffi.h"
 #include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -65,9 +67,11 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_execute_options.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_memory.h"
+#include "xla/pjrt/plugin/xla_cpu/cpu_topology.h"
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/pjrt/strided_gather.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -84,11 +88,21 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/path.h"
 
 #define EIGEN_USE_THREADS
 #include "unsupported/Eigen/CXX11/Tensor"
 
 namespace xla {
+
+class CpuExecutableLoadStateTestPeer {
+ public:
+  static size_t OverridePlacementCount(CpuExecutableLoadState& state) {
+    absl::MutexLock lock(state.mu_);
+    return state.override_placements_.size();
+  }
+};
+
 namespace {
 
 using ::absl_testing::IsOkAndHolds;
@@ -1344,6 +1358,138 @@ TEST(PjRtCpuClientTest, ForwardUserDataToFfiHandler) {
   EXPECT_TRUE(LiteralTestUtil::Equal(
       LiteralUtil::CreateR1<float>({42.0f, 42.0f, 42.0f, 42.0f}),
       *result_literal));
+}
+
+absl::Status CheckLogicalDeviceIds(ffi::LogicalDeviceInfo info,
+                                   ffi::BufferR0<U32> replica,
+                                   ffi::BufferR0<U32> partition,
+                                   ffi::Result<ffi::BufferR0<S32>> ordinal) {
+  EXPECT_EQ(info.replica_id, *replica.typed_data());
+  EXPECT_EQ(info.partition_id, *partition.typed_data());
+  EXPECT_EQ(info.replica_count, 2);
+  EXPECT_EQ(info.partition_count, 2);
+  *ordinal->typed_data() =
+      info.replica_id * info.partition_count + info.partition_id;
+  return absl::OkStatus();
+}
+
+XLA_FFI_DEFINE_HANDLER(kCheckLogicalDeviceIds, CheckLogicalDeviceIds,
+                       ffi::Ffi::Bind()
+                           .Ctx<ffi::LogicalDeviceInfo>()
+                           .Arg<ffi::BufferR0<U32>>()
+                           .Arg<ffi::BufferR0<U32>>()
+                           .Ret<ffi::BufferR0<S32>>());
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(),
+                         "__xla_test$$CheckLogicalDeviceIds", "Host",
+                         kCheckLogicalDeviceIds);
+
+TEST(PjRtCpuClientTest, LogicalDeviceInfoMatchesReplicaAndPartitionIds) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule placement
+    ENTRY main {
+      replica = u32[] replica-id(), sharding={manual}
+      partition = u32[] partition-id(), sharding={manual}
+      ROOT ordinal = s32[] custom-call(replica, partition),
+        custom_call_target="__xla_test$$CheckLogicalDeviceIds",
+        api_version=API_VERSION_TYPED_FFI, sharding={manual}
+    })hlo";
+  CpuClientOptions cpu_options;
+  cpu_options.cpu_device_count = 4;
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetXlaPjrtCpuClient(std::move(cpu_options)));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHlo, {}));
+  CompileOptions options;
+  options.executable_build_options.set_num_replicas(2);
+  options.executable_build_options.set_num_partitions(2);
+  options.executable_build_options.set_use_spmd_partitioning(true);
+  ASSERT_OK_AND_ASSIGN(auto executable,
+                       client->CompileAndLoad(XlaComputation(module->ToProto()),
+                                              std::move(options)));
+  ASSERT_OK_AND_ASSIGN(auto outputs, executable->Execute({{}, {}, {}, {}}, {}));
+  std::vector<int32_t> ordinals;
+  for (const auto& output : outputs) {
+    ASSERT_EQ(output.size(), 1);
+    ASSERT_OK_AND_ASSIGN(auto literal, output[0]->ToLiteral().Await());
+    ordinals.push_back(literal->Get<int32_t>({}));
+  }
+  EXPECT_THAT(ordinals, ::testing::UnorderedElementsAre(0, 1, 2, 3));
+}
+
+absl::Status ReadOverrideReplica(ffi::Context ctx, bool* request_placement,
+                                 ffi::Result<ffi::BufferR0<S32>> out) {
+  if (!*request_placement) {
+    *out->typed_data() = -1;
+    return absl::OkStatus();
+  }
+  ABSL_ASSIGN_OR_RETURN(auto info, ctx.get<ffi::LogicalDeviceInfo>());
+  *out->typed_data() = info.replica_id;
+  return absl::OkStatus();
+}
+
+XLA_FFI_DEFINE_HANDLER(kReadOverrideReplica, ReadOverrideReplica,
+                       ffi::Ffi::Bind()
+                           .Ctx()
+                           .Ctx<ffi::UserData<bool>>()
+                           .Ret<ffi::BufferR0<S32>>());
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test$$ReadOverrideReplica",
+                         "Host", kReadOverrideReplica);
+
+TEST(PjRtCpuClientTest, CachesPlacementAcrossProcessIndexOverrides) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule process_index_override
+    ENTRY main {
+      ROOT result = s32[] custom-call(),
+        custom_call_target="__xla_test$$ReadOverrideReplica",
+        api_version=API_VERSION_TYPED_FFI
+    })hlo";
+  CpuClientOptions cpu_options;
+  cpu_options.collectives = std::make_shared<cpu::InProcessCollectives>();
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetXlaPjrtCpuClient(std::move(cpu_options)));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHlo, {}));
+  DeviceAssignment assignment(/*replica_count=*/3, /*computation_count=*/1);
+  assignment(0, 0) = PackCpuDeviceId(2, 0).value();
+  assignment(1, 0) = PackCpuDeviceId(0, 0).value();
+  assignment(2, 0) = PackCpuDeviceId(1, 0).value();
+  CompileOptions compile_options;
+  compile_options.executable_build_options.set_num_replicas(3);
+  compile_options.executable_build_options.set_device_assignment(assignment);
+  ASSERT_OK_AND_ASSIGN(auto executable,
+                       client->CompileAndLoad(XlaComputation(module->ToProto()),
+                                              compile_options));
+  auto* loaded = absl::down_cast<CommonPjRtLoadedExecutable*>(executable.get());
+  auto* state =
+      absl::down_cast<CpuExecutableLoadState*>(loaded->load_state().get());
+
+  auto execute = [&](int process_index,
+                     bool request_placement = true) -> absl::StatusOr<int32_t> {
+    CpuExecuteContext context;
+    context.process_index() = process_index;
+    ABSL_RETURN_IF_ERROR(
+        context.ffi_context().Emplace<bool>(request_placement));
+    ExecuteOptions options;
+    options.context = &context;
+    ABSL_ASSIGN_OR_RETURN(auto outputs, executable->Execute({{}}, options));
+    ABSL_ASSIGN_OR_RETURN(auto literal, outputs[0][0]->ToLiteral().Await());
+    return literal->Get<int32_t>({});
+  };
+
+  EXPECT_THAT(execute(0), IsOkAndHolds(1));
+  EXPECT_EQ(CpuExecutableLoadStateTestPeer::OverridePlacementCount(*state), 0);
+  for (auto [process, replica, cached] :
+       {std::array{1, 2, 1}, {1, 2, 1}, {2, 0, 2}, {1, 2, 2}}) {
+    EXPECT_THAT(execute(process), IsOkAndHolds(replica));
+    EXPECT_EQ(CpuExecutableLoadStateTestPeer::OverridePlacementCount(*state),
+              cached);
+  }
+
+  EXPECT_THAT(execute(3, /*request_placement=*/false), IsOkAndHolds(-1));
+  for (int i = 0; i < 2; ++i) {
+    EXPECT_THAT(execute(3), StatusIs(absl::StatusCode::kInternal,
+                                     HasSubstr("doesn't appear")));
+    EXPECT_EQ(CpuExecutableLoadStateTestPeer::OverridePlacementCount(*state),
+              3);
+  }
 }
 
 static absl::Status MemsetFromAttr(

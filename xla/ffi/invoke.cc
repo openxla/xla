@@ -87,7 +87,8 @@ static XLA_FFI_InvokeContext CreateExecutionContext(
       internal::ScopedExecutionContext::GetCallExecutionContext(context),
       context.custom_options,
       /*encoded_custom_options=*/nullptr,
-      context.extension_start};
+      context.extension_start,
+      context.device_placement};
 }
 
 template <typename Handler>
