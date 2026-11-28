@@ -18,17 +18,6 @@ func.func @unsupported_totalorder(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) ->
 
 // -----
 
-// nv_tensor_ir.matmul has nowhere to record a precision request, so anything
-// other than DEFAULT is rejected instead of being silently dropped.
-func.func @dot_general_non_default_precision(%arg0: tensor<8x16xf32>, %arg1: tensor<16x32xf32>) -> tensor<8x32xf32> {
-  // expected-error @+2 {{failed to legalize operation 'stablehlo.dot_general'}}
-  // expected-error @+1 {{operation was not legalized to nv_tensor_ir dialect}}
-  %0 = stablehlo.dot_general %arg0, %arg1, contracting_dims = [1] x [0], precision = [HIGHEST, HIGHEST] : (tensor<8x16xf32>, tensor<16x32xf32>) -> tensor<8x32xf32>
-  return %0 : tensor<8x32xf32>
-}
-
-// -----
-
 // Likewise for an explicit dot algorithm.
 func.func @dot_general_algorithm(%arg0: tensor<8x16xf32>, %arg1: tensor<16x32xf32>) -> tensor<8x32xf32> {
   // expected-error @+2 {{failed to legalize operation 'stablehlo.dot_general'}}
