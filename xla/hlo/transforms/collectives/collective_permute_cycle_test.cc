@@ -17,6 +17,8 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <limits>
 #include <utility>
 
 #include "xla/service/source_target_pairs.h"
@@ -207,6 +209,53 @@ TEST_F(CollectivePermuteUtilsTest, HasCyclesSkippingFirstDeviceCycle) {
   // Cycle: 1->2, 2->3, 3->4, 4->5, 5->6, 6->7, 7->1
   EXPECT_TRUE(HasCycles(SourceTargetPairs(
       {{1, 2}, {2, 3}, {3, 4}, {4, 5}, {5, 6}, {6, 7}, {7, 1}})));
+}
+
+TEST_F(CollectivePermuteUtilsTest,
+       HasCyclesHandlesNegativeSparseAndDuplicateSourceEdges) {
+  EXPECT_FALSE(HasCycles(SourceTargetPairs()));
+  EXPECT_FALSE(HasCycles(SourceTargetPairs({{-1, 0}})));
+  EXPECT_FALSE(HasCycles(SourceTargetPairs({{0, -2}})));
+  EXPECT_FALSE(HasCycles(SourceTargetPairs({{-2, -2}})));
+  EXPECT_TRUE(HasCycles(SourceTargetPairs({{-1, 5}, {0, 1}, {1, 0}})));
+
+  constexpr int64_t kSparse = 1000000000000LL;
+  EXPECT_TRUE(HasCycles(SourceTargetPairs({{0, kSparse}, {kSparse, 0}})));
+  EXPECT_FALSE(HasCycles(SourceTargetPairs({{0, kSparse}, {kSparse, 1}})));
+
+  EXPECT_TRUE(HasCycles(SourceTargetPairs({{0, 1}, {0, 2}, {1, 0}})));
+  EXPECT_TRUE(HasCycles(SourceTargetPairs({{0, 2}, {0, 1}, {1, 0}})));
+  EXPECT_FALSE(HasCycles(SourceTargetPairs({{0, 1}, {0, 2}, {1, 2}})));
+}
+
+TEST_F(CollectivePermuteUtilsTest,
+       RejectsDegenerateSplitAndExtremeCycleEndpointsWithoutOverflow) {
+  EXPECT_FALSE(
+      IsForwardCycle(SourceTargetPairs({{0, 0}}), SourceTargetPairs()));
+  EXPECT_FALSE(
+      IsBackwardCycle(SourceTargetPairs({{0, 0}}), SourceTargetPairs()));
+
+  EXPECT_EQ(SplitEdges(SourceTargetPairs(), CycleType::kForward),
+            std::make_pair(SourceTargetPairs(), SourceTargetPairs()));
+  EXPECT_EQ(SplitEdges(SourceTargetPairs(), CycleType::kBackward),
+            std::make_pair(SourceTargetPairs(), SourceTargetPairs()));
+  EXPECT_EQ(SplitEdges(SourceTargetPairs({{0, 1}}), CycleType::kNone),
+            std::make_pair(SourceTargetPairs(), SourceTargetPairs()));
+
+  constexpr int64_t kMax = std::numeric_limits<int64_t>::max();
+  constexpr int64_t kMin = std::numeric_limits<int64_t>::min();
+  EXPECT_FALSE(IsForwardCycle(SourceTargetPairs({{kMax, 0}, {0, kMax}})));
+  EXPECT_FALSE(IsForwardCycle(SourceTargetPairs({{0, kMax}, {kMax, 0}})));
+  EXPECT_FALSE(IsBackwardCycle(SourceTargetPairs({{0, kMin}, {kMin, 0}})));
+  EXPECT_FALSE(IsBackwardCycle(SourceTargetPairs({{kMin, 0}, {0, kMin}})));
+  EXPECT_FALSE(IsForwardCycle(SourceTargetPairs({{-2, -1}, {-1, -2}})));
+  EXPECT_FALSE(IsForwardCycle(SourceTargetPairs({{-1, 0}, {0, -1}})));
+  EXPECT_FALSE(IsBackwardCycle(SourceTargetPairs({{-2, -1}, {-1, -2}})));
+  EXPECT_FALSE(IsBackwardCycle(SourceTargetPairs({{-1, 0}, {0, -1}})));
+  EXPECT_EQ(GetCycleType(SourceTargetPairs({{kMax, 0}, {0, kMax}})),
+            CycleType::kNone);
+  EXPECT_EQ(GetCycleType(SourceTargetPairs({{0, kMin}, {kMin, 0}})),
+            CycleType::kNone);
 }
 
 }  // namespace
