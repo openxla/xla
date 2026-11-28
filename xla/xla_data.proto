@@ -1452,6 +1452,7 @@ message PrecisionConfig {
     // Next: 16
   }
 
+  // LINT.IfChange(precision_config)
   repeated Precision operand_precision = 1;
 
   // Currently doesn't do anything, but we plan to support it for dot and
@@ -1464,6 +1465,7 @@ message PrecisionConfig {
   Algorithm algorithm = 2;
 
   // Next: 8
+  // LINT.ThenChange(//tensorflow/compiler/xla/hlo/ir/hlo_instructions.cc:precision_config)
 }
 
 // Describes whether all data-parallelism replicas will receive the same

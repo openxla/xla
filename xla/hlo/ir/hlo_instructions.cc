@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_instructions.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -30,6 +31,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
+#include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/log/die_if_null.h"
 #include "absl/log/log.h"
@@ -110,6 +112,50 @@ void PrintPrecisionConfig(HloInstruction::AttributePrinter& printer,
     });
   }
 }
+
+// LINT.IfChange(precision_config)
+// Compares two PrecisionConfigs semantically, treating omitted trailing
+// operand_precision entries as PrecisionConfig::DEFAULT. This keeps
+// IdenticalSlowPath consistent with PrintPrecisionConfig (which omits both
+// empty and all-DEFAULT operand_precision) and HloInstruction::CreateFromProto
+// (which pads operand_precision with DEFAULT).
+bool PrecisionConfigsIdentical(const PrecisionConfig& a,
+                               const PrecisionConfig& b) {
+  if (a.algorithm() != b.algorithm()) {
+    return false;
+  }
+  const int max_size =
+      std::max(a.operand_precision_size(), b.operand_precision_size());
+  for (int i = 0; i < max_size; ++i) {
+    const PrecisionConfig::Precision pa = i < a.operand_precision_size()
+                                              ? a.operand_precision(i)
+                                              : PrecisionConfig::DEFAULT;
+    const PrecisionConfig::Precision pb = i < b.operand_precision_size()
+                                              ? b.operand_precision(i)
+                                              : PrecisionConfig::DEFAULT;
+    if (pa != pb) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Hashes PrecisionConfig consistently with PrecisionConfigsIdentical, ignoring
+// trailing PrecisionConfig::DEFAULT entries in operand_precision.
+absl::HashState HashPrecisionConfig(absl::HashState h,
+                                    const PrecisionConfig& config) {
+  int trimmed_size = config.operand_precision_size();
+  while (trimmed_size > 0 && config.operand_precision(trimmed_size - 1) ==
+                                 PrecisionConfig::DEFAULT) {
+    --trimmed_size;
+  }
+  h = absl::HashState::combine(std::move(h), config.algorithm(), trimmed_size);
+  for (int i = 0; i < trimmed_size; ++i) {
+    h = absl::HashState::combine(std::move(h), config.operand_precision(i));
+  }
+  return h;
+}
+// LINT.ThenChange(//tensorflow/compiler/xla/xla_data.proto:precision_config)
 
 std::string ConvolutionKindToString(ConvolutionKind kind) {
   switch (kind) {
@@ -3741,8 +3787,8 @@ bool HloConvolutionInstruction::IdenticalSlowPath(
          protobuf_util::HaveSameSerialization(
              convolution_dimension_numbers(),
              casted_other.convolution_dimension_numbers()) &&
-         protobuf_util::HaveSameSerialization(
-             precision_config(), casted_other.precision_config()) &&
+         PrecisionConfigsIdentical(precision_config(),
+                                   casted_other.precision_config()) &&
          protobuf_util::HaveSameSerialization(sparsity_config(),
                                               casted_other.sparsity_config()) &&
          protobuf_util::HaveSameSerialization(
@@ -4130,8 +4176,8 @@ bool HloCustomCallInstruction::IdenticalSlowPath(
       casted_other.output_to_operand_aliasing()) {
     return false;
   }
-  if (!protobuf_util::HaveSameSerialization(precision_config(),
-                                            casted_other.precision_config())) {
+  if (!PrecisionConfigsIdentical(precision_config(),
+                                 casted_other.precision_config())) {
     return false;
   }
 
@@ -4616,6 +4662,13 @@ void HloDotInstruction::PrintExtraAttributesImpl(
   }
 }
 
+void HloDotInstruction::HashAdditionalAttributes(absl::HashState h) const {
+  h = absl::HashState::combine(
+      std::move(h),
+      protobuf_util::ProtobufHashBySerialization(dot_dimension_numbers()));
+  HashPrecisionConfig(std::move(h), precision_config());
+}
+
 bool HloDotInstruction::IdenticalSlowPath(
     const HloInstruction& other,
     absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
@@ -4623,8 +4676,8 @@ bool HloDotInstruction::IdenticalSlowPath(
   const auto& casted_other = static_cast<const HloDotInstruction&>(other);
   return protobuf_util::HaveSameSerialization(
              dot_dimension_numbers(), casted_other.dot_dimension_numbers()) &&
-         protobuf_util::HaveSameSerialization(
-             precision_config(), casted_other.precision_config()) &&
+         PrecisionConfigsIdentical(precision_config(),
+                                   casted_other.precision_config()) &&
          protobuf_util::HaveSameSerialization(sparsity_config(),
                                               casted_other.sparsity_config()) &&
          protobuf_util::HaveSameSerialization(
@@ -4684,6 +4737,18 @@ void HloDotGeneralInstruction::PrintExtraAttributesImpl(
   }
 }
 
+void HloDotGeneralInstruction::HashAdditionalAttributes(
+    absl::HashState h) const {
+  h = absl::HashState::combine(
+      std::move(h),
+      protobuf_util::ProtobufHashBySerialization(dot_dimension_numbers()));
+  h = HashPrecisionConfig(std::move(h), precision_config());
+  absl::HashState::combine(
+      std::move(h),
+      protobuf_util::ProtobufHashBySerialization(sparsity_config()),
+      protobuf_util::ProtobufHashBySerialization(block_scaling_config()));
+}
+
 bool HloDotGeneralInstruction::IdenticalSlowPath(
     const HloInstruction& other,
     absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
@@ -4692,8 +4757,8 @@ bool HloDotGeneralInstruction::IdenticalSlowPath(
       static_cast<const HloDotGeneralInstruction&>(other);
   return protobuf_util::HaveSameSerialization(
              dot_dimension_numbers(), casted_other.dot_dimension_numbers()) &&
-         protobuf_util::HaveSameSerialization(
-             precision_config(), casted_other.precision_config()) &&
+         PrecisionConfigsIdentical(precision_config(),
+                                   casted_other.precision_config()) &&
          protobuf_util::HaveSameSerialization(sparsity_config(),
                                               casted_other.sparsity_config()) &&
          protobuf_util::HaveSameSerialization(
@@ -4747,8 +4812,8 @@ bool HloRaggedDotInstruction::IdenticalSlowPath(
   return protobuf_util::HaveSameSerialization(
              ragged_dot_dimension_numbers(),
              casted_other.ragged_dot_dimension_numbers()) &&
-         protobuf_util::HaveSameSerialization(precision_config(),
-                                              casted_other.precision_config());
+         PrecisionConfigsIdentical(precision_config(),
+                                   casted_other.precision_config());
 }
 
 std::unique_ptr<HloInstruction>
@@ -4796,8 +4861,8 @@ bool HloScaledDotInstruction::IdenticalSlowPath(
   const auto& casted_other = static_cast<const HloScaledDotInstruction&>(other);
   return protobuf_util::HaveSameSerialization(
              dot_dimension_numbers(), casted_other.dot_dimension_numbers()) &&
-         protobuf_util::HaveSameSerialization(precision_config(),
-                                              casted_other.precision_config());
+         PrecisionConfigsIdentical(precision_config(),
+                                   casted_other.precision_config());
 }
 
 std::unique_ptr<HloInstruction>

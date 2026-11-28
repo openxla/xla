@@ -2920,12 +2920,7 @@ class HloDotInstruction : public HloInstruction {
     return hlo->opcode() == HloOpcode::kDot;
   }
 
-  void HashAdditionalAttributes(absl::HashState h) const override {
-    absl::HashState::combine(
-        std::move(h),
-        protobuf_util::ProtobufHashBySerialization(dot_dimension_numbers()),
-        protobuf_util::ProtobufHashBySerialization(precision_config()));
-  }
+  void HashAdditionalAttributes(absl::HashState h) const override;
 
  private:
   void PrintExtraAttributesImpl(AttributePrinter& printer,
@@ -2993,14 +2988,7 @@ class HloDotGeneralInstruction : public HloInstruction {
     return hlo->opcode() == HloOpcode::kDotGeneral;
   }
 
-  void HashAdditionalAttributes(absl::HashState h) const override {
-    absl::HashState::combine(
-        std::move(h),
-        protobuf_util::ProtobufHashBySerialization(dot_dimension_numbers()),
-        protobuf_util::ProtobufHashBySerialization(precision_config()),
-        protobuf_util::ProtobufHashBySerialization(sparsity_config()),
-        protobuf_util::ProtobufHashBySerialization(block_scaling_config()));
-  }
+  void HashAdditionalAttributes(absl::HashState h) const override;
 
  private:
   void PrintExtraAttributesImpl(AttributePrinter& printer,
