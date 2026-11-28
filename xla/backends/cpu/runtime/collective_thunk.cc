@@ -69,6 +69,8 @@ absl::string_view CollectiveThunk::CollectiveKindToString(CollectiveKind kind) {
       return "all-reduce";
     case CollectiveKind::kAllToAll:
       return "all-to-all";
+    case CollectiveKind::kCollectiveBroadcast:
+      return "collective-broadcast";
     case CollectiveKind::kCollectivePermute:
       return "collective-permute";
     case CollectiveKind::kReduceScatter:

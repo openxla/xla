@@ -403,6 +403,29 @@ cc_library(
 )
 
 cc_library(
+    name = "collective_broadcast_thunk",
+    srcs = ["collective_broadcast_thunk.cc"],
+    hdrs = ["collective_broadcast_thunk.h"],
+    deps = [
+        ":collective_thunk",
+        ":thunk",
+        "//xla:future",
+        "//xla:shape_util",
+        "//xla/backends/cpu/collectives:cpu_collectives",
+        "//xla/core/collectives:communicator",
+        "//xla/core/collectives:rank_id",
+        "//xla/service:collective_rendezvous",
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+    ],
+)
+
+cc_library(
     name = "convolution_dims",
     srcs = ["convolution_dims.cc"],
     hdrs = ["convolution_dims.h"],
@@ -1500,6 +1523,7 @@ xla_cc_test(
         ":all_reduce_thunk",
         ":all_to_all_thunk",
         ":call_thunk",
+        ":collective_broadcast_thunk",
         ":collective_permute_thunk",
         ":collective_thunk",
         ":conditional_thunk",

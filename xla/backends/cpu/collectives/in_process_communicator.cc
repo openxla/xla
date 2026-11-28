@@ -362,6 +362,28 @@ static absl::Status AllGatherOp(
 }
 
 //===----------------------------------------------------------------------===//
+// Broadcast
+//===----------------------------------------------------------------------===//
+
+struct BroadcastParticipant {
+  size_t rank;
+  se::DeviceAddressBase src;
+  se::DeviceAddressBase dest;
+};
+
+static absl::Status BroadcastOp(
+    absl::Span<const BroadcastParticipant> participants, size_t rank,
+    size_t root, size_t num_bytes) {
+  const void* src = participants[root].src.opaque();
+  void* dest = participants[rank].dest.opaque();
+  // The root's destination may alias its own source buffer.
+  if (dest != src) {
+    std::memcpy(dest, src, num_bytes);
+  }
+  return absl::OkStatus();
+}
+
+//===----------------------------------------------------------------------===//
 // AllToAll
 //===----------------------------------------------------------------------===//
 
@@ -508,6 +530,37 @@ Future<> InProcessCommunicator::AllToAll(
   size_t num_bytes = count * primitive_util::ByteWidth(dtype);
 
   ABSL_RETURN_IF_ERROR(op->Invoke(AllToAllOp, rank_, num_bytes));
+
+  return Future<>(absl::OkStatus());
+}
+
+Future<> InProcessCommunicator::Broadcast(se::DeviceAddressBase send_buffer,
+                                          se::DeviceAddressBase recv_buffer,
+                                          PrimitiveType dtype, size_t count,
+                                          RankId root,
+                                          const Executor& executor) {
+  ABSL_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
+  const RendezvousKey& key = cpu_executor->rendezvous_key();
+
+  if (root.value() < 0 || root.value() >= num_ranks_) {
+    return Future<>(
+        InvalidArgument("Broadcast root rank %d is out of range for %d ranks",
+                        root.value(), num_ranks_));
+  }
+
+  std::string name = absl::StrCat("broadcast ", key.ToString());
+  BroadcastParticipant participant{rank_, send_buffer, recv_buffer};
+
+  ABSL_ASSIGN_OR_RETURN(auto op,
+                        Rendezvous<OpParticipants<BroadcastParticipant>>(
+                            name, key, participant, key.num_local_participants,
+                            CollectParticipants<BroadcastParticipant>,
+                            WarnStuckTimeout(), TerminateTimeout()));
+
+  size_t num_bytes = count * primitive_util::ByteWidth(dtype);
+
+  ABSL_RETURN_IF_ERROR(op->Invoke(
+      BroadcastOp, rank_, static_cast<size_t>(root.value()), num_bytes));
 
   return Future<>(absl::OkStatus());
 }

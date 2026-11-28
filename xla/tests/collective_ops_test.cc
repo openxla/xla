@@ -796,6 +796,86 @@ TEST_F(CollectiveOpsTest, CollectiveBroadcast_TwoGPUs) {
                                      results[1]));
 }
 
+// Synchronous collective-broadcast. The async-start/async-done form above is
+// skipped on CPU because these tests do not run HLO passes, so the async pair
+// is never converted to a synchronous op there.
+TEST_F(CollectiveOpsTest, CollectiveBroadcast_Sync) {
+  const char* const kModuleStr = R"(
+  HloModule test
+
+  ENTRY test_computation {
+    replica = u32[] replica-id()
+    ten = u32[] constant(10)
+    sum = u32[] add(replica, ten)
+    p = u32[2] broadcast(sum), dimensions={}
+    ROOT res = u32[2] collective-broadcast(p), replica_groups={{1, 0, 2, 3}}
+  }
+  )";
+  const int64_t kNumReplicas = 4;
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr, config));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      ExecuteReplicated(std::move(module), absl::Span<Literal* const>{},
+                        kNumReplicas,
+                        /*use_threads=*/true));
+  ASSERT_EQ(results.size(), kNumReplicas);
+  // Every replica receives the value of replica 1, the first id in the group.
+  for (int64_t i = 0; i < kNumReplicas; ++i) {
+    EXPECT_TRUE(LiteralTestUtil::Equal(
+        LiteralUtil::CreateR1<uint32_t>({11, 11}), results[i]));
+  }
+}
+
+TEST_F(CollectiveOpsTest, CollectiveBroadcast_SyncTwoGroups) {
+  const char* const kModuleStr = R"(
+  HloModule test
+
+  ENTRY test_computation {
+    replica = u32[] replica-id()
+    ten = u32[] constant(10)
+    sum = u32[] add(replica, ten)
+    p = u32[2] broadcast(sum), dimensions={}
+    ROOT res = u32[2] collective-broadcast(p), replica_groups={{3, 2}, {1, 0}}
+  }
+  )";
+  const int64_t kNumReplicas = 4;
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr, config));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      ExecuteReplicated(std::move(module), absl::Span<Literal* const>{},
+                        kNumReplicas,
+                        /*use_threads=*/true));
+  ASSERT_EQ(results.size(), kNumReplicas);
+  // Each group broadcasts from its own first id: replicas 0 and 1 receive
+  // replica 1's value, replicas 2 and 3 receive replica 3's value.
+  EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<uint32_t>({11, 11}),
+                                     results[0]));
+  EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<uint32_t>({11, 11}),
+                                     results[1]));
+  EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<uint32_t>({13, 13}),
+                                     results[2]));
+  EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<uint32_t>({13, 13}),
+                                     results[3]));
+}
+
 TEST_F(CollectiveOpsTest, CollectiveBroadcast_Simple) {
   if (test::DeviceIs(test::kCpu)) {
     GTEST_SKIP();

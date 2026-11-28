@@ -66,10 +66,10 @@ class InProcessCommunicator : public Communicator {
                          size_t count, ReductionKind reduction_kind,
                          const Executor& executor) override;
 
-  Future<> Broadcast(se::DeviceAddressBase, se::DeviceAddressBase,
-                     PrimitiveType, size_t, RankId, const Executor&) override {
-    return Future<>(Unimplemented("Broadcast is not implemented"));
-  }
+  Future<> Broadcast(se::DeviceAddressBase send_buffer,
+                     se::DeviceAddressBase recv_buffer, PrimitiveType dtype,
+                     size_t count, RankId root,
+                     const Executor& executor) override;
 
   Future<> Send(se::DeviceAddressBase, PrimitiveType, size_t, RankId,
                 const Executor&) override {

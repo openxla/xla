@@ -51,6 +51,7 @@ class CollectiveThunk : public Thunk {
     kAllGather,
     kAllReduce,
     kAllToAll,
+    kCollectiveBroadcast,
     kCollectivePermute,
     kReduceScatter,
   };

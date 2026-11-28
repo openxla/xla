@@ -13,9 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -25,6 +22,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
@@ -35,11 +34,11 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/platform/casts.h"
 #include "xla/backends/cpu/runtime/all_gather_thunk.h"
 #include "xla/backends/cpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/cpu/runtime/all_to_all_thunk.h"
 #include "xla/backends/cpu/runtime/call_thunk.h"
+#include "xla/backends/cpu/runtime/collective_broadcast_thunk.h"
 #include "xla/backends/cpu/runtime/collective_permute_thunk.h"
 #include "xla/backends/cpu/runtime/collective_thunk.h"
 #include "xla/backends/cpu/runtime/conditional_thunk.h"
@@ -84,6 +83,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/casts.h"
 
 namespace xla::cpu {
 namespace {
@@ -155,6 +155,10 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
         thunk_sequence.emplace_back(),
         CreateCollectivePermuteThunk(collective_thunk_resources.at(
             CollectiveThunk::CollectiveKind::kCollectivePermute)));
+    ABSL_ASSIGN_OR_RETURN(
+        thunk_sequence.emplace_back(),
+        CreateCollectiveBroadcastThunk(collective_thunk_resources.at(
+            CollectiveThunk::CollectiveKind::kCollectiveBroadcast)));
 
     return thunk_sequence;
   }
@@ -173,6 +177,8 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateCallThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
                           CreateCollectivePermuteThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+                          CreateCollectiveBroadcastThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateCopyThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
                           CreateConditionalThunk());
@@ -252,6 +258,36 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
     ABSL_RETURN_IF_ERROR(AddBufferAllocations(2));
 
     return AllGatherThunk::Create(
+        Thunk::Info(),
+        /*op_params=*/
+        {/*op_id=*/0,
+         /*has_channel_id=*/false,
+         /*use_global_device_ids=*/false,
+         /*group=*/{}},
+        /*op_buffers=*/
+        {
+            /*source_buffers=*/{CreateBufferAllocationSlice(
+                buffer_allocations_[buffer_allocations_.size() - 2])},
+            /*source_shapes=*/
+            {literals_[buffer_allocations_.size() - 2].shape()},
+            /*destination_buffers=*/
+            {CreateBufferAllocationSlice(
+                buffer_allocations_[buffer_allocations_.size() - 1])},
+            /*destination_shapes=*/
+            {literals_[buffer_allocations_.size() - 1].shape()},
+        },
+        /*op_resources=*/
+        {
+            /*communicator_resource=*/communicator_resource,
+        });
+  }
+
+  absl::StatusOr<std::unique_ptr<Thunk>> CreateCollectiveBroadcastThunk(
+      std::shared_ptr<Resource> communicator_resource =
+          Resource::Create(Resource::Kind::kCollectiveCommunicator)) {
+    ABSL_RETURN_IF_ERROR(AddBufferAllocations(2));
+
+    return CollectiveBroadcastThunk::Create(
         Thunk::Info(),
         /*op_params=*/
         {/*op_id=*/0,
@@ -821,6 +857,12 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
     return true;
   }
 
+  bool VerifyCollectiveBroadcastThunkEquality(
+      const CollectiveBroadcastThunk& thunk_1,
+      const CollectiveBroadcastThunk& thunk_2) {
+    return true;
+  }
+
   bool VerifyAllReduceThunkEquality(const AllReduceThunk& thunk_1,
                                     const AllReduceThunk& thunk_2) {
     return thunk_1.single_replica() == thunk_2.single_replica() &&
@@ -1188,6 +1230,10 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
         return VerifyReduceScatterThunkEquality(
             absl::down_cast<const ReduceScatterThunk&>(thunk_1),
             absl::down_cast<const ReduceScatterThunk&>(thunk_2));
+      case CollectiveThunk::CollectiveKind::kCollectiveBroadcast:
+        return VerifyCollectiveBroadcastThunkEquality(
+            absl::down_cast<const CollectiveBroadcastThunk&>(thunk_1),
+            absl::down_cast<const CollectiveBroadcastThunk&>(thunk_2));
       case CollectiveThunk::CollectiveKind::kCollectivePermute:
         return VerifyCollectivePermuteThunkEquality(
             absl::down_cast<const CollectivePermuteThunk&>(thunk_1),
@@ -1334,7 +1380,8 @@ TYPED_TEST(ThunkSequenceSerdesTest, ResourceSharingRecounstruction) {
 
   absl::flat_hash_set<CollectiveThunk::CollectiveKind> second_group_collectives{
       CollectiveThunk::CollectiveKind::kReduceScatter,
-      CollectiveThunk::CollectiveKind::kCollectivePermute};
+      CollectiveThunk::CollectiveKind::kCollectivePermute,
+      CollectiveThunk::CollectiveKind::kCollectiveBroadcast};
 
   {
     std::shared_ptr<Resource> first_collective_group_communicator =

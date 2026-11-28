@@ -28,10 +28,10 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
-#include "tsl/platform/casts.h"
 #include "xla/backends/cpu/runtime/all_gather_thunk.h"
 #include "xla/backends/cpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/cpu/runtime/all_to_all_thunk.h"
+#include "xla/backends/cpu/runtime/collective_broadcast_thunk.h"
 #include "xla/backends/cpu/runtime/collective_permute_thunk.h"
 #include "xla/backends/cpu/runtime/collective_thunk.h"
 #include "xla/backends/cpu/runtime/reduce_scatter_thunk.h"
@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "tsl/platform/casts.h"
 
 namespace xla::cpu {
 namespace {
@@ -172,6 +173,11 @@ absl::Status AllToAllToProto(const AllToAllThunk& thunk,
   return absl::OkStatus();
 }
 
+absl::Status CollectiveBroadcastToProto(const CollectiveBroadcastThunk& thunk,
+                                        CollectiveBroadcastThunkProto& proto) {
+  return absl::OkStatus();
+}
+
 absl::Status ReduceScatterToProto(const ReduceScatterThunk& thunk,
                                   ReduceScatterThunkProto& proto) {
   std::string reduction_kind_as_string = absl::StrCat(thunk.reduction_kind());
@@ -249,6 +255,11 @@ absl::Status CollectiveThunkToProto(const Thunk& thunk, ThunkProto& proto) {
           absl::down_cast<const ReduceScatterThunk&>(collective_thunk),
           *collective_thunk_proto->mutable_reduce_scatter_thunk()));
       break;
+    case CollectiveThunk::CollectiveKind::kCollectiveBroadcast:
+      ABSL_RETURN_IF_ERROR(CollectiveBroadcastToProto(
+          absl::down_cast<const CollectiveBroadcastThunk&>(collective_thunk),
+          *collective_thunk_proto->mutable_collective_broadcast_thunk()));
+      break;
     case CollectiveThunk::CollectiveKind::kCollectivePermute:
       ABSL_RETURN_IF_ERROR(CollectivePermuteToProto(
           absl::down_cast<const CollectivePermuteThunk&>(collective_thunk),
@@ -268,6 +279,8 @@ ProtoCollectiveThunkToCollectiveThunkKind(const CollectiveThunkProto& proto) {
       return CollectiveThunk::CollectiveKind::kAllReduce;
     case CollectiveThunkProto::ImplCase::kAllToAllThunk:
       return CollectiveThunk::CollectiveKind::kAllToAll;
+    case CollectiveThunkProto::ImplCase::kCollectiveBroadcastThunk:
+      return CollectiveThunk::CollectiveKind::kCollectiveBroadcast;
     case CollectiveThunkProto::ImplCase::kCollectivePermuteThunk:
       return CollectiveThunk::CollectiveKind::kCollectivePermute;
     case CollectiveThunkProto::ImplCase::kReduceScatterThunk:
@@ -290,6 +303,23 @@ absl::StatusOr<std::unique_ptr<AllGatherThunk>> AllGatherThunkFromProto(
 
   const auto& [op_params, op_buffers, op_resources] = collective_thunk_params;
   return AllGatherThunk::Create(info, op_params, op_buffers, op_resources);
+}
+
+absl::StatusOr<std::unique_ptr<CollectiveBroadcastThunk>>
+CollectiveBroadcastThunkFromProto(
+    const ThunkProto& proto,
+    const std::vector<BufferAllocation>& buffer_allocations,
+    const std::vector<std::shared_ptr<Resource>>& resources) {
+  ABSL_ASSIGN_OR_RETURN(Thunk::Info info, ThunkInfoFromProto(proto.info()));
+
+  ABSL_ASSIGN_OR_RETURN(
+      auto collective_thunk_params,
+      GetCollectiveThunkParamsFromProto(proto.collective_thunk(),
+                                        buffer_allocations, resources));
+
+  const auto& [op_params, op_buffers, op_resources] = collective_thunk_params;
+  return CollectiveBroadcastThunk::Create(info, op_params, op_buffers,
+                                          op_resources);
 }
 
 absl::StatusOr<std::unique_ptr<AllReduceThunk>> AllReduceThunkFromProto(
@@ -393,6 +423,9 @@ absl::StatusOr<std::unique_ptr<Thunk>> CollectiveThunkFromProto(
       return AllReduceThunkFromProto(proto, buffer_allocations, *resources);
     case CollectiveThunk::CollectiveKind::kAllToAll:
       return AllToAllThunkFromProto(proto, buffer_allocations, *resources);
+    case CollectiveThunk::CollectiveKind::kCollectiveBroadcast:
+      return CollectiveBroadcastThunkFromProto(proto, buffer_allocations,
+                                               *resources);
     case CollectiveThunk::CollectiveKind::kCollectivePermute:
       return CollectivePermuteThunkFromProto(proto, buffer_allocations,
                                              *resources);
