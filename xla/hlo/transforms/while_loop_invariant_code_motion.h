@@ -48,8 +48,8 @@ class WhileLoopInvariantCodeMotion : public HloModulePass {
   // input(s) is larger than hoist_size_inflation_ratio. This is useful on
   // platforms on which it's important to prevent blow-ups in memory size.
   //
-  // If `hoist_reshapes` is true, then reshapes are allowed to be hoisted out of
-  // while loop body by themselves. Otherwise, they are only hoisted out if they
+  // If `hoist_reshapes` is true, reshapes and layout changing copies may be
+  // hoisted by themselves. Otherwise, they are only hoisted out if they
   // enable other non-trivial computations to be hoisted out.
   //
   // Setting `hoist_reshapes` to false can be useful when LICM is run in the
