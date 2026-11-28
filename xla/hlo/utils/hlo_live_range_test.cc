@@ -53,7 +53,7 @@ using LiveRangeBounds = HloLiveRange::LiveRangeBounds;
 class HloLiveRangeTest : public HloHardwareIndependentTestBase {
  protected:
   HloLiveRangeTest() : module_(CreateNewVerifiedModule()) {}
-  ~HloLiveRangeTest() override {}
+  ~HloLiveRangeTest() override = default;
 
   void Analyze(const HloSchedule& schedule) {
     alias_analysis_ =
